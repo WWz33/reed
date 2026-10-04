@@ -1,0 +1,10 @@
+[workspace]
+members = ["hts", "noo"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

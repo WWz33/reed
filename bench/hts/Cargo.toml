@@ -1,0 +1,7 @@
+[package]
+name = "bench-hts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rust-htslib = { version = "1.0", default-features = false }

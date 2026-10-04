@@ -1,0 +1,10 @@
+# Build artifacts
+/target/
+/bench/target/
+
+# Environment-specific cargo config (mirror + target-dir are machine-specific)
+.cargo/config.toml
+
+# Editor
+.vscode/
+.idea/

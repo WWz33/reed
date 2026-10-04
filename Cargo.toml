@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/reed-core", "crates/reed-io"]
+resolver = "2"
