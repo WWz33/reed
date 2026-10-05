@@ -167,6 +167,19 @@ impl PlaneBlock {
         }
     }
 
+    /// Grows the block to `n_sites` sites, preserving existing content
+    /// (worker scratch reuse: one allocation warm-up per chunk).
+    pub fn resize_sites(&mut self, n_sites: usize) {
+        if n_sites <= self.n_sites {
+            return;
+        }
+        let site_words = self.n_planes * self.n_words_per_plane;
+        let mut words = vec![0_u64; n_sites * site_words].into_boxed_slice();
+        words[..self.n_sites * site_words].copy_from_slice(&self.words);
+        self.words = words;
+        self.n_sites = n_sites;
+    }
+
     /// Borrowed view of one site's planes.
     ///
     /// # Panics

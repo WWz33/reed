@@ -19,16 +19,24 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use noodles::bcf as bcf;
-use noodles::bgzf as bgzf;
+use noodles::bgzf as noodles_bgzf;
 // Public re-export: reed-io is the single noodles boundary, and downstream
 // crates (reed-filter) have no direct noodles dependency.
-pub use noodles::vcf;
-use vcf::variant::record::samples::series::value::genotype::Phasing;
-use vcf::variant::record::samples::series::Value;
+pub use noodles::vcf as noodles_vcf;
+pub use error::{IoError, Locus};
+use noodles_vcf::variant::record::samples::series::value::genotype::Phasing;
+use noodles_vcf::variant::record::samples::series::Value;
 
 use reed_core::{Bits, ContigId, SiteCompleteness, WindowBuffer, WindowError};
 
+pub mod bgzf;
+pub mod chunk;
+pub mod error;
+pub mod field_plan;
+pub mod format;
+pub mod header;
 pub mod record;
+pub mod vcf;
 pub mod sink;
 
 /// Failures while reading VCF/BCF data (windows and record streams).
@@ -244,12 +252,12 @@ where
         )
     } else if name.ends_with(".vcf.gz") || name.ends_with(".vcf.bgz") {
         stream_vcf(
-            vcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(file))),
+            noodles_vcf::io::Reader::new(noodles_bgzf::io::Reader::new(BufReader::new(file))),
             opts,
             f,
         )
     } else if name.ends_with(".vcf") {
-        stream_vcf(vcf::io::Reader::new(BufReader::new(file)), opts, f)
+        stream_vcf(noodles_vcf::io::Reader::new(BufReader::new(file)), opts, f)
     } else {
         Err(ReadError::UnsupportedFormat(name))
     }
@@ -289,11 +297,11 @@ pub fn header_info(path: &Path) -> Result<HeaderInfo, ReadError> {
             .read_header()
             .map_err(ReadError::Io)?
     } else if name.ends_with(".vcf.gz") || name.ends_with(".vcf.bgz") {
-        vcf::io::Reader::new(bgzf::io::Reader::new(BufReader::new(file)))
+        noodles_vcf::io::Reader::new(noodles_bgzf::io::Reader::new(BufReader::new(file)))
             .read_header()
             .map_err(ReadError::Io)?
     } else if name.ends_with(".vcf") {
-        vcf::io::Reader::new(BufReader::new(file))
+        noodles_vcf::io::Reader::new(BufReader::new(file))
             .read_header()
             .map_err(ReadError::Io)?
     } else {
@@ -343,7 +351,7 @@ struct Assembler {
 }
 
 impl Assembler {
-    fn new(opts: &ReadOptions, header: &vcf::Header) -> Self {
+    fn new(opts: &ReadOptions, header: &noodles_vcf::Header) -> Self {
         let mut contig_lens = HashMap::new();
         for (name, contig) in header.contigs() {
             if let Some(len) = contig.length() {
@@ -525,9 +533,9 @@ fn build_next_window(
 
 // ------------------------------------------------------------------ backends
 
-fn record_key<R: vcf::variant::Record + ?Sized>(
+fn record_key<R: noodles_vcf::variant::Record + ?Sized>(
     record: &R,
-    header: &vcf::Header,
+    header: &noodles_vcf::Header,
 ) -> Result<(String, u32), ReadError> {
     // A contig/POS lookup failure is a header/record contradiction, i.e. a
     // decode problem at this site, not an I/O failure. The position is not
@@ -560,8 +568,8 @@ fn record_key<R: vcf::variant::Record + ?Sized>(
 type DecodedGt = (Vec<i8>, Vec<bool>, Vec<bool>);
 
 fn decode_gt(
-    series: &dyn vcf::variant::record::samples::Series,
-    header: &vcf::Header,
+    series: &dyn noodles_vcf::variant::record::samples::Series,
+    header: &noodles_vcf::Header,
     n_samples: usize,
     contig: &str,
     pos: u32,
@@ -681,7 +689,7 @@ where
 }
 
 fn stream_vcf<R, F>(
-    mut reader: vcf::io::Reader<R>,
+    mut reader: noodles_vcf::io::Reader<R>,
     opts: &ReadOptions,
     mut f: F,
 ) -> Result<StreamSummary, ReadError>

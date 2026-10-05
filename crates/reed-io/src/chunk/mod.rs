@@ -1,0 +1,157 @@
+//! Block-aligned parallel parsing inputs (`docs/architecture-spec.md` §6.2).
+//!
+//! A chunk is a run of consecutive BGZF blocks cut at a block boundary once
+//! its compressed size reaches [`CHUNK_TARGET_COMPRESSED`]. Chunk boundaries
+//! depend only on the input bytes — never on thread counts — which is what
+//! makes reed's output deterministic (§2 principle 5).
+
+pub mod bgzf;
+
+use std::ops::Range;
+use std::sync::Arc;
+
+use reed_core::ChunkId;
+
+use crate::error::IoError;
+
+/// Compressed-byte target per chunk. `// determinism-relevant`: changing it
+/// changes chunk boundaries, so output could shift at the last float digit;
+/// bump the version and record an ADR before touching it
+/// (`docs/architecture-spec.md` §6.2).
+pub const CHUNK_TARGET_COMPRESSED: u64 = 1 << 20; // 1 MiB
+
+/// One chunk of compressed input, ready for a worker to inflate.
+#[derive(Clone, Debug)]
+pub struct ChunkBytes {
+    /// Input-order index; the only basis of reduction order.
+    pub id: ChunkId,
+    /// Whole BGZF blocks, concatenated.
+    pub compressed: Arc<[u8]>,
+    /// Inflated-text offset where records start (nonzero only for the chunk
+    /// that carries the end of the header).
+    pub first_in_block_offset: u64,
+}
+
+/// The inflated content of one chunk, split by line ownership.
+///
+/// `head` (chunks after the first) is the partial line at the start — it
+/// belongs to the previous chunk's record and goes back to the reducer for
+/// seam stitching. `body` is the byte range of complete lines this chunk
+/// owns. `tail` is the trailing partial line after the last `\n` (None when
+/// the chunk ends exactly at a line end). All ranges index into `text`.
+#[derive(Debug)]
+pub struct InflatedChunk<'a> {
+    /// Full inflated text.
+    pub text: &'a [u8],
+    /// Byte range of complete lines this chunk owns (for the first chunk
+    /// this starts at the end of the header).
+    pub body: Range<usize>,
+    /// Partial line at the start (`None` for the first chunk).
+    pub head: Option<Range<usize>>,
+    /// Partial line after the last `\n` (`None` when empty).
+    pub tail: Option<Range<usize>>,
+}
+
+impl InflatedChunk<'_> {
+    /// The complete lines this chunk owns, as a byte slice.
+    #[must_use]
+    pub fn body_bytes<'a>(&self, text: &'a [u8]) -> &'a [u8] {
+        &text[self.body.clone()]
+    }
+
+    /// The head fragment, as a byte slice.
+    #[must_use]
+    pub fn head_bytes<'a>(&self, text: &'a [u8]) -> Option<&'a [u8]> {
+        self.head.as_ref().map(|r| &text[r.clone()])
+    }
+
+    /// The tail fragment, as a byte slice.
+    #[must_use]
+    pub fn tail_bytes<'a>(&self, text: &'a [u8]) -> Option<&'a [u8]> {
+        self.tail.as_ref().map(|r| &text[r.clone()])
+    }
+}
+
+/// Inflates every block of `chunk` into `scratch` (replacing its content)
+/// and splits the text into head/body/tail line ownership.
+///
+/// # Errors
+///
+/// [`IoError::MalformedBgzf`] on corrupt blocks.
+pub fn inflate_chunk<'a>(
+    chunk: &ChunkBytes,
+    inflater: &mut crate::bgzf::inflate::Inflater,
+    scratch: &'a mut Vec<u8>,
+) -> Result<InflatedChunk<'a>, IoError> {
+    scratch.clear();
+    let mut compressed: &[u8] = chunk.compressed.as_ref();
+    while !compressed.is_empty() {
+        let Some(total) = crate::bgzf::block::parse_block_size(compressed) else {
+            return Err(IoError::MalformedBgzf {
+                locus: None,
+                reason: "chunk contains a non-BGZF block header",
+            });
+        };
+        inflater.inflate_block(&compressed[..total], scratch)?;
+        compressed = &compressed[total..];
+    }
+    let text: &'a [u8] = scratch.as_slice();
+
+    let scan_start = if chunk.first_in_block_offset > 0 {
+        // This chunk carries the end of the header; records start right
+        // after the #CHROM line, so the head is complete by construction.
+        usize::try_from(chunk.first_in_block_offset).map_err(|_| IoError::MalformedBgzf {
+            locus: None,
+            reason: "header offset overflows usize",
+        })?
+    } else {
+        0
+    };
+
+    // First chunk (or header-carrying chunk): all text from scan_start on is
+    // owned; there is no head fragment.
+    if scan_start > 0 || chunk.id.get() == 0 {
+        return Ok(InflatedChunk {
+            text,
+            body: owned_body_range(text, scan_start),
+            head: None,
+            tail: tail_range(text),
+        });
+    }
+
+    // Later chunks: the head fragment runs to (and includes) the first \n.
+    let Some(first_nl) = memchr::memchr(b'\n', &text[scan_start..]) else {
+        // Degenerate: no newline in the whole chunk — everything is head.
+        return Ok(InflatedChunk {
+            text,
+            body: scan_start..scan_start,
+            head: Some(scan_start..text.len()),
+            tail: None,
+        });
+    };
+    let head_end = scan_start + first_nl + 1;
+    Ok(InflatedChunk {
+        text,
+        body: owned_body_range(text, head_end),
+        head: Some(scan_start..head_end),
+        tail: tail_range(text),
+    })
+}
+
+/// Range of complete lines: from `from` to one past the last `\n`.
+fn owned_body_range(text: &[u8], from: usize) -> Range<usize> {
+    match text[from..].iter().rposition(|&b| b == b'\n') {
+        Some(rel) => from..from + rel + 1,
+        None => from..from,
+    }
+}
+
+/// Tail fragment range (after the last `\n`), or None when empty.
+fn tail_range(text: &[u8]) -> Option<Range<usize>> {
+    match text.iter().rposition(|&b| b == b'\n') {
+        Some(rel) if rel + 1 < text.len() => Some(rel + 1..text.len()),
+        Some(_) => None,
+        None if !text.is_empty() => Some(0..text.len()),
+        None => None,
+    }
+}

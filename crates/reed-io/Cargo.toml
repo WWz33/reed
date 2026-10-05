@@ -1,6 +1,6 @@
 [package]
 name = "reed-io"
-description = "VCF/BCF window reading for reed-core, built on noodles."
+description = "VCF/BCF transport for reed: block-aligned parallel parsing, fast field scans, byte-level edits."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,13 @@ license.workspace = true
 [dependencies]
 reed-core.workspace = true
 noodles.workspace = true
+libdeflater.workspace = true
+memchr.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+crossbeam-channel.workspace = true
 
 [lints]
 workspace = true

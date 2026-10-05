@@ -41,8 +41,8 @@ use crossbeam_channel::{SendTimeoutError, Sender};
 use reed_core::estimators::site_counts::SiteCounts;
 use reed_io::record::{self, GtMask, RecordView, Recompute};
 use reed_io::sink::VariantSink;
-use reed_io::vcf;
-use reed_io::vcf::variant::RecordBuf;
+use reed_io::noodles_vcf as vcf;
+use reed_io::noodles_vcf::variant::RecordBuf;
 
 use crate::plan;
 use crate::spec::{CohortRule, FilterSpec};
@@ -710,9 +710,9 @@ pub fn execute(
 /// Add header definitions for the recomputed tags the input lacks
 /// (NS/MAF/HWE and friends); existing definitions stay untouched.
 fn ensure_info_defs(mut header: vcf::Header, spec: &FilterSpec) -> vcf::Header {
-    use reed_io::vcf::header::record::value::map::info::{Number, Type};
-    type InfoMap = reed_io::vcf::header::record::value::Map<
-        reed_io::vcf::header::record::value::map::Info,
+    use reed_io::noodles_vcf::header::record::value::map::info::{Number, Type};
+    type InfoMap = reed_io::noodles_vcf::header::record::value::Map<
+        reed_io::noodles_vcf::header::record::value::map::Info,
     >;
 
     let add = |header: &mut vcf::Header, id: &str, number: Number, ty: Type, desc: &str| {
