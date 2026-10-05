@@ -155,3 +155,41 @@ fn tail_range(text: &[u8]) -> Option<Range<usize>> {
         None => None,
     }
 }
+
+/// The chunk stream the engine consumes (`docs/architecture-spec.md` §7.1).
+pub trait ChunkSource: Send {
+    /// The next chunk, or `None` at end of stream.
+    ///
+    /// # Errors
+    ///
+    /// Transport failures (abort is handled by the engine, not the source).
+    fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, IoError>;
+}
+
+/// A BGZF file's chunk source; construction performs the header scan, so the
+/// first chunk starts exactly at the first record.
+pub struct BgzfChunkSource<R: std::io::Read + Send> {
+    reader: bgzf::BgzfChunkReader<R>,
+}
+
+impl<R: std::io::Read + Send> BgzfChunkSource<R> {
+    /// Opens the source and scans the header.
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::Header`] when the header is missing or unparsable.
+    pub fn open(
+        inner: R,
+    ) -> Result<(Self, crate::header::HeaderFacts), IoError> {
+        let mut reader = bgzf::BgzfChunkReader::new(inner);
+        let scan = reader.scan_header(&mut crate::bgzf::inflate::Inflater::new())?;
+        let facts = crate::header::HeaderFacts::parse(&scan.text)?;
+        Ok((Self { reader }, facts))
+    }
+}
+
+impl<R: std::io::Read + Send> ChunkSource for BgzfChunkSource<R> {
+    fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, IoError> {
+        self.reader.next_chunk()
+    }
+}

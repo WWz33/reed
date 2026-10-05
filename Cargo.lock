@@ -706,6 +706,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "reed"
+version = "0.3.0"
+dependencies = [
+ "memchr",
+ "reed-core",
+ "reed-engine",
+ "reed-io",
+ "reed-qc",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "reed-core"
 version = "0.3.0"
 dependencies = [
@@ -719,6 +732,17 @@ dependencies = [
 [[package]]
 name = "reed-core-v02-oracle"
 version = "0.2.0"
+
+[[package]]
+name = "reed-engine"
+version = "0.3.0"
+dependencies = [
+ "crossbeam-channel",
+ "reed-core",
+ "reed-io",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "reed-filter"
@@ -744,6 +768,15 @@ dependencies = [
  "noodles",
  "reed-core",
  "thiserror",
+]
+
+[[package]]
+name = "reed-qc"
+version = "0.3.0"
+dependencies = [
+ "proptest",
+ "reed-core",
+ "serde",
 ]
 
 [[package]]

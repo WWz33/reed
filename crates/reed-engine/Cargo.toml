@@ -1,0 +1,17 @@
+[package]
+name = "reed-engine"
+description = "Parallel execution base for reed: chunk pipeline, ticket backpressure, ordered reduction, abort, determinism (spec §7)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+reed-core.workspace = true
+reed-io.workspace = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
