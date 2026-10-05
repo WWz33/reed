@@ -709,11 +709,13 @@ dependencies = [
 name = "reed"
 version = "0.3.0"
 dependencies = [
+ "clap",
  "memchr",
  "reed-core",
  "reed-engine",
  "reed-io",
  "reed-qc",
+ "reed-stats",
  "serde_json",
  "sha2",
 ]
@@ -777,6 +779,16 @@ dependencies = [
  "proptest",
  "reed-core",
  "serde",
+]
+
+[[package]]
+name = "reed-stats"
+version = "0.3.0"
+dependencies = [
+ "proptest",
+ "reed-core",
+ "reed-core-v02-oracle",
+ "thiserror",
 ]
 
 [[package]]

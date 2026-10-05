@@ -9,6 +9,9 @@
 //! the scanner rejects them — the A6 fix goes the other way).
 
 use std::io::BufReader;
+
+/// One record's expected planes and int columns (as noodles reports them).
+type SampleExpectations = (Vec<i8>, Vec<Option<u32>>, Vec<Option<u32>>);
 use std::path::Path;
 
 use reed_io::Locus;
@@ -30,7 +33,7 @@ fn fixture_path() -> std::path::PathBuf {
 /// Reference decode via noodles RecordBufs (the legacy transport path).
 fn reference(
     path: &Path,
-) -> Vec<(Vec<i8>, Vec<Option<u32>>, Vec<Option<u32>>)> {
+) -> Vec<SampleExpectations> {
     let file = std::fs::File::open(path).expect("invariant: fixture exists");
     let mut reader =
         noodles::vcf::io::Reader::new(BufReader::new(file));
@@ -97,7 +100,7 @@ fn scanner_matches_noodles_on_every_fixture_record() {
             assert_eq!(planes.plane(0, 2)[sample / 64] >> (sample % 64) & 1 == 1, b >= 1,
                 "record {record_idx} sample {sample} slot1 alt");
 
-            let expect_int = |v: &Option<u32>| v.map_or(INT_MISSING, |x| x);
+            let expect_int = |v: &Option<u32>| v.unwrap_or(INT_MISSING);
             assert_eq!(int_cols[0][sample], expect_int(&dp[sample]),
                 "record {record_idx} sample {sample} DP");
             assert_eq!(int_cols[1][sample], expect_int(&gq[sample]),

@@ -13,6 +13,9 @@ pub struct HeaderFacts {
     pub sample_names: Vec<String>,
     /// Contig names in header order (the source of `ContigId`).
     pub contig_names: Vec<String>,
+    /// Contig declared lengths, parallel to `contig_names` (`None` when the
+    /// header declares no length).
+    pub contig_lengths: Vec<Option<u64>>,
     /// INFO definitions in header order (the source of `TagId`).
     pub info_keys: Vec<String>,
     /// FORMAT definitions in header order (the source of `TagId`).
@@ -33,11 +36,16 @@ impl HeaderFacts {
             .map_err(|err| IoError::Header(format!("noodles rejected the header: {err}")))?;
         Ok(Self {
             text: text.to_vec(),
-            sample_names: header.sample_names().iter().map(|s| s.to_string()).collect(),
+            sample_names: header.sample_names().iter().map(ToString::to_string).collect(),
             contig_names: header
                 .contigs()
                 .iter()
                 .map(|(name, _)| name.to_string())
+                .collect(),
+            contig_lengths: header
+                .contigs()
+                .iter()
+                .map(|(_, contig)| contig.length().map(|l| l as u64))
                 .collect(),
             info_keys: header.infos().keys().map(|key| key.to_string()).collect(),
             format_keys: header.formats().keys().map(|key| key.to_string()).collect(),

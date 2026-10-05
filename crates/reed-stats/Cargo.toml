@@ -1,0 +1,18 @@
+[package]
+name = "reed-stats"
+description = "Population-genetics statistics as additive accumulators over per-site group counts (spec §8–§9). Pure: no I/O, no threads."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+reed-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+reed-core-v02-oracle.path = "../reed-core-v02-oracle"
+
+[lints]
+workspace = true

@@ -1,0 +1,371 @@
+//! Statistics requests (`docs/architecture-spec.md` §8.1–§8.2): the sealed
+//! set of `(statistic, estimator, groups)` triples and the matching sealed
+//! accumulator union — static dispatch, no `dyn`. [`build_accs`] validates
+//! every request up front (group bounds, distinctness, chromosome counts),
+//! so a rejected combination fails at build time, never mid-stream.
+
+use reed_core::count::SiteGroupCounts;
+use reed_core::CoreError;
+
+use crate::dxy::DxyAcc;
+use crate::fst::{FstAcc, FstKind};
+use crate::pi::PiAcc;
+use crate::pbs::{PbsAcc, PbsKind};
+use crate::sfs::SfsAcc;
+use crate::tajima::TajimaAcc;
+use crate::theta::ThetaAcc;
+
+/// One requested statistic over group indices (a group index is a position
+/// in the count row handed to every `push`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StatKind {
+    /// π for one group; `per_bp` selects the `AccessibleBp` convention
+    /// (divides by window bp) over the `PerPairComparable` ratio.
+    Pi {
+        /// Group index.
+        group: usize,
+        /// Divide by window bp instead of comparable pairs.
+        per_bp: bool,
+    },
+    /// Absolute divergence dxy for one group pair; `per_bp` as in
+    /// [`StatKind::Pi`].
+    Dxy {
+        /// First group index.
+        a: usize,
+        /// Second group index.
+        b: usize,
+        /// Divide by window bp instead of comparable pairs.
+        per_bp: bool,
+    },
+    /// Fst for one group pair; one accumulator pass fills all three
+    /// estimators' components, `kind` picks the reported one.
+    Fst {
+        /// First group index.
+        a: usize,
+        /// Second group index.
+        b: usize,
+        /// Which estimator's value to report.
+        kind: FstKind,
+    },
+    /// Population branch statistic over one group triple (`a` is the branch
+    /// of interest: `t_ab + t_ac − t_bc`).
+    Pbs {
+        /// Branch-of-interest group index.
+        a: usize,
+        /// Second group index.
+        b: usize,
+        /// Third group index.
+        c: usize,
+        /// Which flavour to report.
+        kind: PbsKind,
+    },
+    /// Site frequency spectrum for one group (complete-case sites).
+    Sfs {
+        /// Group index.
+        group: usize,
+        /// Fold to the minor allele count.
+        folded: bool,
+    },
+    /// Watterson's θ for one group; `per_bp` divides by window bp.
+    ThetaW {
+        /// Group index.
+        group: usize,
+        /// Divide by window bp.
+        per_bp: bool,
+    },
+    /// Tajima's D for one group with a segregating-site guard.
+    TajimaD {
+        /// Group index.
+        group: usize,
+        /// Minimum segregating sites (below → `None`).
+        min_sites: u64,
+    },
+}
+
+/// Stable output identifier of one request, e.g. `fst.hudson.0.1`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StatKey(pub String);
+
+impl StatKey {
+    /// The identifier as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for StatKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl StatKind {
+    /// The stable key this request reports under.
+    #[must_use]
+    pub fn key(&self) -> StatKey {
+        match *self {
+            Self::Pi { group, per_bp } => StatKey(format!(
+                "pi.{}.{}",
+                if per_bp { "bp" } else { "pair" },
+                group
+            )),
+            Self::Dxy { a, b, per_bp } => StatKey(format!(
+                "dxy.{}.{}.{}",
+                if per_bp { "bp" } else { "pair" },
+                a,
+                b
+            )),
+            Self::Fst { a, b, kind } => StatKey(format!("fst.{}.{a}.{b}", kind.id())),
+            Self::Pbs { a, b, c, kind } => {
+                StatKey(format!("pbs.{}.{a}.{b}.{c}", kind.id()))
+            }
+            Self::Sfs { group, folded } => {
+                StatKey(format!("sfs.{}.{group}", if folded { "folded" } else { "unfolded" }))
+            }
+            Self::ThetaW { group, per_bp } => StatKey(format!(
+                "theta_w.{}.{}",
+                if per_bp { "bp" } else { "total" },
+                group
+            )),
+            Self::TajimaD { group, .. } => StatKey(format!("tajima_d.{group}")),
+        }
+    }
+
+    /// Validates the request against the group sizes and builds its
+    /// accumulator.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::LengthMismatch`] when a group index is out of bounds,
+    /// [`CoreError::InvalidWindow`] when an estimator's chromosome
+    /// requirement is not met (e.g. SFS/θ need `n_chrom ≥ 2`) or groups are
+    /// not distinct where required.
+    pub fn build(&self, n_group: &[u32]) -> Result<StatAcc, CoreError> {
+        let chroms = |g: usize| -> Result<u64, CoreError> {
+            let n = n_group.get(g).copied().ok_or(CoreError::LengthMismatch {
+                expected: g + 1,
+                got: n_group.len(),
+            })?;
+            Ok(u64::from(n) * 2)
+        };
+        let distinct = |gs: &[usize]| -> Result<(), CoreError> {
+            for (i, &x) in gs.iter().enumerate() {
+                for &y in &gs[i + 1..] {
+                    if x == y {
+                        return Err(CoreError::InvalidWindow);
+                    }
+                }
+            }
+            Ok(())
+        };
+        match *self {
+            Self::Pi { group, .. } => {
+                let n_group = u32::try_from(chroms(group)? / 2).unwrap_or(u32::MAX);
+                Ok(StatAcc::Pi(PiAcc::new(group, n_group)))
+            }
+            Self::Dxy { a, b, .. } => {
+                distinct(&[a, b])?;
+                let (na, nb) = (chroms(a)?, chroms(b)?);
+                let (na, nb) = (
+                    u32::try_from(na / 2).unwrap_or(u32::MAX),
+                    u32::try_from(nb / 2).unwrap_or(u32::MAX),
+                );
+                Ok(StatAcc::Dxy(DxyAcc::new(a, b, na, nb)))
+            }
+            Self::Fst { a, b, .. } => {
+                distinct(&[a, b])?;
+                Ok(StatAcc::Fst(FstAcc::new(a, b)))
+            }
+            Self::Pbs { a, b, c, .. } => {
+                distinct(&[a, b, c])?;
+                Ok(StatAcc::Pbs(PbsAcc::new(a, b, c)))
+            }
+            Self::Sfs { group, folded } => {
+                let n = chroms(group)?;
+                let n_group = u32::try_from(n / 2).unwrap_or(u32::MAX);
+                Ok(StatAcc::Sfs(SfsAcc::new(group, n_group, folded)?))
+            }
+            Self::ThetaW { group, .. } => {
+                let n = chroms(group)?;
+                let n_group = u32::try_from(n / 2).unwrap_or(u32::MAX);
+                let acc = ThetaAcc::new(group, n_group).ok_or(CoreError::InvalidWindow)?;
+                Ok(StatAcc::Theta(acc))
+            }
+            Self::TajimaD { group, .. } => {
+                let n = chroms(group)?;
+                let n_group = u32::try_from(n / 2).unwrap_or(u32::MAX);
+                let acc = TajimaAcc::new(group, n_group).ok_or(CoreError::InvalidWindow)?;
+                Ok(StatAcc::Tajima(acc))
+            }
+        }
+    }
+}
+
+/// Builds one accumulator per request, in request order.
+///
+/// # Errors
+///
+/// The first failing request (see [`StatKind::build`]).
+pub fn build_accs(kinds: &[StatKind], n_group: &[u32]) -> Result<Vec<StatAcc>, CoreError> {
+    kinds.iter().map(|kind| kind.build(n_group)).collect()
+}
+
+/// The sealed accumulator union — one variant per [`StatKind`] family.
+#[derive(Clone, Debug)]
+pub enum StatAcc {
+    /// π accumulator.
+    Pi(PiAcc),
+    /// dxy accumulator.
+    Dxy(DxyAcc),
+    /// Fst accumulator (all three estimators in one pass).
+    Fst(FstAcc),
+    /// PBS accumulator (both flavours in one pass).
+    Pbs(PbsAcc),
+    /// SFS accumulator.
+    Sfs(SfsAcc),
+    /// Watterson θ accumulator.
+    Theta(ThetaAcc),
+    /// Tajima's D accumulator.
+    Tajima(TajimaAcc),
+}
+
+impl StatAcc {
+    /// Absorbs one site's count row; `all_variant` is the site-wide
+    /// "any ALT called" flag (variant/invariant site tallies).
+    pub fn push(&mut self, row: &[SiteGroupCounts], all_variant: bool) {
+        match self {
+            Self::Pi(acc) => acc.push(row, all_variant),
+            Self::Dxy(acc) => acc.push(row, all_variant),
+            Self::Fst(acc) => acc.push(row),
+            Self::Pbs(acc) => acc.push(row),
+            Self::Sfs(acc) => acc.push(row),
+            Self::Theta(acc) => acc.push(row),
+            Self::Tajima(acc) => acc.push(row),
+        }
+    }
+
+    /// Component-wise merge (associative; exact integer components).
+    ///
+    /// # Panics
+    ///
+    /// Debug builds panic when the two variants differ (a caller bug: parts
+    /// of one request are never merged across requests).
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(
+            std::mem::discriminant(self),
+            std::mem::discriminant(other),
+            "invariant: merge combines identical accumulator kinds"
+        );
+        match (self, other) {
+            (Self::Pi(a), Self::Pi(b)) => a.merge(b),
+            (Self::Dxy(a), Self::Dxy(b)) => a.merge(b),
+            (Self::Fst(a), Self::Fst(b)) => a.merge(b),
+            (Self::Pbs(a), Self::Pbs(b)) => a.merge(b),
+            (Self::Sfs(a), Self::Sfs(b)) => a.merge(b),
+            (Self::Theta(a), Self::Theta(b)) => a.merge(b),
+            (Self::Tajima(a), Self::Tajima(b)) => a.merge(b),
+            _ => {}
+        }
+    }
+
+    /// The scalar estimate this accumulator holds for its request kind;
+    /// `None` for an empty/skipped window. The SFS has no scalar value.
+    #[must_use]
+    pub fn value(&self, kind: &StatKind, window_bp: u64) -> Option<f64> {
+        debug_assert_eq!(self.kind_id(), kind_key_family(kind));
+        match (self, kind) {
+            (Self::Pi(acc), StatKind::Pi { per_bp: false, .. }) => acc.value_per_pair(),
+            (Self::Pi(acc), StatKind::Pi { per_bp: true, .. }) => {
+                acc.value_accessible_bp(window_bp)
+            }
+            (Self::Dxy(acc), StatKind::Dxy { per_bp: false, .. }) => acc.value_per_pair(),
+            (Self::Dxy(acc), StatKind::Dxy { per_bp: true, .. }) => {
+                acc.value_accessible_bp(window_bp)
+            }
+            (Self::Fst(acc), StatKind::Fst { kind, .. }) => acc.value(*kind),
+            (Self::Pbs(acc), StatKind::Pbs { kind, .. }) => acc.value(*kind),
+            (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => acc.value_total(),
+            (Self::Theta(acc), StatKind::ThetaW { per_bp: true, .. }) => {
+                acc.value_per_bp(window_bp)
+            }
+            (Self::Tajima(acc), StatKind::TajimaD { min_sites, .. }) => acc.value(*min_sites),
+            _ => None,
+        }
+    }
+
+    /// The SFS bins when this is the SFS accumulator.
+    #[must_use]
+    pub fn sfs_bins(&self) -> Option<&[u64]> {
+        match self {
+            Self::Sfs(acc) => Some(acc.bins()),
+            _ => None,
+        }
+    }
+
+    fn kind_id(&self) -> &'static str {
+        match self {
+            Self::Pi(_) => "pi",
+            Self::Dxy(_) => "dxy",
+            Self::Fst(_) => "fst",
+            Self::Pbs(_) => "pbs",
+            Self::Sfs(_) => "sfs",
+            Self::Theta(_) => "theta",
+            Self::Tajima(_) => "tajima",
+        }
+    }
+}
+
+fn kind_key_family(kind: &StatKind) -> &'static str {
+    match kind {
+        StatKind::Pi { .. } => "pi",
+        StatKind::Dxy { .. } => "dxy",
+        StatKind::Fst { .. } => "fst",
+        StatKind::Pbs { .. } => "pbs",
+        StatKind::Sfs { .. } => "sfs",
+        StatKind::ThetaW { .. } => "theta",
+        StatKind::TajimaD { .. } => "tajima",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_are_stable_and_distinct() {
+        let kinds = [
+            StatKind::Pi { group: 0, per_bp: false },
+            StatKind::Pi { group: 0, per_bp: true },
+            StatKind::Dxy { a: 0, b: 1, per_bp: false },
+            StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson },
+            StatKind::Fst { a: 0, b: 1, kind: FstKind::WeirCockerham84 },
+            StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::PbsN1 },
+            StatKind::Sfs { group: 1, folded: true },
+            StatKind::ThetaW { group: 0, per_bp: false },
+            StatKind::TajimaD { group: 0, min_sites: 3 },
+        ];
+        let keys: Vec<_> = kinds.iter().map(StatKind::key).collect();
+        for (i, a) in keys.iter().enumerate() {
+            for b in &keys[i + 1..] {
+                assert_ne!(a, b, "keys must be distinct");
+            }
+        }
+        assert_eq!(keys[3].as_str(), "fst.hudson.0.1");
+    }
+
+    #[test]
+    fn build_validates_bounds_and_distinctness() {
+        let ok = [StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson }];
+        assert!(build_accs(&ok, &[3, 2]).is_ok());
+        let oob = [StatKind::Pi { group: 2, per_bp: false }];
+        assert!(build_accs(&oob, &[3, 2]).is_err());
+        let same = [StatKind::Fst { a: 1, b: 1, kind: FstKind::Hudson }];
+        assert!(build_accs(&same, &[3, 2]).is_err());
+        let pbs = [StatKind::Pbs { a: 0, b: 1, c: 1, kind: PbsKind::Yi2010 }];
+        assert!(build_accs(&pbs, &[3, 2, 2]).is_err());
+        // SFS with zero chromosomes has no spectrum.
+        let sfs = [StatKind::Sfs { group: 0, folded: false }];
+        assert!(build_accs(&sfs, &[0]).is_err());
+    }
+}

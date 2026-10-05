@@ -12,6 +12,8 @@ reed-core.workspace = true
 reed-io.workspace = true
 reed-engine.workspace = true
 reed-qc.workspace = true
+reed-stats.workspace = true
+clap.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
@@ -22,3 +24,7 @@ name = "qc_summary"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "reed"
+path = "src/main.rs"

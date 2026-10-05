@@ -57,7 +57,7 @@ fn build(manifest: SiteCompleteness, sites: &[(u32, [[i8; 2]; 4])]) -> WindowBuf
         Bits::from_bools(&missing),
         Bits::from_bools(&phased),
     )
-    .unwrap()
+    .expect("invariant: valid test fixture")
 }
 
 fn fixture(manifest: SiteCompleteness) -> WindowBuffer {
@@ -72,7 +72,7 @@ fn fixture(manifest: SiteCompleteness) -> WindowBuffer {
 }
 
 fn pops() -> PopulationView {
-    PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).unwrap()
+    PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).expect("invariant: valid test fixture")
 }
 
 #[test]
@@ -80,14 +80,14 @@ fn pi_per_pair_comparable_counts() {
     let w = fixture(SiteCompleteness::WithInvariants);
     let p = pops();
 
-    let a = pi(&w, &p, 0, PiEstimator::PerPairComparable).unwrap();
+    let a = pi(&w, &p, 0, PiEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert_eq!(a.counts.diffs, 3);
     assert_eq!(a.counts.comparable, 18);
     assert_eq!(a.counts.missing, 0);
     assert_eq!((a.n_variant_sites, a.n_invariant_sites), (2, 1));
     assert_close(a.value(), 3.0 / 18.0);
 
-    let b = pi(&w, &p, 1, PiEstimator::PerPairComparable).unwrap();
+    let b = pi(&w, &p, 1, PiEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert_eq!(b.counts.diffs, 6);
     assert_eq!(b.counts.comparable, 18);
     assert_close(b.value(), 6.0 / 18.0);
@@ -98,10 +98,10 @@ fn pi_accessible_bp_uses_window_length() {
     let w = fixture(SiteCompleteness::WithInvariants);
     let p = pops();
 
-    let a = pi(&w, &p, 0, PiEstimator::AccessibleBp).unwrap();
+    let a = pi(&w, &p, 0, PiEstimator::AccessibleBp).expect("invariant: valid test fixture");
     assert_close(a.value(), 0.5 / 10.0); // site means: 3/6, 0, 0
 
-    let b = pi(&w, &p, 1, PiEstimator::AccessibleBp).unwrap();
+    let b = pi(&w, &p, 1, PiEstimator::AccessibleBp).expect("invariant: valid test fixture");
     assert_close(b.value(), 1.0 / 10.0); // site means: 3/6, 3/6, 0
 }
 
@@ -110,12 +110,12 @@ fn dxy_per_pair_and_accessible() {
     let w = fixture(SiteCompleteness::WithInvariants);
     let p = pops();
 
-    let d = dxy(&w, &p, 0, 1, DxyEstimator::PerPairComparable).unwrap();
+    let d = dxy(&w, &p, 0, 1, DxyEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert_eq!(d.counts.diffs, 14);
     assert_eq!(d.counts.comparable, 48);
     assert_close(d.value(), 14.0 / 48.0);
 
-    let d = dxy(&w, &p, 0, 1, DxyEstimator::AccessibleBp).unwrap();
+    let d = dxy(&w, &p, 0, 1, DxyEstimator::AccessibleBp).expect("invariant: valid test fixture");
     assert_close(d.value(), (10.0 / 16.0 + 4.0 / 16.0) / 10.0);
 }
 
@@ -124,7 +124,7 @@ fn hudson_fst_ratio_of_sums() {
     let w = fixture(SiteCompleteness::WithInvariants);
     let p = pops();
 
-    let f = fst(&w, &p, 0, 1, FstEstimator::Hudson).unwrap();
+    let f = fst(&w, &p, 0, 1, FstEstimator::Hudson).expect("invariant: valid test fixture");
     assert_eq!(f.within_a.diffs, 3);
     assert_eq!(f.within_a.comparable, 18);
     assert_eq!(f.within_b.diffs, 6);
@@ -141,9 +141,9 @@ fn missing_data_is_pairwise_deleted() {
         SiteCompleteness::WithInvariants,
         &[(0, [[0, 0], [-1, -1], [0, 0], [0, 0]])],
     );
-    let p = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).unwrap();
+    let p = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).expect("invariant: valid test fixture");
 
-    let r = pi(&w, &p, 0, PiEstimator::PerPairComparable).unwrap();
+    let r = pi(&w, &p, 0, PiEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert_eq!(r.counts.diffs, 0);
     assert_eq!(r.counts.comparable, 1); // only S0's two chromosomes
     assert_eq!(r.counts.missing, 5); // C(4,2) - 1
@@ -157,18 +157,18 @@ fn manifest_gates_pi_but_only_flags_fst() {
     let unknown = fixture(SiteCompleteness::VariantOnly(Ascertainment::Unknown));
     assert!(pi(&unknown, &p, 0, PiEstimator::PerPairComparable).is_err());
     assert!(pi(&unknown, &p, 0, PiEstimator::AccessibleBp).is_err());
-    let f = fst(&unknown, &p, 0, 1, FstEstimator::Hudson).unwrap();
+    let f = fst(&unknown, &p, 0, 1, FstEstimator::Hudson).expect("invariant: valid test fixture");
     assert!(f.bias.is_some());
 
     let complete = fixture(SiteCompleteness::VariantOnly(Ascertainment::Complete));
-    let r = pi(&complete, &p, 0, PiEstimator::PerPairComparable).unwrap();
+    let r = pi(&complete, &p, 0, PiEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert!(r.bias.is_some()); // biased but computable
     assert_close(r.value(), 3.0 / 18.0);
-    let r = pi(&complete, &p, 0, PiEstimator::AccessibleBp).unwrap();
+    let r = pi(&complete, &p, 0, PiEstimator::AccessibleBp).expect("invariant: valid test fixture");
     assert!(r.bias.is_none());
 
     let full = fixture(SiteCompleteness::WithInvariants);
-    let r = pi(&full, &p, 0, PiEstimator::PerPairComparable).unwrap();
+    let r = pi(&full, &p, 0, PiEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert!(r.bias.is_none());
 }
 
@@ -176,7 +176,7 @@ fn manifest_gates_pi_but_only_flags_fst() {
 fn aggregate_allele_counts() {
     let w = fixture(SiteCompleteness::WithInvariants);
     let p = pops();
-    let counts = allele_counts(&w, &p).unwrap();
+    let counts = allele_counts(&w, &p).expect("invariant: valid test fixture");
     assert_eq!(counts.len(), 2);
     assert_eq!(
         (counts[0].ref_count, counts[0].alt_count, counts[0].missing),

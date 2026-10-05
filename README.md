@@ -159,7 +159,28 @@ sink.finish()?;
 // use report.funnel, report.elapsed, report.n_output_records, etc.
 ```
 
-### CLI (reed-filter)
+### CLI (reed stats) — stats v2 (v0.3, M4)
+
+Windowed π/dxy/Fst/PBS/SFS/θ_W/Tajima's D over a BGZF VCF, computed as
+additive accumulators over per-site group counts (oracle-verified:
+integers exact, floats ≤ 1e-12; byte-identical output across thread
+counts):
+
+```bash
+reed stats input.vcf.gz --groups samples.3pop.txt --size 100000 --step 50000 \
+    --levels window,contig,genome [--skip-empty] [--threads 0] [--out out.tsv]
+```
+
+- `--groups`: `sample<TAB>population` rows, first line skipped; groups are
+  indexed in first-appearance order.
+- `--levels`: window rows (default), per-contig rows, and a final `genome`
+  row — all plain accumulator merges, so PBS stays re-aggregable.
+- The full per-group/per-pair statistic set is emitted (38 columns for 3
+  groups); multiallelic records are skipped and counted.
+- Reference throughput: 3.3M records × 348 samples → 19k windows in
+  ≈0.9 s (56 threads), ≈23 s single-threaded.
+
+### CLI (reed-filter, v0.2 — `reed filter` alias planned for M5)
 
 ```bash
 reed-filter -c filters.conf -o out.vcf.gz --threads 8 input.vcf.gz

@@ -47,6 +47,17 @@ impl NeumaierSum {
         self.sum = t;
     }
 
+    /// Absorbs another compensated sum (partial-order merge).
+    ///
+    /// Both sides' residuals are re-absorbed through the same compensation
+    /// path as single adds, so merging partials stays within the same
+    /// reorder tolerance as reordering the terms themselves (`docs/
+    /// architecture-spec.md` §8.4: ≤ 4 ulp).
+    pub fn merge(&mut self, other: &Self) {
+        self.add(other.sum);
+        self.add(other.c);
+    }
+
     /// Current compensated value (`sum + c`); the only read accessor.
     #[must_use]
     pub const fn value(&self) -> f64 {
@@ -85,5 +96,23 @@ mod tests {
             backward.add(v);
         }
         assert!((forward.value() - backward.value()).abs() <= 4.0 * f64::EPSILON * forward.value().abs());
+    }
+
+    #[test]
+    fn merge_recovers_partial_order() {
+        // Splitting the catastrophic-cancellation sequence into two partials
+        // and merging must still recover 10.0 exactly.
+        let mut first = NeumaierSum::new();
+        first.add(1.0e16);
+        for _ in 0..5 {
+            first.add(1.0);
+        }
+        let mut second = NeumaierSum::new();
+        for _ in 0..5 {
+            second.add(1.0);
+        }
+        second.add(-1.0e16);
+        first.merge(&second);
+        assert_eq!(first.value(), 10.0);
     }
 }

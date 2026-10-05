@@ -117,8 +117,7 @@ mod tests {
         assert!(s.contains("hwe>=-")); // off by default
         assert!(s.contains("regions=all"));
 
-        let mut spec2 = FilterSpec::default();
-        spec2.cohort = Some(CohortRule::MaxMissing(0.1));
+        let mut spec2 = FilterSpec { cohort: Some(CohortRule::MaxMissing(0.1)), ..FilterSpec::default() };
         spec2.regions.include.push(Region::parse("Chr01").unwrap());
         let s2 = compile(&spec2).spec_summary;
         assert!(s2.contains("miss<=0.1"));

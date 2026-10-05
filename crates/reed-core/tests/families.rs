@@ -51,7 +51,7 @@ fn build(manifest: SiteCompleteness, n_samples: u32, sites: &[(u32, Vec<[i8; 2]>
         Bits::from_bools(&missing),
         Bits::from_bools(&phased),
     )
-    .unwrap()
+    .expect("invariant: valid test fixture")
 }
 
 /// The shared 4-sample fixture (see `core.rs`).
@@ -75,9 +75,9 @@ fn assert_close(a: Option<f64>, b: f64) {
 #[test]
 fn weir_cockerham_matches_scikit_allel() {
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).unwrap();
-    let f = fst(&w, &pops, 0, 1, FstEstimator::WeirCockerham84).unwrap();
-    let wc = f.wc.unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).expect("invariant: valid test fixture");
+    let f = fst(&w, &pops, 0, 1, FstEstimator::WeirCockerham84).expect("invariant: valid test fixture");
+    let wc = f.wc.expect("invariant: valid test fixture");
     // scikit-allel: a sum 0.125, b sum 0.0, c sum 0.75
     assert!((wc.a - 0.125).abs() < EPS);
     assert!((wc.b - 0.0).abs() < EPS);
@@ -88,9 +88,9 @@ fn weir_cockerham_matches_scikit_allel() {
 #[test]
 fn nei86_matches_hand_formula() {
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).unwrap();
-    let f = fst(&w, &pops, 0, 1, FstEstimator::Nei86).unwrap();
-    let nei = f.nei.unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).expect("invariant: valid test fixture");
+    let f = fst(&w, &pops, 0, 1, FstEstimator::Nei86).expect("invariant: valid test fixture");
+    let nei = f.nei.expect("invariant: valid test fixture");
     assert!((nei.hs - 0.5625).abs() < EPS);
     assert!((nei.ht - 0.71875).abs() < EPS);
     assert_close(f.value(), 0.21739130434782608); // 5/23
@@ -99,17 +99,17 @@ fn nei86_matches_hand_formula() {
 #[test]
 fn sfs_and_theta_match_scikit_allel() {
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
 
-    let unfolded = sfs(&w, &pops, 0, false).unwrap();
+    let unfolded = sfs(&w, &pops, 0, false).expect("invariant: valid test fixture");
     assert_eq!(unfolded.n_chroms, 8);
     // ALT counts: site0 = 4, site1 = 1, site2 = 0 (monomorphic, excluded)
     assert_eq!(unfolded.counts, vec![1, 0, 0, 1, 0, 0, 0]);
 
-    let folded = sfs(&w, &pops, 0, true).unwrap();
+    let folded = sfs(&w, &pops, 0, true).expect("invariant: valid test fixture");
     assert_eq!(folded.counts, vec![1, 0, 0, 1]);
 
-    let theta = watterson_theta(&w, &pops, 0).unwrap();
+    let theta = watterson_theta(&w, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!(theta.segregating, 2);
     // scikit-allel watterson_theta(pos, ac, start=1, stop=10)
     assert_close(theta.value(), 0.07713498622589533);
@@ -118,8 +118,8 @@ fn sfs_and_theta_match_scikit_allel() {
 #[test]
 fn tajima_d_matches_scikit_allel() {
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let d = tajima_d(&w, &pops, 0, 2).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
+    let d = tajima_d(&w, &pops, 0, 2).expect("invariant: valid test fixture");
     assert_eq!(d.segregating, 2);
     assert!((d.pi - 0.8214285714285714).abs() < EPS);
     assert!((d.theta_w - 0.7713498622589533).abs() < EPS);
@@ -137,8 +137,8 @@ fn hwe_exact_matches_independent_enumeration() {
 
     // Per-site pass over the fixture (all complete).
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let sites = hwe_exact(&w, &pops, 0).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
+    let sites = hwe_exact(&w, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!(sites.len(), 3);
     assert_eq!((sites[0].hom_ref, sites[0].het, sites[0].hom_alt), (1, 2, 1));
     assert!((sites[0].p_value - 1.0).abs() < EPS);
@@ -149,17 +149,17 @@ fn hwe_exact_matches_independent_enumeration() {
 #[test]
 fn heterozygosity_matches_hand_values() {
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let sites = heterozygosity(&w, &pops, 0).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
+    let sites = heterozygosity(&w, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!(sites.len(), 3);
 
     assert!((sites[0].hobs - 0.5).abs() < EPS);
     assert!((sites[0].hexp - 0.5).abs() < EPS);
-    assert!((sites[0].fis.unwrap() - 0.0).abs() < EPS);
+    assert!((sites[0].fis.expect("invariant: valid test fixture") - 0.0).abs() < EPS);
 
     assert!((sites[1].hobs - 0.25).abs() < EPS);
     assert!((sites[1].hexp - 0.21875).abs() < EPS);
-    assert!((sites[1].fis.unwrap() - (-1.0 / 7.0)).abs() < EPS);
+    assert!((sites[1].fis.expect("invariant: valid test fixture") - (-1.0 / 7.0)).abs() < EPS);
 
     // Monomorphic site: Fis undefined.
     assert!(sites[2].fis.is_none());
@@ -168,9 +168,9 @@ fn heterozygosity_matches_hand_values() {
 #[test]
 fn ld_rogers_huff_matches_scikit_allel() {
     let w = fixture();
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
 
-    let pairs = ld_r2_pairs(&w, &pops, 0).unwrap();
+    let pairs = ld_r2_pairs(&w, &pops, 0).expect("invariant: valid test fixture");
     // Only pair (site0, site1) is valid: site2 is monomorphic (zero variance).
     assert_eq!(pairs.len(), 1);
     assert_eq!((pairs[0].site_i, pairs[0].site_j), (0, 1));
@@ -178,31 +178,31 @@ fn ld_rogers_huff_matches_scikit_allel() {
     // scikit-allel rogers_huff_r: r2 = 0.6666667 (exactly 2/3)
     assert!((pairs[0].r2 - 2.0 / 3.0).abs() < 1e-9);
 
-    let summary = ld_r2_summary(&w, &pops, 0).unwrap();
+    let summary = ld_r2_summary(&w, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!(summary.n_pairs, 3);
     assert_eq!(summary.n_valid, 1);
-    assert!((summary.mean_r2.unwrap() - 2.0 / 3.0).abs() < 1e-9);
+    assert!((summary.mean_r2.expect("invariant: valid test fixture") - 2.0 / 3.0).abs() < 1e-9);
 }
 
 #[test]
 fn f_statistics_match_hand_values() {
     let w = fixture();
     // One group per sample: A={S0}, B={S1}, C={S2}, D={S3}
-    let pops = PopulationView::from_assignment(4, &[0, 1, 2, 3], 4).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 1, 2, 3], 4).expect("invariant: valid test fixture");
 
-    let r = f2(&w, &pops, 0, 1).unwrap();
+    let r = f2(&w, &pops, 0, 1).expect("invariant: valid test fixture");
     assert_close(r.value(), 1.0 / 12.0);
     assert_eq!(r.n_sites, 3);
 
-    let r = f3(&w, &pops, 2, 0, 1).unwrap(); // f3(S2; S0, S1)
+    let r = f3(&w, &pops, 2, 0, 1).expect("invariant: valid test fixture"); // f3(S2; S0, S1)
     // site0: (0−1)(0.5−1) = 0.5; site1: (0−0.5)(0−0.5) = 0.25 (S2 is 0/1 there);
     // site2: 0 → mean = 0.75/3 = 0.25.
     assert_close(r.value(), 0.25);
 
-    let r = f4(&w, &pops, 0, 1, 2, 3).unwrap();
+    let r = f4(&w, &pops, 0, 1, 2, 3).expect("invariant: valid test fixture");
     assert_close(r.value(), -1.0 / 12.0);
 
-    let r = d_stat(&w, &pops, 0, 1, 2, 3).unwrap();
+    let r = d_stat(&w, &pops, 0, 1, 2, 3).expect("invariant: valid test fixture");
     assert!((r.num - (-0.25)).abs() < EPS);
     assert!((r.den - 0.25).abs() < EPS);
     assert_close(r.value(), -1.0);
@@ -221,22 +221,22 @@ fn pbs_matches_scikit_allel() {
             vec![[0, 0], [0, 0], [0, 1], [0, 1], [1, 1], [0, 1]],
         )],
     );
-    let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).unwrap();
+    let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).expect("invariant: valid test fixture");
 
-    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).unwrap();
+    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).expect("invariant: valid test fixture");
     assert_eq!(r.n_sites, 1);
-    assert!((r.fst_ab.unwrap() - 1.0 / 3.0).abs() < EPS);
-    assert!((r.fst_ac.unwrap() - 2.0 / 3.0).abs() < EPS);
-    assert!((r.fst_bc.unwrap() - 0.0).abs() < EPS); // clipped from −1/6
-    assert!((r.t_ab.unwrap() - 1.5f64.ln()).abs() < EPS);
-    assert!((r.t_ac.unwrap() - 3.0f64.ln()).abs() < EPS);
-    assert!((r.t_bc.unwrap() - 0.0).abs() < EPS);
+    assert!((r.fst_ab.expect("invariant: valid test fixture") - 1.0 / 3.0).abs() < EPS);
+    assert!((r.fst_ac.expect("invariant: valid test fixture") - 2.0 / 3.0).abs() < EPS);
+    assert!((r.fst_bc.expect("invariant: valid test fixture") - 0.0).abs() < EPS); // clipped from −1/6
+    assert!((r.t_ab.expect("invariant: valid test fixture") - 1.5f64.ln()).abs() < EPS);
+    assert!((r.t_ac.expect("invariant: valid test fixture") - 3.0f64.ln()).abs() < EPS);
+    assert!((r.t_bc.expect("invariant: valid test fixture") - 0.0).abs() < EPS);
     // scikit-allel: pbs(..., normed=False)
-    assert!((r.pbs.unwrap() - 0.752038698388137).abs() < 1e-12);
+    assert!((r.pbs.expect("invariant: valid test fixture") - 0.752038698388137).abs() < 1e-12);
 
-    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::PbsN1).unwrap();
+    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::PbsN1).expect("invariant: valid test fixture");
     // scikit-allel: pbs(..., normed=True)
-    assert!((r.pbs.unwrap() - 0.4292363513888176).abs() < 1e-12);
+    assert!((r.pbs.expect("invariant: valid test fixture") - 0.4292363513888176).abs() < 1e-12);
 }
 
 #[test]
@@ -246,14 +246,14 @@ fn manifest_availability_extends_to_new_estimators() {
         4,
         &[(0, vec![[0, 0], [0, 1], [1, 1], [0, 1]])],
     );
-    let pops = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).expect("invariant: valid test fixture");
     // All Fst variants stay computable (bias flag), unlike pi/dxy.
     for est in [
         FstEstimator::Hudson,
         FstEstimator::WeirCockerham84,
         FstEstimator::Nei86,
     ] {
-        let f = fst(&w, &pops, 0, 1, est).unwrap();
+        let f = fst(&w, &pops, 0, 1, est).expect("invariant: valid test fixture");
         assert!(f.bias.is_some());
     }
 }

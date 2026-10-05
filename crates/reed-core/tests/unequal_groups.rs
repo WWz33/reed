@@ -27,7 +27,7 @@ fn build(n_samples: u32, sites: &[&str]) -> WindowBuffer {
         let alleles: Vec<i8> = site
             .split_whitespace()
             .map(|x| {
-                let v: i8 = x.parse().unwrap();
+                let v: i8 = x.parse().expect("invariant: valid test fixture");
                 if v > 0 {
                     variant = true;
                 }
@@ -55,7 +55,7 @@ fn build(n_samples: u32, sites: &[&str]) -> WindowBuffer {
         Bits::from_bools(&missing),
         Bits::from_bools(&phased),
     )
-    .unwrap()
+    .expect("invariant: valid test fixture")
 }
 
 fn assert_close(a: Option<f64>, b: f64) {
@@ -85,11 +85,11 @@ const RNG7_SITES: [&str; 6] = [
 #[test]
 fn hudson_fst_matches_allel_under_unequal_coverage() {
     let w = build(10, &RNG42_SITES);
-    let pops = PopulationView::from_assignment(10, &[0, 0, 0, 1, 1, 1, 1, 1, 1, 1], 2).unwrap();
-    let f = fst(&w, &pops, 0, 1, FstEstimator::Hudson).unwrap();
+    let pops = PopulationView::from_assignment(10, &[0, 0, 0, 1, 1, 1, 1, 1, 1, 1], 2).expect("invariant: valid test fixture");
+    let f = fst(&w, &pops, 0, 1, FstEstimator::Hudson).expect("invariant: valid test fixture");
     // allel: num=-0.08636363636363636, den=1.456060606060606
-    assert!((f.hudson_num.unwrap() - (-0.08636363636363636)).abs() < EPS);
-    assert!((f.hudson_den.unwrap() - 1.456060606060606).abs() < EPS);
+    assert!((f.hudson_num.expect("invariant: valid test fixture") - (-0.08636363636363636)).abs() < EPS);
+    assert!((f.hudson_den.expect("invariant: valid test fixture") - 1.456060606060606).abs() < EPS);
     assert_close(f.value(), -0.05931321540062435);
     // The pooled-ratio audit trail must also be self-consistent:
     // diffs/comparable ≤ 1 per term.
@@ -102,9 +102,9 @@ fn hudson_fst_matches_allel_under_unequal_coverage() {
 #[test]
 fn weir_cockerham_matches_allel_under_unequal_coverage() {
     let w = build(10, &RNG42_SITES);
-    let pops = PopulationView::from_assignment(10, &[0, 0, 0, 1, 1, 1, 1, 1, 1, 1], 2).unwrap();
-    let f = fst(&w, &pops, 0, 1, FstEstimator::WeirCockerham84).unwrap();
-    let wc = f.wc.unwrap();
+    let pops = PopulationView::from_assignment(10, &[0, 0, 0, 1, 1, 1, 1, 1, 1, 1], 2).expect("invariant: valid test fixture");
+    let f = fst(&w, &pops, 0, 1, FstEstimator::WeirCockerham84).expect("invariant: valid test fixture");
+    let wc = f.wc.expect("invariant: valid test fixture");
     // allel: a=-0.0877475667204709, b=-0.12224304293099507, c=1.6408730158730158
     assert!((wc.a - (-0.0877475667204709)).abs() < EPS);
     assert!((wc.b - (-0.12224304293099507)).abs() < EPS);
@@ -122,16 +122,16 @@ fn pbs_matches_allel_under_unequal_coverage() {
             _ => 2,
         })
         .collect();
-    let pops = PopulationView::from_assignment(12, &assignment, 3).unwrap();
+    let pops = PopulationView::from_assignment(12, &assignment, 3).expect("invariant: valid test fixture");
 
-    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).unwrap();
+    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).expect("invariant: valid test fixture");
     // allel: pbs(..., normed=False) = 0.06629918897511186
-    assert!((r.pbs.unwrap() - 0.06629918897511186).abs() < 1e-12);
-    assert!(r.fst_ab.unwrap() > 0.0);
+    assert!((r.pbs.expect("invariant: valid test fixture") - 0.06629918897511186).abs() < 1e-12);
+    assert!(r.fst_ab.expect("invariant: valid test fixture") > 0.0);
 
-    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::PbsN1).unwrap();
+    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::PbsN1).expect("invariant: valid test fixture");
     // allel: pbs(..., normed=True) = 0.057258307386842185
-    assert!((r.pbs.unwrap() - 0.057258307386842185).abs() < 1e-12);
+    assert!((r.pbs.expect("invariant: valid test fixture") - 0.057258307386842185).abs() < 1e-12);
 
     // Between-pair integer audit trail is now retained.
     assert!(r.between_ab.comparable + r.between_ac.comparable + r.between_bc.comparable > 0);

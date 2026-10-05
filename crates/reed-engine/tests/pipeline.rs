@@ -221,7 +221,7 @@ fn worker_panic_becomes_worker_panicked() {
     let chunks = make_chunks(&text, 500);
     let mut source = VecSource { chunks: chunks.into_iter() };
     let (_h, signal) = abort_channel();
-    let err = run(&mut source, &PanickyJob, UnitSink::default(), &budget(3), &signal).unwrap_err();
+    let err = run(&mut source, &PanickyJob, UnitSink, &budget(3), &signal).unwrap_err();
     match err {
         EngineError::WorkerPanicked { chunk, message } => {
             assert_eq!(chunk.get(), 1);
@@ -255,7 +255,7 @@ fn external_abort_stops_the_run() {
         std::thread::sleep(Duration::from_millis(50));
         handle.trigger();
     });
-    let result = run(&mut source, &SlowJob, UnitSink::default(), &budget(4), &signal);
+    let result = run(&mut source, &SlowJob, UnitSink, &budget(4), &signal);
     assert!(matches!(result, Err(EngineError::Aborted)));
 }
 
@@ -339,7 +339,7 @@ fn partials_arrive_in_chunk_order_at_the_sink() {
         type Partial = u64;
         type Scratch = ();
         fn run_chunk(&self, chunk: &ChunkBytes, _body: &[u8], _: &mut ()) -> Result<u64, EngineError> {
-            if chunk.id.get() % 2 == 0 {
+            if chunk.id.get().is_multiple_of(2) {
                 std::thread::sleep(Duration::from_millis(2));
             }
             Ok(chunk.id.get())

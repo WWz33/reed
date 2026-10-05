@@ -20,6 +20,7 @@ use reed_io::vcf::line::LineRef;
 use reed_io::vcf::sample_scan::SampleScanner;
 use reed_io::Locus;
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut args = std::env::args().skip(1);
     let Some(input) = args.next() else {
@@ -148,7 +149,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
         }
         if let Some(leftover) = fragment {
-            if !leftover.iter().all(|&b| b == b'\n') && !leftover.is_empty() {
+            let has_record_bytes = leftover.iter().any(|&b| b != b'\n');
+            if has_record_bytes {
                 return Err(format!("truncated final record: {} bytes", leftover.len()).into());
             }
         }

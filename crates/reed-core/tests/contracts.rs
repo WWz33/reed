@@ -56,7 +56,7 @@ fn build(
         Bits::from_bools(&missing),
         Bits::from_bools(&phased),
     )
-    .unwrap()
+    .expect("invariant: valid test fixture")
 }
 
 /// The shared 4-sample fixture: groups A={0,1}, B={2,3}.
@@ -69,7 +69,7 @@ fn fixture() -> WindowBuffer {
 }
 
 fn pops4() -> PopulationView {
-    PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).unwrap()
+    PopulationView::from_assignment(4, &[0, 0, 1, 1], 2).expect("invariant: valid test fixture")
 }
 
 #[test]
@@ -81,8 +81,8 @@ fn pbs_audit_trail_covers_skipped_and_partial_sites() {
         6,
         &[(0, vec![[0, 0], [0, 1], [1, 1], [0, 0], [-1, -1], [-1, -1]])],
     );
-    let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).unwrap();
-    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).unwrap();
+    let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).expect("invariant: valid test fixture");
+    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).expect("invariant: valid test fixture");
     assert_eq!((r.n_sites, r.n_skipped), (0, 1));
     // A: fully called (4 chroms, 6 pairs) — nothing missing.
     assert_eq!((r.within_a.comparable, r.within_a.missing), (6, 0));
@@ -97,7 +97,7 @@ fn pbs_audit_trail_covers_skipped_and_partial_sites() {
 
     // The audit trail must agree with a standalone fst(A, B) call on the same
     // window (fst.rs accumulates over all sites too).
-    let f = fst(&w, &pops, 0, 1, FstEstimator::Hudson).unwrap();
+    let f = fst(&w, &pops, 0, 1, FstEstimator::Hudson).expect("invariant: valid test fixture");
     assert_eq!(f.within_a, r.within_a);
     assert_eq!(f.between, r.between_ab);
 
@@ -108,17 +108,17 @@ fn pbs_audit_trail_covers_skipped_and_partial_sites() {
         6,
         &[(0, vec![[0, -1], [0, 1], [1, 1], [0, 0], [0, 1], [1, 0]])],
     );
-    let r2 = pbs(&w2, &pops, 0, 1, 2, PbsEstimator::Yi2010).unwrap();
+    let r2 = pbs(&w2, &pops, 0, 1, 2, PbsEstimator::Yi2010).expect("invariant: valid test fixture");
     assert_eq!((r2.within_a.comparable, r2.within_a.missing), (3, 3));
 }
 
 #[test]
 fn watterson_reports_no_value_for_empty_or_all_missing_windows() {
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
 
     // Empty grid window: no sites at all.
     let empty = build(SiteCompleteness::WithInvariants, 4, &[]);
-    let t = watterson_theta(&empty, &pops, 0).unwrap();
+    let t = watterson_theta(&empty, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!(t.n_sites, 0);
     assert_eq!(t.value(), None);
     assert_eq!(t.total_theta(), None);
@@ -129,7 +129,7 @@ fn watterson_reports_no_value_for_empty_or_all_missing_windows() {
         4,
         &[(0, vec![[-1, -1], [-1, -1], [-1, -1], [-1, -1]])],
     );
-    let t2 = watterson_theta(&all_missing, &pops, 0).unwrap();
+    let t2 = watterson_theta(&all_missing, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!((t2.n_sites, t2.n_skipped_missing), (0, 1));
     assert_eq!(t2.value(), None);
     assert_eq!(t2.total_theta(), None);
@@ -140,7 +140,7 @@ fn watterson_reports_no_value_for_empty_or_all_missing_windows() {
         4,
         &[(0, vec![[0, 0], [0, 0], [0, 0], [0, 0]])],
     );
-    let t3 = watterson_theta(&mono, &pops, 0).unwrap();
+    let t3 = watterson_theta(&mono, &pops, 0).expect("invariant: valid test fixture");
     assert_eq!(t3.value(), Some(0.0));
     assert_eq!(t3.total_theta(), Some(0.0));
 }
@@ -156,12 +156,12 @@ fn watterson_total_theta_matches_tajima_theta_w() {
             (8, vec![[0, 0], [0, 0], [0, 0], [0, 0]]),
         ],
     );
-    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let t = watterson_theta(&w, &pops, 0).unwrap();
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).expect("invariant: valid test fixture");
+    let t = watterson_theta(&w, &pops, 0).expect("invariant: valid test fixture");
     // S=2, n=8: total theta = 2 / a1(8) — the quantity Tajima's D compares
     // against π; per-bp divides by the 10 bp window.
-    assert!((t.total_theta().unwrap() - 0.7713498622589533).abs() < EPS);
-    assert!((t.theta_per_bp().unwrap() - 0.07713498622589533).abs() < EPS);
+    assert!((t.total_theta().expect("invariant: valid test fixture") - 0.7713498622589533).abs() < EPS);
+    assert!((t.theta_per_bp().expect("invariant: valid test fixture") - 0.07713498622589533).abs() < EPS);
     assert_eq!(t.value(), t.theta_per_bp());
 }
 
@@ -173,12 +173,12 @@ fn pbs_and_ld_summary_expose_value() {
         6,
         &[(0, vec![[0, 0], [0, 1], [1, 1], [0, 0], [0, 1], [1, 1]])],
     );
-    let p6 = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).unwrap();
-    let r = pbs(&w, &p6, 0, 1, 2, PbsEstimator::PbsN1).unwrap();
+    let p6 = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).expect("invariant: valid test fixture");
+    let r = pbs(&w, &p6, 0, 1, 2, PbsEstimator::PbsN1).expect("invariant: valid test fixture");
     assert!(r.value().is_some());
     assert_eq!(r.value(), r.pbs);
 
-    let l = ld_r2_summary(&fixture(), &pops4(), 0).unwrap();
+    let l = ld_r2_summary(&fixture(), &pops4(), 0).expect("invariant: valid test fixture");
     assert_eq!(l.value(), l.mean_r2);
 }
 
@@ -188,31 +188,31 @@ fn window_level_results_carry_coordinates() {
     let p = pops4();
     let coords = (w.contig, w.start, w.end);
 
-    let a = pi(&w, &p, 0, PiEstimator::PerPairComparable).unwrap();
+    let a = pi(&w, &p, 0, PiEstimator::PerPairComparable).expect("invariant: valid test fixture");
     assert_eq!((a.contig, a.start, a.end), coords);
 
-    let f2r = f2(&w, &p, 0, 1).unwrap();
+    let f2r = f2(&w, &p, 0, 1).expect("invariant: valid test fixture");
     assert_eq!((f2r.contig, f2r.start, f2r.end), coords);
 
-    let l = ld_r2_summary(&w, &p, 0).unwrap();
+    let l = ld_r2_summary(&w, &p, 0).expect("invariant: valid test fixture");
     assert_eq!((l.contig, l.start, l.end), coords);
 
-    let t = watterson_theta(&w, &p, 0).unwrap();
+    let t = watterson_theta(&w, &p, 0).expect("invariant: valid test fixture");
     assert_eq!((t.contig, t.start, t.end), coords);
 
-    let s = sfs(&w, &p, 0, false).unwrap();
+    let s = sfs(&w, &p, 0, false).expect("invariant: valid test fixture");
     assert_eq!((s.contig, s.start, s.end), coords);
 
-    let counts = allele_counts(&w, &p).unwrap();
+    let counts = allele_counts(&w, &p).expect("invariant: valid test fixture");
     assert_eq!((counts[0].contig, counts[0].start, counts[0].end), coords);
 
     // Per-site results carry the contig alongside pos.
-    let hw = hwe_exact(&w, &p, 0).unwrap();
+    let hw = hwe_exact(&w, &p, 0).expect("invariant: valid test fixture");
     assert!(!hw.is_empty());
     assert!(hw.iter().all(|x| x.contig == w.contig));
-    let ht = heterozygosity(&w, &p, 0).unwrap();
+    let ht = heterozygosity(&w, &p, 0).expect("invariant: valid test fixture");
     assert!(ht.iter().all(|x| x.contig == w.contig));
-    let lp = ld_r2_pairs(&w, &p, 0).unwrap();
+    let lp = ld_r2_pairs(&w, &p, 0).expect("invariant: valid test fixture");
     assert!(lp.iter().all(|x| x.contig == w.contig));
 }
 
@@ -239,31 +239,31 @@ fn availability_gates_follow_sealed_definitions() {
 
     // θ_W shares the AccessibleBp denominator: refused under VO(Unknown).
     assert!(watterson_theta(&unknown, &p, 0).is_err());
-    assert!(watterson_theta(&filtered, &p, 0).unwrap().bias.is_some());
-    assert!(watterson_theta(&complete, &p, 0).unwrap().bias.is_none());
-    assert!(watterson_theta(&full, &p, 0).unwrap().bias.is_none());
+    assert!(watterson_theta(&filtered, &p, 0).expect("invariant: valid test fixture").bias.is_some());
+    assert!(watterson_theta(&complete, &p, 0).expect("invariant: valid test fixture").bias.is_none());
+    assert!(watterson_theta(&full, &p, 0).expect("invariant: valid test fixture").bias.is_none());
 
     // SFS / Tajima's D / LD are invariant to monomorphic-site presence:
     // VO(Complete) is exact; Filtered/Unknown carry the note.
-    assert!(sfs(&unknown, &p, 0, false).unwrap().bias.is_some());
-    assert!(sfs(&complete, &p, 0, false).unwrap().bias.is_none());
-    assert!(tajima_d(&unknown, &p, 0, 1).unwrap().bias.is_some());
-    assert!(tajima_d(&complete, &p, 0, 1).unwrap().bias.is_none());
-    assert!(ld_r2_summary(&unknown, &p, 0).unwrap().bias.is_some());
-    assert!(ld_r2_summary(&complete, &p, 0).unwrap().bias.is_none());
+    assert!(sfs(&unknown, &p, 0, false).expect("invariant: valid test fixture").bias.is_some());
+    assert!(sfs(&complete, &p, 0, false).expect("invariant: valid test fixture").bias.is_none());
+    assert!(tajima_d(&unknown, &p, 0, 1).expect("invariant: valid test fixture").bias.is_some());
+    assert!(tajima_d(&complete, &p, 0, 1).expect("invariant: valid test fixture").bias.is_none());
+    assert!(ld_r2_summary(&unknown, &p, 0).expect("invariant: valid test fixture").bias.is_some());
+    assert!(ld_r2_summary(&complete, &p, 0).expect("invariant: valid test fixture").bias.is_none());
 
     // f2/f3/f4 are site means that include monomorphic sites under all-sites
     // input: any variant-only input changes the quantity.
-    assert!(f2(&unknown, &p, 0, 1).unwrap().bias.is_some());
-    assert!(f2(&complete, &p, 0, 1).unwrap().bias.is_some());
-    assert!(f2(&full, &p, 0, 1).unwrap().bias.is_none());
+    assert!(f2(&unknown, &p, 0, 1).expect("invariant: valid test fixture").bias.is_some());
+    assert!(f2(&complete, &p, 0, 1).expect("invariant: valid test fixture").bias.is_some());
+    assert!(f2(&full, &p, 0, 1).expect("invariant: valid test fixture").bias.is_none());
 
     // …but D is a ratio of sums: invariant, like SFS/Tajima/LD. Needs four
     // distinct groups.
-    let p4 = PopulationView::from_assignment(4, &[0, 1, 2, 3], 4).unwrap();
-    assert!(d_stat(&complete, &p4, 0, 1, 2, 3).unwrap().bias.is_none());
-    assert!(d_stat(&unknown, &p4, 0, 1, 2, 3).unwrap().bias.is_some());
-    assert!(d_stat(&full, &p4, 0, 1, 2, 3).unwrap().bias.is_none());
+    let p4 = PopulationView::from_assignment(4, &[0, 1, 2, 3], 4).expect("invariant: valid test fixture");
+    assert!(d_stat(&complete, &p4, 0, 1, 2, 3).expect("invariant: valid test fixture").bias.is_none());
+    assert!(d_stat(&unknown, &p4, 0, 1, 2, 3).expect("invariant: valid test fixture").bias.is_some());
+    assert!(d_stat(&full, &p4, 0, 1, 2, 3).expect("invariant: valid test fixture").bias.is_none());
 
     // Site-local (HWE, heterozygosity) and census (allele counts) estimators
     // are exempt from gating: they run under any manifest.
@@ -276,7 +276,7 @@ fn availability_gates_follow_sealed_definitions() {
 fn population_mismatch_is_an_error_not_a_panic() {
     let w = fixture();
     // A view built for a different sample count.
-    let bad = PopulationView::from_assignment(5, &[0, 0, 1, 1, 1], 2).unwrap();
+    let bad = PopulationView::from_assignment(5, &[0, 0, 1, 1, 1], 2).expect("invariant: valid test fixture");
     assert_eq!(
         bad.validate_against(&w),
         Err(PopError::SampleCountMismatch {
