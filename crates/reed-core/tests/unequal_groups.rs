@@ -135,4 +135,8 @@ fn pbs_matches_allel_under_unequal_coverage() {
 
     // Between-pair integer audit trail is now retained.
     assert!(r.between_ab.comparable + r.between_ac.comparable + r.between_bc.comparable > 0);
+    // v0.2: the pooled audit trail covers every site, skipped or not (§12.3-1);
+    // with 12% missing, within/between pairs are lost and must be accounted.
+    assert!(r.within_a.missing + r.within_b.missing + r.within_c.missing > 0);
+    assert!(r.between_ab.missing + r.between_ac.missing + r.between_bc.missing > 0);
 }

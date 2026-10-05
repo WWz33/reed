@@ -176,7 +176,7 @@ fn manifest_gates_pi_but_only_flags_fst() {
 fn aggregate_allele_counts() {
     let w = fixture(SiteCompleteness::WithInvariants);
     let p = pops();
-    let counts = allele_counts(&w, &p);
+    let counts = allele_counts(&w, &p).unwrap();
     assert_eq!(counts.len(), 2);
     assert_eq!(
         (counts[0].ref_count, counts[0].alt_count, counts[0].missing),

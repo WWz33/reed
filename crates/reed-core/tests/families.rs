@@ -101,15 +101,15 @@ fn sfs_and_theta_match_scikit_allel() {
     let w = fixture();
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
 
-    let unfolded = sfs(&w, &pops, 0, false);
+    let unfolded = sfs(&w, &pops, 0, false).unwrap();
     assert_eq!(unfolded.n_chroms, 8);
     // ALT counts: site0 = 4, site1 = 1, site2 = 0 (monomorphic, excluded)
     assert_eq!(unfolded.counts, vec![1, 0, 0, 1, 0, 0, 0]);
 
-    let folded = sfs(&w, &pops, 0, true);
+    let folded = sfs(&w, &pops, 0, true).unwrap();
     assert_eq!(folded.counts, vec![1, 0, 0, 1]);
 
-    let theta = watterson_theta(&w, &pops, 0);
+    let theta = watterson_theta(&w, &pops, 0).unwrap();
     assert_eq!(theta.segregating, 2);
     // scikit-allel watterson_theta(pos, ac, start=1, stop=10)
     assert_close(theta.value(), 0.07713498622589533);
@@ -119,7 +119,7 @@ fn sfs_and_theta_match_scikit_allel() {
 fn tajima_d_matches_scikit_allel() {
     let w = fixture();
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let d = tajima_d(&w, &pops, 0, 2);
+    let d = tajima_d(&w, &pops, 0, 2).unwrap();
     assert_eq!(d.segregating, 2);
     assert!((d.pi - 0.8214285714285714).abs() < EPS);
     assert!((d.theta_w - 0.7713498622589533).abs() < EPS);
@@ -138,7 +138,7 @@ fn hwe_exact_matches_independent_enumeration() {
     // Per-site pass over the fixture (all complete).
     let w = fixture();
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let sites = hwe_exact(&w, &pops, 0);
+    let sites = hwe_exact(&w, &pops, 0).unwrap();
     assert_eq!(sites.len(), 3);
     assert_eq!((sites[0].hom_ref, sites[0].het, sites[0].hom_alt), (1, 2, 1));
     assert!((sites[0].p_value - 1.0).abs() < EPS);
@@ -150,7 +150,7 @@ fn hwe_exact_matches_independent_enumeration() {
 fn heterozygosity_matches_hand_values() {
     let w = fixture();
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
-    let sites = heterozygosity(&w, &pops, 0);
+    let sites = heterozygosity(&w, &pops, 0).unwrap();
     assert_eq!(sites.len(), 3);
 
     assert!((sites[0].hobs - 0.5).abs() < EPS);
@@ -170,7 +170,7 @@ fn ld_rogers_huff_matches_scikit_allel() {
     let w = fixture();
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
 
-    let pairs = ld_r2_pairs(&w, &pops, 0);
+    let pairs = ld_r2_pairs(&w, &pops, 0).unwrap();
     // Only pair (site0, site1) is valid: site2 is monomorphic (zero variance).
     assert_eq!(pairs.len(), 1);
     assert_eq!((pairs[0].site_i, pairs[0].site_j), (0, 1));
@@ -178,7 +178,7 @@ fn ld_rogers_huff_matches_scikit_allel() {
     // scikit-allel rogers_huff_r: r2 = 0.6666667 (exactly 2/3)
     assert!((pairs[0].r2 - 2.0 / 3.0).abs() < 1e-9);
 
-    let summary = ld_r2_summary(&w, &pops, 0);
+    let summary = ld_r2_summary(&w, &pops, 0).unwrap();
     assert_eq!(summary.n_pairs, 3);
     assert_eq!(summary.n_valid, 1);
     assert!((summary.mean_r2.unwrap() - 2.0 / 3.0).abs() < 1e-9);

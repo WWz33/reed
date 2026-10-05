@@ -1,0 +1,14 @@
+[package]
+name = "reed-core-v02-oracle"
+description = "Frozen reed-core 0.2 implementation, kept as a differential-testing oracle during the architecture migration (docs/architecture-spec.md §16.2). Never publish."
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "reed_core_v02_oracle"
+path = "src/lib.rs"
+
+[lints.rust]
+missing_docs = "allow"

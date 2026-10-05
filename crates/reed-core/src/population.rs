@@ -2,17 +2,38 @@
 
 use std::fmt;
 
+use crate::window::WindowBuffer;
+
 /// Errors from constructing a [`PopulationView`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PopError {
     /// `n_groups` was zero.
     NoGroups,
     /// Assignment length does not match the sample count.
-    AssignmentLength { expected: usize, got: usize },
+    AssignmentLength {
+        /// Sample count the view was built for.
+        expected: usize,
+        /// Length of the assignment slice supplied.
+        got: usize,
+    },
     /// A sample was assigned to a group index outside `0..n_groups`.
-    GroupOutOfRange { sample: usize, group: u32, n_groups: u32 },
+    GroupOutOfRange {
+        /// 0-based index of the offending sample.
+        sample: usize,
+        /// Group index the sample was assigned to.
+        group: u32,
+        /// Number of groups the view was built with.
+        n_groups: u32,
+    },
     /// A declared group has no samples.
     EmptyGroup(u32),
+    /// The view's sample count does not match the window being analysed.
+    SampleCountMismatch {
+        /// Samples covered by the population view.
+        view_samples: usize,
+        /// Samples in the window being analysed.
+        window_samples: u32,
+    },
 }
 
 impl fmt::Display for PopError {
@@ -27,6 +48,10 @@ impl fmt::Display for PopError {
                 "sample {sample} assigned to group {group}, but only {n_groups} groups exist"
             ),
             PopError::EmptyGroup(g) => write!(f, "group {g} has no samples"),
+            PopError::SampleCountMismatch { view_samples, window_samples } => write!(
+                f,
+                "population view covers {view_samples} samples but the window has {window_samples}"
+            ),
         }
     }
 }
@@ -67,10 +92,15 @@ impl PopulationView {
                     n_groups,
                 });
             }
+            // Sample indices derive from `n_samples`, whose consumers bound
+            // cohorts at `u32::MAX` (the window stores `n_samples: u32`).
+            #[allow(clippy::cast_possible_truncation)]
             groups[group as usize].push(sample as u32);
         }
         for (g, samples) in groups.iter().enumerate() {
             if samples.is_empty() {
+                // `g < n_groups` and `n_groups: u32` was checked above.
+                #[allow(clippy::cast_possible_truncation)]
                 return Err(PopError::EmptyGroup(g as u32));
             }
         }
@@ -89,6 +119,27 @@ impl PopulationView {
     /// Panics if `group` is out of range.
     pub fn samples(&self, group: u32) -> &[u32] {
         &self.groups[group as usize]
+    }
+
+    /// Non-panicking group access; `None` when `group` is out of range.
+    pub fn get(&self, group: u32) -> Option<&[u32]> {
+        self.groups.get(group as usize).map(Vec::as_slice)
+    }
+
+    /// Checks that this view covers exactly the window's sample count.
+    ///
+    /// Estimator entry points perform this check through their own validation
+    /// (`samples_of`); call it directly when sample indices are used outside
+    /// the estimators.
+    pub fn validate_against(&self, window: &WindowBuffer) -> Result<(), PopError> {
+        let total: usize = self.groups.iter().map(Vec::len).sum();
+        if total != window.n_samples as usize {
+            return Err(PopError::SampleCountMismatch {
+                view_samples: total,
+                window_samples: window.n_samples,
+            });
+        }
+        Ok(())
     }
 }
 

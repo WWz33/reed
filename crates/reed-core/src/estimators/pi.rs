@@ -5,7 +5,7 @@ use crate::population::PopulationView;
 use crate::result::{PairCounts, PiResult};
 use crate::window::WindowBuffer;
 
-use super::Unavailable;
+use super::{samples_of, Unavailable};
 
 /// Sealed π estimator definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +47,8 @@ impl PiEstimator {
         use Ascertainment::{Complete, Filtered, Unknown};
         use Availability::{Available, Biased, Unavailable};
         match (self, manifest) {
-            (_, SiteCompleteness::WithInvariants) => Available,
-            (PiEstimator::AccessibleBp, SiteCompleteness::VariantOnly(Complete)) => Available,
+            (_, SiteCompleteness::WithInvariants)
+            | (PiEstimator::AccessibleBp, SiteCompleteness::VariantOnly(Complete)) => Available,
             (PiEstimator::AccessibleBp, SiteCompleteness::VariantOnly(Filtered)) => Biased(
                 "filtered variant-only input: removed true variants are indistinguishable \
                  from invariant sites; the numerator is undercounted",
@@ -78,19 +78,23 @@ impl PiEstimator {
 }
 
 /// Computes π for one group.
+//
+// Counts are bounded by the window's alleles (≪ 2^53); the ratio cast is exact.
+#[allow(clippy::cast_precision_loss)]
 pub fn pi(
     window: &WindowBuffer,
     pops: &PopulationView,
     group: u32,
     estimator: PiEstimator,
 ) -> Result<PiResult, Unavailable> {
+    let samples = samples_of(pops, window, group)?;
+
     let bias = match estimator.availability(window.manifest) {
         Availability::Available => None,
         Availability::Biased(reason) => Some(reason),
         Availability::Unavailable(reason) => return Err(Unavailable { reason }),
     };
 
-    let samples = pops.samples(group);
     let n_chrom = 2 * samples.len() as u64;
     let total_pairs = n_chrom * n_chrom.saturating_sub(1) / 2;
 

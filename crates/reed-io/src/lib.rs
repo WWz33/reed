@@ -20,39 +20,95 @@ use std::path::Path;
 
 use noodles::bcf as bcf;
 use noodles::bgzf as bgzf;
-use noodles::vcf as vcf;
+// Public re-export: reed-io is the single noodles boundary, and downstream
+// crates (reed-filter) have no direct noodles dependency.
+pub use noodles::vcf;
 use vcf::variant::record::samples::series::value::genotype::Phasing;
 use vcf::variant::record::samples::series::Value;
 
 use reed_core::{Bits, ContigId, SiteCompleteness, WindowBuffer, WindowError};
 
-/// Failures while reading windows.
+pub mod record;
+pub mod sink;
+
+/// Failures while reading VCF/BCF data (windows and record streams).
 #[derive(Debug)]
 pub enum ReadError {
+    /// An I/O failure while reading or decoding the stream.
     Io(io::Error),
+    /// A window invariant from reed-core was violated.
     Core(WindowError),
     /// File name does not end in `.vcf`, `.vcf.gz`, `.vcf.bgz` or `.bcf`.
     UnsupportedFormat(String),
     /// A contig used by a record has no length in the VCF header.
-    MissingContigLength { contig: String },
+    MissingContigLength {
+        /// Contig name from the record.
+        contig: String,
+    },
     /// A record has no POS.
-    MissingPosition { contig: String },
+    MissingPosition {
+        /// Contig name from the record.
+        contig: String,
+    },
     /// A genotype is not diploid (v0.1).
-    NotDiploid { contig: String, pos: u64, observed: usize },
+    NotDiploid {
+        /// Contig name from the record.
+        contig: String,
+        /// 1-based record position.
+        pos: u64,
+        /// Number of alleles observed in the genotype.
+        observed: usize,
+    },
     /// An allele index above 1 (v0.1: biallelic).
-    Multiallelic { contig: String, pos: u64 },
+    Multiallelic {
+        /// Contig name from the record.
+        contig: String,
+        /// 1-based record position.
+        pos: u64,
+    },
     /// The record has no GT series.
-    MissingGt { contig: String, pos: u64 },
+    MissingGt {
+        /// Contig name from the record.
+        contig: String,
+        /// 1-based record position.
+        pos: u64,
+    },
     /// Records are not sorted by position within a contig.
-    OutOfOrder { contig: String, prev: u32, pos: u32 },
+    OutOfOrder {
+        /// Contig name from the record.
+        contig: String,
+        /// Position of the previous record.
+        prev: u32,
+        /// Position of the offending record.
+        pos: u32,
+    },
     /// A record's POS (1-based) exceeds the contig length declared in the
     /// header — the record would fall outside every window.
-    PositionBeyondContigLength { contig: String, pos: u64, len: u64 },
+    PositionBeyondContigLength {
+        /// Contig name from the record.
+        contig: String,
+        /// 1-based record position.
+        pos: u64,
+        /// Contig length declared in the header.
+        len: u64,
+    },
     /// A contig's records are not contiguous (the contig re-appears after
     /// another contig); the window grid for it would be corrupted.
-    ContigRevisit { contig: String },
+    ContigRevisit {
+        /// Contig whose records re-appeared.
+        contig: String,
+    },
     /// Invalid options or a user callback error.
     User(String),
+    /// A single record failed to decode or edit, located by site.
+    Decode {
+        /// Contig name (empty when the contig lookup itself failed).
+        contig: String,
+        /// 1-based record position (0 when unknown).
+        pos: u64,
+        /// The underlying decode failure.
+        msg: String,
+    },
 }
 
 impl fmt::Display for ReadError {
@@ -100,6 +156,9 @@ impl fmt::Display for ReadError {
                  each contig's records to be contiguous"
             ),
             ReadError::User(msg) => write!(f, "{msg}"),
+            ReadError::Decode { contig, pos, msg } => {
+                write!(f, "record decode failed at {contig}:{pos}: {msg}")
+            }
         }
     }
 }
@@ -129,8 +188,12 @@ impl From<WindowError> for ReadError {
 /// How to cut the stream into windows and what the input is declared to contain.
 #[derive(Clone, Copy, Debug)]
 pub struct ReadOptions {
+    /// Window length in bases (the grid is `[start, start + window_size)`).
     pub window_size: u32,
+    /// Advance of the window start between consecutive windows
+    /// (`0 < step <= window_size`).
     pub step: u32,
+    /// Declared site completeness (ascertainment) of the input.
     pub manifest: SiteCompleteness,
 }
 
@@ -150,7 +213,9 @@ pub type WindowSink<'a> = &'a mut dyn FnMut(WindowBuffer) -> Result<(), ReadErro
 /// Stream summary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StreamSummary {
+    /// Number of windows emitted.
     pub windows: u64,
+    /// Number of sites read across all windows.
     pub sites: u64,
 }
 
@@ -204,6 +269,7 @@ pub fn read_windows(path: &Path, opts: &ReadOptions) -> Result<Vec<WindowBuffer>
 /// [`reed_core::PopulationView`].
 #[derive(Clone, Debug)]
 pub struct HeaderInfo {
+    /// Number of samples declared in the header.
     pub n_samples: usize,
     /// Contigs in header order with their declared lengths (`None` = missing;
     /// the reader will refuse records on such contigs).
@@ -307,10 +373,8 @@ impl Assembler {
         phased: Vec<bool>,
         on_window: WindowSink<'_>,
     ) -> Result<(), ReadError> {
-        if let Some(state) = &self.state {
-            if state.name != contig {
-                self.finish_contig(on_window)?;
-            }
+        if let Some(state) = &self.state && state.name != contig {
+            self.finish_contig(on_window)?;
         }
         if self.state.is_none() {
             if self.finished_contigs.contains(contig) {
@@ -465,14 +529,26 @@ fn record_key<R: vcf::variant::Record + ?Sized>(
     record: &R,
     header: &vcf::Header,
 ) -> Result<(String, u32), ReadError> {
+    // A contig/POS lookup failure is a header/record contradiction, i.e. a
+    // decode problem at this site, not an I/O failure. The position is not
+    // known yet at these points (it is what the lookups produce), so a
+    // failed lookup reports POS 0.
     let contig = record
         .reference_sequence_name(header)
-        .map_err(ReadError::Io)?
+        .map_err(|e| ReadError::Decode {
+            contig: String::new(),
+            pos: 0,
+            msg: format!("contig lookup failed: {e}"),
+        })?
         .to_string();
     let start = record
         .variant_start()
         .transpose()
-        .map_err(ReadError::Io)?
+        .map_err(|e| ReadError::Decode {
+            contig: contig.clone(),
+            pos: 0,
+            msg: format!("POS lookup failed: {e}"),
+        })?
         .ok_or_else(|| ReadError::MissingPosition {
             contig: contig.clone(),
         })?;

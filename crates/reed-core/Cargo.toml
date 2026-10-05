@@ -1,8 +1,19 @@
 [package]
 name = "reed-core"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
 description = "Canonical population-genetics statistics over windowed genotype buffers (no I/O)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
+bitflags.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

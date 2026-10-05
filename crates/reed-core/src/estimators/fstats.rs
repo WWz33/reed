@@ -1,31 +1,74 @@
 //! f-statistics: f2, f3, f4, and the D-statistic (Patterson et al. 2012).
 //!
-//! All are means over sites where every involved group has at least one called
-//! allele; ALT-allele frequencies are taken from counts (per-allele deletion).
-//! Block-jackknife standard errors are a v0.3 concern.
+//! All are computed over sites where every involved group has at least one
+//! called allele; ALT-allele frequencies are taken from counts (per-allele
+//! deletion). Block-jackknife standard errors are a v0.3 concern.
+//!
+//! Manifest gates (§4.2, judged per estimator): f2/f3/f4 are **site means**
+//! that include monomorphic sites under all-sites input (they contribute 0 to
+//! the sum but 1 to the count), so any variant-only input changes the
+//! quantity — biased under every `VariantOnly` manifest. The D-statistic is a
+//! **ratio of sums** (a monomorphic site contributes 0 to numerator and
+//! denominator alike), so it is invariant to monomorphic-site presence:
+//! `VariantOnly(Complete)` matches all-sites input, while `Filtered` — and
+//! `Unknown`, which cannot be distinguished from it — loses pairs to removed
+//! true variants → bias note.
 
 use crate::population::PopulationView;
-use crate::window::WindowBuffer;
+use crate::window::{ContigId, WindowBuffer};
 
-use super::Unavailable;
+use super::{samples_of, Unavailable};
 
+// Counts are bounded by the site's called alleles (≪ 2^53); the ratio cast
+// is exact.
+#[allow(clippy::cast_precision_loss)]
 fn alt_freq(window: &WindowBuffer, samples: &[u32], site: usize) -> Option<f64> {
     let counts = window.allele_counts(site, samples);
     let n = counts.ref_count + counts.alt_count;
     (n > 0).then(|| counts.alt_count as f64 / n as f64)
 }
 
+/// Bias note for the site-mean statistics (f2/f3/f4) under any
+/// `VariantOnly` manifest.
+const FSTATS_BIAS: &str =
+    "variant-only input: monomorphic sites are absent, so this site mean is \
+     inflated relative to all-sites semantics (site-density dependent); removed \
+     true variants additionally bias the numerator";
+
+/// Bias note for the D-statistic under `VariantOnly(Filtered/Unknown)`.
+const DSTAT_BIAS: &str =
+    "variant-only input: pairs involving removed true variants are missing; the \
+     ratio of sums is otherwise invariant to monomorphic-site presence, and \
+     Unknown cannot be distinguished from Filtered";
+
 /// f2(A, B) = mean over sites of `(pA − pB)²`.
 #[derive(Clone, Copy, Debug)]
 pub struct F2Result {
+    /// Contig the window is on.
+    pub contig: ContigId,
+    /// Window start (0-based, half-open).
+    pub start: u64,
+    /// Window end (exclusive).
+    pub end: u64,
+    /// First group of the pair.
     pub group_a: u32,
+    /// Second group of the pair.
     pub group_b: u32,
+    /// Sites where both groups have a called allele.
     pub n_sites: u64,
+    /// Sites skipped for missing data.
     pub n_skipped: u64,
+    /// Sum over sites of `(pA − pB)²`.
     pub sum_sq: f64,
+    /// Manifest caveat, if any.
+    pub bias: Option<&'static str>,
 }
 
 impl F2Result {
+    /// The f2 estimate, or `None` when no site contributed.
+    //
+    // `n_sites` is a site count (≪ 2^53); the ratio cast is exact.
+    #[allow(clippy::cast_precision_loss)]
     pub fn value(&self) -> Option<f64> {
         (self.n_sites > 0).then(|| self.sum_sq / self.n_sites as f64)
     }
@@ -34,15 +77,33 @@ impl F2Result {
 /// f3(target; b, c) = mean over sites of `(pB − pTarget) * (pC − pTarget)`.
 #[derive(Clone, Copy, Debug)]
 pub struct F3Result {
+    /// Contig the window is on.
+    pub contig: ContigId,
+    /// Window start (0-based, half-open).
+    pub start: u64,
+    /// Window end (exclusive).
+    pub end: u64,
+    /// Target (outgroup-ish) group of the f3 triple.
     pub target: u32,
+    /// Second group of the f3 triple.
     pub group_b: u32,
+    /// Third group of the f3 triple.
     pub group_c: u32,
+    /// Sites where all three groups have a called allele.
     pub n_sites: u64,
+    /// Sites skipped for missing data.
     pub n_skipped: u64,
+    /// Sum over sites of `(pB − pTarget) * (pC − pTarget)`.
     pub sum_prod: f64,
+    /// Manifest caveat, if any.
+    pub bias: Option<&'static str>,
 }
 
 impl F3Result {
+    /// The f3 estimate, or `None` when no site contributed.
+    //
+    // `n_sites` is a site count (≪ 2^53); the ratio cast is exact.
+    #[allow(clippy::cast_precision_loss)]
     pub fn value(&self) -> Option<f64> {
         (self.n_sites > 0).then(|| self.sum_prod / self.n_sites as f64)
     }
@@ -51,16 +112,35 @@ impl F3Result {
 /// f4(A, B; C, D) = mean over sites of `(pA − pB) * (pC − pD)`.
 #[derive(Clone, Copy, Debug)]
 pub struct F4Result {
+    /// Contig the window is on.
+    pub contig: ContigId,
+    /// Window start (0-based, half-open).
+    pub start: u64,
+    /// Window end (exclusive).
+    pub end: u64,
+    /// First group of the first pair.
     pub group_a: u32,
+    /// Second group of the first pair.
     pub group_b: u32,
+    /// First group of the second pair.
     pub group_c: u32,
+    /// Second group of the second pair.
     pub group_d: u32,
+    /// Sites where all four groups have a called allele.
     pub n_sites: u64,
+    /// Sites skipped for missing data.
     pub n_skipped: u64,
+    /// Sum over sites of `(pA − pB) * (pC − pD)`.
     pub sum_prod: f64,
+    /// Manifest caveat, if any.
+    pub bias: Option<&'static str>,
 }
 
 impl F4Result {
+    /// The f4 estimate, or `None` when no site contributed.
+    //
+    // `n_sites` is a site count (≪ 2^53); the ratio cast is exact.
+    #[allow(clippy::cast_precision_loss)]
     pub fn value(&self) -> Option<f64> {
         (self.n_sites > 0).then(|| self.sum_prod / self.n_sites as f64)
     }
@@ -71,17 +151,34 @@ impl F4Result {
 /// `den = (pA + pB − 2 pA pB)(pC + pD − 2 pC pD)`.
 #[derive(Clone, Copy, Debug)]
 pub struct DStatResult {
+    /// Contig the window is on.
+    pub contig: ContigId,
+    /// Window start (0-based, half-open).
+    pub start: u64,
+    /// Window end (exclusive).
+    pub end: u64,
+    /// First group of the first pair.
     pub group_a: u32,
+    /// Second group of the first pair.
     pub group_b: u32,
+    /// First group of the second pair.
     pub group_c: u32,
+    /// Second group of the second pair.
     pub group_d: u32,
+    /// Sites where all four groups have a called allele.
     pub n_sites: u64,
+    /// Sites skipped for missing data.
     pub n_skipped: u64,
+    /// Sum over sites of `(pA − pB)(pC − pD)`.
     pub num: f64,
+    /// Sum over sites of `(pA + pB − 2 pA pB)(pC + pD − 2 pC pD)`.
     pub den: f64,
+    /// Manifest caveat, if any.
+    pub bias: Option<&'static str>,
 }
 
 impl DStatResult {
+    /// The D-statistic, or `None` when the summed denominator is zero.
     pub fn value(&self) -> Option<f64> {
         (self.den > 0.0).then(|| self.num / self.den)
     }
@@ -113,8 +210,9 @@ pub fn f2(
     group_b: u32,
 ) -> Result<F2Result, Unavailable> {
     require_distinct(&[(group_a, group_b)])?;
-    let sa = pops.samples(group_a);
-    let sb = pops.samples(group_b);
+    let sa = samples_of(pops, window, group_a)?;
+    let sb = samples_of(pops, window, group_b)?;
+    let bias = super::variant_only_note(window.manifest, FSTATS_BIAS);
     let (mut n_sites, mut n_skipped, mut sum_sq) = (0u64, 0u64, 0.0f64);
     for site in 0..window.n_sites() {
         match (alt_freq(window, sa, site), alt_freq(window, sb, site)) {
@@ -126,11 +224,15 @@ pub fn f2(
         }
     }
     Ok(F2Result {
+        contig: window.contig,
+        start: window.start,
+        end: window.end,
         group_a,
         group_b,
         n_sites,
         n_skipped,
         sum_sq,
+        bias,
     })
 }
 
@@ -143,9 +245,10 @@ pub fn f3(
     group_c: u32,
 ) -> Result<F3Result, Unavailable> {
     require_distinct(&[(target, group_b), (target, group_c), (group_b, group_c)])?;
-    let st = pops.samples(target);
-    let sb = pops.samples(group_b);
-    let sc = pops.samples(group_c);
+    let st = samples_of(pops, window, target)?;
+    let sb = samples_of(pops, window, group_b)?;
+    let sc = samples_of(pops, window, group_c)?;
+    let bias = super::variant_only_note(window.manifest, FSTATS_BIAS);
     let (mut n_sites, mut n_skipped, mut sum_prod) = (0u64, 0u64, 0.0f64);
     for site in 0..window.n_sites() {
         match (
@@ -161,12 +264,16 @@ pub fn f3(
         }
     }
     Ok(F3Result {
+        contig: window.contig,
+        start: window.start,
+        end: window.end,
         target,
         group_b,
         group_c,
         n_sites,
         n_skipped,
         sum_prod,
+        bias,
     })
 }
 
@@ -187,10 +294,11 @@ pub fn f4(
         (group_b, group_d),
         (group_c, group_d),
     ])?;
-    let sa = pops.samples(group_a);
-    let sb = pops.samples(group_b);
-    let sc = pops.samples(group_c);
-    let sd = pops.samples(group_d);
+    let sa = samples_of(pops, window, group_a)?;
+    let sb = samples_of(pops, window, group_b)?;
+    let sc = samples_of(pops, window, group_c)?;
+    let sd = samples_of(pops, window, group_d)?;
+    let bias = super::variant_only_note(window.manifest, FSTATS_BIAS);
     let (mut n_sites, mut n_skipped, mut sum_prod) = (0u64, 0u64, 0.0f64);
     for site in 0..window.n_sites() {
         match (
@@ -207,6 +315,9 @@ pub fn f4(
         }
     }
     Ok(F4Result {
+        contig: window.contig,
+        start: window.start,
+        end: window.end,
         group_a,
         group_b,
         group_c,
@@ -214,6 +325,7 @@ pub fn f4(
         n_sites,
         n_skipped,
         sum_prod,
+        bias,
     })
 }
 
@@ -234,10 +346,11 @@ pub fn d_stat(
         (group_b, group_d),
         (group_c, group_d),
     ])?;
-    let sa = pops.samples(group_a);
-    let sb = pops.samples(group_b);
-    let sc = pops.samples(group_c);
-    let sd = pops.samples(group_d);
+    let sa = samples_of(pops, window, group_a)?;
+    let sb = samples_of(pops, window, group_b)?;
+    let sc = samples_of(pops, window, group_c)?;
+    let sd = samples_of(pops, window, group_d)?;
+    let bias = super::monomorphic_invariant_note(window.manifest, DSTAT_BIAS);
     let (mut n_sites, mut n_skipped, mut num, mut den) = (0u64, 0u64, 0.0f64, 0.0f64);
     for site in 0..window.n_sites() {
         match (
@@ -255,6 +368,9 @@ pub fn d_stat(
         }
     }
     Ok(DStatResult {
+        contig: window.contig,
+        start: window.start,
+        end: window.end,
         group_a,
         group_b,
         group_c,
@@ -263,5 +379,6 @@ pub fn d_stat(
         n_skipped,
         num,
         den,
+        bias,
     })
 }

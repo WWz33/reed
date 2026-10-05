@@ -23,7 +23,7 @@ use crate::population::PopulationView;
 use crate::result::{FstResult, NeiComponents, PairCounts, WcComponents};
 use crate::window::WindowBuffer;
 
-use super::Unavailable;
+use super::{samples_of, Unavailable};
 
 /// Sealed Fst estimator definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +38,7 @@ pub enum FstEstimator {
 }
 
 impl FstEstimator {
+    /// Stable identifier for reports and golden tests.
     pub fn id(self) -> &'static str {
         match self {
             FstEstimator::Hudson => "fst.hudson",
@@ -46,6 +47,7 @@ impl FstEstimator {
         }
     }
 
+    /// Literature the definition follows.
     pub fn citation(self) -> &'static str {
         match self {
             FstEstimator::Hudson => {
@@ -59,6 +61,7 @@ impl FstEstimator {
         }
     }
 
+    /// Whether this estimator is computable under a manifest.
     pub fn availability(self, manifest: SiteCompleteness) -> Availability {
         match manifest {
             SiteCompleteness::WithInvariants => Availability::Available,
@@ -71,6 +74,12 @@ impl FstEstimator {
 }
 
 /// Computes Fst between two groups.
+//
+// - Casts: counts are bounded by the window's allele totals (≪ 2^53), so the
+//   u64→f64 conversions in the ratio formulas are exact in practice.
+// - Length: one branch per estimator definition; splitting would scatter the
+//   per-estimator formulas across helpers and obscure the audit trail.
+#[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
 pub fn fst(
     window: &WindowBuffer,
     pops: &PopulationView,
@@ -83,14 +92,15 @@ pub fn fst(
             reason: "Fst requires two distinct groups",
         });
     }
+    let samples_a = samples_of(pops, window, group_a)?;
+    let samples_b = samples_of(pops, window, group_b)?;
+
     let bias = match estimator.availability(window.manifest) {
         Availability::Available => None,
         Availability::Biased(reason) => Some(reason),
         Availability::Unavailable(reason) => return Err(Unavailable { reason }),
     };
 
-    let samples_a = pops.samples(group_a);
-    let samples_b = pops.samples(group_b);
     let n_chrom_a = 2 * samples_a.len() as u64;
     let n_chrom_b = 2 * samples_b.len() as u64;
     let within_total_a = n_chrom_a * n_chrom_a.saturating_sub(1) / 2;
@@ -137,13 +147,13 @@ pub fn fst(
             let mpd_b = (n_b >= 2).then(|| {
                 b.ref_count as f64 * b.alt_count as f64 / (n_b * (n_b - 1) / 2) as f64
             });
-            let mpd_ab = (n_a >= 1 && n_b >= 1)
+            let between_mpd = (n_a >= 1 && n_b >= 1)
                 .then(|| (a.ref_count * b.alt_count + a.alt_count * b.ref_count) as f64
                     / (n_a * n_b) as f64);
-            if let Some(pab) = mpd_ab {
+            if let Some(pab) = between_mpd {
                 hudson_den += pab;
                 if let (Some(pa), Some(pb)) = (mpd_a, mpd_b) {
-                    hudson_num += pab - (pa + pb) / 2.0;
+                    hudson_num += pab - f64::midpoint(pa, pb);
                 }
             }
         }
@@ -199,8 +209,8 @@ pub fn fst(
                 }
                 let p1 = a.alt_count as f64 / n_a as f64;
                 let p2 = b.alt_count as f64 / n_b as f64;
-                let hs = (2.0 * p1 * (1.0 - p1) + 2.0 * p2 * (1.0 - p2)) / 2.0;
-                let p_bar = (p1 + p2) / 2.0;
+                let hs = f64::midpoint(2.0 * p1 * (1.0 - p1), 2.0 * p2 * (1.0 - p2));
+                let p_bar = f64::midpoint(p1, p2);
                 let ht = 2.0 * p_bar * (1.0 - p_bar);
                 nei.hs += hs;
                 nei.ht += ht;

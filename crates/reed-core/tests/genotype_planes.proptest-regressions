@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6509b3806230ae0e0dc1ee4c5218d6082556257043571e9905dea2a34dede1c2 # shrinks to n_samples = 1, genotypes = [(Diploid, None, None), (Diploid, None, None)]

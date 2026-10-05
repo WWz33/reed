@@ -5,6 +5,9 @@
 # Environment-specific cargo config (mirror + target-dir are machine-specific)
 .cargo/config.toml
 
+# Local golden-standard tooling and its data products (not tracked)
+/gold/
+
 # Editor
 .vscode/
 .idea/

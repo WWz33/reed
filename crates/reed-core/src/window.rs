@@ -22,20 +22,82 @@ pub struct ContigId(pub u32);
 /// Violations of the window-buffer invariants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowError {
+    /// `contig_len` was zero, which is a construction error.
     ZeroContigLength,
-    EmptyWindow { start: u64, end: u64 },
-    PositionCount { expected: usize, got: usize },
-    GenotypeCount { expected: usize, got: usize },
-    MissingCount { expected: usize, got: usize },
-    PhasedCount { expected: usize, got: usize },
-    PositionOutOfWindow { index: usize, pos: u32, start: u64, end: u64 },
-    MissingBitMismatch { index: usize },
+    /// The window span is empty (`end <= start`).
+    EmptyWindow {
+        /// Window start (0-based).
+        start: u64,
+        /// Window end (exclusive).
+        end: u64,
+    },
+    /// The `is_variant` bit vector does not cover every position.
+    PositionCount {
+        /// Number of positions required.
+        expected: usize,
+        /// Length of the supplied bit vector.
+        got: usize,
+    },
+    /// The genotype vector does not hold `n_sites * n_samples * 2` alleles.
+    GenotypeCount {
+        /// Number of genotype alleles required.
+        expected: usize,
+        /// Length of the supplied genotype vector.
+        got: usize,
+    },
+    /// The missing bit vector does not cover every genotype.
+    MissingCount {
+        /// Number of missing bits required.
+        expected: usize,
+        /// Length of the supplied bit vector.
+        got: usize,
+    },
+    /// The phased bit vector does not cover every genotype.
+    PhasedCount {
+        /// Number of phased bits required.
+        expected: usize,
+        /// Length of the supplied bit vector.
+        got: usize,
+    },
+    /// A position lies outside the window span.
+    PositionOutOfWindow {
+        /// 0-based index of the offending site.
+        index: usize,
+        /// The offending position.
+        pos: u32,
+        /// Window start (0-based).
+        start: u64,
+        /// Window end (exclusive).
+        end: u64,
+    },
+    /// A genotype's missing bit disagrees with the `-1` allele sentinel.
+    MissingBitMismatch {
+        /// 0-based index of the offending genotype.
+        index: usize,
+    },
     /// v0.1 rejects allele indices above 1 (biallelic) and below -1.
-    AlleleOutOfRange { index: usize, allele: i8 },
+    AlleleOutOfRange {
+        /// 0-based index of the offending genotype.
+        index: usize,
+        /// The offending allele index.
+        allele: i8,
+    },
     /// Window span extends past the declared contig length.
-    EndBeyondContigLength { end: u64, contig_len: u64 },
+    EndBeyondContigLength {
+        /// The offending window end.
+        end: u64,
+        /// Declared contig length.
+        contig_len: u64,
+    },
     /// Positions must be strictly ascending.
-    PositionNotAscending { index: usize, prev: u32, pos: u32 },
+    PositionNotAscending {
+        /// 0-based index of the offending site.
+        index: usize,
+        /// The preceding position.
+        prev: u32,
+        /// The position that does not exceed it.
+        pos: u32,
+    },
 }
 
 impl fmt::Display for WindowError {
@@ -87,7 +149,9 @@ impl std::error::Error for WindowError {}
 /// Allele tallies at one site over a sample subset, per-allele deletion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AlleleCounts {
+    /// Called REF alleles among the requested samples.
     pub ref_count: u64,
+    /// Called ALT alleles among the requested samples.
     pub alt_count: u64,
     /// Number of missing alleles among the requested samples.
     pub missing: u64,
@@ -96,8 +160,11 @@ pub struct AlleleCounts {
 /// Per-site diploid genotype category counts over a sample subset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GenotypeCounts {
+    /// Individuals homozygous for the REF allele.
     pub hom_ref: u64,
+    /// Heterozygous individuals.
     pub het: u64,
+    /// Individuals homozygous for the ALT allele.
     pub hom_alt: u64,
     /// Individuals with both alleles called.
     pub n_called: u64,
@@ -106,12 +173,17 @@ pub struct GenotypeCounts {
 /// Decoded genotypes for one window of one contig.
 #[derive(Debug, Clone)]
 pub struct WindowBuffer {
+    /// Manifest the window was decoded under (site completeness).
     pub manifest: SiteCompleteness,
+    /// Contig the window is on.
     pub contig: ContigId,
+    /// Declared length of the contig in base pairs.
     pub contig_len: u32,
     /// 0-based, half-open `[start, end)`; `end` never exceeds `contig_len`.
     pub start: u64,
+    /// Window end (exclusive); never exceeds `contig_len`.
     pub end: u64,
+    /// Samples in the window.
     pub n_samples: u32,
     /// 0-based positions, ascending.
     pub pos: Vec<u32>,
@@ -149,10 +221,10 @@ impl WindowBuffer {
         if end <= start {
             return Err(WindowError::EmptyWindow { start, end });
         }
-        if end > contig_len as u64 {
+        if end > u64::from(contig_len) {
             return Err(WindowError::EndBeyondContigLength {
                 end,
-                contig_len: contig_len as u64,
+                contig_len: u64::from(contig_len),
             });
         }
         let n_sites = pos.len();
@@ -183,7 +255,7 @@ impl WindowBuffer {
             });
         }
         for (index, &p) in pos.iter().enumerate() {
-            if (p as u64) < start || (p as u64) >= end {
+            if u64::from(p) < start || u64::from(p) >= end {
                 return Err(WindowError::PositionOutOfWindow {
                     index,
                     pos: p,

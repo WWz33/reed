@@ -5,7 +5,7 @@ use crate::population::PopulationView;
 use crate::result::{DxyResult, PairCounts};
 use crate::window::WindowBuffer;
 
-use super::Unavailable;
+use super::{samples_of, Unavailable};
 
 /// Sealed dxy estimator definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +20,7 @@ pub enum DxyEstimator {
 }
 
 impl DxyEstimator {
+    /// Stable identifier for reports and golden tests.
     pub fn id(self) -> &'static str {
         match self {
             DxyEstimator::PerPairComparable => "dxy.per_pair_comparable",
@@ -27,6 +28,7 @@ impl DxyEstimator {
         }
     }
 
+    /// Literature the definition follows.
     pub fn citation(self) -> &'static str {
         match self {
             DxyEstimator::PerPairComparable => {
@@ -39,12 +41,13 @@ impl DxyEstimator {
         }
     }
 
+    /// Whether this estimator is computable under a manifest.
     pub fn availability(self, manifest: SiteCompleteness) -> Availability {
         use Ascertainment::{Complete, Filtered, Unknown};
         use Availability::{Available, Biased, Unavailable};
         match (self, manifest) {
-            (_, SiteCompleteness::WithInvariants) => Available,
-            (DxyEstimator::AccessibleBp, SiteCompleteness::VariantOnly(Complete)) => Available,
+            (_, SiteCompleteness::WithInvariants)
+            | (DxyEstimator::AccessibleBp, SiteCompleteness::VariantOnly(Complete)) => Available,
             (DxyEstimator::AccessibleBp, SiteCompleteness::VariantOnly(Filtered)) => Biased(
                 "filtered variant-only input: removed true variants are indistinguishable \
                  from invariant sites; the numerator is undercounted",
@@ -74,6 +77,9 @@ impl DxyEstimator {
 }
 
 /// Computes dxy between two groups.
+//
+// Counts are bounded by the window's alleles (≪ 2^53); the ratio cast is exact.
+#[allow(clippy::cast_precision_loss)]
 pub fn dxy(
     window: &WindowBuffer,
     pops: &PopulationView,
@@ -86,14 +92,15 @@ pub fn dxy(
             reason: "dxy requires two distinct groups",
         });
     }
+    let samples_a = samples_of(pops, window, group_a)?;
+    let samples_b = samples_of(pops, window, group_b)?;
+
     let bias = match estimator.availability(window.manifest) {
         Availability::Available => None,
         Availability::Biased(reason) => Some(reason),
         Availability::Unavailable(reason) => return Err(Unavailable { reason }),
     };
 
-    let samples_a = pops.samples(group_a);
-    let samples_b = pops.samples(group_b);
     let n_chrom_a = 2 * samples_a.len() as u64;
     let n_chrom_b = 2 * samples_b.len() as u64;
     let total_pairs = n_chrom_a * n_chrom_b;
