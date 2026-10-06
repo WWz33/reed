@@ -1,6 +1,7 @@
 //! `reed` CLI (`docs/architecture-spec.md` M0: clap; M4: `reed stats`).
 //! The `filter` and `qc` subcommands follow with M5/M6.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -73,9 +74,18 @@ enum Command {
     Stats {
         /// Input BGZF VCF (.vcf.gz)
         input: String,
-        /// Groups file: `sample<TAB>population` rows, first line skipped
+        /// Groups file: `sample<TAB>population` rows, no header (pixy
+        /// populations-file format)
         #[arg(short, long)]
         groups: String,
+        /// Skip group-file rows naming samples absent from the header
+        /// (default: error, pixy behavior)
+        #[arg(long)]
+        force_samples: bool,
+        /// Contig lengths as a .fai-style file (name, length), for inputs
+        /// whose header lacks ##contig lines
+        #[arg(long)]
+        contig_lengths_path: Option<String>,
         /// Window size in bp
         #[arg(long, default_value_t = 100_000)]
         size: u64,
@@ -144,6 +154,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let Command::Stats {
         input,
         groups,
+        force_samples,
+        contig_lengths_path,
         size,
         step,
         levels,
@@ -158,13 +170,41 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let header = record_header(Path::new(&input))?;
     let sample_names: Vec<String> =
         header.sample_names().iter().map(ToString::to_string).collect();
-    let (gt_groups, group_names) = assign_groups(Path::new(&groups), &sample_names)?;
+    let (gt_groups, group_names) =
+        assign_groups(Path::new(&groups), &sample_names, force_samples)?;
     eprintln!(
         "{} samples, {} groups: {}",
         sample_names.len(),
         group_names.len(),
         group_names.join(", ")
     );
+
+    let mut contig_lengths: HashMap<Vec<u8>, u64> = header
+        .contigs()
+        .iter()
+        .filter_map(|(name, contig)| {
+            contig
+                .length()
+                .and_then(|len| u64::try_from(len).ok())
+                .map(|len| (name.as_bytes().to_vec(), len))
+        })
+        .collect();
+    if let Some(path) = &contig_lengths_path {
+        for line in std::fs::read_to_string(Path::new(path))?.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut cols = line.split('\t');
+            let (Some(name), Some(len)) = (cols.next(), cols.next()) else {
+                continue;
+            };
+            let len: u64 = len
+                .parse()
+                .map_err(|_| format!("{path}: contig length for {name:?} is not a number"))?;
+            contig_lengths.insert(name.as_bytes().to_vec(), len);
+        }
+    }
 
     let request = StatsRequest {
         kinds: default_kinds(group_names.len()),
@@ -173,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         step,
         levels: Levels::parse(&levels)?,
         skip_empty,
+        contig_lengths,
     };
     let threads = threads
         .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))

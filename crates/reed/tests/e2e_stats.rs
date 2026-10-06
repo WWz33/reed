@@ -2,6 +2,7 @@
 //! determinism (§7.6), the contig-revisit refusal, `--skip-empty`
 //! (§8.5) and the window/contig/genome levels (§8.7).
 
+use std::collections::HashMap;
 use std::io::Write;
 
 use reed::stats::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
@@ -53,6 +54,15 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
 }
 
 fn request(kinds: Vec<StatKind>, levels: Levels, skip_empty: bool) -> StatsRequest {
+    request_with(kinds, levels, skip_empty, HashMap::new())
+}
+
+fn request_with(
+    kinds: Vec<StatKind>,
+    levels: Levels,
+    skip_empty: bool,
+    contig_lengths: HashMap<Vec<u8>, u64>,
+) -> StatsRequest {
     StatsRequest {
         kinds,
         gt_groups: vec![Some(0), Some(1), Some(2)],
@@ -60,6 +70,7 @@ fn request(kinds: Vec<StatKind>, levels: Levels, skip_empty: bool) -> StatsReque
         step: 100,
         levels,
         skip_empty,
+        contig_lengths,
     }
 }
 
@@ -224,14 +235,34 @@ fn assign_groups_maps_header_order() {
     let dir = std::env::temp_dir().join(format!("reed-groups-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let path = dir.join("groups.tsv");
-    std::fs::write(&path, "sample\tpop\ns1\tpop2\ns0\tpop1\ns2\tpop1\n")
+    // Pixy populations-file format: two columns, no header row.
+    std::fs::write(&path, "s1\tpop2\ns0\tpop1\ns2\tpop1\n")
         .expect("invariant: write");
     let (gt_groups, names) =
-        assign_groups(&path, &["s0".into(), "s1".into(), "s2".into(), "s9".into()])
+        assign_groups(&path, &["s0".into(), "s1".into(), "s2".into(), "s9".into()], false)
             .expect("invariant: parse");
     // First appearance order: pop2 (s1) then pop1 (s0, s2); s9 unlisted.
     assert_eq!(names, ["pop2", "pop1"]);
     assert_eq!(gt_groups, [Some(1), Some(0), Some(1), None]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Regression (01-review D9): a file row naming a sample absent from the
+/// header is an error (pixy behavior), not a silent skip; --force-samples
+/// downgrades it to a skip. A header row is DATA now: `sample` is not a
+/// real sample, so the header form must fail too.
+#[test]
+fn assign_groups_rejects_unknown_samples() {
+    let dir = std::env::temp_dir().join(format!("reed-groups-unknown-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("groups.tsv");
+    std::fs::write(&path, "s0\tpop1\nghost\tpop2\n").expect("invariant: write");
+    let err = assign_groups(&path, &["s0".into(), "s1".into()], false).unwrap_err();
+    assert!(err.to_string().contains("ghost"), "{err}");
+    let (gt_groups, names) =
+        assign_groups(&path, &["s0".into(), "s1".into()], true).expect("invariant: forced");
+    assert_eq!(names, ["pop1"]);
+    assert_eq!(gt_groups, [Some(0), None]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -253,4 +284,98 @@ fn default_kinds_covers_every_family() {
     sorted.sort();
     sorted.dedup();
     assert_eq!(sorted.len(), keys.len());
+}
+
+/// Regression (01-review D7): a contig without a declared length must fail
+/// the run (the trailing-window clip and per-bp denominators would be
+/// fabricated from the last position otherwise), and --contig-lengths must
+/// repair it with identical window values.
+#[test]
+fn missing_contig_length_is_an_error_and_lengths_file_repairs_it() {
+    // Same records as fixture_text() but the header omits ##contig lengths.
+    let text = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1>
+##contig=<ID=chr2>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t0/0
+chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
+";
+    let path = write_fixture("d7-no-length", &text);
+    let gt_groups = vec![Some(0), Some(1), Some(2)];
+
+    let err = run_stats(
+        &path,
+        request(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false),
+        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+    )
+    .expect_err("invariant: missing length is refused");
+    assert!(err.to_string().contains("no ##contig length"), "{err}");
+
+    // The .fai-style supplement repairs it: same values as a declared run.
+    let mut lengths = HashMap::new();
+    lengths.insert(b"chr1".to_vec(), 1_000_u64);
+    let with_file = run_stats(
+        &path,
+        request_with(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false, lengths),
+        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+    )
+    .expect("invariant: lengths supplement works");
+
+    let declared = write_fixture("d7-declared", &fixture_text());
+    let reference = run_stats(
+        &declared,
+        request(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false),
+        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+    )
+    .expect("invariant: declared run");
+    assert_eq!(
+        with_file.tsv, reference.tsv,
+        "supplemented lengths must match a header-declared run"
+    );
+    let _ = gt_groups;
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+    let _ = std::fs::remove_dir_all(declared.parent().expect("invariant: temp dir path"));
+}
+
+/// Regression (01-review D8): non-ascending positions and positions beyond
+/// the declared contig length are refused instead of silently dropping
+/// sites into already-emitted bins.
+#[test]
+fn position_contract_violations_are_refused() {
+    let unsorted = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+chr1\t80\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
+chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
+";
+    let path = write_fixture("d8-unsorted", &unsorted);
+    let err = run_stats(
+        &path,
+        request(vec![StatKind::Pi { group: 0, per_bp: false }], Levels::default(), false),
+        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+    )
+    .expect_err("invariant: unsorted input is refused");
+    assert!(err.to_string().contains("ascending"), "{err}");
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+
+    let beyond = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
+";
+    let path = write_fixture("d8-beyond", &beyond);
+    let err = run_stats(
+        &path,
+        request(vec![StatKind::Pi { group: 0, per_bp: false }], Levels::default(), false),
+        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+    )
+    .expect_err("invariant: position beyond the contig length is refused");
+    assert!(err.to_string().contains("exceeds contig"), "{err}");
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }

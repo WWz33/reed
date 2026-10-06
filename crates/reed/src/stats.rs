@@ -124,6 +124,11 @@ pub struct StatsRequest {
     pub levels: Levels,
     /// Skip windows no site fell into (§8.5 `--skip-empty`).
     pub skip_empty: bool,
+    /// Extra contig lengths (`--contig-lengths`, .fai-style), merged over
+    /// the header's `##contig` declarations. Trailing-window clipping needs
+    /// a length for every contig with records and is never fabricated
+    /// (01-review D7).
+    pub contig_lengths: HashMap<Vec<u8>, u64>,
 }
 
 /// The run's output and counters.
@@ -143,39 +148,44 @@ pub struct StatsReport {
     pub elapsed: Duration,
 }
 
-/// Parses a `sample<TAB>population` groups file (first line skipped as a
-/// header) and maps the VCF header's sample names to group indices in
-/// first-appearance order. Samples absent from the file get `None`.
+/// Parses a `sample<TAB>population` groups file — pixy's populations-file
+/// convention: two columns, no header row, `#` comments allowed
+/// (reed_core::GroupTable::from_tsv). A file row naming a sample absent
+/// from the VCF header is an error (pixy behavior) unless `force_samples`,
+/// which skips it with a warning. Group ids follow first-appearance order.
 ///
 /// # Errors
 ///
-/// [`EngineError::Io`] when the file cannot be read.
+/// [`EngineError::Job`] for an unreadable file, a malformed row, or an
+/// unknown sample (without `force_samples`).
 pub fn assign_groups(
     groups_path: &Path,
     sample_names: &[String],
+    force_samples: bool,
 ) -> Result<(Vec<Option<u32>>, Vec<String>), EngineError> {
-    let text =
-        std::fs::read_to_string(groups_path).map_err(|err| EngineError::Io(err.to_string()))?;
-    let mut index: HashMap<&str, u32> = HashMap::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut by_sample: HashMap<&str, u32> = HashMap::new();
-    for line in text.lines().skip(1) {
-        let mut parts = line.split('\t');
-        let (Some(sample), Some(population)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        let next = u32::try_from(names.len())
+    let samples = reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
+        .map_err(|err| EngineError::Job(err.to_string()))?;
+    let table = reed_core::group::GroupTable::from_tsv(
+        groups_path,
+        &samples,
+        reed_core::group::GroupFileOptions { ignore_missing_samples: force_samples },
+    )
+    .map_err(|err| EngineError::Job(err.to_string()))?;
+    let mut gt_groups: Vec<Option<u32>> = vec![None; sample_names.len()];
+    let mut names: Vec<String> = Vec::with_capacity(table.n_groups());
+    for (group_idx, group) in table.iter().enumerate() {
+        names.push(group.name.clone());
+        let group_idx = u32::try_from(group_idx)
             .map_err(|_| EngineError::Job("more than u32::MAX groups".into()))?;
-        let group = *index.entry(population).or_insert_with(|| {
-            names.push(population.to_string());
-            next
-        });
-        by_sample.insert(sample, group);
+        for (word_idx, &word) in group.mask.words().iter().enumerate() {
+            let mut word = word;
+            while word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                gt_groups[word_idx * 64 + bit] = Some(group_idx);
+                word &= word - 1;
+            }
+        }
     }
-    let gt_groups = sample_names
-        .iter()
-        .map(|name| by_sample.get(name.as_str()).copied())
-        .collect();
     Ok((gt_groups, names))
 }
 
@@ -202,6 +212,9 @@ pub struct StatsJob {
     n_groups: usize,
     gt_groups: Arc<[Option<u32>]>,
     seed: Arc<[StatAcc]>,
+    /// Declared contig lengths (header + `--contig-lengths`); positions
+    /// beyond the declared length are rejected (01-review D8).
+    contig_len: Arc<HashMap<Vec<u8>, u64>>,
 }
 
 impl ChunkJob for StatsJob {
@@ -287,6 +300,20 @@ impl StatsJob {
             let here = locus(0);
             return Err(EngineError::Job(format!("{here}: POS is zero")));
         };
+        // Input contract (04-algorithms.md §6): positions ascending within a
+        // contig, never beyond the declared length.
+        if let Some(&len) = self.contig_len.get(chrom) {
+            if pos1 > len {
+                return Err(EngineError::Job(
+                    reed_core::CoreError::PositionBeyondContigLength {
+                        contig_name: String::from_utf8_lossy(chrom).into_owned(),
+                        pos1,
+                        len_bp: len,
+                    }
+                    .to_string(),
+                ));
+            }
+        }
         if memchr::memchr(b',', lr.alts()).is_some() {
             partial.n_multiallelic_skipped += 1;
             return Ok(());
@@ -316,9 +343,18 @@ impl StatsJob {
         let segment = current
             .as_mut()
             .expect("invariant: segment opened for this contig above");
+        if pos0 < segment.last_pos0 {
+            return Err(EngineError::Job(
+                reed_core::CoreError::PositionNotAscending {
+                    prev_pos0: segment.last_pos0,
+                    pos0,
+                }
+                .to_string(),
+            ));
+        }
         segment.bins.push_site(pos0, row, any_alt);
         segment.first_pos0 = segment.first_pos0.min(pos0);
-        segment.last_pos0 = segment.last_pos0.max(pos0);
+        segment.last_pos0 = pos0;
         partial.n_records += 1;
         Ok(())
     }
@@ -379,6 +415,18 @@ impl OrderedSink<StatsPartial> for StatsSink {
         for mut segment in std::mem::take(&mut partial.segments) {
             let mut current = match self.current.take() {
                 Some(mut cur) if cur.name == segment.contig => {
+                    // Cross-chunk seam (04-algorithms.md §6): a later chunk
+                    // may not rewind into positions this sink already
+                    // emitted windows for.
+                    if segment.first_pos0 < cur.last_pos0 {
+                        return Err(EngineError::Job(
+                            reed_core::CoreError::PositionNotAscending {
+                                prev_pos0: cur.last_pos0,
+                                pos0: segment.first_pos0,
+                            }
+                            .to_string(),
+                        ));
+                    }
                     segment.bins.fold(&mut cur.totals);
                     cur.bins.merge_bins(&mut segment.bins);
                     cur.first_pos0 = cur.first_pos0.min(segment.first_pos0);
@@ -446,17 +494,14 @@ impl StatsSink {
 
     /// Emits every window that the watermark proves complete: with sorted
     /// input, no future site can land in `[s, s+size)` once the last seen
-    /// position reaches `s+size−1` (§8.3). Consumed bins are freed.
+    /// position reaches `s+size−1` (§8.3). Consumed bins are freed. The
+    /// contig length does not gate this loop — only the trailing windows
+    /// in `close_contig` need it.
     fn emit_complete_windows(&mut self, cur: &mut CurrentContig) -> Result<(), EngineError> {
-        let len = self
-            .contig_len
-            .get(&cur.name)
-            .copied()
-            .unwrap_or(cur.last_pos0 + 1);
         let watermark = cur.last_pos0.saturating_add(1);
         let mut s = cur.next_start;
-        while s < len && s.saturating_add(self.size) <= watermark {
-            let end = s.saturating_add(self.size).min(len);
+        while s.saturating_add(self.size) <= watermark {
+            let end = s + self.size;
             let bins = (s / self.width)..end.div_ceil(self.width);
             if !(self.skip_empty && !cur.bins.any_bin_in(bins.clone())) {
                 let accs = cur.bins.finish_bins(bins);
@@ -478,8 +523,9 @@ impl StatsSink {
     }
 
     /// Closes a contig: emits the trailing windows (start at or before the
-    /// last site, clipped to the contig length — legacy anchoring §5.9),
-    /// then the contig-level row (§8.7), then folds into the genome total.
+    /// last site, clipped to the contig length — the contig length is
+    /// required here and is never fabricated, 01-review D7), then the
+    /// contig-level row (§8.7), then folds into the genome total.
     fn close_contig(&mut self, mut cur: CurrentContig) -> Result<(), EngineError> {
         if self.closed.iter().any(|closed| closed == &cur.name) {
             return Err(EngineError::Job(format!(
@@ -488,11 +534,12 @@ impl StatsSink {
             )));
         }
         self.closed.push(cur.name.clone());
-        let len = self
-            .contig_len
-            .get(&cur.name)
-            .copied()
-            .unwrap_or(cur.last_pos0 + 1);
+        let len = self.contig_len.get(&cur.name).copied().ok_or_else(|| {
+            EngineError::Job(format!(
+                "contig {} has no ##contig length; window clipping needs it (pass --contig-lengths)",
+                String::from_utf8_lossy(&cur.name)
+            ))
+        })?;
         let contig = String::from_utf8_lossy(&cur.name).into_owned();
         let mut s = cur.next_start;
         while s < len && s <= cur.last_pos0 {
@@ -590,19 +637,26 @@ pub fn run_stats(
             header.n_samples()
         )));
     }
-    let contig_len: HashMap<Vec<u8>, u64> = header
-        .contig_names
-        .iter()
-        .map(String::as_bytes)
-        .zip(header.contig_lengths.iter().copied())
-        .filter_map(|(name, len)| len.map(|len| (name.to_vec(), len)))
-        .collect();
+    let contig_len: Arc<HashMap<Vec<u8>, u64>> = Arc::new({
+        let mut map: HashMap<Vec<u8>, u64> = request.contig_lengths;
+        for (name, len) in header
+            .contig_names
+            .iter()
+            .zip(header.contig_lengths.iter().copied())
+        {
+            if let Some(len) = len {
+                map.insert(name.as_bytes().to_vec(), len);
+            }
+        }
+        map
+    });
 
     let job = StatsJob {
         width: binning.width(),
         n_groups,
         gt_groups: request.gt_groups.into(),
         seed: accs.clone().into(),
+        contig_len: Arc::clone(&contig_len),
     };
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
@@ -613,7 +667,7 @@ pub fn run_stats(
         seed: accs.clone(),
         levels: request.levels,
         skip_empty: request.skip_empty,
-        contig_len,
+        contig_len: (*contig_len).clone(),
         current: None,
         closed: Vec::new(),
         genome_totals: accs,
