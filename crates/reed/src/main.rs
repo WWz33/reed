@@ -50,9 +50,10 @@ enum Command {
         /// Output VCF (.vcf.gz) — omit for plain VCF on the path/stdout
         #[arg(short, long)]
         out: Option<String>,
-        /// Write a tabix index next to the output
-        #[arg(long)]
-        write_index: bool,
+        /// Write an index next to the output: csi (default) or tbi
+        #[arg(short = 'W', long = "write-index",
+              value_name = "csi|tbi", num_args = 0..=1, default_missing_value = "csi")]
+        write_index: Option<String>,
         /// BGZF compression level (default 6)
         #[arg(long, default_value_t = 6)]
         compress_level: u8,
@@ -201,7 +202,7 @@ struct FilterCli {
     spec: Option<String>,
     conf: Option<String>,
     out: Option<String>,
-    write_index: bool,
+    write_index: Option<String>,
     compress_level: u8,
     report: Option<String>,
     strategy: Option<String>,
@@ -245,7 +246,7 @@ fn run_filter_cli(
     let opts = reed::filter::FilterOptions {
         threads,
         output: out.map(PathBuf::from),
-        write_index,
+        write_index: reed::filter::WriteIndex::parse(write_index.as_deref())?,
         compress_level,
         strategy,
         command_line,

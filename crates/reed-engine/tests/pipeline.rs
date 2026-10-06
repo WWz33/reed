@@ -181,6 +181,51 @@ fn output_is_invariant_across_thread_counts() {
     assert!(expected.n_chunks > 2, "test must span multiple chunks");
 }
 
+/// Regression (01-review D1): a slow chunk must not let later chunk ids
+/// overflow the reorder window. The reducer used to pull finished results
+/// into the ring while chunk 0 was still running, freeing result-channel
+/// slots until ids exceeded the ring capacity and the `insert` assert
+/// panicked. With real tickets the reader blocks at the token budget, so
+/// the run completes instead.
+#[test]
+fn slow_first_chunk_does_not_overflow_the_reorder_window() {
+    struct DelayFirstJob;
+    impl ChunkJob for DelayFirstJob {
+        type Partial = Vec<Vec<u8>>;
+        type Scratch = ();
+        fn run_chunk(
+            &self,
+            chunk: &ChunkBytes,
+            body: &[u8],
+            _scratch: &mut Self::Scratch,
+        ) -> Result<Self::Partial, EngineError> {
+            if chunk.id.get() == 0 {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Ok(lines_of(body))
+        }
+        fn run_seam(
+            &self,
+            _id: ChunkId,
+            line: &[u8],
+            _scratch: &mut Self::Scratch,
+        ) -> Result<Self::Partial, EngineError> {
+            Ok(lines_of(line))
+        }
+    }
+    // Far more chunks than the old window (tickets + workers), so the
+    // fast chunks would overflow the ring while chunk 0 sleeps.
+    let text = fixture_text(8_000);
+    let chunks = make_chunks(&text, 500);
+    assert!(chunks.len() >= 60, "test needs many chunks, got {}", chunks.len());
+    let n_chunks = chunks.len() as u64;
+    let mut source = VecSource { chunks: chunks.into_iter() };
+    let (_h, signal) = abort_channel();
+    let report = run(&mut source, &DelayFirstJob, VecSink::default(), &budget(8), &signal)
+        .expect("invariant: slow chunk must not overflow the reorder window");
+    assert_eq!(report.n_chunks, n_chunks);
+}
+
 #[test]
 fn seam_records_are_counted_exactly_once() {
     // 50 records compressed as one block each is too coarse; 100-byte

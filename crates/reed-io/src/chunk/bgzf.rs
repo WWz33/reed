@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use reed_core::ChunkId;
 
-use crate::bgzf::block::{is_eof_block, parse_block_size, BGZF_HEADER_LEN};
+use crate::bgzf::block::{is_empty_member, is_eof_block, parse_block_size, BGZF_HEADER_LEN};
 use crate::chunk::{ChunkBytes, CHUNK_TARGET_COMPRESSED};
 use crate::error::IoError;
 
@@ -22,6 +22,11 @@ pub struct BgzfChunkReader<R: Read> {
     /// Offset of the first record inside that block's inflated text.
     first_in_block_offset: u64,
     header_done: bool,
+    /// Whether the canonical EOF marker was the last block read (htslib
+    /// warns when a stream ends without one).
+    last_was_eof_marker: bool,
+    /// Whether the missing-EOF-marker warning already fired (once per run).
+    warned_missing_eof: bool,
 }
 
 /// Result of the header scan: the accumulated header text plus where
@@ -53,44 +58,64 @@ impl<R: Read> BgzfChunkReader<R> {
             pending_block: None,
             first_in_block_offset: 0,
             header_done: false,
+            last_was_eof_marker: false,
+            warned_missing_eof: false,
         }
     }
 
-    /// Reads one BGZF block (header + payload); `None` at the EOF block or
-    /// a clean end of stream.
+    /// Reads one BGZF block (header + payload); `None` at the end of the
+    /// underlying stream.
+    ///
+    /// Empty members (ISIZE = 0, including the canonical EOF marker) are
+    /// skipped — concatenated BGZF files carry one at every join, and the
+    /// stream ends only at the underlying EOF (01-review D2). A clean end
+    /// without a trailing EOF marker warns once (htslib behavior).
     fn read_block(&mut self) -> Result<Option<Vec<u8>>, IoError> {
-        let mut header = [0_u8; BGZF_HEADER_LEN];
-        let mut filled = 0;
-        while filled < BGZF_HEADER_LEN {
-            match self.inner.read(&mut header[filled..]) {
-                Ok(0) => {
-                    if filled == 0 {
-                        return Ok(None);
+        loop {
+            let mut header = [0_u8; BGZF_HEADER_LEN];
+            let mut filled = 0;
+            while filled < BGZF_HEADER_LEN {
+                match self.inner.read(&mut header[filled..]) {
+                    Ok(0) => {
+                        if filled == 0 {
+                            self.warn_if_missing_eof_marker();
+                            return Ok(None);
+                        }
+                        return Err(IoError::MalformedBgzf {
+                            locus: None,
+                            reason: "stream ends inside a block header",
+                        });
                     }
-                    return Err(IoError::MalformedBgzf {
-                        locus: None,
-                        reason: "stream ends inside a block header",
-                    });
+                    Ok(n) => filled += n,
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(err) => return Err(err.into()),
                 }
-                Ok(n) => filled += n,
-                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(err) => return Err(err.into()),
             }
+            let Some(total) = parse_block_size(&header) else {
+                return Err(IoError::MalformedBgzf {
+                    locus: None,
+                    reason: "not a BGZF block header (trailing garbage after the last block?)",
+                });
+            };
+            let mut block = Vec::with_capacity(total);
+            block.extend_from_slice(&header);
+            block.resize(total, 0);
+            self.inner.read_exact(&mut block[BGZF_HEADER_LEN..])?;
+            if is_empty_member(&block) {
+                self.last_was_eof_marker = is_eof_block(&block);
+                continue;
+            }
+            self.last_was_eof_marker = false;
+            return Ok(Some(block));
         }
-        let Some(total) = parse_block_size(&header) else {
-            return Err(IoError::MalformedBgzf {
-                locus: None,
-                reason: "not a BGZF block header (trailing garbage after the last block?)",
-            });
-        };
-        let mut block = Vec::with_capacity(total);
-        block.extend_from_slice(&header);
-        block.resize(total, 0);
-        self.inner.read_exact(&mut block[BGZF_HEADER_LEN..])?;
-        if is_eof_block(&block) {
-            return Ok(None);
+    }
+
+    /// Warns once when the stream ended without the canonical EOF marker.
+    fn warn_if_missing_eof_marker(&mut self) {
+        if !self.warned_missing_eof && self.header_done && !self.last_was_eof_marker {
+            self.warned_missing_eof = true;
+            eprintln!("reed: warning: BGZF stream ends without an EOF marker");
         }
-        Ok(Some(block))
     }
 
     /// Reads blocks, inflating as it goes, until the `#CHROM` line ends.
@@ -290,5 +315,112 @@ mod tests {
         assert!(fragment.is_none());
         assert!(n_seam_bytes > 0, "test must actually exercise seams");
         assert_eq!(n_record_lines, 100);
+    }
+
+    /// Compresses `text` into whole blocks of `block_data` bytes, each cut
+    /// at block boundaries, plus a trailing EOF marker. Returns the block
+    /// list *without* the marker so tests can splice it anywhere.
+    fn compress_blocks(text: &[u8], block_data: usize) -> Vec<Vec<u8>> {
+        let mut deflater = Deflater::new(6).expect("invariant: level 6 is valid");
+        let mut blocks = Vec::new();
+        for piece in text.chunks(block_data) {
+            let mut block = Vec::new();
+            deflater.deflate_block(piece, &mut block).expect("invariant: test block fits");
+            blocks.push(block);
+        }
+        blocks
+    }
+
+    fn record_text(n_records: usize) -> Vec<u8> {
+        let mut text = header_text(2);
+        for i in 0..n_records {
+            text.extend_from_slice(
+                format!("chr1\t{}\t.\tA\tG\t1\tPASS\t.\tGT\t0/0\t0/1\n", 100 + i * 7).as_bytes(),
+            );
+        }
+        text
+    }
+
+    /// Counts complete `chr1` record lines a full scan of `stream` yields.
+    fn count_records_in_stream(stream: &[u8], chunk_target: u64) -> usize {
+        let mut reader = BgzfChunkReader::with_chunk_target(Cursor(stream.to_vec()), chunk_target);
+        let mut inflater = crate::bgzf::inflate::Inflater::new();
+        let _ = reader.scan_header(&mut inflater).expect("invariant: header present");
+        let mut n = 0_usize;
+        let mut scratch = Vec::new();
+        let mut fragment: Vec<u8> = Vec::new();
+        while let Some(chunk) = reader.next_chunk().expect("invariant: chunking") {
+            let view = inflate_chunk(&chunk, &mut inflater, &mut scratch).expect("invariant: inflate");
+            let text = view.text;
+            let mut all = std::mem::take(&mut fragment);
+            all.extend_from_slice(text);
+            let mut lines = all.split(|&b| b == b'\n').collect::<Vec<_>>();
+            // The final piece may be an incomplete record; keep it pending
+            // unless it ends with a newline.
+            fragment = if text.last() == Some(&b'\n') {
+                Vec::new()
+            } else {
+                lines.pop().unwrap_or_default().to_vec()
+            };
+            n += lines.iter().filter(|l| l.starts_with(b"chr1\t")).count();
+        }
+        assert!(fragment.is_empty(), "stream ends mid-record");
+        n
+    }
+
+    /// Regression (01-review D2): the EOF marker and empty members may sit
+    /// anywhere in a concatenated stream — mid-chunk or at a chunk start —
+    /// and must never terminate the read. Every splice position of the EOF
+    /// marker across the whole stream must still yield every record.
+    #[test]
+    fn empty_members_anywhere_never_end_the_stream() {
+        let text = record_text(60);
+        let blocks = compress_blocks(&text, 24);
+        assert!(blocks.len() >= 4, "test needs several blocks");
+        let n_records = 60;
+
+        for splice in 0..=blocks.len() {
+            let mut stream: Vec<u8> = Vec::new();
+            for (i, block) in blocks.iter().enumerate() {
+                if i == splice {
+                    stream.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+                    // An extra non-canonical empty member at the same spot.
+                    let mut empty = Vec::new();
+                    Deflater::new(6)
+                        .expect("invariant: level 6 is valid")
+                        .deflate_block(b"", &mut empty)
+                        .expect("invariant: empty member");
+                    stream.extend_from_slice(&empty);
+                }
+                stream.extend_from_slice(block);
+            }
+            if splice == blocks.len() {
+                stream.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+            }
+            // Two chunk targets: block-aligned and not, so the empty block
+            // also lands at a chunk *start* (the case that used to end the
+            // whole stream).
+            assert_eq!(
+                count_records_in_stream(&stream, 40),
+                n_records,
+                "EOF marker spliced before block {splice} (chunk target 40)"
+            );
+            assert_eq!(
+                count_records_in_stream(&stream, 72),
+                n_records,
+                "EOF marker spliced before block {splice} (chunk target 72)"
+            );
+        }
+    }
+
+    /// Regression (01-review D2): `cat a.vcf.gz b.vcf.gz` — two complete
+    /// BGZF files joined — must be read end to end.
+    #[test]
+    fn concatenated_files_read_through_every_join() {
+        let a = record_text(30);
+        let b = record_text(30);
+        let mut stream = compress_lines(&[&a], 48);
+        stream.extend_from_slice(&compress_lines(&[&b], 48));
+        assert_eq!(count_records_in_stream(&stream, 64), 60);
     }
 }

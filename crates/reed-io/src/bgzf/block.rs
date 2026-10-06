@@ -26,6 +26,15 @@ pub fn is_eof_block(block: &[u8]) -> bool {
     block == EOF_BLOCK
 }
 
+/// Whether `block` is an empty gzip member (ISIZE = 0). Empty members carry
+/// no data; BGZF files concatenated with `cat` (or `bcftools concat
+/// --naive`) place the 28-byte EOF marker at every join, so readers must
+/// skip them instead of ending the stream (01-review D2).
+#[must_use]
+pub fn is_empty_member(block: &[u8]) -> bool {
+    block.len() >= 8 && block[block.len() - 4..] == [0, 0, 0, 0]
+}
+
 /// Parses the fixed header; returns the **total** block size (BSIZE + 1).
 ///
 /// Returns `None` when the bytes are not a BGZF header (callers treat this

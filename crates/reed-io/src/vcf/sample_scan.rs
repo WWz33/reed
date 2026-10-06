@@ -320,7 +320,14 @@ fn parse_allele(token: &[u8], line: &LineRef<'_>, pos1: u64) -> Result<Option<u1
                 reason: "GT allele contains a non-digit",
             });
         }
-        value = value * 10 + u16::from(b - b'0');
+        // 5 digits can overflow u16 (99_999 > 65_535): reject the wrap.
+        value = value
+            .checked_mul(10)
+            .and_then(|v| v.checked_add(u16::from(b - b'0')))
+            .ok_or(IoError::MalformedRecord {
+                locus: locus_of(line, pos1),
+                reason: "GT allele index exceeds u16",
+            })?;
     }
     Ok(Some(value))
 }
@@ -454,6 +461,15 @@ mod tests {
         let err = scanner
             .scan_record(&line, 0, 1, &mut planes, &mut [], &policies(), &mut counters)
             .unwrap_err();
+        assert!(matches!(err, IoError::MalformedRecord { .. }));
+    }
+
+    #[test]
+    fn allele_index_overflow_is_rejected() {
+        let line = LineRef::parse(b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/0\n").expect("invariant");
+        // 65_535 fits; 70_000 must error instead of wrapping.
+        assert_eq!(parse_allele(b"65535", &line, 1).expect("invariant: fits u16"), Some(65_535));
+        let err = parse_allele(b"70000", &line, 1).unwrap_err();
         assert!(matches!(err, IoError::MalformedRecord { .. }));
     }
 

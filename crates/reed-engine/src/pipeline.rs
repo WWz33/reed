@@ -272,30 +272,46 @@ where
     let tickets = budget.tickets();
     let (chunk_tx, chunk_rx) = bounded::<ChunkBytes>(tickets);
     let (result_tx, result_rx) = bounded::<WorkerMsg<J::Partial>>(tickets);
+    // Real tickets (03 §4.1, fixes 01-review D1): the reader acquires one
+    // permit *before* cutting a chunk, and the reducer returns it only after
+    // the chunk is delivered in order. The number of chunks cut but not yet
+    // delivered is therefore bounded by `tickets`, so every in-flight id
+    // stays inside `[expected, expected + tickets)` and the reorder ring of
+    // the same capacity can never overflow.
+    let (ticket_tx, ticket_rx) = bounded::<()>(tickets);
+    for _ in 0..tickets {
+        // Capacity equals the token count, so these never block.
+        let _ = ticket_tx.send(());
+    }
     let shared = Arc::new(Shared {
         first: Arc::clone(first),
         in_flight: AtomicU64::new(0),
         in_flight_peak: AtomicU64::new(0),
     });
     let mem_budget_bytes = budget.mem.bytes;
-    // Ticket window (§7.4): the bounded chunk channel caps queued chunks at
-    // `tickets`; each worker may hold one more between recv and send, so
-    // in-flight chunks never exceed `tickets + n_workers` — the reorder ring
-    // is sized for that bound.
-    let window = tickets + n_workers;
+    let window = tickets;
     let worker_busy_ns = Arc::new(AtomicU64::new(0));
 
     let scope_result = std::thread::scope(|scope| -> Result<_, EngineError> {
-        // Reader: cut chunks; sends block when the ticket window is full.
-        // Every blocking point races abort, and an abort/error breaks the
-        // loop so the sender disconnects and unblocks everyone downstream.
+        // Reader: acquire a ticket, then cut one chunk; sends block when
+        // the ticket window is full. Every blocking point races abort, and
+        // an abort/error breaks the loop so the sender disconnects and
+        // unblocks everyone downstream.
         scope.spawn({
             let chunk_tx = chunk_tx.clone();
             let first = Arc::clone(first);
             let shared = Arc::clone(&shared);
+            let ticket_rx = ticket_rx.clone();
             move || {
                 loop {
                     if first.failed() {
+                        break;
+                    }
+                    let ticket = crossbeam_channel::select! {
+                        recv(abort.receiver()) -> _ => false,
+                        recv(ticket_rx) -> token => token.is_ok(),
+                    };
+                    if !ticket || first.failed() {
                         break;
                     }
                     let chunk = match source.next_chunk() {
@@ -442,6 +458,9 @@ where
                     return Err(err);
                 }
                 shared.release_in_flight(msg.compressed_bytes);
+                // Delivered in order: the chunk's ticket returns to the
+                // reader (03 §4.1). Never blocks — returns ≤ acquisitions.
+                let _ = ticket_tx.send(());
                 fragment = finish_fragment(fragment, msg.tail.take());
                 delivered += 1;
             }
@@ -467,6 +486,7 @@ where
                             )?;
                             sink.accept(id, &mut msg.partial)?;
                             shared.release_in_flight(msg.compressed_bytes);
+                            let _ = ticket_tx.send(());
                             fragment = finish_fragment(fragment, msg.tail.take());
                             delivered += 1;
                         }

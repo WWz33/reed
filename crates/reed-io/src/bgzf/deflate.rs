@@ -1,7 +1,7 @@
 //! libdeflate-based BGZF block compression (`docs/architecture-spec.md`
 //! §6.6): one call produces one complete BGZF member.
 
-use crate::bgzf::block::EOF_BLOCK;
+use crate::bgzf::block::{BGZF_MAX_BLOCK_DATA, EOF_BLOCK};
 use crate::error::IoError;
 
 /// Worker-local compressor: allocate once per worker, reuse per block.
@@ -31,9 +31,17 @@ impl Deflater {
     ///
     /// # Errors
     ///
-    /// [`IoError::MalformedBgzf`] if libdeflate reports an output overflow
-    /// (input too large / incompressible beyond the member ceiling).
+    /// [`IoError::MalformedBgzf`] when `src` exceeds
+    /// [`BGZF_MAX_BLOCK_DATA`] — writing it would corrupt the member's
+    /// 16-bit BSIZE (01-review D11) — or if libdeflate reports an output
+    /// overflow.
     pub fn deflate_block(&mut self, src: &[u8], dst: &mut Vec<u8>) -> Result<usize, IoError> {
+        if src.len() > BGZF_MAX_BLOCK_DATA {
+            return Err(IoError::MalformedBgzf {
+                locus: None,
+                reason: "block data exceeds the BGZF 65,280-byte member limit",
+            });
+        }
         let start = dst.len();
         // Raw deflate payload with libdeflate's own worst-case bound, plus
         // the 18-byte header and the 8-byte CRC/ISIZE trailer.
@@ -52,7 +60,10 @@ impl Deflater {
         dst[start..start + 18].copy_from_slice(&[
             0x1f, 0x8b, 0x08, 0x04, 0, 0, 0, 0, 0, 0xff, 0x06, 0x00, b'B', b'C', 0x02, 0x00, 0, 0,
         ]);
-        let bsize = (total - 1) as u16;
+        let bsize = u16::try_from(total - 1).map_err(|_| IoError::MalformedBgzf {
+            locus: None,
+            reason: "BGZF block size overflows the 16-bit BSIZE field",
+        })?;
         dst[start + 16..start + 18].copy_from_slice(&bsize.to_le_bytes());
         // Trailer: CRC32 of the uncompressed data + ISIZE mod 2^32.
         let crc = libdeflater::crc32(src);
@@ -74,6 +85,21 @@ pub const fn eof_block() -> [u8; 28] {
 mod tests {
     use super::super::inflate::Inflater;
     use super::*;
+
+    #[test]
+    fn oversize_input_is_rejected_not_truncated() {
+        // Regression (01-review D11): 65,281 uncompressed bytes used to be
+        // written with a truncated BSIZE, corrupting the block.
+        let mut deflater = Deflater::new(6).expect("invariant: level 6 is valid");
+        let mut dst = Vec::new();
+        let src = vec![b'x'; BGZF_MAX_BLOCK_DATA + 1];
+        let err = deflater.deflate_block(&src, &mut dst).unwrap_err();
+        assert!(matches!(err, IoError::MalformedBgzf { .. }), "got {err:?}");
+        // Exactly at the limit still works.
+        dst.clear();
+        let src = vec![b'x'; BGZF_MAX_BLOCK_DATA];
+        deflater.deflate_block(&src, &mut dst).expect("invariant: max-size block fits");
+    }
 
     #[test]
     fn block_structure_is_self_consistent() {

@@ -128,7 +128,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
     FilterOptions {
         threads: 4,
         output: Some(out.to_path_buf()),
-        write_index: false,
+        write_index: reed::filter::WriteIndex::None,
         compress_level: 6,
         strategy,
         command_line: "test".to_string(),
@@ -439,5 +439,171 @@ fn sketch_funnel_matches_the_single_pass_funnel() {
     assert_eq!(single.funnel, sketch.funnel, "funnel is strategy-invariant");
     assert_eq!(single.n_masked_gt, sketch.n_masked_gt);
     assert_eq!(single.masked_by_rule, sketch.masked_by_rule);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Regression (01-review D4): tid must stay u32 past 65,535 contigs, the
+/// CSI index must address positions past the TBI 2^29 ceiling, and an
+/// undeclared contig must fail instead of landing on tid 0.
+mod write_index {
+    use super::*;
+
+    fn wide_header() -> String {
+        let mut h = String::from(
+            "##fileformat=VCFv4.2\n##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+             ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n",
+        );
+        for c in 0..70_000 {
+            h.push_str(&format!("##contig=<ID=c{c},length=1000000000>\n"));
+        }
+        h.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n");
+        h
+    }
+
+    fn wide_fixture(dir: &std::path::Path) -> std::path::PathBuf {
+        let mut text = wide_header();
+        text.push_str("c0\t10\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n");
+        text.push_str("c69999\t600000000\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n");
+        let path = dir.join("wide.vcf.gz");
+        std::fs::write(&path, bgzf(&text, 4_096)).expect("invariant: write");
+        path
+    }
+
+    fn opts(out: &std::path::Path, index: reed::filter::WriteIndex) -> FilterOptions {
+        FilterOptions {
+            threads: 2,
+            output: Some(out.to_path_buf()),
+            write_index: index,
+            compress_level: 6,
+            strategy: None,
+            command_line: "test".into(),
+            quiet: true,
+            report_json: None,
+        }
+    }
+
+    #[test]
+    fn csi_indexes_70000_contigs_and_positions_past_512mb() {
+        let dir = std::env::temp_dir().join(format!("reed-filter-d4-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let input = wide_fixture(&dir);
+        let out = dir.join("wide.out.vcf.gz");
+
+        run_filter(&input, &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Csi))
+            .expect("invariant: filter runs");
+
+        let index = noodles::csi::fs::read(dir.join("wide.out.vcf.gz.csi"))
+            .expect("invariant: csi written");
+        let contig = index
+            .reference_sequences()
+            .get(69_999)
+            .expect("invariant: 70,000 reference sequences");
+        // The far record must be queryable through the index.
+        let chunks: Vec<_> = contig
+            .bins()
+            .values()
+            .flat_map(|bin| bin.chunks())
+            .cloned()
+            .collect();
+        assert!(!chunks.is_empty(), "contig 69,999 has index chunks");
+        use std::io::BufRead as _;
+        let mut reader = noodles::bgzf::io::Reader::new(
+            std::fs::File::open(&out).expect("invariant: output"),
+        );
+        let query = noodles::csi::io::Query::new(&mut reader, chunks);
+        let lines: Vec<Vec<u8>> = query
+            .split(b'\n')
+            .map(|l| l.expect("invariant: query read"))
+            .collect();
+        assert!(lines
+            .iter()
+            .any(|l| l.starts_with(b"c69999\t600000000\t")),
+            "record on c69999 at 600,000,000 must be found, got {lines:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tbi_refuses_positions_beyond_29_bits() {
+        let dir = std::env::temp_dir().join(format!("reed-filter-d4-tbi-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let input = wide_fixture(&dir);
+        let out = dir.join("wide.tbi.vcf.gz");
+
+        let result = run_filter(&input, &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Tbi));
+        assert!(result.is_err(), "TBI must refuse coordinates ≥ 2^29");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undeclared_contig_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("reed-filter-d4-und-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let mut text = wide_header();
+        // Header declares c0..c69999; the record uses an unlisted contig.
+        text.push_str("unlisted\t10\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n");
+        let input = dir.join("und.vcf.gz");
+        std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
+        let out = dir.join("und.out.vcf.gz");
+
+        let result = run_filter(&input, &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::None));
+        assert!(result.is_err(), "an undeclared contig must fail, not alias tid 0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Regression (01-review D11): a single record wider than the 65,280-byte
+/// BGZF member limit must span blocks instead of corrupting the member's
+/// 16-bit BSIZE. Read back with noodles as the `bgzip -t` stand-in.
+#[test]
+fn record_wider_than_one_block_round_trips() {
+    let dir = std::env::temp_dir().join(format!("reed-filter-d11-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+
+    const N: usize = 3_000;
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n##contig=<ID=c0,length=1000000>\n\
+         ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=XH,Number=1,Type=Float,Description=\"wide value\">\n",
+    );
+    text.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+    for s in 0..N {
+        text.push_str(&format!("\ts{s}"));
+    }
+    text.push('\n');
+    // Narrow record, then one ~105 KB record (30 digits per sample).
+    text.push_str("c0\t10\t.\tA\tG\t.\tPASS\t.\tGT");
+    for s in 0..N {
+        text.push_str("\t0/1");
+    }
+    text.push('\n');
+    let mut wide = String::from("c0\t20\t.\tA\tG\t.\tPASS\t.\tGT:XH");
+    for s in 0..N {
+        let _ = s;
+        wide.push_str(&format!("\t0/1:1.{}", "1234567890".repeat(3)));
+    }
+    wide.push('\n');
+    text.push_str(&wide);
+    assert!(wide.len() > 100_000, "the wide record must exceed 100 KB");
+
+    let input = dir.join("wide.vcf.gz");
+    std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
+    let out = dir.join("wide.out.vcf.gz");
+
+    run_filter(&input, &FilterSpecV2::default(), &options(None, &out))
+        .expect("invariant: filter runs on a record wider than one block");
+
+    use std::io::Read as _;
+    let mut reader = noodles::bgzf::io::Reader::new(
+        std::fs::File::open(&out).expect("invariant: output"),
+    );
+    let mut round = Vec::new();
+    reader
+        .read_to_end(&mut round)
+        .expect("invariant: output is a valid BGZF stream (bgzip -t equivalent)");
+    let out_text = String::from_utf8(round).expect("invariant: utf8");
+    let out_lines: Vec<&str> = out_text.lines().filter(|l| !l.starts_with('#')).collect();
+    assert_eq!(out_lines.len(), 2);
+    assert_eq!(out_lines[1], wide.trim_end(), "wide record must round-trip byte-identical");
     let _ = std::fs::remove_dir_all(&dir);
 }

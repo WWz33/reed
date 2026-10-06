@@ -43,6 +43,45 @@ use reed_io::vcf::sample_scan::SampleScanner;
 /// BGZF maximum uncompressed payload per block (htslib `BGZF_BLOCK_SIZE`).
 const BGZF_BLOCK_SIZE: usize = 65_280;
 
+/// TBI coordinates are limited to 29 bits (htslib); anything wider needs CSI.
+const TBI_MAX_POS1: u64 = (1 << 29) - 1;
+
+/// Which index flavor `--write-index` produces. CSI is the default (bcftools
+/// parity): it has no contig-count or 512 Mb coordinate ceiling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WriteIndex {
+    /// No index.
+    None,
+    /// Coordinate-sorted index (`.csi`), the default.
+    #[default]
+    Csi,
+    /// Tabix index (`.tbi`); positions ≥ 2^29 are refused.
+    Tbi,
+}
+
+impl WriteIndex {
+    /// Parses the optional `--write-index[=csi|tbi]` value.
+    ///
+    /// # Errors
+    ///
+    /// On an unknown flavor name.
+    pub fn parse(value: Option<&str>) -> Result<Self, FilterError> {
+        match value {
+            None | Some("") | Some("csi") => Ok(Self::Csi),
+            Some("tbi") => Ok(Self::Tbi),
+            Some(other) => Err(FilterError::Spec(format!(
+                "unknown index flavor {other:?} (expected csi or tbi)"
+            ))),
+        }
+    }
+
+    /// Whether an index is requested at all.
+    #[must_use]
+    pub const fn is_some(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Run options.
 #[derive(Clone, Debug, Default)]
 pub struct FilterOptions {
@@ -50,8 +89,8 @@ pub struct FilterOptions {
     pub threads: usize,
     /// Output path; `None` = stdout (plain VCF).
     pub output: Option<PathBuf>,
-    /// Write a tabix index next to a `.vcf.gz` output.
-    pub write_index: bool,
+    /// Write a `.csi` (default) or `.tbi` index next to the output.
+    pub write_index: WriteIndex,
     /// BGZF compression level (1–9; htslib default 6).
     pub compress_level: u8,
     /// Test-only strategy override (§11.4: the chosen strategy lands in
@@ -173,7 +212,21 @@ pub fn run_filter(
         .map_err(FilterError::from)?;
 
     // ---- output target ----
-    let gz_out = opts.output.as_ref().is_some_and(|p| is_gz(p));
+    // Extension inference (01-review D12): .vcf.gz/.vcf.bgz (or any .gz/
+    // .bgz) compress; BCF output is refused until the BCF encoder exists —
+    // a silent text-VCF-in-.bcf is worse than a loud error.
+    let gz_out = match &opts.output {
+        None => false,
+        Some(p) => match p.extension().and_then(|e| e.to_str()) {
+            Some("gz") | Some("bgz") => true,
+            Some("bcf") => {
+                return Err(FilterError::Spec(
+                    "BCF output is not supported yet; use a .vcf.gz output".into(),
+                ))
+            }
+            _ => false,
+        },
+    };
     let mut writer: Box<dyn Write + Send> = match &opts.output {
         None => Box::new(std::io::BufWriter::with_capacity(1 << 20, std::io::stdout())),
         Some(p) => Box::new(std::io::BufWriter::with_capacity(
@@ -202,7 +255,7 @@ pub fn run_filter(
             .collect::<Vec<_>>()
             .into_boxed_slice(),
     );
-    let mut indexer = if gz_out && opts.write_index {
+    let mut indexer = if gz_out && opts.write_index.is_some() {
         use noodles::csi::binning_index::index::header::ReferenceSequenceNames;
         let names: ReferenceSequenceNames = contig_names
             .iter()
@@ -216,19 +269,36 @@ pub fn run_filter(
             .set_line_comment_prefix(b'#')
             .set_reference_sequence_names(names)
             .build();
-        let mut indexer = noodles::tabix::index::Indexer::default();
-        indexer.set_header(header);
-        Some(indexer)
+        match opts.write_index {
+            WriteIndex::Tbi => {
+                let mut indexer = noodles::tabix::index::Indexer::default();
+                indexer.set_header(header);
+                Some(Indexer::Tbi(Box::new(indexer)))
+            }
+            WriteIndex::Csi | WriteIndex::None => {
+                use noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex;
+                // depth 6 (shift 32) so CSI covers every VCF-legal position;
+                // the noodles default (depth 5) is TBI-sized (2^29).
+                let indexer = noodles::csi::binning_index::indexer::Indexer::<BinnedIndex>::new(14, 6)
+                    .expect("invariant: min_shift/depth are valid")
+                    .set_header(header);
+                Some(Indexer::Csi(Box::new(indexer), contig_names.len()))
+            }
+        }
     } else {
         None
     };
     let index_path = opts
         .output
         .as_ref()
-        .filter(|_| gz_out && opts.write_index)
+        .filter(|_| gz_out && opts.write_index.is_some())
         .map(|p| {
+            let suffix = match opts.write_index {
+                WriteIndex::Tbi => ".tbi",
+                WriteIndex::Csi | WriteIndex::None => ".csi",
+            };
             let mut s = p.as_os_str().to_os_string();
-            s.push(".tbi");
+            s.push(suffix);
             PathBuf::from(s)
         });
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
@@ -255,6 +325,8 @@ pub fn run_filter(
             slot: Arc::clone(&slot),
             compressed,
             contig_names: Arc::clone(&contig_names),
+            pending_record: None,
+            last_block_end: 0,
         };
         // Header first (as BGZF block(s) on the compressed path).
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
@@ -290,6 +362,8 @@ pub fn run_filter(
             slot: Arc::clone(&slot),
             compressed,
             contig_names: Arc::clone(&contig_names),
+            pending_record: None,
+            last_block_end: 0,
         };
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
         let (mut source, _facts) =
@@ -343,10 +417,6 @@ pub fn run_filter(
         std::fs::write(path, json).map_err(FilterError::from)?;
     }
     Ok(report)
-}
-
-fn is_gz(p: &Path) -> bool {
-    p.extension().and_then(|e| e.to_str()) == Some("gz")
 }
 
 /// Builds the keep mask plus the editor's `SampleMask`, and completes the
@@ -596,8 +666,10 @@ pub struct OutBlock {
     pub compressed: Vec<u8>,
     /// Uncompressed payload length (the block's virtual-offset span).
     pub uncompressed_len: u32,
-    /// `(tid, pos1, ref_len, uoffset)` per output record, in order.
-    pub records: Vec<(u16, u32, u32, u32)>,
+    /// `(tid, pos1, ref_len, uoffset)` per output record, in order. `tid`
+    /// is the header contig's index (u32 — no truncation); a record whose
+    /// bytes span into the next block starts in *this* one, at `uoffset`.
+    pub records: Vec<(u32, u64, u32, u32)>,
 }
 
 /// The chunk partial: output bytes plus the funnel contribution.
@@ -633,11 +705,11 @@ pub struct WorkerScratch {
     info_set: Vec<(&'static [u8], InfoValueOut)>,
     edit_buf: Vec<u8>,
     block_buf: Vec<u8>,
-    records: Vec<(u16, u32, u32, u32)>,
+    records: Vec<(u32, u64, u32, u32)>,
     blocks: Vec<OutBlock>,
     raw: Vec<u8>,
     deflater: Option<Deflater>,
-    last_contig: (Vec<u8>, u16),
+    last_contig: (Vec<u8>, u32),
     funnel: FunnelPartial,
 }
 
@@ -833,39 +905,49 @@ impl FilterJob {
         scratch.funnel.n_input += 1;
         scratch.funnel.n_output += 1;
         if self.compressed {
-            // htslib inflates into a 64 KiB buffer: a member's uncompressed
-            // payload must stay at or below BGZF_BLOCK_SIZE (§6.6), so cut
-            // BEFORE appending a record that would overflow it.
-            if scratch.block_buf.len() + scratch.edit_buf.len() > BGZF_BLOCK_SIZE {
+            // Blocks are cut on the byte boundary, not the record boundary:
+            // a record wider than the 65,280-byte member limit must span
+            // blocks instead of corrupting one (htslib behavior). The
+            // record's index entry anchors at its start offset.
+            let tid = self.tid_of(lr.chrom(), scratch)?;
+            let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
+            let uoffset = u32::try_from(scratch.block_buf.len())
+                .expect("invariant: pending block below u32::MAX");
+            scratch.records.push((tid, pos1, ref_len, uoffset));
+            scratch.block_buf.extend_from_slice(&scratch.edit_buf);
+            while scratch.block_buf.len() >= BGZF_BLOCK_SIZE {
                 self.cut_block(scratch)?;
             }
-            let uoffset = scratch.block_buf.len() as u32;
-            let tid = self.tid_of(lr.chrom(), scratch);
-            let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
-            scratch
-                .records
-                .push((tid, u32::try_from(pos1).unwrap_or(u32::MAX), ref_len, uoffset));
-            scratch.block_buf.extend_from_slice(&scratch.edit_buf);
         } else {
             scratch.raw.extend_from_slice(&scratch.edit_buf);
         }
         Ok(())
     }
 
-    fn tid_of(&self, chrom: &[u8], scratch: &mut WorkerScratch) -> u16 {
+    fn tid_of(&self, chrom: &[u8], scratch: &mut WorkerScratch) -> Result<u32, EngineError> {
         if scratch.last_contig.0 == chrom {
-            return scratch.last_contig.1;
+            return Ok(scratch.last_contig.1);
         }
-        let tid = self
+        // The contig table is the index's tid space: a record on an
+        // undeclared contig has no addressable tid and must fail loudly.
+        let Some(tid) = self
             .contig_names
             .iter()
             .position(|name| name == chrom)
-            .map(|i| i as u16)
-            .unwrap_or(0);
+            .and_then(|i| u32::try_from(i).ok())
+        else {
+            return Err(EngineError::Job(format!(
+                "{}: contig is not declared in the header",
+                String::from_utf8_lossy(chrom)
+            )));
+        };
         scratch.last_contig = (chrom.to_vec(), tid);
-        tid
+        Ok(tid)
     }
 
+    /// Deflates one block of at most [`BGZF_BLOCK_SIZE`] bytes. Records that
+    /// start before the cut stay with this block; later starts are re-based
+    /// into the continuation block.
     fn cut_block(&self, scratch: &mut WorkerScratch) -> Result<(), EngineError> {
         if scratch.block_buf.is_empty() {
             return Ok(());
@@ -873,17 +955,27 @@ impl FilterJob {
         let Some(deflater) = &mut scratch.deflater else {
             return Ok(());
         };
-        let mut compressed = Vec::with_capacity(scratch.block_buf.len() / 2 + 64);
+        let cut = scratch.block_buf.len().min(BGZF_BLOCK_SIZE);
+        let cut32 = u32::try_from(cut).expect("invariant: cut ≤ 65,280");
+        let mut compressed = Vec::with_capacity(cut / 2 + 64);
         deflater
-            .deflate_block(&scratch.block_buf, &mut compressed)
+            .deflate_block(&scratch.block_buf[..cut], &mut compressed)
             .map_err(|e| EngineError::Job(format!("bgzf deflate: {e}")))?;
-        let uncompressed_len = u32::try_from(scratch.block_buf.len()).expect("invariant: < u32::MAX");
+        let boundary = scratch
+            .records
+            .partition_point(|&(_, _, _, uoffset)| uoffset < cut32);
+        let mut records = std::mem::take(&mut scratch.records);
+        let mut continuation = records.split_off(boundary);
+        for record in continuation.iter_mut() {
+            record.3 -= cut32;
+        }
+        scratch.records = continuation;
         scratch.blocks.push(OutBlock {
             compressed,
-            uncompressed_len,
-            records: std::mem::take(&mut scratch.records),
+            uncompressed_len: cut32,
+            records,
         });
-        scratch.block_buf.clear();
+        scratch.block_buf.drain(..cut);
         Ok(())
     }
 
@@ -939,17 +1031,74 @@ fn parse_f64_field(raw: &[u8]) -> Option<f64> {
 
 // ---------------------------------------------------------------- sink
 
+/// The index writer, per flavor. CSI is keyed by header contig id; TBI maps
+/// names itself and is limited to 29-bit coordinates.
+enum Indexer {
+    Csi(Box<noodles::csi::binning_index::indexer::Indexer<noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex>>, usize),
+    Tbi(Box<noodles::tabix::index::Indexer>),
+}
+
+impl Indexer {
+    fn add(
+        &mut self,
+        name: &str,
+        tid: u32,
+        pos1: u64,
+        ref_len: u32,
+        voff_start: u64,
+        voff_end: u64,
+    ) -> Result<(), EngineError> {
+        use noodles::bgzf::VirtualPosition;
+        use noodles::core::Position as CorePosition;
+        use noodles::csi::binning_index::index::reference_sequence::bin::Chunk;
+        let chunk = Chunk::new(
+            VirtualPosition::from(voff_start),
+            VirtualPosition::from(voff_end),
+        );
+        let start = usize::try_from(pos1)
+            .ok()
+            .and_then(|p| CorePosition::try_from(p).ok())
+            .ok_or_else(|| EngineError::Job(format!("index position {pos1} out of range")))?;
+        let end_pos1 = pos1.saturating_add(u64::from(ref_len.saturating_sub(1)));
+        let end = usize::try_from(end_pos1)
+            .ok()
+            .and_then(|p| CorePosition::try_from(p).ok())
+            .ok_or_else(|| EngineError::Job(format!("index end {end_pos1} out of range")))?;
+        match self {
+            Indexer::Csi(indexer, _) => indexer
+                .add_record(Some((usize::try_from(tid).expect("invariant: tid < u32::MAX"), start, end, true)), chunk)
+                .map_err(|e| EngineError::Job(format!("index add_record: {e}"))),
+            Indexer::Tbi(indexer) => {
+                if end_pos1 > TBI_MAX_POS1 {
+                    return Err(EngineError::Job(format!(
+                        "{end_pos1}: TBI coordinates are limited to {TBI_MAX_POS1}; use CSI (--write-index=csi)"
+                    )));
+                }
+                indexer
+                    .add_record(name, start, end, chunk)
+                    .map_err(|e| EngineError::Job(format!("index add_record: {e}")))
+            }
+        }
+    }
+}
+
 /// The ordered output sink: appends worker blocks in chunk order, tracks
-/// virtual offsets, and feeds the tabix indexer (§6.6).
+/// virtual offsets, and feeds the indexer while writing (§6.6).
 struct OutputSink {
     writer: Box<dyn Write + Send>,
-    indexer: Option<noodles::tabix::index::Indexer>,
+    indexer: Option<Indexer>,
     index_path: Option<PathBuf>,
     coffset: u64,
     funnel: FunnelPartial,
     slot: Arc<Mutex<Option<FunnelPartial>>>,
     compressed: bool,
     contig_names: Arc<[Vec<u8>]>,
+    /// The record whose index chunk is still open: its end is the next
+    /// record's start (which may sit in a later block when records span
+    /// block boundaries).
+    pending_record: Option<(u32, u64, u32, u64)>,
+    /// Virtual offset just past the last written block.
+    last_block_end: u64,
 }
 
 impl OutputSink {
@@ -974,49 +1123,44 @@ impl OutputSink {
         Ok(())
     }
 
-    fn accept_block(&mut self, block: &OutBlock) -> Result<(), FilterError> {
+    fn accept_block(&mut self, block: &OutBlock) -> Result<(), EngineError> {
         let coffset_before = self.coffset;
-        self.writer.write_all(&block.compressed).map_err(FilterError::from)?;
+        self.writer
+            .write_all(&block.compressed)
+            .map_err(|e| EngineError::Io(e.to_string()))?;
         self.coffset += block.compressed.len() as u64;
-        if let Some(indexer) = &mut self.indexer {
-            // htslib tabix semantics, one add_record per output record:
-            // span = [pos, pos + REF.len() - 1], chunk = [record voffset,
-            // next record voffset] (block end for the last one).
-            use noodles::bgzf::VirtualPosition;
-            use noodles::core::Position as CorePosition;
-            use noodles::csi::binning_index::index::reference_sequence::bin::Chunk;
-            let block_end = (coffset_before << 16) | u64::from(block.uncompressed_len);
-            for (i, &(tid, pos1, ref_len, uoffset)) in block.records.iter().enumerate() {
+        self.last_block_end = (coffset_before << 16) | u64::from(block.uncompressed_len);
+        if self.indexer.is_some() {
+            // Index chunks follow the record stream, not the block stream:
+            // a record's chunk ends where the next record starts, even when
+            // that is a later block.
+            for &(tid, pos1, ref_len, uoffset) in &block.records {
                 let voff_start = (coffset_before << 16) | u64::from(uoffset);
-                let voff_end = match block.records.get(i + 1) {
-                    Some(&(_, _, _, next_uoffset)) => {
-                        (coffset_before << 16) | u64::from(next_uoffset)
-                    }
-                    None => block_end,
-                };
-                let name = self
-                    .contig_names
-                    .get(usize::from(tid))
-                    .map(|v| String::from_utf8_lossy(v).into_owned())
-                    .unwrap_or_default();
-                let pos = usize::try_from(pos1)
-                    .ok()
-                    .and_then(|p| CorePosition::try_from(p).ok())
-                    .ok_or_else(|| FilterError::Spec(format!("index position {pos1}")))?;
-                let end_pos1 = pos1.saturating_add(ref_len.saturating_sub(1));
-                let end = usize::try_from(end_pos1)
-                    .ok()
-                    .and_then(|p| CorePosition::try_from(p).ok())
-                    .ok_or_else(|| FilterError::Spec(format!("index end {end_pos1}")))?;
-                indexer
-                    .add_record(name.as_str(), pos, end, Chunk::new(
-                        VirtualPosition::from(voff_start),
-                        VirtualPosition::from(voff_end),
-                    ))
-                    .map_err(|e| FilterError::Spec(format!("index add_record: {e}")))?;
+                if let Some(pending) = self.pending_record.take() {
+                    self.close_index_record(pending, voff_start)?;
+                }
+                self.pending_record = Some((tid, pos1, ref_len, voff_start));
             }
         }
         Ok(())
+    }
+
+    /// Closes one record's index chunk `[start, end)` against the indexer.
+    fn close_index_record(
+        &mut self,
+        pending: (u32, u64, u32, u64),
+        voff_end: u64,
+    ) -> Result<(), EngineError> {
+        let Some(indexer) = &mut self.indexer else {
+            return Ok(());
+        };
+        let (tid, pos1, ref_len, voff_start) = pending;
+        let name = self
+            .contig_names
+            .get(tid as usize)
+            .map(|v| String::from_utf8_lossy(v).into_owned())
+            .unwrap_or_default();
+        indexer.add(&name, tid, pos1, ref_len, voff_start, voff_end)
     }
 }
 
@@ -1025,7 +1169,7 @@ impl OrderedSink<FilterPartial> for OutputSink {
         self.funnel.merge(&partial.funnel);
         if self.compressed {
             for block in &partial.blocks {
-                self.accept_block(block).map_err(|e| EngineError::Job(e.to_string()))?;
+                self.accept_block(block)?;
             }
         } else {
             self.writer.write_all(&partial.raw).map_err(|e| EngineError::Io(e.to_string()))?;
@@ -1038,9 +1182,19 @@ impl OrderedSink<FilterPartial> for OutputSink {
             self.writer.write_all(&EOF_BLOCK).map_err(|e| EngineError::Io(e.to_string()))?;
         }
         self.writer.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+        if let Some(pending) = self.pending_record.take() {
+            // The last record's chunk runs to the end of the last block.
+            self.close_index_record(pending, self.last_block_end)?;
+        }
         if let (Some(indexer), Some(path)) = (self.indexer.take(), self.index_path.take()) {
-            let index = indexer.build();
-            noodles::tabix::fs::write(path, &index).map_err(|e| EngineError::Io(e.to_string()))?;
+            match indexer {
+                Indexer::Csi(indexer, n_ref) => noodles::csi::fs::write(path, &indexer.build(n_ref))
+                    .map_err(|e| EngineError::Io(e.to_string()))?,
+                Indexer::Tbi(indexer) => {
+                    noodles::tabix::fs::write(path, &indexer.build())
+                        .map_err(|e| EngineError::Io(e.to_string()))?
+                }
+            }
         }
         *self.slot.lock().expect("invariant: funnel slot not poisoned") =
             Some(std::mem::take(&mut self.funnel));
@@ -1499,11 +1653,11 @@ struct EmitJob {
 struct EmitScratch {
     edit_buf: Vec<u8>,
     block_buf: Vec<u8>,
-    records: Vec<(u16, u32, u32, u32)>,
+    records: Vec<(u32, u64, u32, u32)>,
     blocks: Vec<OutBlock>,
     raw: Vec<u8>,
     deflater: Option<Deflater>,
-    last_contig: (Vec<u8>, u16),
+    last_contig: (Vec<u8>, u32),
     mask_bitset: Bitset,
 }
 
@@ -1620,34 +1774,40 @@ impl EmitJob {
         edit_vcf_line(&lr, &edit_plan, gt_subfield_index(lr.format_text()), &mut scratch.edit_buf)
             .map_err(|e| EngineError::Job(e.to_string()))?;
         if self.compressed {
-            if scratch.block_buf.len() + scratch.edit_buf.len() > BGZF_BLOCK_SIZE {
+            // Byte-boundary cutting, records may span blocks (as in
+            // FilterJob::push_line).
+            let tid = self.tid_of(lr.chrom(), scratch)?;
+            let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
+            let uoffset = u32::try_from(scratch.block_buf.len())
+                .expect("invariant: pending block below u32::MAX");
+            scratch.records.push((tid, pos1, ref_len, uoffset));
+            scratch.block_buf.extend_from_slice(&scratch.edit_buf);
+            while scratch.block_buf.len() >= BGZF_BLOCK_SIZE {
                 self.cut_block(scratch)?;
             }
-            let uoffset = scratch.block_buf.len() as u32;
-            let tid = self.tid_of(lr.chrom(), scratch);
-            let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
-            scratch
-                .records
-                .push((tid, u32::try_from(pos1).unwrap_or(u32::MAX), ref_len, uoffset));
-            scratch.block_buf.extend_from_slice(&scratch.edit_buf);
         } else {
             scratch.raw.extend_from_slice(&scratch.edit_buf);
         }
         Ok(())
     }
 
-    fn tid_of(&self, chrom: &[u8], scratch: &mut EmitScratch) -> u16 {
+    fn tid_of(&self, chrom: &[u8], scratch: &mut EmitScratch) -> Result<u32, EngineError> {
         if scratch.last_contig.0 == chrom {
-            return scratch.last_contig.1;
+            return Ok(scratch.last_contig.1);
         }
-        let tid = self
+        let Some(tid) = self
             .contig_names
             .iter()
             .position(|name| name == chrom)
-            .map(|i| i as u16)
-            .unwrap_or(0);
+            .and_then(|i| u32::try_from(i).ok())
+        else {
+            return Err(EngineError::Job(format!(
+                "{}: contig is not declared in the header",
+                String::from_utf8_lossy(chrom)
+            )));
+        };
         scratch.last_contig = (chrom.to_vec(), tid);
-        tid
+        Ok(tid)
     }
 
     fn cut_block(&self, scratch: &mut EmitScratch) -> Result<(), EngineError> {
@@ -1657,17 +1817,27 @@ impl EmitJob {
         let Some(deflater) = &mut scratch.deflater else {
             return Ok(());
         };
-        let mut compressed = Vec::with_capacity(scratch.block_buf.len() / 2 + 64);
+        let cut = scratch.block_buf.len().min(BGZF_BLOCK_SIZE);
+        let cut32 = u32::try_from(cut).expect("invariant: cut ≤ 65,280");
+        let mut compressed = Vec::with_capacity(cut / 2 + 64);
         deflater
-            .deflate_block(&scratch.block_buf, &mut compressed)
+            .deflate_block(&scratch.block_buf[..cut], &mut compressed)
             .map_err(|e| EngineError::Job(format!("bgzf deflate: {e}")))?;
-        let uncompressed_len = u32::try_from(scratch.block_buf.len()).expect("invariant: < u32::MAX");
+        let boundary = scratch
+            .records
+            .partition_point(|&(_, _, _, uoffset)| uoffset < cut32);
+        let mut records = std::mem::take(&mut scratch.records);
+        let mut continuation = records.split_off(boundary);
+        for record in continuation.iter_mut() {
+            record.3 -= cut32;
+        }
+        scratch.records = continuation;
         scratch.blocks.push(OutBlock {
             compressed,
-            uncompressed_len,
-            records: std::mem::take(&mut scratch.records),
+            uncompressed_len: cut32,
+            records,
         });
-        scratch.block_buf.clear();
+        scratch.block_buf.drain(..cut);
         Ok(())
     }
 }
