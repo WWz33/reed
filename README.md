@@ -204,11 +204,16 @@ reed filter input.vcf.gz --spec filter.toml --out out.vcf.gz   # TOML spec (§11
   filter_sha256/ascertainment` provenance (§11.7–11.8); `reed stats` picks
   the ascertainment up automatically.
 - Reference throughput: 3.3M records × 348 samples → 1.77M output records
-  in **12.6 s** (48 threads; gate ≤ 120 s); cohort reduction + filter +
+  in **12.6 s** (TwoPassReparse) / **14.7 s** (SketchThenEmit), 48 threads;
+  gates ≤ 120 s (M5) and ≤ 60 s (M5b); cohort reduction + filter +
   recompute + compress + index.
-- Strategies (§11.4): `SinglePass` (no cohort rule or keep/remove lists)
-  and `TwoPassReparse` (max_missing cohort); byte-identical output,
-  test-locked. `SketchThenEmit` arrives with M5b.
+- Strategies (§11.4): `SinglePass` (no cohort rule or keep/remove lists),
+  `TwoPassReparse` (max_missing cohort), and `SketchThenEmit` (max_missing
+  cohort when the pass0 sketch fits the memory budget: pass0 captures
+  per-site genotype planes + per-rule mask bitmaps, the mid stage derives
+  tail decisions from `keep ∧ planes`, pass1 re-parses survivors only) —
+  all three byte-identical, test-locked; the chosen strategy is auto-picked
+  from a first-chunk records/byte extrapolation and reported.
 
 ### CLI (reed-filter, v0.2 legacy binary — retained until 0.5.0, D14)
 

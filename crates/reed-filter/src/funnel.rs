@@ -10,7 +10,7 @@ pub type RuleId = String;
 /// One funnel stage: the rule and the count of records that passed it
 /// (cumulative semantics: a record that failed rule i counts in stages
 /// 1..i only).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FunnelStage {
     /// The stable rule id.
     pub rule: RuleId,
@@ -20,7 +20,7 @@ pub struct FunnelStage {
 
 /// Mask attribution (§11.5 `masked_by_rule`): the first rule that fires
 /// owns the masked transition.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MaskedBy {
     /// The mask rule id (`genotype.mask.DP`, in declaration order).
     pub rule: RuleId,

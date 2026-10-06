@@ -48,6 +48,7 @@ impl ChunkJob for QcJob {
 
     fn run_seam(
         &self,
+        _id: reed_core::ChunkId,
         line: &[u8],
         _scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, reed_engine::error::EngineError> {

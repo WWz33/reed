@@ -231,6 +231,7 @@ impl ChunkJob for StatsJob {
 
     fn run_seam(
         &self,
+        _id: reed_core::ChunkId,
         line: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {

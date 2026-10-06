@@ -20,6 +20,7 @@ pub mod eval;
 pub mod exec;
 pub mod funnel;
 pub mod plan;
+pub mod sketch;
 pub mod spec;
 
 pub use exec::{execute, ExecOptions, RunReport};

@@ -387,3 +387,57 @@ fn provenance_and_ascertainment_are_written() {
 fn _assert_error_type(e: FilterError) -> FilterError {
     e
 }
+
+#[test]
+fn all_three_strategies_produce_identical_bytes() {
+    let dir_path = write_fixture("three-strategies", 8_000);
+    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+
+    let mut hashes = Vec::new();
+    for (name, strategy) in [
+        ("single", Some(reed_filter::plan::ExecStrategy::SinglePass)),
+        ("two", Some(reed_filter::plan::ExecStrategy::TwoPassReparse)),
+        ("sketch", Some(reed_filter::plan::ExecStrategy::SketchThenEmit)),
+    ] {
+        let out = dir.join(format!("{name}.vcf.gz"));
+        let report = run_filter(&dir_path, &spec, &options(strategy, &out))
+            .unwrap_or_else(|e| panic!("{name} failed: {e}"));
+        assert_eq!(report.strategy, strategy.expect("invariant: forced").id(), "the report names the strategy");
+        let bytes = std::fs::read(&out).expect("invariant: output");
+        let hash = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(&bytes);
+            format!("{:x}", h.finalize())
+        };
+        hashes.push(hash);
+    }
+    assert_eq!(hashes[0], hashes[1], "SinglePass vs TwoPassReparse");
+    assert_eq!(hashes[1], hashes[2], "TwoPassReparse vs SketchThenEmit");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sketch_funnel_matches_the_single_pass_funnel() {
+    let dir_path = write_fixture("sketch-funnel", 6_000);
+    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+
+    let single = run_filter(
+        &dir_path,
+        &spec,
+        &options(Some(reed_filter::plan::ExecStrategy::SinglePass), &dir.join("s.vcf.gz")),
+    )
+    .expect("invariant: single pass");
+    let sketch = run_filter(
+        &dir_path,
+        &spec,
+        &options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &dir.join("k.vcf.gz")),
+    )
+    .expect("invariant: sketch");
+    assert_eq!(single.funnel, sketch.funnel, "funnel is strategy-invariant");
+    assert_eq!(single.n_masked_gt, sketch.n_masked_gt);
+    assert_eq!(single.masked_by_rule, sketch.masked_by_rule);
+    let _ = std::fs::remove_dir_all(&dir);
+}

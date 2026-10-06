@@ -191,6 +191,7 @@ fn run_filter_cli(
         .map(|s| match s.as_str() {
             "single_pass" => Ok(reed_filter::plan::ExecStrategy::SinglePass),
             "two_pass_reparse" => Ok(reed_filter::plan::ExecStrategy::TwoPassReparse),
+            "sketch_then_emit" => Ok(reed_filter::plan::ExecStrategy::SketchThenEmit),
             other => Err(format!("unknown strategy {other:?}")),
         })
         .transpose()?;

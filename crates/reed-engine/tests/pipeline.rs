@@ -38,6 +38,7 @@ impl ChunkJob for CountJob {
 
     fn run_seam(
         &self,
+        _id: reed_core::ChunkId,
         line: &[u8],
         _scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
@@ -213,7 +214,7 @@ fn worker_panic_becomes_worker_panicked() {
             }
             Ok(())
         }
-        fn run_seam(&self, _line: &[u8], _: &mut ()) -> Result<(), EngineError> {
+        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<(), EngineError> {
             Ok(())
         }
     }
@@ -241,7 +242,7 @@ fn external_abort_stops_the_run() {
             std::thread::sleep(Duration::from_millis(5));
             Ok(())
         }
-        fn run_seam(&self, _line: &[u8], _: &mut ()) -> Result<(), EngineError> {
+        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<(), EngineError> {
             Ok(())
         }
     }
@@ -305,7 +306,7 @@ fn partials_arrive_in_chunk_order_at_the_sink() {
         fn run_chunk(&self, chunk: &ChunkBytes, _body: &[u8], _: &mut ()) -> Result<u64, EngineError> {
             Ok(chunk.id.get())
         }
-        fn run_seam(&self, _line: &[u8], _: &mut ()) -> Result<u64, EngineError> {
+        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<u64, EngineError> {
             Ok(u64::MAX) // seam marker; excluded from the order assertion below
         }
     }
@@ -344,7 +345,7 @@ fn partials_arrive_in_chunk_order_at_the_sink() {
             }
             Ok(chunk.id.get())
         }
-        fn run_seam(&self, _line: &[u8], _: &mut ()) -> Result<u64, EngineError> {
+        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<u64, EngineError> {
             Ok(u64::MAX)
         }
     }

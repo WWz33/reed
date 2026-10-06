@@ -60,11 +60,16 @@ pub trait ChunkJob: Sync {
 
     /// Processes one seam record (a complete line ending in `\n`).
     ///
+    /// `id` is the chunk whose head fragment completed the seam — the seam
+    /// record itself belongs to the *previous* chunk's stream (jobs that
+    /// key state by chunk use `id - 1`).
+    ///
     /// # Errors
     ///
     /// Whatever the job considers a run-stopping failure.
     fn run_seam(
         &self,
+        id: ChunkId,
         line: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError>;
@@ -533,7 +538,7 @@ where
     let mut seam = fragment.unwrap_or_default();
     seam.extend_from_slice(&head);
     if seam.ends_with(b"\n") {
-        let mut partial = job.run_seam(&seam, seam_scratch)?;
+        let mut partial = job.run_seam(id, &seam, seam_scratch)?;
         sink.accept(id, &mut partial)?;
         Ok(None)
     } else {
