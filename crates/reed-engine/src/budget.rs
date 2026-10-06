@@ -58,11 +58,19 @@ impl Default for ThreadBudget {
 }
 
 /// In-memory upper bound for in-flight chunk data (§7.7, §2 principle 11).
+///
+/// The budget is enforced as *backpressure*: the reader blocks until the
+/// reducer returns permits for delivered chunks. It fails the run only when
+/// a single chunk alone exceeds the whole budget.
 #[derive(Clone, Copy, Debug)]
 pub struct MemBudget {
-    /// Maximum in-flight compressed bytes.
+    /// Maximum in-flight (estimated) bytes.
     pub bytes: u64,
 }
+
+/// Estimated in-memory footprint per compressed input byte (compressed ≈
+/// 5× smaller than inflated, plus output blocks and partial results).
+pub const MEM_FACTOR: u64 = 8;
 
 impl MemBudget {
     /// An explicit byte budget.
@@ -79,20 +87,60 @@ impl MemBudget {
         }
     }
 
-    /// Checks an observed in-flight peak against the budget.
-    ///
-    /// # Errors
-    ///
-    /// [`EngineError::MemBudgetExceeded`] when `peak_bytes` exceeds the
-    /// budget.
-    pub fn check(&self, peak_bytes: u64) -> Result<(), EngineError> {
-        if peak_bytes > self.bytes {
-            return Err(EngineError::MemBudgetExceeded {
-                peak_bytes,
-                budget_bytes: self.bytes,
-            });
+    /// Estimated in-memory footprint of one chunk.
+    #[must_use]
+    pub const fn estimate(&self, compressed_len: u64) -> u64 {
+        compressed_len * MEM_FACTOR
+    }
+}
+
+/// Byte permits for in-flight chunks (03-architecture.md §4.2): the reader
+/// acquires a chunk's estimated footprint before handing it to a worker and
+/// the reducer releases it after in-order delivery. Over budget → the
+/// reader *blocks*, not fails.
+#[derive(Debug)]
+pub struct BytePermits {
+    available: std::sync::Mutex<u64>,
+    cv: std::sync::Condvar,
+}
+
+impl BytePermits {
+    /// A pool of `bytes` permits.
+    #[must_use]
+    pub fn new(bytes: u64) -> Self {
+        Self {
+            available: std::sync::Mutex::new(bytes),
+            cv: std::sync::Condvar::new(),
         }
-        Ok(())
+    }
+
+    /// Blocks until `bytes` permits are available (or abort fires); returns
+    /// `false` on abort.
+    pub fn acquire(&self, bytes: u64, abort: &crate::abort::AbortSignal) -> bool {
+        let mut guard = self.available.lock().expect("invariant: permits not poisoned");
+        loop {
+            if abort.is_aborted() {
+                return false;
+            }
+            if *guard >= bytes {
+                *guard -= bytes;
+                return true;
+            }
+            // A short poll keeps abort latency low without a watcher thread.
+            let (g, _) = self
+                .cv
+                .wait_timeout(guard, std::time::Duration::from_millis(10))
+                .expect("invariant: permits not poisoned");
+            guard = g;
+        }
+    }
+
+    /// Returns `bytes` permits to the pool.
+    pub fn release(&self, bytes: u64) {
+        let mut guard = self.available.lock().expect("invariant: permits not poisoned");
+        *guard = guard.saturating_add(bytes);
+        drop(guard);
+        self.cv.notify_all();
     }
 }
 
@@ -130,10 +178,14 @@ mod tests {
     }
 
     #[test]
-    fn mem_budget_rejects_overages() {
-        let budget = MemBudget::from_bytes(100);
-        assert!(budget.check(99).is_ok());
-        let err = budget.check(101).unwrap_err();
-        assert!(matches!(err, EngineError::MemBudgetExceeded { .. }));
+    fn mem_budget_estimates_footprints() {
+        let budget = MemBudget::from_bytes(1000);
+        assert_eq!(budget.estimate(10), 80);
+        // Backpressure, not error: over-budget chunks block the reader; only
+        // a single chunk larger than the whole budget fails the run (03 §4.2).
+        let permits = BytePermits::new(80);
+        assert!(permits.acquire(80, &crate::abort::abort().signal));
+        permits.release(80);
+        assert!(*permits.available.lock().unwrap() >= 80);
     }
 }

@@ -66,6 +66,24 @@ pub fn abort_channel() -> (AbortHandle, AbortSignal) {
     (AbortHandle { tx }, AbortSignal { rx })
 }
 
+/// One abort channel shared by the caller and the engine: internal errors
+/// trigger the same handle the caller holds, so there is no watcher thread
+/// forwarding an external signal (03-architecture.md §4.3).
+#[derive(Clone, Debug)]
+pub struct Abort {
+    /// Trigger side (external abort and internal first-error both use it).
+    pub handle: AbortHandle,
+    /// Receive side (every engine blocking point selects on it).
+    pub signal: AbortSignal,
+}
+
+/// Creates one shared abort channel.
+#[must_use]
+pub fn abort() -> Abort {
+    let (handle, signal) = abort_channel();
+    Abort { handle, signal }
+}
+
 /// First error wins: records the first error and triggers abort; later
 /// errors are dropped (they are consequences, not causes).
 #[derive(Debug)]

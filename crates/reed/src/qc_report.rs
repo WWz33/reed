@@ -519,9 +519,9 @@ pub fn run_qc_report(input: Option<&Path>, opts: &QcOptions) -> Result<QcOutcome
     let job = QcJob { n_samples };
     let slot: Arc<Mutex<Option<QcReportAcc>>> = Arc::new(Mutex::new(None));
     let sink = QcSink { acc: Some(QcReportAcc::new(u32::try_from(n_samples).unwrap_or(u32::MAX))), out: Arc::clone(&slot) };
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
-    let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-    run(source.as_mut(), &job, sink, &budget, &abort_signal)?;
+    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
+    let abort = reed_engine::abort::abort();
+    run(source.as_mut(), &job, sink, &budget, &abort)?;
     let report = slot
         .lock()
         .expect("invariant: qc slot not poisoned")

@@ -16,8 +16,8 @@ use crossbeam_channel::bounded;
 use reed_core::ChunkId;
 use reed_io::chunk::{inflate_chunk, ChunkBytes, ChunkSource};
 
-use crate::abort::{abort_channel, AbortSignal, FirstError};
-use crate::budget::ThreadBudget;
+use crate::abort::{Abort, AbortSignal, FirstError};
+use crate::budget::{BytePermits, ThreadBudget};
 use crate::error::EngineError;
 use crate::metrics::StageMetrics;
 use crate::reorder::ReorderBuffer;
@@ -117,45 +117,25 @@ pub struct RunReport {
 /// # Errors
 ///
 /// The first error recorded by any stage, [`EngineError::Aborted`] on
-/// external abort, [`EngineError::MemBudgetExceeded`] on budget overage.
+/// external abort, [`EngineError::MemBudgetExceeded`] when a single chunk
+/// exceeds the whole memory budget.
 pub fn run<J, S>(
     source: &mut dyn ChunkSource,
     job: &J,
-    mut sink: S,
+    sink: S,
     budget: &ThreadBudget,
-    abort: &AbortSignal,
+    abort: &Abort,
 ) -> Result<RunReport, EngineError>
 where
     J: ChunkJob + 'static,
     S: OrderedSink<J::Partial> + 'static,
 {
     let started = Instant::now();
-    let (abort_handle, abort_signal) = abort_channel();
-    let first = Arc::new(FirstError::new(abort_handle.clone()));
-    // All pipeline blocking points select on the *internal* signal; a
-    // watcher forwards the caller's external abort onto it. The watcher
-    // races that against a completion signal so it never outlives the run.
-    let (done_tx, done_rx) = bounded::<()>(1);
-    let caller_abort = abort.receiver().clone();
-    let watcher = {
-        let abort_handle = abort_handle.clone();
-        std::thread::spawn(move || {
-            crossbeam_channel::select! {
-                recv(caller_abort) -> _ => abort_handle.trigger(),
-                recv(done_rx) -> _ => {}
-            }
-        })
-    };
-
-    let outcome = if budget.is_sequential() {
-        run_sequential(source, job, sink, budget, &first, &abort_signal)
-    } else {
-        run_parallel(source, job, sink, budget, &first, &abort_signal)
-    };
-
-    let _ = done_tx.send(());
-    let _ = watcher.join();
-
+    // Caller and engine share one channel: an internal error triggers the
+    // caller's handle, an external trigger aborts the stages — no watcher.
+    let first = Arc::new(FirstError::new(abort.handle.clone()));
+    let outcome = run_parallel(source, job, sink, budget, &first, &abort.signal);
+    // The recorded cause outranks the Aborted consequence it produced.
     if let Some(err) = FirstError::take_shared(&first) {
         return Err(err);
     }
@@ -176,82 +156,14 @@ struct Shared {
 }
 
 impl Shared {
-    fn record_in_flight(&self, bytes: u64, mem_budget_bytes: u64, first: &FirstError) {
+    fn record_in_flight(&self, bytes: u64) {
         let now = self.in_flight.fetch_add(bytes, Ordering::AcqRel) + bytes;
         self.in_flight_peak.fetch_max(now, Ordering::AcqRel);
-        if now > mem_budget_bytes {
-            first.record(EngineError::MemBudgetExceeded {
-                peak_bytes: now,
-                budget_bytes: mem_budget_bytes,
-            });
-        }
     }
 
     fn release_in_flight(&self, bytes: u64) {
         self.in_flight.fetch_sub(bytes, Ordering::AcqRel);
     }
-}
-
-/// Sequential mode (threads ≤ 2): reader, worker and reducer share one
-/// thread. Output must be byte-identical to the parallel mode (§7.3).
-fn run_sequential<J, S>(
-    source: &mut dyn ChunkSource,
-    job: &J,
-    mut sink: S,
-    _budget: &ThreadBudget,
-    first: &Arc<FirstError>,
-    abort: &AbortSignal,
-) -> Result<(u64, u64, StageMetrics), EngineError>
-where
-    J: ChunkJob,
-    S: OrderedSink<J::Partial>,
-{
-    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
-    let mut inflate_scratch = Vec::new();
-    let mut scratch = J::Scratch::default();
-    let mut seam_scratch = J::Scratch::default();
-    let mut fragment: Option<Vec<u8>> = None;
-    let mut expected: u64 = 0;
-    let mut worker_busy = Duration::ZERO;
-
-    loop {
-        if abort.is_aborted() {
-            return Err(EngineError::Aborted);
-        }
-        let Some(chunk) = source.next_chunk()? else {
-            break;
-        };
-        let started = Instant::now();
-        let view = inflate_chunk(&chunk, &mut inflater, &mut inflate_scratch)?;
-        // The seam record belongs to the previous chunk's stream and must
-        // precede this chunk's body, exactly as in the parallel reducer.
-        fragment = stitch_seam(
-            fragment,
-            view.head_bytes(view.text).map(Vec::from),
-            job,
-            &mut seam_scratch,
-            &mut sink,
-            ChunkId(expected),
-        )?;
-        let mut partial = job.run_chunk(&chunk, view.body_bytes(view.text), &mut scratch)?;
-        worker_busy += started.elapsed();
-        sink.accept(ChunkId(expected), &mut partial)?;
-        fragment = finish_fragment(fragment, view.tail_bytes(view.text).map(Vec::from));
-        expected += 1;
-    }
-    if first.failed() {
-        return Err(EngineError::Aborted);
-    }
-    let sink_report = sink.finish()?;
-    Ok((
-        expected,
-        sink_report,
-        StageMetrics {
-            n_chunks_read: expected,
-            worker_busy,
-            in_flight_peak_bytes: 0,
-        },
-    ))
 }
 
 /// Parallel mode: reader thread, `workers()` compute workers, the caller's
@@ -270,8 +182,11 @@ where
 {
     let n_workers = budget.workers();
     let tickets = budget.tickets();
-    let (chunk_tx, chunk_rx) = bounded::<ChunkBytes>(tickets);
+    let (chunk_tx, chunk_rx) = bounded::<InFlightChunk>(tickets);
     let (result_tx, result_rx) = bounded::<WorkerMsg<J::Partial>>(tickets);
+    // Memory backpressure (03 §4.2): in-flight chunks hold permits sized by
+    // their estimated footprint; the reader blocks while the pool is empty.
+    let permits = Arc::new(BytePermits::new(budget.mem.bytes));
     // Real tickets (03 §4.1, fixes 01-review D1): the reader acquires one
     // permit *before* cutting a chunk, and the reducer returns it only after
     // the chunk is delivered in order. The number of chunks cut but not yet
@@ -288,7 +203,6 @@ where
         in_flight: AtomicU64::new(0),
         in_flight_peak: AtomicU64::new(0),
     });
-    let mem_budget_bytes = budget.mem.bytes;
     let window = tickets;
     let worker_busy_ns = Arc::new(AtomicU64::new(0));
 
@@ -302,6 +216,7 @@ where
             let first = Arc::clone(first);
             let shared = Arc::clone(&shared);
             let ticket_rx = ticket_rx.clone();
+            let permits = Arc::clone(&permits);
             move || {
                 loop {
                     if first.failed() {
@@ -322,17 +237,31 @@ where
                             break;
                         }
                     };
-                    shared.record_in_flight(
-                        chunk.compressed.len() as u64,
-                        mem_budget_bytes,
-                        &first,
-                    );
-                    if first.failed() {
+                    // Memory backpressure: acquire the footprint before the
+                    // chunk enters the pipeline. One chunk larger than the
+                    // whole budget cannot continue (03 §4.2).
+                    let footprint = budget.mem.estimate(chunk.compressed.len() as u64);
+                    if footprint > budget.mem.bytes {
+                        first.record(EngineError::MemBudgetExceeded {
+                            peak_bytes: footprint,
+                            budget_bytes: budget.mem.bytes,
+                        });
                         break;
                     }
+                    if !permits.acquire(footprint, abort) {
+                        break;
+                    }
+                    if first.failed() {
+                        permits.release(footprint);
+                        break;
+                    }
+                    shared.record_in_flight(footprint);
                     let sent = crossbeam_channel::select! {
-                        recv(abort.receiver()) -> _ => false,
-                        send(chunk_tx, chunk) -> _ => true,
+                        recv(abort.receiver()) -> _ => {
+                            permits.release(footprint);
+                            false
+                        }
+                        send(chunk_tx, InFlightChunk { chunk, footprint }) -> _ => true,
                     };
                     if !sent || first.failed() {
                         break;
@@ -358,13 +287,14 @@ where
                         if first.failed() {
                             break;
                         }
-                        let chunk = crossbeam_channel::select! {
+                        let in_flight = crossbeam_channel::select! {
                             recv(abort.receiver()) -> _ => break,
                             recv(chunk_rx) -> msg => match msg {
-                                Ok(chunk) => chunk,
+                                Ok(in_flight) => in_flight,
                                 Err(_) => break,
                             },
                         };
+                        let chunk = in_flight.chunk;
                         let started = Instant::now();
                         let outcome = catch_unwind(AssertUnwindSafe(|| {
                             let view =
@@ -402,7 +332,7 @@ where
                             recv(abort.receiver()) -> _ => false,
                             send(result_tx, WorkerMsg {
                                 id: chunk.id,
-                                compressed_bytes: chunk.compressed.len() as u64,
+                                footprint: in_flight.footprint,
                                 partial,
                                 head,
                                 tail,
@@ -457,7 +387,8 @@ where
                     drop(result_rx);
                     return Err(err);
                 }
-                shared.release_in_flight(msg.compressed_bytes);
+                shared.release_in_flight(msg.footprint);
+                permits.release(msg.footprint);
                 // Delivered in order: the chunk's ticket returns to the
                 // reader (03 §4.1). Never blocks — returns ≤ acquisitions.
                 let _ = ticket_tx.send(());
@@ -485,7 +416,8 @@ where
                                 id,
                             )?;
                             sink.accept(id, &mut msg.partial)?;
-                            shared.release_in_flight(msg.compressed_bytes);
+                            shared.release_in_flight(msg.footprint);
+                            permits.release(msg.footprint);
                             let _ = ticket_tx.send(());
                             fragment = finish_fragment(fragment, msg.tail.take());
                             delivered += 1;
@@ -529,10 +461,17 @@ where
 /// A worker result on its way to the reducer.
 struct WorkerMsg<P> {
     id: ChunkId,
-    compressed_bytes: u64,
+    /// The memory permits this chunk holds; the reducer releases them.
+    footprint: u64,
     partial: P,
     head: Option<Vec<u8>>,
     tail: Option<Vec<u8>>,
+}
+
+/// A chunk in the pipeline together with its memory footprint.
+struct InFlightChunk {
+    chunk: ChunkBytes,
+    footprint: u64,
 }
 
 /// Chain-stitches the seam record between the previous fragment and this

@@ -674,8 +674,8 @@ pub fn run_stats(
         n_multiallelic_skipped: 0,
         out: Arc::clone(&out),
     };
-    let (_abort_handle, abort_signal) = reed_engine::abort::abort_channel();
-    let report = run(source.as_mut(), &job, sink, budget, &abort_signal)?;
+    let abort = reed_engine::abort::abort();
+    let report = run(source.as_mut(), &job, sink, budget, &abort)?;
     let output = out
         .lock()
         .expect("invariant: stats slot not poisoned")

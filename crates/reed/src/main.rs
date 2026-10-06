@@ -225,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap_or_else(|| {
             std::thread::available_parallelism().expect("invariant: parallelism").get()
         });
-    let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget { threads, mem: MemBudget::default_half_memory() };
 
     let report = run_stats(input_path(&input).as_deref(), request, &budget)?;
     eprintln!(

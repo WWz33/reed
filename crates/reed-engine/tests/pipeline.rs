@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reed_core::ChunkId;
-use reed_engine::abort::abort_channel;
+use reed_engine::abort::abort;
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
@@ -166,13 +166,13 @@ fn output_is_invariant_across_thread_counts() {
     let chunks = make_chunks(&text, 700); // seams + multiple chunks
     let expected = {
         let mut source = VecSource { chunks: chunks.clone().into_iter() };
-        let (_h, signal) = abort_channel();
-        run(&mut source, &CountJob, VecSink::default(), &budget(1), &signal).expect("invariant: sequential run")
+        let abort = abort();
+        run(&mut source, &CountJob, VecSink::default(), &budget(1), &abort).expect("invariant: run")
     };
     for threads in [2_usize, 3, 7, 16] {
         let mut source = VecSource { chunks: chunks.clone().into_iter() };
-        let (_h, signal) = abort_channel();
-        let report = run(&mut source, &CountJob, VecSink::default(), &budget(threads), &signal)
+        let abort = abort();
+        let report = run(&mut source, &CountJob, VecSink::default(), &budget(threads), &abort)
             .expect("invariant: parallel run matches sequential");
         assert_eq!(report.sink_report, expected.sink_report, "threads={threads}");
         assert_eq!(report.n_chunks, expected.n_chunks, "threads={threads}");
@@ -220,8 +220,8 @@ fn slow_first_chunk_does_not_overflow_the_reorder_window() {
     assert!(chunks.len() >= 60, "test needs many chunks, got {}", chunks.len());
     let n_chunks = chunks.len() as u64;
     let mut source = VecSource { chunks: chunks.into_iter() };
-    let (_h, signal) = abort_channel();
-    let report = run(&mut source, &DelayFirstJob, VecSink::default(), &budget(8), &signal)
+    let abort = abort();
+    let report = run(&mut source, &DelayFirstJob, VecSink::default(), &budget(8), &abort)
         .expect("invariant: slow chunk must not overflow the reorder window");
     assert_eq!(report.n_chunks, n_chunks);
 }
@@ -235,12 +235,12 @@ fn seam_records_are_counted_exactly_once() {
     let n_chunks = all_chunks.len() as u64;
     assert!(n_chunks > 10, "test needs many seam-rich chunks, got {n_chunks}");
     let mut seq_source = VecSource { chunks: all_chunks.clone().into_iter() };
-    let (_h2, signal2) = abort_channel();
-    let seq = run(&mut seq_source, &CountJob, VecSink::default(), &budget(1), &signal2)
+    let abort2 = abort();
+    let seq = run(&mut seq_source, &CountJob, VecSink::default(), &budget(1), &abort2)
         .expect("invariant: sequential reference");
     let mut source = VecSource { chunks: all_chunks.into_iter() };
-    let (_h, signal) = abort_channel();
-    let report = run(&mut source, &CountJob, VecSink::default(), &budget(4), &signal)
+    let abort = abort();
+    let report = run(&mut source, &CountJob, VecSink::default(), &budget(4), &abort)
         .expect("invariant: run with seams");
     assert_eq!(report.sink_report, seq.sink_report, "parallel must equal sequential");
     assert_eq!(seq.sink_report, fold_lines(&text), "sequential must equal a serial scan");
@@ -266,8 +266,8 @@ fn worker_panic_becomes_worker_panicked() {
     let text = fixture_text(200);
     let chunks = make_chunks(&text, 500);
     let mut source = VecSource { chunks: chunks.into_iter() };
-    let (_h, signal) = abort_channel();
-    let err = run(&mut source, &PanickyJob, UnitSink, &budget(3), &signal).unwrap_err();
+    let abort = abort();
+    let err = run(&mut source, &PanickyJob, UnitSink, &budget(3), &abort).unwrap_err();
     match err {
         EngineError::WorkerPanicked { chunk, message } => {
             assert_eq!(chunk.get(), 1);
@@ -294,14 +294,17 @@ fn external_abort_stops_the_run() {
     let text = fixture_text(5_000);
     let chunks = make_chunks(&text, 500);
     let mut source = VecSource { chunks: chunks.into_iter() };
-    let (handle, signal) = abort_channel();
+    let abort = abort();
     // Abort shortly after the run starts; the pipeline must observe it at
     // its next blocking point and return Aborted.
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(50));
-        handle.trigger();
-    });
-    let result = run(&mut source, &SlowJob, UnitSink, &budget(4), &signal);
+    {
+        let handle = abort.handle.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            handle.trigger();
+        });
+    }
+    let result = run(&mut source, &SlowJob, UnitSink, &budget(4), &abort);
     assert!(matches!(result, Err(EngineError::Aborted)));
 }
 
@@ -313,12 +316,12 @@ fn memory_budget_stops_the_run() {
     let chunks = make_chunks(&text, 2_000);
     assert!(chunks.len() > 3, "test needs several chunks");
     let mut source = VecSource { chunks: chunks.into_iter() };
-    let (_h, signal) = abort_channel();
+    let abort = abort();
     let b = ThreadBudget {
         threads: 4,
         mem: MemBudget::from_bytes(64),
     };
-    let result = run(&mut source, &CountJob, VecSink::default(), &b, &signal);
+    let result = run(&mut source, &CountJob, VecSink::default(), &b, &abort);
     assert!(
         matches!(result, Err(EngineError::MemBudgetExceeded { .. })),
         "expected MemBudgetExceeded, got {result:?}"
@@ -334,8 +337,8 @@ fn source_errors_propagate() {
         }
     }
     let mut source = FailingSource;
-    let (_h, signal) = abort_channel();
-    let err = run(&mut source, &CountJob, VecSink::default(), &budget(3), &signal).unwrap_err();
+    let abort = abort();
+    let err = run(&mut source, &CountJob, VecSink::default(), &budget(3), &abort).unwrap_err();
     assert!(matches!(err, EngineError::Io(ref m) if m.contains("disk exploded")));
 }
 
@@ -398,15 +401,42 @@ fn partials_arrive_in_chunk_order_at_the_sink() {
     let chunks = make_chunks(&text, 600);
     let n_chunks = chunks.len();
     let mut source = VecSource { chunks: chunks.into_iter() };
-    let (_h, signal) = abort_channel();
+    let abort = abort();
     let report = run(
         &mut source,
         &SleepJob,
         IdSink { last_id: 0, n_seams: 0 },
         &budget(6),
-        &signal,
+        &abort,
     )
     .expect("invariant: ordered delivery");
     assert_eq!(report.sink_report, (n_chunks - 1) as u64);
 }
 
+
+/// R3 gate (03-architecture.md §4.2): the memory budget is backpressure —
+/// the run *completes* with a small pool, and the observed in-flight peak
+/// stays within the budget.
+#[test]
+fn memory_budget_bounds_in_flight_bytes() {
+    // Chunks of ~1 KB compressed (footprint ≈ 8 KB each): a 64 KB pool
+    // admits at most a handful in flight, and the run still finishes.
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 1_000);
+    assert!(chunks.len() > 20, "test needs many chunks");
+    let budget_bytes: u64 = 64 * 1024;
+    let b = ThreadBudget {
+        threads: 4,
+        mem: MemBudget::from_bytes(budget_bytes),
+    };
+    let mut source = VecSource { chunks: chunks.into_iter() };
+    let abort = abort();
+    let report = run(&mut source, &CountJob, VecSink::default(), &b, &abort)
+        .expect("invariant: backpressure completes the run");
+    assert!(
+        report.metrics.in_flight_peak_bytes <= budget_bytes,
+        "in-flight peak {} must respect the budget {budget_bytes}",
+        report.metrics.in_flight_peak_bytes
+    );
+    assert!(report.metrics.in_flight_peak_bytes > 0, "peak must be observed");
+}

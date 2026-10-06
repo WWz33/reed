@@ -303,7 +303,7 @@ pub fn run_filter(
             s.push(suffix);
             PathBuf::from(s)
         });
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
 
     // The report funnel: the FilterJob paths collect it in the sink slot;
     // the sketch path assembled it during the mid stage.
@@ -333,8 +333,8 @@ pub fn run_filter(
         // Header first (as BGZF block(s) on the compressed path).
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
         let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
-        let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-        run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr)?;
+        let abort = reed_engine::abort::abort();
+        run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         sketch_funnel
     } else {
         let job = FilterJob {
@@ -362,8 +362,8 @@ pub fn run_filter(
         };
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
         let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
-        let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-        run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr)?;
+        let abort = reed_engine::abort::abort();
+        run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         slot
             .lock()
             .expect("invariant: funnel slot not poisoned")
@@ -592,13 +592,13 @@ fn run_missing_pass(
     n_samples: usize,
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
     let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
     let job = MissingJob { n_samples };
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
     let sink = SumSink { total: Arc::clone(&total) };
-    let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-    run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr);
+    let abort = reed_engine::abort::abort();
+    run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr);
     Ok(total
         .lock()
         .expect("invariant: missing slot not poisoned")
@@ -1506,7 +1506,7 @@ fn run_sketch_pass(
     plan: &FilterPlan,
     opts: &FilterOptions,
 ) -> Result<SketchPassOutput, FilterError> {
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
     let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
     let job = SketchJob {
         plan: Arc::new(plan.clone()),
@@ -1521,8 +1521,8 @@ fn run_sketch_pass(
         open: None,
         out: Arc::clone(&out),
     };
-    let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-    run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr)?;
+    let abort = reed_engine::abort::abort();
+    run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
     Ok(out
         .lock()
         .expect("invariant: sketch slot not poisoned")
