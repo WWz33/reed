@@ -55,7 +55,7 @@ fn summarize(spec: &FilterSpec) -> String {
     let fmt_opt_f32 = |v: &Option<f32>| v.map_or("-".into(), |x| format!("{x}"));
     let fmt_opt_f64 = |v: &Option<f64>| v.map_or("-".into(), |x| format!("{x}"));
     let cohort = match &spec.cohort {
-        Some(crate::spec::CohortRule::MaxMissing(t)) => format!("miss<={t}"),
+        Some(crate::spec::legacy::CohortRule::MaxMissing(t)) => format!("miss<={t}"),
         None => "off".into(),
     };
     let regions = if spec.regions.is_empty() {
@@ -90,7 +90,7 @@ fn summarize(spec: &FilterSpec) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::{CohortRule, Region};
+    use crate::spec::legacy::{CohortRule, Region};
 
     #[test]
     fn provenance_is_deterministic() {

@@ -45,7 +45,7 @@ use reed_io::noodles_vcf as vcf;
 use reed_io::noodles_vcf::variant::RecordBuf;
 
 use crate::plan;
-use crate::spec::{CohortRule, FilterSpec};
+use crate::spec::legacy::{CohortRule, FilterSpec};
 use crate::FilterError;
 
 /// Records per batch handed to the compute stage
@@ -466,7 +466,7 @@ pub fn execute(
     opts: &ExecOptions,
 ) -> Result<RunReport, FilterError> {
     let t0 = Instant::now();
-    let _plan = plan::compile(spec);
+    let _plan = plan::legacy::compile(spec);
 
     let header = record::record_header(input)?;
     let n_samples_in = header.sample_names().len();
@@ -755,7 +755,7 @@ mod tests {
     //! of the funnel (mask, site missing, MAF, INFO, QUAL, PASS, biallelic).
 
     use super::*;
-    use crate::spec::CohortRule;
+    use crate::spec::legacy::CohortRule;
     use reed_io::sink;
 
     const HEADER_TEXT: &str = "\
@@ -834,7 +834,7 @@ mod tests {
         // counter is exercised.
         FilterSpec {
             cohort: Some(CohortRule::MaxMissing(0.9)),
-            sites: crate::spec::SiteRules {
+            sites: crate::spec::legacy::SiteRules {
                 max_missing: Some(0.5),
                 ..FilterSpec::default().sites
             },

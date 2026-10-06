@@ -180,7 +180,37 @@ reed stats input.vcf.gz --groups samples.3pop.txt --size 100000 --step 50000 \
 - Reference throughput: 3.3M records × 348 samples → 19k windows in
   ≈0.9 s (56 threads), ≈23 s single-threaded.
 
-### CLI (reed-filter, v0.2 — `reed filter` alias planned for M5)
+### CLI (reed filter) — filter v2 (v0.3, M5)
+
+Streaming hard filter on the chunk pipeline: head → GT-mask → post-mask
+tail → byte-level line edit → worker-local BGZF compression, written in
+chunk order with a synchronized tabix index (`--write-index`). Gold-parity
+gates (docs/filter-architecture.md §10): site set, genotypes and
+recomputed tags (AC/AN/NS integer-exact; MAF/HWE ≤ 1e-9) all match the
+bcftools/vcftools/plink2 three-tool gold standard; record output is
+byte-identical across thread counts.
+
+```bash
+reed filter input.vcf.gz --conf filters.conf --out out.vcf.gz \
+    --threads 48 --write-index
+reed filter input.vcf.gz --spec filter.toml --out out.vcf.gz   # TOML spec (§11.1)
+```
+
+- `--conf`: the gold `KEY=VALUE` compatibility reader (`compat::from_gold_conf`).
+- `--spec`: the typed TOML spec (cohort / targets / site / genotype masks /
+  site_after_mask / recompute / policy), validated at plan-compile time
+  against the input header.
+- The output header carries `##reed_version/command/filter_spec/
+  filter_sha256/ascertainment` provenance (§11.7–11.8); `reed stats` picks
+  the ascertainment up automatically.
+- Reference throughput: 3.3M records × 348 samples → 1.77M output records
+  in **12.6 s** (48 threads; gate ≤ 120 s); cohort reduction + filter +
+  recompute + compress + index.
+- Strategies (§11.4): `SinglePass` (no cohort rule or keep/remove lists)
+  and `TwoPassReparse` (max_missing cohort); byte-identical output,
+  test-locked. `SketchThenEmit` arrives with M5b.
+
+### CLI (reed-filter, v0.2 legacy binary — retained until 0.5.0, D14)
 
 ```bash
 reed-filter -c filters.conf -o out.vcf.gz --threads 8 input.vcf.gz

@@ -119,6 +119,45 @@ impl SampleScanner {
         Ok(())
     }
 
+    /// Scans one record with a callback: per sample, the GT subfield bytes
+    /// (`None` when the FORMAT has no GT) and one parsed integer per
+    /// requested key (`None` when the key or the value is absent) are
+    /// handed to `f` in sample order. The filter's per-site pipeline runs
+    /// on this — no plane materialization, single pass.
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedRecord`] for column-count mismatches and
+    /// unparsable integer values.
+    pub fn scan_fields<F>(&mut self, line: &LineRef<'_>, mut f: F) -> Result<(), IoError>
+    where
+        F: FnMut(usize, Option<&[u8]>, &[Option<&[u8]>]),
+    {
+        let layout = self.layout_for(line.format_text())?;
+        let samples = line.samples_text();
+        let mut field_start = 0;
+        let mut sample_idx = 0_usize;
+        while field_start < samples.len() {
+            let field_end = memchr::memchr(b'\t', &samples[field_start..])
+                .map_or(samples.len(), |rel| field_start + rel);
+            let field = &samples[field_start..field_end];
+            self.split_subfields(field);
+            let gt = layout
+                .gt_index
+                .and_then(|gi| self.subfields.get(usize::from(gi)))
+                .map(|r| &field[r.clone()]);
+            let ints: Vec<Option<&[u8]>> = layout
+                .int_indices
+                .iter()
+                .map(|ki| ki.and_then(|i| self.subfields.get(usize::from(i))).map(|r| &field[r.clone()]))
+                .collect();
+            f(sample_idx, gt, &ints);
+            sample_idx += 1;
+            field_start = field_end + 1;
+        }
+        Ok(())
+    }
+
     /// Cached FORMAT layout (parsed on first sight of each distinct FORMAT).
     fn layout_for(&mut self, format: &[u8]) -> Result<Layout, IoError> {
         if self.layouts.len() > 64 {

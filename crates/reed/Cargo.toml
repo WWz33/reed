@@ -13,11 +13,14 @@ reed-io.workspace = true
 reed-engine.workspace = true
 reed-qc.workspace = true
 reed-stats.workspace = true
+reed-filter.workspace = true
+sha2.workspace = true
+noodles.workspace = true
+bstr = "1"
 clap.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
-sha2.workspace = true
 
 [[example]]
 name = "qc_summary" 

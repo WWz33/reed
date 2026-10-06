@@ -338,8 +338,8 @@ impl FilterSpec {
     }
 
     /// Expands the spec into the fixed execution schedule ([`crate::plan`]).
-    pub fn compile(&self) -> crate::plan::Plan {
-        crate::plan::compile(self)
+    pub fn compile(&self) -> crate::plan::legacy::Plan {
+        crate::plan::legacy::compile(self)
     }
 }
 

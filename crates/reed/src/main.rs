@@ -1,7 +1,7 @@
 //! `reed` CLI (`docs/architecture-spec.md` M0: clap; M4: `reed stats`).
 //! The `filter` and `qc` subcommands follow with M5/M6.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use reed::stats::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
@@ -21,6 +21,37 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Streaming hard filter (v2 engine, §11): gold-parity funnel with
+    /// worker-local BGZF compression and synchronized indexing.
+    Filter {
+        /// Input BGZF VCF (.vcf.gz)
+        input: String,
+        /// Filter spec as TOML (§11.1)
+        #[arg(long, conflicts_with = "conf")]
+        spec: Option<String>,
+        /// Filter spec as the gold KEY=VALUE conf (compat path)
+        #[arg(long)]
+        conf: Option<String>,
+        /// Output VCF (.vcf.gz) — omit for plain VCF on the path/stdout
+        #[arg(short, long)]
+        out: Option<String>,
+        /// Write a tabix index next to the output
+        #[arg(long)]
+        write_index: bool,
+        /// BGZF compression level (default 6)
+        #[arg(long, default_value_t = 6)]
+        compress_level: u8,
+        /// JSON report path
+        #[arg(long)]
+        report: Option<String>,
+        /// Test-only strategy override (single_pass|two_pass_reparse)
+        #[arg(long, hide = true)]
+        strategy: Option<String>,
+        /// Worker threads (default: all cores)
+        #[arg(long)]
+        threads: Option<usize>,
+    },
+
     /// Windowed statistics (π, dxy, Fst, PBS, SFS, θ_W, Tajima's D) over a
     /// BGZF VCF, as additive accumulators with byte-deterministic output.
     Stats {
@@ -51,6 +82,23 @@ enum Command {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let command = Cli::parse().command;
+    if let Command::Filter {
+        input, spec, conf, out, write_index, compress_level, report, strategy, threads,
+    } = command
+    {
+        return run_filter_cli(FilterCli {
+            input,
+            spec,
+            conf,
+            out,
+            write_index,
+            compress_level,
+            report,
+            strategy,
+            threads,
+        });
+    }
     let Command::Stats {
         input,
         groups,
@@ -60,7 +108,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         skip_empty,
         out,
         threads,
-    } = Cli::parse().command;
+    } = command
+    else {
+        unreachable!("the filter subcommand returned above");
+    };
 
     let header = record_header(Path::new(&input))?;
     let sample_names: Vec<String> =
@@ -101,5 +152,68 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(path) => std::fs::write(path, report.tsv)?,
         None => print!("{}", report.tsv),
     }
+    Ok(())
+}
+
+struct FilterCli {
+    input: String,
+    spec: Option<String>,
+    conf: Option<String>,
+    out: Option<String>,
+    write_index: bool,
+    compress_level: u8,
+    report: Option<String>,
+    strategy: Option<String>,
+    threads: Option<usize>,
+}
+
+fn run_filter_cli(
+    FilterCli {
+        input,
+        spec,
+        conf,
+        out,
+        write_index,
+        compress_level,
+        report,
+        strategy,
+        threads,
+    }: FilterCli,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let spec_v2 = match (spec, conf) {
+        (Some(path), _) => reed::filter::read_spec_toml(Path::new(&path))?,
+        (None, Some(path)) => reed_filter::spec::compat::from_gold_conf(Path::new(&path))?,
+        (None, None) => {
+            return Err("one of --spec <filter.toml> or --conf <filters.conf> is required".into());
+        }
+    };
+    let strategy = strategy
+        .map(|s| match s.as_str() {
+            "single_pass" => Ok(reed_filter::plan::ExecStrategy::SinglePass),
+            "two_pass_reparse" => Ok(reed_filter::plan::ExecStrategy::TwoPassReparse),
+            other => Err(format!("unknown strategy {other:?}")),
+        })
+        .transpose()?;
+    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+    let threads = threads
+        .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism().expect("invariant: parallelism").get()
+        });
+    let opts = reed::filter::FilterOptions {
+        threads,
+        output: out.map(PathBuf::from),
+        write_index,
+        compress_level,
+        strategy,
+        command_line,
+        quiet: false,
+        report_json: report.map(PathBuf::from),
+    };
+    let report = reed::filter::run_filter(Path::new(&input), &spec_v2, &opts)?;
+    eprintln!(
+        "reed filter: {} -> {} records in {:.1}s",
+        report.n_input_records, report.n_output_records, report.elapsed_secs
+    );
     Ok(())
 }

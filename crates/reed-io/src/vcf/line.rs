@@ -112,6 +112,13 @@ impl<'a> LineRef<'a> {
     pub fn samples_start(&self) -> usize {
         self.tabs[8] + 1
     }
+
+    /// Byte offset of the INFO column text within `line` (columns 1–7 end
+    /// here, the FILTER tab included).
+    #[must_use]
+    pub fn info_start(&self) -> usize {
+        self.tabs[6] + 1
+    }
 }
 
 #[cfg(test)]

@@ -2,5 +2,6 @@
 //! (reed-qc, reed-stats; reed-filter as it migrates) onto the
 //! parallel engine (`docs/architecture-spec.md` §3.1, §7.1).
 
+pub mod filter;
 pub mod qc;
 pub mod stats;

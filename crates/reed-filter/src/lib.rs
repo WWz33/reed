@@ -16,7 +16,9 @@
 //! reed-io; this crate depends on reed-io and reed-core only.
 
 pub mod emitter;
+pub mod eval;
 pub mod exec;
+pub mod funnel;
 pub mod plan;
 pub mod spec;
 

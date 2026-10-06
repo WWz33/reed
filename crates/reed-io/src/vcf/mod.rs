@@ -6,4 +6,5 @@ pub mod fixed;
 pub mod gt;
 pub mod info;
 pub mod line;
+pub mod line_edit;
 pub mod sample_scan;
