@@ -3,6 +3,8 @@
 //! the projected estimator is M7).
 
 use reed_core::count::SiteGroupCounts;
+use reed_core::math::harmonic::{a1, a2};
+use reed_core::math::sum::NeumaierSum;
 
 /// Unfolded (or folded) SFS accumulator for one group. Complete-case: any
 /// missing allele in the group skips the site (counted separately).
@@ -89,5 +91,235 @@ impl SfsAcc {
     #[must_use]
     pub const fn n_chrom(&self) -> u64 {
         self.n_chrom
+    }
+}
+
+// ---------------------------------------------------------------- projected
+
+/// Hypergeometric projection weights for one site: `P(k | n, m, alt) =
+/// C(alt,k)·C(m−alt, n−k) / C(m, n)` (Marth 2004; dadi `project`), built
+/// with the ratio recursion `P(k+1)/P(k) = (alt−k)(n−k) /
+/// ((k+1)(m−alt−n+k+1))`, normalized, and truncated at a relative weight
+/// of 1e−15 (§9.4). Returns `(k, weight)` pairs with `k` in `1..n`
+/// (the segregating bins; k = 0 and k = n carry no SFS mass).
+#[must_use]
+pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
+    let (m, alt, n) = (u64::from(m), u64::from(alt), u64::from(n));
+    // Full support, including k = 0 and k = n: the projection is a true
+    // probability distribution, and its non-segregating mass (k = 0/n)
+    // is simply not stored in the spectrum — never renormalized away.
+    let k_lo = n.saturating_sub(m - alt);
+    let k_hi = n.min(alt);
+    if k_lo > k_hi {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity((k_hi - k_lo + 1) as usize);
+    let mut w = 1.0_f64;
+    out.push((u32::try_from(k_lo).unwrap_or(u32::MAX), w));
+    let mut k = k_lo;
+    while k < k_hi {
+        // P(k+1)/P(k) = (alt−k)(n−k) / ((k+1)(m−alt−n+k+1)); the
+        // denominator's inner difference goes through i64 — the u64
+        // intermediate (m−alt)−n can be negative before k is added.
+        let num = (alt - k) as f64 * (n - k) as f64;
+        let den = (k + 1) as f64
+            * (m as i64 - alt as i64 - n as i64 + k as i64 + 1) as f64;
+        w *= num / den;
+        k += 1;
+        out.push((u32::try_from(k).unwrap_or(u32::MAX), w));
+    }
+    let sum: f64 = out.iter().map(|(_, w)| *w).sum();
+    if sum <= 0.0 || !sum.is_finite() {
+        return Vec::new();
+    }
+    for (_, w) in &mut out {
+        *w /= sum;
+    }
+    // Numerical guard (§9.4): drop weights below 1e−15 of the PEAK
+    // without renormalizing — the distribution is unimodal, so the dropped
+    // tails sit at the recursion's noise floor and their mass (≤ 1e−15 ×
+    // count) is negligible.
+    let peak = out.iter().map(|(_, w)| *w).fold(0.0_f64, f64::max);
+    out.retain(|(_, w)| *w >= 1e-15 * peak);
+    out
+}
+
+/// Worker-side memo for projection weights, keyed by `(m, alt)` for a
+/// fixed `n` (§9.4: LRU; # ponytail: clear-on-full like HweCache).
+/// A shared weight slice (the cache hands out `Arc`s so sites reuse one
+/// allocation).
+pub type WeightsArc = std::sync::Arc<Vec<(u32, f64)>>;
+
+#[derive(Debug, Default)]
+pub struct ProjectionCache {
+    n: u32,
+    map: std::collections::HashMap<(u32, u32), WeightsArc>,
+}
+
+/// Capacity of [`ProjectionCache`] before a wholesale clear.
+pub const PROJECTION_CACHE_CAPACITY: usize = 8192;
+
+impl ProjectionCache {
+    /// A cache for a fixed projection size `n`.
+    #[must_use]
+    pub fn new(n: u32) -> Self {
+        Self { n, map: std::collections::HashMap::new() }
+    }
+
+    /// The projection size.
+    #[must_use]
+    pub const fn n(&self) -> u32 {
+        self.n
+    }
+
+    /// Weights for `(m, alt)`, cached.
+    #[must_use]
+    pub fn weights(&mut self, m: u32, alt: u32) -> WeightsArc {
+        if let Some(w) = self.map.get(&(m, alt)) {
+            return std::sync::Arc::clone(w);
+        }
+        let w: WeightsArc = std::sync::Arc::new(projection_weights(m, alt, self.n));
+        if self.map.len() >= PROJECTION_CACHE_CAPACITY {
+            self.map.clear();
+        }
+        self.map.insert((m, alt), std::sync::Arc::clone(&w));
+        w
+    }
+}
+
+/// Projected site-frequency spectrum for one group (§9.4 `Projected { n }`):
+/// sites with `m ≥ n` called chromosomes distribute their alt count over
+/// bins `ξ_k` by hypergeometric weights; `m < n` sites are skipped and
+/// counted. Float bins are [`NeumaierSum`]s so chunk merges stay within the
+/// §8.4 tolerance.
+#[derive(Clone, Debug)]
+pub struct ProjectedSfsAcc {
+    group: usize,
+    n: u32,
+    folded: bool,
+    /// `bins[k]` = ξ_k for `k` in `1..n` (index 0 unused).
+    bins: Vec<NeumaierSum>,
+    n_sites: u64,
+    n_skipped_m_lt_n: u64,
+}
+
+impl ProjectedSfsAcc {
+    /// Accumulator for `group` projected to `n` chromosomes; `None` when
+    /// `n < 2`.
+    #[must_use]
+    pub fn new(group: usize, n: u32, folded: bool) -> Option<Self> {
+        (n >= 2).then(|| Self {
+            group,
+            n,
+            folded,
+            bins: vec![NeumaierSum::new(); n as usize],
+            n_sites: 0,
+            n_skipped_m_lt_n: 0,
+        })
+    }
+
+    /// The projection size.
+    #[must_use]
+    pub const fn n(&self) -> u32 {
+        self.n
+    }
+
+    /// Absorbs one site with pre-fetched weights (`None` = the site was
+    /// skipped for `m < n`; the caller decides via its cache).
+    pub fn push_weighted(&mut self, weights: Option<&[(u32, f64)]>) {
+        if weights.is_none() {
+            self.n_skipped_m_lt_n += 1;
+            return;
+        }
+        self.n_sites += 1;
+        for &(k, w) in weights.unwrap_or(&[]) {
+            let k = if self.folded { k.min(self.n - k) } else { k };
+            if k >= 1 && u64::from(k) < u64::from(self.n) {
+                self.bins[k as usize].add(w);
+            }
+        }
+    }
+
+    /// Component-wise merge.
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(self.n, other.n, "invariant: same projection size");
+        debug_assert_eq!(self.folded, other.folded, "invariant: same folding");
+        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
+            dst.merge(src);
+        }
+        self.n_sites += other.n_sites;
+        self.n_skipped_m_lt_n += other.n_skipped_m_lt_n;
+    }
+
+    /// Bin ξ_k (k in 1..n).
+    #[must_use]
+    pub fn xi(&self, k: u32) -> f64 {
+        self.bins[k as usize].value()
+    }
+
+    /// All bins as a slice view (k = 0 unused, always 0).
+    #[must_use]
+    pub fn bins(&self) -> &[NeumaierSum] {
+        &self.bins
+    }
+
+    /// θ_π = Σ_k k(n−k)·ξ_k / C(n,2).
+    #[must_use]
+    pub fn pi(&self) -> f64 {
+        let n = u64::from(self.n);
+        let num: f64 = (1..self.n)
+            .map(|k| {
+                let k = u64::from(k);
+                (k * (n - k)) as f64 * self.bins[k as usize].value()
+            })
+            .sum();
+        let comps = n * (n - 1) / 2;
+        num / comps as f64
+    }
+
+    /// S = Σ_{k=1}^{n−1} ξ_k (segregating sites on the projected spectrum).
+    #[must_use]
+    pub fn segregating(&self) -> f64 {
+        (1..self.n as usize).map(|k| self.bins[k].value()).sum()
+    }
+
+    /// θ_W = S / a₁(n) on the projected spectrum.
+    #[must_use]
+    pub fn theta_w(&self) -> Option<f64> {
+        let n = usize::try_from(self.n).ok()?;
+        (n >= 2).then(|| self.segregating() / a1(n))
+    }
+
+    /// Tajima's D on the projected spectrum (fixed n: the standard moment
+    /// variance applies; `min_sites` guards S).
+    #[must_use]
+    pub fn tajima_d(&self, min_sites: u64) -> Option<f64> {
+        let n = u64::from(self.n);
+        if n < 2 {
+            return None;
+        }
+        let n_us = usize::try_from(n).ok()?;
+        let a1n = a1(n_us);
+        let a2n = a2(n_us);
+        let s = self.segregating();
+        if s < min_sites as f64 {
+            return None;
+        }
+        let theta_w = if a1n > 0.0 { s / a1n } else { 0.0 };
+        let nf = n as f64;
+        let b1 = (nf + 1.0) / (3.0 * (nf - 1.0));
+        let b2 = 2.0 * (nf * nf + nf + 3.0) / (9.0 * nf * (nf - 1.0));
+        let c1 = b1 - 1.0 / a1n;
+        let c2 = b2 - (nf + 2.0) / (a1n * nf) + a2n / (a1n * a1n);
+        let e1 = c1 / a1n;
+        let e2 = c2 / (a1n * a1n + a2n);
+        let variance = e1 * s + e2 * s * (s - 1.0);
+        (variance > 0.0).then(|| (self.pi() - theta_w) / variance.sqrt())
+    }
+
+    /// Site tallies: projected / skipped (m < n).
+    #[must_use]
+    pub const fn site_tally(&self) -> (u64, u64) {
+        (self.n_sites, self.n_skipped_m_lt_n)
     }
 }
