@@ -215,6 +215,28 @@ reed filter input.vcf.gz --spec filter.toml --out out.vcf.gz   # TOML spec (§11
   all three byte-identical, test-locked; the chosen strategy is auto-picked
   from a first-chunk records/byte extrapolation and reported.
 
+### CLI (reed qc) — QC report (v0.3, M6)
+
+The full §10.1 QC report on the chunk pipeline, with a `bcftools stats`-
+compatible text output (feedable to `plot-vcfstats`/MultiQC) plus a
+structured JSON report:
+
+```bash
+reed qc input.vcf.gz --out report.stats.txt --json report.qc.json
+```
+
+Sections: `summary` (SN), `tstv` (TSTV), singletons (SiS), `af_spectrum`
+(AF bins, bcftools binning formula), `qual` (QUAL), `substitution` (ST),
+`indel_length` (IDD), depth distributions (DP, per-site and per-genotype),
+and per-sample counters (PSC) — all additive accumulators over chunk
+partials, byte-identical across thread counts.
+
+**Parity gate (M6)**: every bcftools-overlapping section matches
+`bcftools stats -s -` line-for-line on the full 3.3M-record gold input
+(SN/TSTV/SiS/ST/AF/QUAL/DP/IDD), including the exact `dist_t`
+log-binning for high QUAL, the AF singleton-bin fold, and htslib's
+INFO/AC+AN preference over GT. Runtime: **3.2 s** (48 threads; gate ≤ 30 s).
+
 ### CLI (reed-filter, v0.2 legacy binary — retained until 0.5.0, D14)
 
 ```bash

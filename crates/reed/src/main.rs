@@ -21,6 +21,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Quality-control report (§10): bcftools-stats-compatible output plus
+    /// the structured JSON report.
+    Qc {
+        /// Input BGZF VCF (.vcf.gz)
+        input: String,
+        /// Write the structured JSON report here
+        #[arg(long)]
+        json: Option<String>,
+        /// Output path for the bcftools-stats text (omit for stdout)
+        #[arg(short, long)]
+        out: Option<String>,
+        /// Worker threads (default: all cores)
+        #[arg(long)]
+        threads: Option<usize>,
+    },
     /// Streaming hard filter (v2 engine, §11): gold-parity funnel with
     /// worker-local BGZF compression and synchronized indexing.
     Filter {
@@ -83,6 +98,32 @@ enum Command {
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let command = Cli::parse().command;
+    if let Command::Qc { input, json, out, threads } = &command {
+        let threads = threads
+            .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism().expect("invariant: parallelism").get()
+            });
+        let started = std::time::Instant::now();
+        let outcome = reed::qc_report::run_qc_report(
+            Path::new(input),
+            &reed::qc_report::QcOptions {
+                threads,
+                json: json.clone().map(PathBuf::from),
+            },
+        )?;
+        match out {
+            Some(path) => std::fs::write(path, &outcome.bcftools_text)?,
+            None => print!("{}", outcome.bcftools_text),
+        }
+        eprintln!(
+            "reed qc: {} records, {} samples in {:.1}s",
+            outcome.report.summary.n_records,
+            outcome.report.n_samples,
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(());
+    }
     if let Command::Filter {
         input, spec, conf, out, write_index, compress_level, report, strategy, threads,
     } = command

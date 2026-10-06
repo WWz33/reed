@@ -4,4 +4,5 @@
 
 pub mod filter;
 pub mod qc;
+pub mod qc_report;
 pub mod stats;
