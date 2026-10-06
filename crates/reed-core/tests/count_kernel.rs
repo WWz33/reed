@@ -5,13 +5,13 @@
 
 use proptest::prelude::*;
 
-use reed_core::bits::Bits;
+use reed_core_v02_oracle::bits::Bits;
 use reed_core::count::{count_site_group, count_site_group_scalar, CountTable};
 use reed_core::genotype::{write_genotype, GenotypePolicies, Ploidy, PolicyCounters};
 use reed_core::id::SampleId;
-use reed_core::manifest::{Ascertainment, SiteCompleteness};
+use reed_core_v02_oracle::manifest::{Ascertainment, SiteCompleteness};
 use reed_core::sample::SampleMask;
-use reed_core::window::{ContigId, WindowBuffer};
+use reed_core_v02_oracle::window::{ContigId, WindowBuffer};
 
 /// One site's genotypes: `(slot0, slot1)` per sample, `None` = missing.
 type SiteGt = Vec<(Option<u16>, Option<u16>)>;
@@ -121,7 +121,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
-    fn kernel_matches_legacy_on_random_genotypes(
+    fn kernel_matches_oracle_on_random_genotypes(
         sites in proptest::collection::vec(arb_genotypes(17), 1..4),
         group_a in prop::collection::vec(any::<bool>(), 17),
         group_b in prop::collection::vec(any::<bool>(), 17),

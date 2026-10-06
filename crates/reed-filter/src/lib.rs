@@ -4,31 +4,22 @@
 //! Architecture: `docs/filter-architecture.md`. Gold standard and parity gate: `gold/`.
 //!
 //! Layers:
-//! - [`spec`]: the sealed filter spec (value type; `from_conf` mirrors the gold pipeline config)
+//! - [`spec`]: the sealed filter spec (value type; `compat` mirrors the gold pipeline config)
 //! - [`plan`]: fixed schedule expansion + ascertainment derivation + provenance hash
-//! - [`exec`]: the engine (two streaming passes over reed-io's record transport:
-//!   reduce = genome-wide sample missing-rate reduction, scan = filter + edit + emit)
-//! - [`emitter`]: thin re-export of reed-io's output sink (stdout plain-text VCF is
-//!   the default; .vcf.gz / .bcf are dispatched by extension)
 //!
 //! The caller declares *what* (spec); the engine decides *how* (auto strategy);
 //! the sink decides *where* (output stream). Every backend touch point sits in
 //! reed-io; this crate depends on reed-io and reed-core only.
 
-pub mod emitter;
 pub mod eval;
-pub mod exec;
 pub mod funnel;
 pub mod plan;
 pub mod sketch;
 pub mod spec;
 
-pub use exec::{execute, ExecOptions, RunReport};
-pub use spec::FilterSpec;
-
 use std::fmt;
 
-use reed_io::ReadError;
+use reed_io::IoError;
 
 /// Unified error type. Construction-time validation reports [`FilterError::Spec`];
 /// runtime failures report Io/Format/Decode.
@@ -72,18 +63,9 @@ impl From<std::io::Error> for FilterError {
     }
 }
 
-/// Transport failures arrive through reed-io's ReadError: I/O and per-record
-/// decode keep their payload, every other failure mode (unsupported format,
-/// header contradictions) becomes a Format error.
-impl From<ReadError> for FilterError {
-    fn from(e: ReadError) -> Self {
-        match e {
-            ReadError::Io(err) => FilterError::Io(err),
-            ReadError::Decode { contig, pos, msg } => FilterError::Decode { contig, pos, msg },
-            ReadError::UnsupportedFormat(name) => FilterError::Format(format!(
-                "unsupported input {name:?} (v0.1: .vcf, .vcf.gz, .vcf.bgz, .bcf)"
-            )),
-            other => FilterError::Format(other.to_string()),
-        }
+/// Transport failures arrive through reed-io's [`IoError`].
+impl From<IoError> for FilterError {
+    fn from(e: IoError) -> Self {
+        FilterError::Io(std::io::Error::other(e.to_string()))
     }
 }

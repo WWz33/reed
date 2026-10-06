@@ -3,7 +3,7 @@
 //! (worker) owns the scratch buffers and constructs the borrowed
 //! [`EditPlan`] inline — no leaked allocations, no unsafe.
 
-use reed_core::estimators::site_counts::SiteCounts;
+use reed_core::count::SiteCounts;
 use reed_io::vcf::line_edit::InfoValueOut;
 
 use crate::plan::RecomputeFlags;

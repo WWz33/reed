@@ -601,7 +601,7 @@ impl StatsSink {
 /// Transport, job, and request failures — including a sample-count mismatch
 /// against the header, an invalid grid, or a group index without samples.
 pub fn run_stats(
-    path: &Path,
+    path: Option<&Path>,
     request: StatsRequest,
     budget: &ThreadBudget,
 ) -> Result<StatsReport, EngineError> {
@@ -625,11 +625,7 @@ pub fn run_stats(
         .map_err(|err| EngineError::Job(format!("invalid stats request: {err}")))?;
     let keys: Vec<StatKey> = request.kinds.iter().map(StatKind::key).collect();
 
-    let (mut source, header) = BgzfChunkSource::open(std::io::BufReader::with_capacity(
-        1 << 20,
-        std::fs::File::open(path).map_err(|err| EngineError::Io(err.to_string()))?,
-    ))
-    .map_err(EngineError::from)?;
+    let (mut source, header) = crate::input::open(path).map_err(EngineError::from)?;
     if header.n_samples() != request.gt_groups.len() {
         return Err(EngineError::Job(format!(
             "request assigns {} samples but the header declares {}",
@@ -679,7 +675,7 @@ pub fn run_stats(
         out: Arc::clone(&out),
     };
     let (_abort_handle, abort_signal) = reed_engine::abort::abort_channel();
-    let report = run(&mut source as &mut dyn ChunkSource, &job, sink, budget, &abort_signal)?;
+    let report = run(source.as_mut(), &job, sink, budget, &abort_signal)?;
     let output = out
         .lock()
         .expect("invariant: stats slot not poisoned")

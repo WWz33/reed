@@ -146,13 +146,13 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
     let out_single = dir.join("single.vcf.gz");
     let out_two = dir.join("two.vcf.gz");
     let r1 = run_filter(
-        &dir_path,
+        Some(&dir_path.as_path()),
         &spec,
         &options(Some(reed_filter::plan::ExecStrategy::SinglePass), &out_single),
     )
     .expect("invariant: single pass runs");
     let r2 = run_filter(
-        &dir_path,
+        Some(&dir_path.as_path()),
         &spec,
         &options(Some(reed_filter::plan::ExecStrategy::TwoPassReparse), &out_two),
     )
@@ -188,7 +188,7 @@ fn output_is_deterministic_across_thread_counts() {
     let mut reference: Option<Vec<u8>> = None;
     for threads in [1_usize, 3, 8] {
         let out = dir.join(format!("out-{threads}.vcf.gz"));
-        run_filter(&dir_path, &spec, &options(None, &out)).expect("invariant: run");
+        run_filter(Some(&dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
         let bytes = std::fs::read(&out).expect("invariant: output");
         match &reference {
             None => reference = Some(bytes),
@@ -223,14 +223,14 @@ fn spec_validation_rejects_unknown_tags_and_ranges() {
     let kv = gold_kv();
     let mut spec = from_gold_kv(&kv).expect("invariant: valid kv");
     spec.site.info[0].tag = "NotDeclared".to_string();
-    let err = run_filter(&dir_path, &spec, &options(None, &dir.join("o.vcf.gz")))
+    let err = run_filter(Some(&dir_path.as_path()), &spec, &options(None, &dir.join("o.vcf.gz")))
         .expect_err("invariant: unknown tag rejected");
     assert!(err.to_string().contains("NotDeclared"), "{err}");
 
     // Threshold out of range.
     let mut spec = from_gold_kv(&kv).expect("invariant: valid kv");
     spec.site_after_mask.min_maf = Some(0.9);
-    let err = run_filter(&dir_path, &spec, &options(None, &dir.join("o.vcf.gz")))
+    let err = run_filter(Some(&dir_path.as_path()), &spec, &options(None, &dir.join("o.vcf.gz")))
         .expect_err("invariant: maf range rejected");
     assert!(err.to_string().contains("min_maf"), "{err}");
 
@@ -334,7 +334,7 @@ when = "< 5"
     let dir_path = write_fixture("maskdefault", 5);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
     let out = dir.join("o.vcf.gz");
-    let result = run_filter(&dir_path, &spec, &options(None, &out));
+    let result = run_filter(Some(&dir_path.as_path()), &spec, &options(None, &out));
     assert!(result.is_ok(), "Pass normalizes to Keep: {result:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -345,7 +345,7 @@ fn provenance_and_ascertainment_are_written() {
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
     let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
     let out = dir.join("o.vcf.gz");
-    run_filter(&dir_path, &spec, &options(None, &out)).expect("invariant: run");
+    run_filter(Some(&dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
 
     let text = {
         use std::io::Read;
@@ -401,7 +401,7 @@ fn all_three_strategies_produce_identical_bytes() {
         ("sketch", Some(reed_filter::plan::ExecStrategy::SketchThenEmit)),
     ] {
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report = run_filter(&dir_path, &spec, &options(strategy, &out))
+        let report = run_filter(Some(&dir_path.as_path()), &spec, &options(strategy, &out))
             .unwrap_or_else(|e| panic!("{name} failed: {e}"));
         assert_eq!(report.strategy, strategy.expect("invariant: forced").id(), "the report names the strategy");
         let bytes = std::fs::read(&out).expect("invariant: output");
@@ -425,13 +425,13 @@ fn sketch_funnel_matches_the_single_pass_funnel() {
     let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
 
     let single = run_filter(
-        &dir_path,
+        Some(&dir_path.as_path()),
         &spec,
         &options(Some(reed_filter::plan::ExecStrategy::SinglePass), &dir.join("s.vcf.gz")),
     )
     .expect("invariant: single pass");
     let sketch = run_filter(
-        &dir_path,
+        Some(&dir_path.as_path()),
         &spec,
         &options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &dir.join("k.vcf.gz")),
     )
@@ -489,7 +489,7 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.out.vcf.gz");
 
-        run_filter(&input, &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Csi))
+        run_filter(Some(&input.as_path()), &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Csi))
             .expect("invariant: filter runs");
 
         let index = noodles::csi::fs::read(dir.join("wide.out.vcf.gz.csi"))
@@ -529,7 +529,7 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.tbi.vcf.gz");
 
-        let result = run_filter(&input, &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Tbi));
+        let result = run_filter(Some(&input.as_path()), &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Tbi));
         assert!(result.is_err(), "TBI must refuse coordinates ≥ 2^29");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -545,7 +545,7 @@ mod write_index {
         std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
         let out = dir.join("und.out.vcf.gz");
 
-        let result = run_filter(&input, &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::None));
+        let result = run_filter(Some(&input.as_path()), &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::None));
         assert!(result.is_err(), "an undeclared contig must fail, not alias tid 0");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -590,7 +590,7 @@ fn record_wider_than_one_block_round_trips() {
     std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
     let out = dir.join("wide.out.vcf.gz");
 
-    run_filter(&input, &FilterSpecV2::default(), &options(None, &out))
+    run_filter(Some(&input.as_path()), &FilterSpecV2::default(), &options(None, &out))
         .expect("invariant: filter runs on a record wider than one block");
 
     use std::io::Read as _;

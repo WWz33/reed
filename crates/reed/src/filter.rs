@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use reed_core::estimators::site_counts::SiteCounts;
+use reed_core::count::SiteCounts;
 use reed_core::sample::SampleMask;
 use reed_core::Bitset;
 use reed_core::ChunkId;
@@ -31,7 +31,7 @@ use reed_filter::spec::{CohortRule as CohortRuleV2, FilterSpecV2};
 use reed_filter::FilterError;
 use reed_io::bgzf::block::EOF_BLOCK;
 use reed_io::bgzf::deflate::Deflater;
-use reed_io::chunk::{BgzfChunkSource, ChunkSource};
+use reed_io::chunk::ChunkSource;
 use noodles;
 use reed_io::noodles_vcf as vcf;
 use reed_io::vcf::fixed::parse_pos1;
@@ -118,22 +118,24 @@ fn ferr(err: EngineError) -> FilterError {
 ///
 /// Spec compilation, transport, job and sink failures.
 pub fn run_filter(
-    input: &Path,
+    input: Option<&Path>,
     spec: &FilterSpecV2,
     opts: &FilterOptions,
 ) -> Result<FilterReport, FilterError> {
     let t0 = Instant::now();
-    let header = reed_io::record::record_header(input).map_err(FilterError::from)?;
+    // One open for the header (the pass loops below open again per pass).
+    let (_source, facts) = crate::input::open(input).map_err(io_err)?;
+    let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
     let mut plan = reed_filter::plan::compile(spec, &header, &opts.command_line)?;
     let strategy = match opts.strategy {
         Some(forced) => forced,
         None => match &spec.cohort {
-            Some(CohortRuleV2::MaxMissing(_)) => {
+            Some(CohortRuleV2::MaxMissing(_)) if input.is_some() => {
                 // §11.4: the sketch path when the upper-bounded sketch fits
                 // the memory budget (records extrapolated from the first
                 // chunk's records/byte density).
-                let estimated = estimate_records(input)?;
+                let estimated = estimate_records(input.expect("invariant: guarded above"))?;
                 reed_filter::plan::strategy::choose_for_max_missing(
                     estimated,
                     n_samples_in,
@@ -194,7 +196,7 @@ pub fn run_filter(
 
     // ---- output header: prune samples, add recompute defs, provenance ----
     let out_header = if subset {
-        reed_io::record::filter_header(&header, &keep)
+        facts.pruned_header(&keep)
     } else {
         header.clone()
     };
@@ -330,16 +332,9 @@ pub fn run_filter(
         };
         // Header first (as BGZF block(s) on the compressed path).
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
-        let (mut source, _facts) =
-            BgzfChunkSource::open(std::io::BufReader::with_capacity(
-                1 << 20,
-                std::fs::File::open(input).map_err(FilterError::from)?,
-            ))
-            .map_err(|e: reed_io::error::IoError| {
-                FilterError::Io(std::io::Error::other(e.to_string()))
-            })?;
+        let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
         let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-        run(&mut source as &mut dyn ChunkSource, &job, sink, &budget, &abort_signal).map_err(ferr)?;
+        run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr)?;
         sketch_funnel
     } else {
         let job = FilterJob {
@@ -366,16 +361,9 @@ pub fn run_filter(
             last_block_end: 0,
         };
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
-        let (mut source, _facts) =
-            BgzfChunkSource::open(std::io::BufReader::with_capacity(
-                1 << 20,
-                std::fs::File::open(input).map_err(FilterError::from)?,
-            ))
-            .map_err(|e: reed_io::error::IoError| {
-                FilterError::Io(std::io::Error::other(e.to_string()))
-            })?;
+        let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
         let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-        run(&mut source as &mut dyn ChunkSource, &job, sink, &budget, &abort_signal).map_err(ferr)?;
+        run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr)?;
         slot
             .lock()
             .expect("invariant: funnel slot not poisoned")
@@ -600,22 +588,17 @@ fn is_fully_missing(gt: &[u8]) -> bool {
 }
 
 fn run_missing_pass(
-    input: &Path,
+    input: Option<&Path>,
     n_samples: usize,
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
-    let (mut source, _facts) =
-        BgzfChunkSource::open(std::io::BufReader::with_capacity(
-            1 << 20,
-            std::fs::File::open(input).map_err(FilterError::from)?,
-        ))
-        .map_err(|e: reed_io::error::IoError| FilterError::Io(std::io::Error::other(e.to_string())))?;
+    let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
     let job = MissingJob { n_samples };
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
     let sink = SumSink { total: Arc::clone(&total) };
     let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-    run(&mut source as &mut dyn ChunkSource, &job, sink, &budget, &abort_signal).map_err(ferr);
+    run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr);
     Ok(total
         .lock()
         .expect("invariant: missing slot not poisoned")
@@ -1518,18 +1501,13 @@ impl OrderedSink<SketchPartial> for SketchSink {
 
 /// The sketch pass (engine run #1).
 fn run_sketch_pass(
-    input: &Path,
+    input: Option<&Path>,
     n_samples: usize,
     plan: &FilterPlan,
     opts: &FilterOptions,
 ) -> Result<SketchPassOutput, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
-    let (mut source, _facts) =
-        BgzfChunkSource::open(std::io::BufReader::with_capacity(
-            1 << 20,
-            std::fs::File::open(input).map_err(FilterError::from)?,
-        ))
-        .map_err(io_err)?;
+    let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
     let job = SketchJob {
         plan: Arc::new(plan.clone()),
         n_samples,
@@ -1544,7 +1522,7 @@ fn run_sketch_pass(
         out: Arc::clone(&out),
     };
     let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-    run(&mut source as &mut dyn ChunkSource, &job, sink, &budget, &abort_signal).map_err(ferr)?;
+    run(source.as_mut(), &job, sink, &budget, &abort_signal).map_err(ferr)?;
     Ok(out
         .lock()
         .expect("invariant: sketch slot not poisoned")
@@ -1847,12 +1825,7 @@ impl EmitJob {
 /// index).
 fn estimate_records(input: &Path) -> Result<u64, FilterError> {
     let file_len = std::fs::metadata(input).map_err(FilterError::from)?.len();
-    let (mut source, _facts) =
-        BgzfChunkSource::open(std::io::BufReader::with_capacity(
-            1 << 20,
-            std::fs::File::open(input).map_err(FilterError::from)?,
-        ))
-        .map_err(io_err)?;
+    let (mut source, _facts) = crate::input::open(Some(input)).map_err(io_err)?;
     let Some(chunk) = source.next_chunk().map_err(io_err)? else {
         return Ok(0);
     };

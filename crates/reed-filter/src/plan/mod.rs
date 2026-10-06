@@ -4,7 +4,6 @@
 //! ascertainment derivation (§11.7) and provenance (§11.8) all happen here.
 
 pub mod ascertainment;
-pub mod legacy;
 pub mod provenance;
 pub mod strategy;
 
@@ -16,7 +15,6 @@ use noodles::vcf::header::record::value::map::info::{Number, Type};
 use reed_core::manifest::v2::Ascertainment;
 
 pub use ascertainment::derive_ascertainment;
-pub use legacy::Plan as LegacyPlan;
 pub use strategy::ExecStrategy;
 
 use crate::spec::{

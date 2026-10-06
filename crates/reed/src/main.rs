@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use reed::stats::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
-use reed_io::record::record_header;
 
 #[derive(Parser)]
 #[command(
@@ -107,6 +106,11 @@ enum Command {
     },
 }
 
+/// `-` means stdin; everything else is a file path.
+fn input_path(arg: &str) -> Option<PathBuf> {
+    (arg != "-").then(|| PathBuf::from(arg))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let command = Cli::parse().command;
     if let Command::Qc { input, json, out, threads } = &command {
@@ -117,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             });
         let started = std::time::Instant::now();
         let outcome = reed::qc_report::run_qc_report(
-            Path::new(input),
+            input_path(input).as_deref(),
             &reed::qc_report::QcOptions {
                 threads,
                 json: json.clone().map(PathBuf::from),
@@ -167,9 +171,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         unreachable!("the filter subcommand returned above");
     };
 
-    let header = record_header(Path::new(&input))?;
-    let sample_names: Vec<String> =
-        header.sample_names().iter().map(ToString::to_string).collect();
+    let (_source, facts) = reed::input::open(input_path(&input).as_deref())
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?;
+    let sample_names: Vec<String> = facts.sample_names.clone();
     let (gt_groups, group_names) =
         assign_groups(Path::new(&groups), &sample_names, force_samples)?;
     eprintln!(
@@ -179,7 +183,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         group_names.join(", ")
     );
 
-    let mut contig_lengths: HashMap<Vec<u8>, u64> = header
+    let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
+        .header
         .contigs()
         .iter()
         .filter_map(|(name, contig)| {
@@ -222,7 +227,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
     let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
 
-    let report = run_stats(Path::new(&input), request, &budget)?;
+    let report = run_stats(input_path(&input).as_deref(), request, &budget)?;
     eprintln!(
         "{} windows, {} records, {} multiallelic skipped, {} chunks in {:.1}s",
         report.n_windows,
@@ -294,7 +299,7 @@ fn run_filter_cli(
         quiet: false,
         report_json: report.map(PathBuf::from),
     };
-    let report = reed::filter::run_filter(Path::new(&input), &spec_v2, &opts)?;
+    let report = reed::filter::run_filter(input_path(&input).as_deref(), &spec_v2, &opts)?;
     eprintln!(
         "reed filter: {} -> {} records in {:.1}s",
         report.n_input_records, report.n_output_records, report.elapsed_secs

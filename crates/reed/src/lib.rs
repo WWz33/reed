@@ -3,6 +3,7 @@
 //! parallel engine (`docs/architecture-spec.md` §3.1, §7.1).
 
 pub mod filter;
+pub mod input;
 pub mod qc;
 pub mod qc_report;
 pub mod stats;

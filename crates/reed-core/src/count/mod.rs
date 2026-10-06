@@ -7,11 +7,13 @@
 //! `estimators::site_counts`) becomes a derived view in reed-filter.
 
 pub mod kernel;
+pub mod site_counts;
 
 use crate::genotype::PlaneBlock;
 use crate::sample::SampleMask;
 
 pub use kernel::{count_site_group, count_site_group_scalar};
+pub use site_counts::{count_site, SiteCounts};
 
 /// Genotype and allele tallies for one group at one site (24 bytes).
 ///

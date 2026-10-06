@@ -129,7 +129,7 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
     for threads in [1_usize, 2, 4, 7] {
         let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
         let report = run_stats(
-            &path,
+            Some(&path.as_path()),
             request(KINDS_TEST.to_vec(), Levels::default(), false),
             &budget,
         )
@@ -147,7 +147,7 @@ fn skip_empty_drops_window_rows_only() {
     let path = write_fixture("skip.vcf.gz", &fixture_text());
     let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
     let report = run_stats(
-        &path,
+        Some(&path.as_path()),
         request(KINDS_TEST.to_vec(), Levels::default(), true),
         &budget,
     )
@@ -165,7 +165,7 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     let path = write_fixture("levels.vcf.gz", &fixture_text());
     let budget = ThreadBudget { threads: 3, mem: MemBudget::from_bytes(u64::MAX) };
     let levels = Levels::parse("window,contig,genome").expect("invariant: levels");
-    let report = run_stats(&path, request(KINDS_TEST.to_vec(), levels, false), &budget)
+    let report = run_stats(Some(&path.as_path()), request(KINDS_TEST.to_vec(), levels, false), &budget)
         .expect("invariant: fixture run succeeds");
 
     let got = rows(&report.tsv);
@@ -221,7 +221,7 @@ chr1\t60\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t1/1
     let path = write_fixture("revisit.vcf.gz", text);
     let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
     let err = run_stats(
-        &path,
+        Some(&path.as_path()),
         request(KINDS_TEST.to_vec(), Levels::default(), false),
         &budget,
     )
@@ -306,7 +306,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     let gt_groups = vec![Some(0), Some(1), Some(2)];
 
     let err = run_stats(
-        &path,
+        Some(&path.as_path()),
         request(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false),
         &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
     )
@@ -317,7 +317,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     let mut lengths = HashMap::new();
     lengths.insert(b"chr1".to_vec(), 1_000_u64);
     let with_file = run_stats(
-        &path,
+        Some(&path.as_path()),
         request_with(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false, lengths),
         &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
     )
@@ -325,7 +325,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
 
     let declared = write_fixture("d7-declared", &fixture_text());
     let reference = run_stats(
-        &declared,
+        Some(&declared.as_path()),
         request(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false),
         &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
     )
@@ -354,7 +354,7 @@ chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
 ";
     let path = write_fixture("d8-unsorted", &unsorted);
     let err = run_stats(
-        &path,
+        Some(&path.as_path()),
         request(vec![StatKind::Pi { group: 0, per_bp: false }], Levels::default(), false),
         &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
     )
@@ -371,7 +371,7 @@ chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
 ";
     let path = write_fixture("d8-beyond", &beyond);
     let err = run_stats(
-        &path,
+        Some(&path.as_path()),
         request(vec![StatKind::Pi { group: 0, per_bp: false }], Levels::default(), false),
         &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
     )

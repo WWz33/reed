@@ -12,7 +12,6 @@
 
 pub mod cohort;
 pub mod compat;
-pub mod legacy;
 pub mod mask;
 pub mod predicate;
 pub mod recompute;
@@ -21,7 +20,6 @@ pub mod region;
 use serde::{Deserialize, Serialize};
 
 pub use cohort::CohortRule;
-pub use legacy::{FilterSpec, FilterSpecBuilder, GtMask, InfoRules, Recompute, SiteRules};
 pub use mask::GenotypeMaskRule;
 pub use predicate::{Cmp, OnMissing, Quantifier, Typed};
 pub use region::{Region, RegionRule};

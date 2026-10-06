@@ -1,7 +1,7 @@
 //! Post-mask site rules (§11.2 Tail stage, fixed order: missing → MAF →
 //! MAC → HWE; HWE is last because it is the most expensive).
 
-use reed_core::estimators::site_counts::SiteCounts;
+use reed_core::count::SiteCounts;
 
 use crate::plan::TailRule;
 

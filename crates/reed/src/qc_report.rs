@@ -513,19 +513,15 @@ pub struct QcOutcome {
 /// # Errors
 ///
 /// Transport and job failures.
-pub fn run_qc_report(input: &Path, opts: &QcOptions) -> Result<QcOutcome, EngineError> {
-    let header = reed_io::record::record_header(input).map_err(|e| EngineError::Io(e.to_string()))?;
-    let n_samples = header.sample_names().len();
+pub fn run_qc_report(input: Option<&Path>, opts: &QcOptions) -> Result<QcOutcome, EngineError> {
+    let (mut source, facts) = crate::input::open(input).map_err(|e| EngineError::Io(e.to_string()))?;
+    let n_samples = facts.n_samples();
     let job = QcJob { n_samples };
     let slot: Arc<Mutex<Option<QcReportAcc>>> = Arc::new(Mutex::new(None));
     let sink = QcSink { acc: Some(QcReportAcc::new(u32::try_from(n_samples).unwrap_or(u32::MAX))), out: Arc::clone(&slot) };
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX) };
-    let (mut source, _facts) = BgzfChunkSource::open(std::io::BufReader::with_capacity(
-        1 << 20,
-        std::fs::File::open(input).map_err(|e| EngineError::Io(e.to_string()))?,
-    ))?;
     let (_abort, abort_signal) = reed_engine::abort::abort_channel();
-    run(&mut source as &mut dyn ChunkSource, &job, sink, &budget, &abort_signal)?;
+    run(source.as_mut(), &job, sink, &budget, &abort_signal)?;
     let report = slot
         .lock()
         .expect("invariant: qc slot not poisoned")

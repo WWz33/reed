@@ -13,7 +13,7 @@
 //! manifest gate (§4.2, site-local statistics exemption) — sites absent from
 //! the input are simply not counted.
 
-use super::hwe::hardy_weinberg_p_value;
+use crate::math::hwe::hwe_exact_p;
 
 /// Exact per-site allele and genotype counts over a sample subset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -72,7 +72,12 @@ impl SiteCounts {
         if self.hwe_is_degenerate() {
             return 1.0;
         }
-        hardy_weinberg_p_value(self.het, self.hom_ref, self.hom_alt)
+        let n_called = self.hom_ref + self.het + self.hom_alt;
+        // Minor allele count = 2·(rarer homozygote) + hets.
+        let minor_hom = self.hom_ref.min(self.hom_alt);
+        let mac = 2 * minor_hom + self.het;
+        let cast = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        hwe_exact_p(cast(n_called), cast(mac), cast(self.het))
     }
 }
 
@@ -255,22 +260,22 @@ mod tests {
         let c = count_site(&[0, 0, 0, 0, 1, 1, 1, 1], None);
         assert!((c.hwe_p() - 3.0 / 35.0).abs() < 1e-12);
 
-        // Argument-order pairing: exactly hardy_weinberg_p_value over the
-        // genotype classes of the site.
+        // Wigginton two-sided exact test on a known site: n = 4 calls,
+        // mac = 3 → valid het counts {1, 3} with P(1) = 3/7, P(3) = 4/7;
+        // the observed configuration is the less likely one, so p = 3/7.
         let gt = [0, 0, 0, 1, 1, 1, 1, 1]; // hom_ref = 1, het = 1, hom_alt = 2
         let c = count_site(&gt, None);
-        assert_eq!(c.hwe_p(), hardy_weinberg_p_value(c.het, c.hom_ref, c.hom_alt));
+        assert!((c.hwe_p() - 3.0 / 7.0).abs() < 1e-12, "{}", c.hwe_p());
     }
 
-    /// Edge inherited from the reference: a site whose only calls are
-    /// half-calls has both allele sides present in AN/AC but zero genotype
-    /// observations, so it is not degenerate and the exact test yields NaN
-    /// (hardy_weinberg_p_value's empty-sample sentinel).
+    /// A site whose only calls are half-calls has zero genotype
+    /// observations: nothing is testable, so the p-value is the fill-tags
+    /// convention for degenerate sites (HWE = 1, the site is kept).
     #[test]
-    fn half_call_only_site_hwe_is_nan() {
+    fn half_call_only_site_hwe_is_one() {
         let c = count_site(&[0, -1, -1, 1], None);
         assert!(!c.hwe_is_degenerate());
-        assert!(c.hwe_p().is_nan());
+        assert!((c.hwe_p() - 1.0).abs() < 1e-12);
     }
 
     /// A trailing unpaired element carries no sample and is ignored.

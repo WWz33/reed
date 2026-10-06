@@ -18,7 +18,6 @@ use reed_io::Locus;
 use reed_io::vcf::fixed::parse_pos1;
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::sample_scan::{INT_MISSING, SampleScanner};
-use reed_io::record;
 use reed_core::genotype::{
     MultiallelicPolicy, PloidyPolicy, PlaneBlock, PolicyCounters,
 };
@@ -30,20 +29,57 @@ fn fixture_path() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE)
 }
 
-/// Reference decode via noodles RecordBufs (the legacy transport path).
-fn reference(
-    path: &Path,
-) -> Vec<SampleExpectations> {
+/// Reference decode via noodles RecordBufs, inline: GT alleles as -1
+/// (missing) / index, first two slots, and DP/GQ as raw integers.
+fn reference(path: &Path) -> Vec<SampleExpectations> {
+    use noodles::vcf::variant::record::samples::Series as _;
+    use noodles::vcf::variant::record::samples::series::Value;
+
     let file = std::fs::File::open(path).expect("invariant: fixture exists");
-    let mut reader =
-        noodles::vcf::io::Reader::new(BufReader::new(file));
+    let mut reader = noodles::vcf::io::Reader::new(BufReader::new(file));
     let header = reader.read_header().expect("invariant: header parses");
     let n_samples = header.sample_names().len();
     let mut out = Vec::new();
     for buf in reader.record_bufs(&header) {
         let buf = buf.expect("invariant: record parses");
-        let view = record::decode(&buf, n_samples).expect("invariant: reference decode");
-        out.push((view.gt, view.dp.clone(), view.gq.clone()));
+        let mut gt = vec![-1_i8; 2 * n_samples];
+        let mut dp: Vec<Option<u32>> = vec![None; n_samples];
+        let mut gq: Vec<Option<u32>> = vec![None; n_samples];
+        for series in buf.samples().series() {
+            match series.name(&header).expect("invariant: series name") {
+                "GT" => {
+                    for (i, value) in series.iter(&header).enumerate() {
+                        let Ok(Some(Value::Genotype(g))) = value else {
+                            continue;
+                        };
+                        for (slot, pair) in g.iter().enumerate().take(2) {
+                            let (allele, _) = pair.expect("invariant: allele pair");
+                            if let Some(index) = allele {
+                                gt[2 * i + slot] = i8::try_from(index)
+                                    .expect("invariant: allele index");
+                            }
+                        }
+                    }
+                }
+                "DP" | "GQ" => {
+                    for (i, value) in series.iter(&header).enumerate() {
+                        let Ok(Some(Value::Integer(v))) = value else {
+                            continue;
+                        };
+                        let slot = if series.name(&header).unwrap() == "DP" {
+                            &mut dp
+                        } else {
+                            &mut gq
+                        };
+                        if i < slot.len() && v >= 0 {
+                            slot[i] = Some(v as u32);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push((gt, dp, gq));
     }
     out
 }

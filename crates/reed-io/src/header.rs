@@ -20,6 +20,9 @@ pub struct HeaderFacts {
     pub info_keys: Vec<String>,
     /// FORMAT definitions in header order (the source of `TagId`).
     pub format_keys: Vec<String>,
+    /// The parsed noodles header (one construction per open; drivers never
+    /// re-open the file just to parse the header).
+    pub header: noodles::vcf::Header,
 }
 
 impl HeaderFacts {
@@ -49,6 +52,7 @@ impl HeaderFacts {
                 .collect(),
             info_keys: header.infos().keys().map(|key| key.to_string()).collect(),
             format_keys: header.formats().keys().map(|key| key.to_string()).collect(),
+            header,
         })
     }
 
@@ -56,6 +60,26 @@ impl HeaderFacts {
     #[must_use]
     pub fn n_samples(&self) -> usize {
         self.sample_names.len()
+    }
+
+    /// The output header for a sample subset: the declared samples pruned to
+    /// the kept ones, everything else untouched.
+    #[must_use]
+    pub fn pruned_header(&self, keep: &[bool]) -> noodles::vcf::Header {
+        let mut out = self.header.clone();
+        let kept: Vec<String> = self
+            .sample_names
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| keep.get(*i).copied().unwrap_or(true))
+            .map(|(_, name)| name.clone())
+            .collect();
+        let names = out.sample_names_mut();
+        names.clear();
+        for name in kept {
+            names.insert(name);
+        }
+        out
     }
 }
 
