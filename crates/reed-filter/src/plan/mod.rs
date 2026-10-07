@@ -548,16 +548,17 @@ pub fn compile(
     // record bytes are gone; a genotype-derived expression therefore forces
     // the single-pass path (02-cli.md §4: expressions run on the record).
     let has_tail_expr = tail.iter().any(|r| matches!(r, TailRule::Expr { .. }));
+    if let Some(m) = spec.mind
+        && !(0.0..=1.0).contains(&m)
+    {
+        return Err(FilterError::Spec(format!("--mind out of range [0,1]: {m}")));
+    }
     let strategy = if has_tail_expr {
         ExecStrategy::SinglePass
+    } else if spec.mind.is_some() {
+        ExecStrategy::TwoPassReparse
     } else {
-        match &spec.cohort {
-            Some(crate::spec::CohortRule::MaxMissing(_)) => ExecStrategy::TwoPassReparse,
-            Some(crate::spec::CohortRule::KeepList(_))
-            | Some(crate::spec::CohortRule::KeepNames(_))
-            | Some(crate::spec::CohortRule::RemoveList(_))
-            | None => ExecStrategy::SinglePass,
-        }
+        ExecStrategy::SinglePass
     };
 
     // ---- recompute + stale ----

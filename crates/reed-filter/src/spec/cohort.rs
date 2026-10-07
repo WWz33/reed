@@ -1,20 +1,37 @@
-//! Sample-level rules (§11.1 `[cohort]`): the pass0 global reduction.
+//! Sample-level rules: the static subset (`-s/-S/--keep/--remove`) and the
+//! dynamic `--mind` threshold. They are modelled separately (04 §C0b) so
+//! both can be given at once: the static subset is applied first, `--mind`
+//! second (plink2's order).
 
 use serde::{Deserialize, Serialize};
 
-/// Which samples survive the cohort stage.
+/// One sample-list source.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum CohortRule {
-    /// Drop samples whose genome-wide raw missing rate exceeds the value.
-    #[serde(rename = "max_missing")]
-    MaxMissing(f64),
-    /// Keep exactly the listed samples (one per line; `#` comments allowed).
-    #[serde(rename = "keep_list")]
-    KeepList(String),
-    /// Keep exactly these sample names (bcftools' inline `-s` list).
-    #[serde(rename = "keep_names")]
-    KeepNames(Vec<String>),
-    /// Drop the listed samples.
-    #[serde(rename = "remove_list")]
-    RemoveList(String),
+pub enum SampleList {
+    /// Inline names (`-s A,B`, or the exclusion form `-s ^A,B`).
+    #[serde(rename = "names")]
+    Names(Vec<String>),
+    /// One name per line (`-S FILE`, `--keep FILE`, `--remove FILE`).
+    #[serde(rename = "file")]
+    File(String),
+}
+
+/// The static sample subset: keep ∩ (not remove). `None` fields mean "all"
+/// and "none" respectively.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SampleSelect {
+    /// Samples to keep (`-s`, `-S`, `--keep`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<SampleList>,
+    /// Samples to drop (`-s ^…`, `--remove`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove: Option<SampleList>,
+}
+
+impl SampleSelect {
+    /// Whether the selection is the identity (no samples touched).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.keep.is_none() && self.remove.is_none()
+    }
 }

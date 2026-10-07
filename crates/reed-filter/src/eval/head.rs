@@ -40,6 +40,9 @@ pub fn eval_head(
     hits: &mut [u64],
     scratch: &mut HeadScratch,
 ) -> bool {
+    // The counters are aligned with the rule list; a short slice would make
+    // the zip below silently skip rules (a caller invariant violation).
+    assert_eq!(rules.len(), hits.len(), "invariant: head counters align with the rules");
     let chrom = line.chrom();
     let reference = line.reference();
     let alts = line.alts();

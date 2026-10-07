@@ -14,6 +14,8 @@ pub fn eval_tail(
     rules: &[TailRule],
     hits: &mut [u64],
 ) -> bool {
+    // A short counter slice would silently skip rules (caller invariant).
+    assert_eq!(rules.len(), hits.len(), "invariant: tail counters align with the rules");
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
             TailRule::Expr { include, expr, .. } => {

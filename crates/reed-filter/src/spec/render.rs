@@ -8,7 +8,7 @@
 //! `-i QUAL>=P`, and typed INFO predicates (`site.info`) become no flag at
 //! all — the CLI carries INFO rules as expressions in `site.include`.
 
-use super::{CohortRule, FilterSpecV2, HweMode, OnMissing};
+use super::{FilterSpecV2, HweMode, OnMissing, SampleList};
 
 /// Appends a flag plus its value.
 fn flag(args: &mut Vec<String>, name: &str, value: impl std::fmt::Display) {
@@ -34,15 +34,25 @@ impl FilterSpecV2 {
     pub fn to_args(&self) -> Vec<String> {
         let mut args: Vec<String> = Vec::new();
 
-        // ---- samples ----
-        match &self.cohort {
-            Some(CohortRule::KeepNames(names)) => {
-                flag(&mut args, "-s", names.join(","));
+        // ---- samples (static subset, then the dynamic --mind threshold) ----
+        if let Some(select) = &self.sample_select {
+            match &select.keep {
+                Some(SampleList::Names(names)) => flag(&mut args, "-s", names.join(",")),
+                Some(SampleList::File(path)) => flag(&mut args, "-S", path),
+                None => {}
             }
-            Some(CohortRule::KeepList(path)) => flag(&mut args, "-S", path),
-            Some(CohortRule::RemoveList(path)) => flag(&mut args, "--remove", path),
-            Some(CohortRule::MaxMissing(threshold)) => flag(&mut args, "--mind", threshold),
-            None => {}
+            if let Some(remove) = &select.remove {
+                match remove {
+                    // The whole list carries one `^` prefix (bcftools syntax).
+                    SampleList::Names(names) => {
+                        flag(&mut args, "-s", format!("^{}", names.join(",")));
+                    }
+                    SampleList::File(path) => flag(&mut args, "--remove", path),
+                }
+            }
+        }
+        if let Some(threshold) = self.mind {
+            flag(&mut args, "--mind", threshold);
         }
 
         // ---- regions (one `-t` list: `^` prefixes the excludes) ----
@@ -157,6 +167,21 @@ mod tests {
 
     fn args_of(spec: &FilterSpecV2) -> Vec<String> {
         spec.to_args()
+    }
+
+    #[test]
+    #[test]
+    fn renders_a_combined_sample_selection() {
+        let spec = FilterSpecV2 {
+            sample_select: Some(super::super::SampleSelect {
+                keep: Some(SampleList::Names(vec!["a".into(), "b".into()])),
+                remove: Some(SampleList::Names(vec!["c".into()])),
+            }),
+            mind: Some(0.25),
+            ..Default::default()
+        };
+        let args = args_of(&spec);
+        assert_eq!(&args[..6], &["-s", "a,b", "-s", "^c", "--mind", "0.25"]);
     }
 
     #[test]

@@ -72,20 +72,22 @@ pub struct FilterCli {
     /// excludes
     #[arg(short = 'T', long = "targets-file", value_name = "FILE")]
     pub targets_file: Option<String>,
-    /// Samples to keep: comma-separated names (bcftools `-s`)
-    #[arg(short = 's', long = "samples", value_name = "LIST")]
-    pub samples: Option<String>,
+    /// Samples to keep: comma-separated names; `^` prefix excludes
+    /// (`^A,B` = keep all but A and B; bcftools `-s`)
+    #[arg(short = 's', long = "samples", value_name = "[^]LIST")]
+    pub samples: Vec<String>,
     /// Samples to keep: one name per line (bcftools `-S`)
     #[arg(short = 'S', long = "samples-file", value_name = "FILE")]
     pub samples_file: Option<String>,
-    /// Samples to keep (plink2/vcftools spelling)
+    /// Samples to keep, one name per line (plink2/vcftools spelling)
     #[arg(long, value_name = "FILE")]
     pub keep: Option<String>,
-    /// Samples to drop
+    /// Samples to drop, one name per line
     #[arg(long, value_name = "FILE")]
     pub remove: Option<String>,
     /// Drop samples whose missing rate exceeds this (plink2 semantics:
-    /// computed after the genotype mask, denominator = all loaded sites)
+    /// computed after the genotype mask, over the sites that pass the
+    /// pre-mask rules; applied before --geno/--maf/--hwe)
     #[arg(long, value_name = "FLOAT")]
     pub mind: Option<f64>,
     /// Sample lists naming samples absent from the header only warn

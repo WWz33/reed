@@ -15,26 +15,56 @@ use crate::units::input_path;
 /// Unknown tokens (variant types, output type) and malformed expressions.
 pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
     use reed_filter::spec::{
-        CohortRule, FilterSpecV2, GenotypeMaskRule, OnMissing,
+        FilterSpecV2, GenotypeMaskRule, OnMissing, SampleList, SampleSelect,
     };
     let mut spec = FilterSpecV2::default();
 
-    // ---- samples (cohort) ----
-    if let Some(list) = &cli.samples {
+    // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
+    // once with names to keep, once with a `^`-prefixed removal list — but
+    // two sources of the same polarity are a conflict, not a silent pick.
+    let mut parse_list = |list: &str| -> Result<(bool, Vec<String>), String> {
+        let exclude = list.trim_start().starts_with('^');
         let names: Vec<String> = list
+            .trim_start_matches('^')
             .split(',')
             .map(str::trim)
             .filter(|n| !n.is_empty())
             .map(str::to_string)
             .collect();
-        spec.cohort = Some(CohortRule::KeepNames(names));
-    } else if let Some(path) = cli.samples_file.as_ref().or(cli.keep.as_ref()) {
-        spec.cohort = Some(CohortRule::KeepList(path.clone()));
-    } else if let Some(path) = &cli.remove {
-        spec.cohort = Some(CohortRule::RemoveList(path.clone()));
-    } else if let Some(threshold) = cli.mind {
-        spec.cohort = Some(CohortRule::MaxMissing(threshold));
+        if names.is_empty() {
+            return Err(format!("empty sample list {list:?}"));
+        }
+        Ok((exclude, names))
+    };
+    let mut inline_keep: Option<Vec<String>> = None;
+    let mut inline_remove: Option<Vec<String>> = None;
+    for list in &cli.samples {
+        let (exclude, names) = parse_list(list)?;
+        let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
+        if slot.is_some() {
+            return Err(format!(
+                "repeated -s list of the same polarity ({list:?}); combine the names into one list"
+            ));
+        }
+        *slot = Some(names);
     }
+    let file_keep = cli.samples_file.as_ref().or(cli.keep.as_ref());
+    if inline_keep.is_some() && file_keep.is_some() {
+        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
+    }
+    if inline_remove.is_some() && cli.remove.is_some() {
+        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
+    }
+    let keep = inline_keep
+        .map(SampleList::Names)
+        .or_else(|| file_keep.map(|p| SampleList::File(p.clone())));
+    let remove = inline_remove
+        .map(SampleList::Names)
+        .or_else(|| cli.remove.clone().map(SampleList::File));
+    if keep.is_some() || remove.is_some() {
+        spec.sample_select = Some(SampleSelect { keep, remove });
+    }
+    spec.mind = cli.mind;
 
     // ---- regions (02-cli.md §2): the spec predicate, validated here.
     // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----
@@ -353,22 +383,57 @@ mod tests {
         assert_eq!(rendered, flags, "the rendering is the canonical spelling");
     }
 
-    /// `--mind` is the cohort rule the spec renders as a threshold (and the
-    /// CLI parses back into `MaxMissing`).
+    /// `--mind` is the dynamic sample rule the spec renders as a threshold
+    /// (and the CLI parses back into `mind`).
     #[test]
     fn mind_round_trips() {
         let flags = vec!["--mind".to_string(), "0.25".to_string()];
         let first = spec_from_flags(&cli_from(&flags)).expect("invariant: --mind translates");
-        assert_eq!(
-            first.cohort,
-            Some(reed_filter::spec::CohortRule::MaxMissing(0.25))
-        );
+        assert_eq!(first.mind, Some(0.25));
+        assert_eq!(first.sample_select, None);
         let rendered = first.to_args();
         let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
         assert_eq!(first, second);
         assert_eq!(&rendered[..flags.len()], &flags[..]);
         // The rest of the rendering is the default `-x` stale list.
         assert!(rendered[flags.len()] == "-x", "{rendered:?}");
+    }
+
+    /// C0b: a static subset (file) and an inline removal list plus `--mind`
+    /// round-trip; the rendering is the canonical spelling.
+    #[test]
+    fn static_subset_and_mind_round_trip() {
+        let flags: Vec<String> = ["-S", "keep.txt", "-s", "^drop1,drop2", "--mind", "0.2"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translate");
+        let select = first.sample_select.as_ref().expect("invariant: subset");
+        assert_eq!(select.keep, Some(reed_filter::spec::SampleList::File("keep.txt".into())));
+        assert_eq!(
+            select.remove,
+            Some(reed_filter::spec::SampleList::Names(vec!["drop1".into(), "drop2".into()]))
+        );
+        assert_eq!(first.mind, Some(0.2));
+        let rendered = first.to_args();
+        assert_eq!(&rendered[..flags.len()], &flags[..]);
+        let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
+        assert_eq!(first, second);
+    }
+
+    /// C0b: same-polarity sample sources are a conflict, not a silent pick.
+    #[test]
+    fn conflicting_sample_sources_error() {
+        for flags in [
+            vec!["-s", "A", "-S", "f"],
+            vec!["-s", "A", "--keep", "f"],
+            vec!["-s", "^A", "--remove", "f"],
+            vec!["-s", "A", "-s", "B"],
+        ] {
+            let args: Vec<String> = flags.iter().map(ToString::to_string).collect();
+            let err = spec_from_flags(&cli_from(&args)).expect_err("must conflict");
+            assert!(err.contains("mutually exclusive") || err.contains("repeated"), "{err}");
+        }
     }
 
     /// The rendered flags are also what `##reed_filterCommand` reports, so

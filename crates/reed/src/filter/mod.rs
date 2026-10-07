@@ -23,7 +23,7 @@ use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, OrderedSink};
 use reed_filter::funnel::{FilterReport, FunnelPartial};
 use reed_filter::plan::{ExecStrategy, FilterPlan, HeadRule};
-use reed_filter::spec::{CohortRule as CohortRuleV2, FilterSpecV2};
+use reed_filter::spec::{FilterSpecV2, SampleList};
 use reed_filter::FilterError;
 use reed_core::ChunkId;
 use reed_io::noodles_vcf as vcf;
@@ -109,8 +109,8 @@ pub fn run_filter(
     let mut plan = reed_filter::plan::compile(spec, &header, &opts.command_line)?;
     let strategy = match opts.strategy {
         Some(forced) => forced,
-        None => match &spec.cohort {
-            Some(CohortRuleV2::MaxMissing(_)) if input.is_some() => {
+        None => match &spec.mind {
+            Some(_) if input.is_some() => {
                 // §11.4: the sketch path when the upper-bounded sketch fits
                 // the memory budget (records extrapolated from the first
                 // chunk's records/byte density).
@@ -127,48 +127,63 @@ pub fn run_filter(
     };
     plan.strategy = strategy;
 
-    // ---- pass0 (cohort resolution; the sketch path also captures the
-    // per-chunk sketches the mid stage turns into emit decisions) ----
+    // ---- pass0 (the sketch path also captures the per-chunk sketches the
+    // mid stage turns into emit decisions) ----
     let sketch_pass = if strategy == ExecStrategy::SketchThenEmit {
         Some(run_sketch_pass(input, n_samples_in, &plan, opts)?)
     } else {
         None
     };
-    let (keep, keep_mask): (Arc<[bool]>, Option<SampleMask>) = match &spec.cohort {
-        None => (Arc::from(vec![true; n_samples_in]), None),
-        Some(CohortRuleV2::MaxMissing(threshold)) => {
-            let missing_partial;
-            let (n_records, counts): (u64, &[u64]) = match &sketch_pass {
-                Some(sketch) => (sketch.n_records, &sketch.cohort_miss),
-                None => {
-                    missing_partial = run_missing_pass(input, n_samples_in, plan.policies, opts)?;
-                    (missing_partial.n_records, &missing_partial.counts)
+
+    // ---- static subset (`-s/-S/--keep/--remove`), then `--mind` (04 §C0b:
+    // plink2's order; `--mind` counts missing calls after masking, over the
+    // records the head rules keep) ----
+    let mut keep_vec: Vec<bool> = match &spec.sample_select {
+        None => vec![true; n_samples_in],
+        Some(select) => {
+            let mut keep = match &select.keep {
+                None => vec![true; n_samples_in],
+                Some(SampleList::Names(names)) => {
+                    keep_list_from_names(names, &header, opts.force_samples)?
+                }
+                Some(SampleList::File(path)) => {
+                    keep_list_from_file(Path::new(path), &header, true, opts.force_samples)?
                 }
             };
-            let keep_vec: Vec<bool> = if n_records == 0 {
-                vec![true; n_samples_in]
-            } else {
-                counts
-                    .iter()
-                    .map(|&m| m as f64 / n_records as f64 <= *threshold)
-                    .collect()
-            };
-            build_keep(keep_vec, &header, &mut plan)?
+            if let Some(remove) = &select.remove {
+                let drop = match remove {
+                    SampleList::Names(names) => {
+                        keep_list_from_names(names, &header, opts.force_samples)?
+                    }
+                    SampleList::File(path) => {
+                        keep_list_from_file(Path::new(path), &header, true, opts.force_samples)?
+                    }
+                };
+                for (keep, drop) in keep.iter_mut().zip(&drop) {
+                    *keep &= !*drop;
+                }
+            }
+            keep
         }
-        Some(CohortRuleV2::KeepList(path)) => build_keep(
-            keep_list_from_file(Path::new(path), &header, true, opts.force_samples)?,
-            &header,
-            &mut plan,
-        )?,
-        Some(CohortRuleV2::KeepNames(names)) => {
-            build_keep(keep_list_from_names(names, &header, opts.force_samples)?, &header, &mut plan)?
-        }
-        Some(CohortRuleV2::RemoveList(path)) => build_keep(
-            keep_list_from_file(Path::new(path), &header, false, opts.force_samples)?,
-            &header,
-            &mut plan,
-        )?,
     };
+    if let Some(threshold) = spec.mind {
+        let missing_partial;
+        let (n_records, counts): (u64, &[u64]) = match &sketch_pass {
+            Some(sketch) => (sketch.n_records, &sketch.cohort_miss),
+            None => {
+                missing_partial = run_missing_pass(input, &plan, opts)?;
+                (missing_partial.n_records, &missing_partial.counts)
+            }
+        };
+        if n_records > 0 {
+            for (keep, &miss) in keep_vec.iter_mut().zip(counts) {
+                if miss as f64 / n_records as f64 > threshold {
+                    *keep = false;
+                }
+            }
+        }
+    }
+    let (keep, keep_mask) = build_keep(keep_vec, &header, &mut plan)?;
     let n_samples_out = keep.iter().filter(|&&k| k).count();
     let subset = n_samples_out < n_samples_in;
     // bcftools `view` updates INFO/AC,INFO/AN when samples are dropped; only

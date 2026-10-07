@@ -14,7 +14,7 @@ pub mod render;
 
 use serde::{Deserialize, Serialize};
 
-pub use cohort::CohortRule;
+pub use cohort::{SampleList, SampleSelect};
 pub use mask::GenotypeMaskRule;
 pub use predicate::{Cmp, OnMissing, Quantifier, Typed};
 pub use region::{Region, RegionRule};
@@ -23,9 +23,14 @@ pub use recompute::RecomputeSpec;
 /// The v2 filter specification (§11.1). Field names mirror the TOML keys.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FilterSpecV2 {
-    /// Sample-level rule (the pass0 global reduction).
+    /// Static sample subset (`-s/-S/--keep/--remove`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cohort: Option<CohortRule>,
+    pub sample_select: Option<SampleSelect>,
+    /// Dynamic sample rule: drop samples whose missing rate exceeds this
+    /// (plink2 `--mind`: computed after masking, over the sites that pass
+    /// the head rules; applied before the tail rules).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mind: Option<f64>,
     /// Streaming region predicates (bcftools `-t` semantics).
     #[serde(default)]
     pub targets: RegionRule,

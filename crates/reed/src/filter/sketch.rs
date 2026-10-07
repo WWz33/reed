@@ -1,7 +1,7 @@
 //! The sketch path's pass0 (`doc_v2/03-architecture.md` §8, §11.4):
 //! head rules → per-sample GT planes + per-rule mask bitmaps (head
-//! survivors) + per-sample raw missing counts (all records, the cohort's
-//! own semantics).
+//! survivors) + per-sample post-mask missing counts over head survivors
+//! (`--mind`'s plink2 semantics, 04 §C0).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -21,9 +21,9 @@ use super::{ferr, io_err, FilterOptions};
 pub(super) struct SketchPassOutput {
     /// Per-chunk sketches in chunk order.
     pub sketches: Vec<ChunkSketch>,
-    /// Genome-wide per-sample raw missing counts (all records).
+    /// Genome-wide per-sample post-mask missing counts (head survivors).
     pub cohort_miss: Vec<u64>,
-    /// Records observed (body + seams).
+    /// Head-surviving records (the `--mind` denominator, body + seams).
     pub n_records: u64,
     /// The pass0 funnel (head-rule hits; tail/mask counters still zero —
     /// the mid stage fills them).
@@ -53,8 +53,8 @@ pub(super) struct SketchScratch {
 }
 
 /// The pass0 job: head rules → per-sample GT planes + per-rule mask
-/// bitmaps (head survivors) + per-sample raw missing counts (all records,
-/// the cohort's own semantics).
+/// bitmaps (head survivors) + per-sample post-mask missing counts (head
+/// survivors, the `--mind` denominator).
 pub(super) struct SketchJob {
     pub(super) plan: Arc<FilterPlan>,
     pub(super) n_samples: usize,
@@ -69,6 +69,8 @@ pub(super) struct SketchPartial {
     pre: Option<reed_filter::sketch::SketchFragment>,
     fragment: reed_filter::sketch::SketchFragment,
     cohort_miss: Vec<u64>,
+    /// Head-surviving records in this chunk.
+    n_head_passed: u64,
     funnel: FunnelPartial,
 }
 impl ChunkJob for SketchJob {
@@ -96,10 +98,12 @@ impl ChunkJob for SketchJob {
             }
             self.sketch_line(line, scratch, &mut fragment)?;
         }
+        let n_head_passed = head_survivors(self.plan.head.len(), &scratch.funnel);
         Ok(SketchPartial {
             pre: None,
             fragment,
             cohort_miss: scratch.miss.clone(),
+            n_head_passed,
             funnel: std::mem::take(&mut scratch.funnel),
         })
     }
@@ -120,10 +124,12 @@ impl ChunkJob for SketchJob {
         scratch.miss.clear();
         scratch.miss.resize(self.n_samples, 0);
         self.sketch_line(line, scratch, &mut pre)?;
+        let n_head_passed = head_survivors(self.plan.head.len(), &scratch.funnel);
         Ok(SketchPartial {
             pre: Some(pre),
             fragment: reed_filter::sketch::SketchFragment::new(self.w, self.plan.mask.len()),
             cohort_miss: scratch.miss.clone(),
+            n_head_passed,
             funnel: std::mem::take(&mut scratch.funnel),
         })
     }
@@ -184,22 +190,22 @@ impl SketchJob {
         let keep_all: Vec<bool> = Vec::new();
         let processed = pipeline.process(line, plan, &keep_all, opts, funnel, |view| {
             let head_passed = view.head_passed;
-            if head_passed {
-                for v in [&mut *p0a, &mut *p0m, &mut *p1a, &mut *p1m] {
-                    v.iter_mut().for_each(|word| *word = 0);
-                }
-                for v in rule_bits.iter_mut() {
-                    v.iter_mut().for_each(|word| *word = 0);
-                }
+            if !head_passed {
+                return Ok(());
+            }
+            for v in [&mut *p0a, &mut *p0m, &mut *p1a, &mut *p1m] {
+                v.iter_mut().for_each(|word| *word = 0);
+            }
+            for v in rule_bits.iter_mut() {
+                v.iter_mut().for_each(|word| *word = 0);
             }
             for (i, &code) in view.scan.codes.iter().enumerate() {
-                if code.is_fully_missing()
+                // `--mind` (04 §C0, plink2 semantics): post-mask fully-missing
+                // calls over the head survivors.
+                if (code.is_fully_missing() || view.masked.get(i))
                     && let Some(slot) = miss.get_mut(i)
                 {
                     *slot += 1;
-                }
-                if !head_passed {
-                    continue;
                 }
                 let (word, bit) = (i / 64, 1_u64 << (i % 64));
                 if code.slot_alt(0) {
@@ -231,11 +237,22 @@ impl SketchJob {
     }
 }
 
+/// Records that survived every head rule (the funnel's cumulative
+/// semantics: the last rule's count, or the input count with no head rules).
+fn head_survivors(n_head: usize, funnel: &FunnelPartial) -> u64 {
+    if n_head == 0 {
+        funnel.n_input
+    } else {
+        funnel.head_hits.get(n_head - 1).copied().unwrap_or(0)
+    }
+}
+
 /// Collects chunk sketches in order; the seam fragment closes the
 /// previous chunk (§11.4: the seam record belongs to the previous
 pub(super) struct SketchSink {
     sketches: Vec<ChunkSketch>,
     cohort: Vec<u64>,
+    n_records: u64,
     funnel: FunnelPartial,
     open: Option<(u64, reed_filter::sketch::SketchFragment)>,
     out: Arc<Mutex<Option<SketchPassOutput>>>,
@@ -244,6 +261,7 @@ pub(super) struct SketchSink {
 impl OrderedSink<SketchPartial> for SketchSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut SketchPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
+        self.n_records += partial.n_head_passed;
         if self.cohort.len() < partial.cohort_miss.len() {
             self.cohort.resize(partial.cohort_miss.len(), 0);
         }
@@ -271,7 +289,7 @@ impl OrderedSink<SketchPartial> for SketchSink {
         if let Some((cid, frag)) = self.open.take() {
             self.sketches.push(ChunkSketch { id: cid, fragment: frag, seam_site: None });
         }
-        let n_records = self.funnel.n_input;
+        let n_records = self.n_records;
         *self.out.lock().expect("invariant: sketch slot not poisoned") = Some(SketchPassOutput {
             sketches: self.sketches,
             cohort_miss: self.cohort,
@@ -310,6 +328,7 @@ pub(super) fn run_sketch_pass(
     let sink = SketchSink {
         sketches: Vec::new(),
         cohort: Vec::new(),
+        n_records: 0,
         funnel: sized_funnel(plan),
         open: None,
         out: Arc::clone(&out),
