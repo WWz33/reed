@@ -7,6 +7,7 @@
 //! reed-stats.
 
 pub mod bitset;
+pub mod contig;
 pub mod coord;
 pub mod count;
 pub mod error;
@@ -20,6 +21,7 @@ pub mod sample;
 pub mod site;
 
 pub use bitset::Bitset;
+pub use contig::ContigId;
 pub use coord::{Interval0, Interval1, Pos0, Pos1};
 pub use count::{CountTable, SiteGroupCounts};
 pub use error::CoreError;

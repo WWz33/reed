@@ -767,6 +767,7 @@ name = "reed-io"
 version = "0.3.0"
 dependencies = [
  "bitflags",
+ "bstr",
  "crossbeam-channel",
  "flate2",
  "libdeflater",

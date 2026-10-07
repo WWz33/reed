@@ -115,6 +115,22 @@ R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF �
   整数语义逐字节相同（gold 的 DP/GQ），Float 型 FORMAT 掩码字段的边界比较可能有 1 ulp 差异。
 - 多等位逐等位统计（04 §3 推广）仍待 R7 收尾：本层已把原始等位下标保留（`ScanOutput::alleles`），但 stats 仍在记录级跳过多等位位点。
 
+## R4 输出层（完成）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| `reed-io/src/write`（03 §5） | `block_writer.rs`：`BlockWriter`（append + 到 65,280 字节自动切块、记录可跨块、`IndexKey`/`IndexRecord` 锚点、`-O v/u` 退化为普通字节缓冲）；`ordered_output.rs`：`OrderedOutput`（按序 append、累积压缩偏移、虚拟偏移换算、跨块记录 chunk 终点 = 下一条记录起点、EOF/索引收尾）；`index.rs`：`WriteIndex`/`Indexer`（CSI min_shift 14/depth 6、TBI ≥ 2^29 报错）从 `reed/src/index.rs` 迁入，`reed index` 与 filter `-W` 共用同一实现 | 单元测试（切块、记录跨块、续块重基、plain 路径、flavor 解析）；`reed index` 的 CSI/TBI 经 bcftools 查询；filter `-W` 的 CSI 区域查询（119 条 = 既有验收值） |
+| filter 两个 job 的重复代码删除 | `FilterJob` 与 `EmitJob` 各自的 `block_buf`/`records`/`blocks`/`raw`/`deflater`/`cut_block`/`flush_block` 全部删除，改为各自持有一个 `BlockWriter`；`OutputSink` 只剩「`OrderedOutput` + funnel 记分」 | 三个策略全量输出正文 md5 不变 |
+| `reed/src/filter.rs` 拆分（03 §8） | 单一文件 1,755 行 → `filter/{mod.rs(492), record_pipeline.rs(305), single_pass.rs(171), sketch.rs(352), mid_stage.rs(130), emit.rs(165), reduce.rs(153), report.rs(44)}`，全部 < 600 行 | `cargo test --workspace` 300 通过 |
+| `record_pipeline.rs`：唯一的分阶段实现（修复 S5） | `RecordPipeline::process` 一次实现「head → decode → mask → count → tail」，`SinglePass` 与 `Sketch` 都调用它；两者的差异显式收进 `PipelineOptions`（是否扫描头部未通过者、掩码是否覆盖 keep 之外样本、是否要求 contig 解析、尾部是否内联、是否计算 `SiteCounts`），策略文件只决定「拿到记录后做什么」（编辑写出 / 填位平面与规则位图） | 单遍/两遍/sketch 三策略在同一数据上正文 md5 相同（6000 条 e2e 用例 + 全量 3,315,604 条） |
+
+**R4 门（通过）**：全量数据三种策略（single_pass / two_pass_reparse / sketch_then_emit）的解压正文 md5 均为
+`7aedc59ac798729a2674e6e7ef19adfc`，与 R2/R3 产物逐字节相同；filter user CPU 439 s（未回归）；
+`cargo test --workspace` 300 通过；`cargo clippy --workspace --all-targets` 无 `clippy::all` 错误。
+
+03 §9 的其余建议（mid_stage 用 rayon 并行并按 chunk id 存 `Vec`、sketch 溢写 `--tmp-dir`、stats 输出流式化、
+`ContigBins` 改 `VecDeque`、`HeaderBundle` 统一）属可选优化，未在 R4 门内，未做。
+
 ## 偏差记录（06-roadmap.md §4.6）
 
 1. **§4.4 类型化 EngineError 暂缓**：45 处 `Job(String)` 全部经 Display 渲染，
@@ -138,8 +154,7 @@ R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF �
 ## 未完成（按 06-roadmap.md §3 顺序）
 
 - ~~**R2** 统一记录解码~~ → 已完成，见上方「R2 统一记录解码（完成）」。
-- **R4** 输出层模块化（BlockWriter/OrderedOutput 移入 reed-io/src/write）：
-  行为已由 R0 的按字节切块 + 跨块索引跟踪实现，模块搬家未做。
+- ~~**R4** 输出层模块化~~ → 已完成，见上方「R4 输出层（完成）」。
 - **R5 未完成**：`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、
   `FMT/` 表达式与下标/正则、`-I/--no-update`、`--max-maf/--max-mac`、`-V`、`--set-gts`。
 - **R6 未完成**：BCF 输入、BCF 输出（`-Ob/-Ou`）。

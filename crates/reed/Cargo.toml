@@ -16,7 +16,7 @@ reed-stats.workspace = true
 reed-filter.workspace = true
 sha2.workspace = true
 noodles.workspace = true
-bstr = "1"
+bstr.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 

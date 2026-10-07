@@ -9,6 +9,7 @@ pub mod field_plan;
 pub mod format;
 pub mod header;
 pub mod vcf;
+pub mod write;
 
 // Public re-export: reed-io is the single noodles boundary, and downstream
 // crates (reed-filter) have no direct noodles dependency.

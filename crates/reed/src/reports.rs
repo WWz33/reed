@@ -170,6 +170,8 @@ impl ReportJob {
         };
         let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
         let pos1 = site.pos1;
+        // The scanner adds its policy triggers; reset the per-record slot.
+        scratch.counters = PolicyCounters::default();
         let out = scratch
             .scanner
             .scan(&lr, &site, &mut scratch.counters)

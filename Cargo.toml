@@ -44,6 +44,7 @@ mimalloc = "0.1"
 anyhow = "1"
 
 # Dev / benches.
+bstr = "1"
 proptest = "1"
 criterion = "0.5"
 assert_cmd = "2"

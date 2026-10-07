@@ -13,6 +13,7 @@ libdeflater.workspace = true
 memchr.workspace = true
 flate2.workspace = true
 bitflags.workspace = true
+bstr.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use reed_core::ContigId;
+
 use crate::error::IoError;
 use crate::vcf::fixed::parse_pos1;
 use crate::vcf::info::info_fragments;
@@ -17,8 +19,8 @@ use crate::Locus;
 /// arrive in runs).
 #[derive(Debug, Default)]
 pub struct ContigTable {
-    ids: HashMap<Box<[u8]>, u32>,
-    last: (Vec<u8>, u32),
+    ids: HashMap<Box<[u8]>, ContigId>,
+    last: (Vec<u8>, ContigId),
 }
 
 impl ContigTable {
@@ -35,7 +37,7 @@ impl ContigTable {
     }
 
     /// The contig's id, or `None` when the header does not declare it.
-    pub fn id_of(&mut self, chrom: &[u8]) -> Option<u32> {
+    pub fn id_of(&mut self, chrom: &[u8]) -> Option<ContigId> {
         if self.last.0 == chrom {
             return Some(self.last.1);
         }
@@ -50,7 +52,7 @@ impl ContigTable {
 pub struct SiteView<'a> {
     /// The contig's tid, resolved when the record arrived through
     /// [`SiteView::parse_declared`] (or left unresolved).
-    pub contig: Option<u32>,
+    pub contig: Option<ContigId>,
     /// CHROM bytes.
     pub contig_name: &'a [u8],
     /// POS (1-based).
