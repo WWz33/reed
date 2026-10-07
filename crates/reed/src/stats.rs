@@ -32,7 +32,7 @@ use reed_io::vcf::gt::tally_gt;
 use reed_io::vcf::line::LineRef;
 use reed_io::Locus;
 pub use reed_stats::fst::FstKind;
-use reed_stats::pbs::PbsKind;
+pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey, StatKind};
 use reed_stats::window::{BpBinning, ContigBins};
 
@@ -80,6 +80,7 @@ pub fn pixy_kinds(
     theta: bool,
     tajima: bool,
     fst: Option<FstKind>,
+    pbs: Option<PbsKind>,
 ) -> Vec<StatKind> {
     let mut kinds = Vec::new();
     if pi {
@@ -109,6 +110,12 @@ pub fn pixy_kinds(
             for b in (a + 1)..n_groups {
                 kinds.push(StatKind::Fst { a, b, kind });
             }
+        }
+    }
+    if let Some(kind) = pbs {
+        // One triple: group 0 is the branch of interest (Yi et al. 2010).
+        if n_groups >= 3 {
+            kinds.push(StatKind::Pbs { a: 0, b: 1, c: 2, kind });
         }
     }
     kinds

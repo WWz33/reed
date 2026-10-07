@@ -46,12 +46,20 @@ impl PairSums {
         self.num_any |= other.num_any;
     }
 
+    /// The pair's Hudson Fst, unclipped (the same value `--fst hudson`
+    /// reports; the PBS transform clips it separately).
     fn fst(&self) -> Option<f64> {
         if !self.den_any || !self.num_any {
             return None;
         }
         let den = self.den.value();
-        (den != 0.0).then(|| (self.num.value() / den).clamp(0.0, FST_CLIP_MAX))
+        (den != 0.0).then(|| self.num.value() / den)
+    }
+
+    /// The Fst the PBS transform uses: clipped to `[0, 0.99999]` like
+    /// scikit-allel's `pbs` (04-algorithms.md §3).
+    fn fst_clipped(&self) -> Option<f64> {
+        self.fst().map(|f| f.clamp(0.0, FST_CLIP_MAX))
     }
 }
 
@@ -73,20 +81,6 @@ pub struct PbsAcc {
     pair_bc: PairSums,
     n_sites: u64,
     n_skipped: u64,
-}
-
-/// Which site set a PBS estimate runs over (§9.3, DESIGN §11 resolved):
-/// both sealed definitions share the three Hudson pair accumulators.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PbsSiteSet {
-    /// A site enters only when ALL THREE groups have ≥1 called allele
-    /// (the v0.2 semantics; branch site sets stay symmetric).
-    Intersection,
-    /// Each pair uses its own site set (allel `pbs` semantics: each
-    /// pairwise `hudson_fst` runs independently). Under missing data the
-    /// pair Fsts can differ from standalone fst calls — a documented
-    /// divergence from Intersection.
-    PerPair,
 }
 
 impl PbsAcc {
@@ -138,49 +132,27 @@ impl PbsAcc {
         }
     }
 
-    /// Absorbs one site (the Intersection site set — the default and the
-    /// v0.2 semantics).
+    /// Absorbs one site: each of the three Hudson pairs decides on its own
+    /// coverage (04-algorithms.md §1 retires the v0.2 three-way
+    /// intersection; the pairs are independent, as in Yi et al. 2010).
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        self.push_with(row, PbsSiteSet::Intersection);
-    }
-
-    /// Absorbs one site under the given site-set semantics (§9.3):
-    /// Intersection needs all three groups covered; PerPair feeds each
-    /// pair independently (a pair contributes whenever both sides have
-    /// ≥1 called allele).
-    pub fn push_with(&mut self, row: &[SiteGroupCounts], site_set: PbsSiteSet) {
         let (a, b, c) = (&row[self.group_a], &row[self.group_b], &row[self.group_c]);
         let n_a = u64::from(a.n_ref_alleles + a.n_alt_alleles);
         let n_b = u64::from(b.n_ref_alleles + b.n_alt_alleles);
         let n_c = u64::from(c.n_ref_alleles + c.n_alt_alleles);
-        match site_set {
-            PbsSiteSet::Intersection => {
-                if n_a == 0 || n_b == 0 || n_c == 0 {
-                    self.n_skipped += 1;
-                    return;
-                }
-                self.n_sites += 1;
-                Self::push_pair(&mut self.pair_ab, a, b);
-                Self::push_pair(&mut self.pair_ac, a, c);
-                Self::push_pair(&mut self.pair_bc, b, c);
-            }
-            PbsSiteSet::PerPair => {
-                // Each pair decides on its own coverage.
-                if n_a > 0 && n_b > 0 {
-                    Self::push_pair(&mut self.pair_ab, a, b);
-                }
-                if n_a > 0 && n_c > 0 {
-                    Self::push_pair(&mut self.pair_ac, a, c);
-                }
-                if n_b > 0 && n_c > 0 {
-                    Self::push_pair(&mut self.pair_bc, b, c);
-                }
-                self.n_sites += 1;
-            }
+        if n_a > 0 && n_b > 0 {
+            Self::push_pair(&mut self.pair_ab, a, b);
         }
-        // The audit trail covers every site (skipped or not) in both
-        // semantics — kept from the original push body below.
-        let _ = (a, b, c, n_a, n_b, n_c);
+        if n_a > 0 && n_c > 0 {
+            Self::push_pair(&mut self.pair_ac, a, c);
+        }
+        if n_b > 0 && n_c > 0 {
+            Self::push_pair(&mut self.pair_bc, b, c);
+        }
+        self.n_sites += 1;
+        if n_a == 0 || n_b == 0 || n_c == 0 {
+            self.n_skipped += 1;
+        }
         self.push_audit(row);
     }
 
@@ -240,9 +212,11 @@ impl PbsAcc {
     /// The estimate for a kind; `None` when any pair denominator is empty.
     #[must_use]
     pub fn value(&self, kind: PbsKind) -> Option<f64> {
-        let (Some(f_ab), Some(f_ac), Some(f_bc)) =
-            (self.pair_ab.fst(), self.pair_ac.fst(), self.pair_bc.fst())
-        else {
+        let (Some(f_ab), Some(f_ac), Some(f_bc)) = (
+            self.pair_ab.fst_clipped(),
+            self.pair_ac.fst_clipped(),
+            self.pair_bc.fst_clipped(),
+        ) else {
             return None;
         };
         let t = |f: f64| -(1.0 - f).ln();
@@ -258,5 +232,18 @@ impl PbsAcc {
     #[must_use]
     pub const fn site_tally(&self) -> (u64, u64) {
         (self.n_sites, self.n_skipped)
+    }
+
+    /// The three pairwise Hudson Fst values `(f_ab, f_ac, f_bc)`, unclipped
+    /// (the PBS transform applies the clip itself).
+    #[must_use]
+    pub fn pair_fsts(&self) -> (Option<f64>, Option<f64>, Option<f64>) {
+        (self.pair_ab.fst(), self.pair_ac.fst(), self.pair_bc.fst())
+    }
+
+    /// Sites absorbed (`no_snps`).
+    #[must_use]
+    pub const fn n_sites(&self) -> u64 {
+        self.n_sites
     }
 }

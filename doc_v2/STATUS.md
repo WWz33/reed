@@ -30,7 +30,7 @@
 | `--variant-only` | 窗口内文件未出现的位点视为单态且全部调用：π 分母加 `(L−|S|)·C(2N,2)`，dxy 加 `(L−|S|)·2N_A·2N_B` | **vcftools `--window-pi` 一致**：全量 28,410 行，最大相对差 1.05e-5（vcftools 逐位点 n/(n−1) 校正 vs pixy/reed 比值之和；容差 1e-4）。速度：reed 5.2 s vs vcftools 10 m 47 s |
 | 不变位点检查（04 §3） | 记录级 `ALT="."` 计数；无不变位点且未声明 `--variant-only`/`--bypass-invariant-check` 时报错（与 pixy 的检查同口径） | 回归测试；all-sites fixture 上默认模式与 pixy 默认模式逐列一致 |
 | pixy 列布局（02-cli §5.4） | `PREFIX_pi.txt` / `PREFIX_dxy.txt` / `PREFIX.log`，列名与 pixy 相同，缺失 `NA` | 手算 fixture 测试 + gold/popgen/compare.py |
-| CLI 增量（R5 的 stats 部分） | `--pop/--populations`、`--pi`、`--dxy`、`--theta`、`--tajima-d`、`--fst [wc84|hudson]`、`--window/--size`（100k/1M 单位）、`--step`、`--variant-only`、`--bypass-invariant-check`、`-o PREFIX` | 上述对拍 |
+| CLI 增量（R5 的 stats 部分） | `--pop/--populations`、`--pi`、`--dxy`、`--theta`、`--tajima-d`、`--fst [wc84|hudson]`、`--pbs [--pbs-normed]`、`--window/--size`（100k/1M 单位）、`--step`、`--variant-only`、`--bypass-invariant-check`、`-o PREFIX` | 上述对拍 |
 
 对拍工具：`gold/popgen/`（run_pixy.sh、run_vcftools.sh、compare.py、README）。本机 pixy 2.2.4 与
 scikit-allel 1.3.13 从仓库上级目录源码安装（`pip install -e pixy scikit-allel` + dask）。

@@ -37,7 +37,7 @@ pub use individual::{IndividualFAcc, JointSfsAcc};
 pub use jackknife::{BlockJackknife, BlockPartial};
 pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
 pub use patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
-pub use pbs::{PbsAcc, PbsSiteSet};
+pub use pbs::PbsAcc;
 pub use request::{StatAcc, StatKey, StatKind, build_accs};
 pub use sfs::{ProjectionCache, ProjectedSfsAcc, SfsAcc, projection_weights};
 pub use tajima::TajimaAcc;

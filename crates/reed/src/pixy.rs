@@ -48,6 +48,9 @@ pub fn write(
         }),
         _ => None,
     });
+    let mut pbs_rows = String::from(
+        "pop1\tpop2\tpop3\tchromosome\twindow_pos_1\twindow_pos_2\tpbs\tno_snps\tfst_12\tfst_13\tfst_23\n",
+    );
     let mut fst_rows = match fst_method {
         Some(method) => format!(
             "pop1\tpop2\tchromosome\twindow_pos_1\twindow_pos_2\tavg_{method}_fst\tno_snps\n"
@@ -150,6 +153,30 @@ pub fn write(
                         row.contig, row.start1, row.end0
                     );
                 }
+                StatKind::Pbs { .. } => {
+                    let Some((value, no_snps, (f_ab, f_ac, f_bc))) = acc.pbs_columns(kind) else {
+                        continue;
+                    };
+                    let cell = |v: Option<f64>| match v {
+                        Some(v) => format!("{v}"),
+                        None => "NA".to_string(),
+                    };
+                    let name = |i: usize| group_names.get(i).map_or("?", String::as_str);
+                    let _ = writeln!(
+                        pbs_rows,
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{no_snps}\t{}\t{}\t{}",
+                        name(0),
+                        name(1),
+                        name(2),
+                        row.contig,
+                        row.start1,
+                        row.end0,
+                        cell(value),
+                        cell(f_ab),
+                        cell(f_ac),
+                        cell(f_bc)
+                    );
+                }
                 _ => {}
             }
         }
@@ -168,6 +195,11 @@ pub fn write(
     if kinds.iter().any(|k| matches!(k, StatKind::ThetaW { .. })) {
         let path = with_suffix(prefix, "_watterson_theta.txt");
         std::fs::write(&path, theta_rows)?;
+        written.push(path);
+    }
+    if kinds.iter().any(|k| matches!(k, StatKind::Pbs { .. })) {
+        let path = with_suffix(prefix, "_pbs.txt");
+        std::fs::write(&path, pbs_rows)?;
         written.push(path);
     }
     if fst_method.is_some() {

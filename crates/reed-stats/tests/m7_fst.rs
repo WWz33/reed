@@ -237,40 +237,22 @@ fn fst_matrix_matches_individual_accumulators() {
 }
 
 #[test]
-fn pbs_per_pair_diverges_from_intersection_under_missing_data() {
+fn pbs_pairs_are_independent_under_missing_data() {
     use reed_core::count::SiteGroupCounts;
-    use reed_stats::pbs::{PbsAcc, PbsKind, PbsSiteSet};
-    // Group C has zero called alleles: Intersection skips the site; PerPair
-    // still feeds the A/B pair (allel semantics).
+    use reed_stats::pbs::{PbsAcc, PbsKind};
+    // Group C has zero called alleles: the A/B pair still contributes (the
+    // three Hudson pairs are independent, 04-algorithms.md §1 — the v0.2
+    // three-way intersection is gone). The value stays undefined while two
+    // pair denominators are empty.
     let row = vec![
         SiteGroupCounts { n_ref_alleles: 4, n_alt_alleles: 2, ..Default::default() },
         SiteGroupCounts { n_ref_alleles: 2, n_alt_alleles: 4, ..Default::default() },
         SiteGroupCounts { n_ref_alleles: 0, n_alt_alleles: 0, ..Default::default() },
     ];
-    let mut inter = PbsAcc::new(0, 1, 2);
-    inter.push_with(&row, PbsSiteSet::Intersection);
-    assert_eq!(inter.site_tally(), (0, 1));
-    assert!(inter.value(PbsKind::Yi2010).is_none());
-
     let mut per_pair = PbsAcc::new(0, 1, 2);
-    per_pair.push_with(&row, PbsSiteSet::PerPair);
-    // The site entered the A/B pair (the only covered pair); with no C data
-    // the value stays undefined (two empty pair denominators) but the
-    // audit trail exists — the divergence is observable via site_tally.
-    assert_eq!(per_pair.site_tally(), (1, 0));
-
-    // With C covered on a second site, PerPair's pair Fsts can differ from
-    // standalone fst calls (documented); here both semantics agree because
-    // every group has data.
-    let full = vec![
-        SiteGroupCounts { n_ref_alleles: 4, n_alt_alleles: 2, ..Default::default() },
-        SiteGroupCounts { n_ref_alleles: 2, n_alt_alleles: 4, ..Default::default() },
-        SiteGroupCounts { n_ref_alleles: 3, n_alt_alleles: 3, ..Default::default() },
-    ];
-    let mut a = PbsAcc::new(0, 1, 2);
-    a.push_with(&full, PbsSiteSet::Intersection);
-    let mut b = PbsAcc::new(0, 1, 2);
-    b.push_with(&full, PbsSiteSet::PerPair);
-    assert_eq!(a.value(PbsKind::Yi2010), b.value(PbsKind::Yi2010));
-    assert_eq!(a.site_tally(), b.site_tally());
+    per_pair.push(&row);
+    assert_eq!(per_pair.site_tally(), (1, 1), "site absorbed, one group uncovered");
+    assert!(per_pair.value(PbsKind::Yi2010).is_none());
+    let (f_ab, f_ac, f_bc) = per_pair.pair_fsts();
+    assert!(f_ab.is_some() && f_ac.is_none() && f_bc.is_none());
 }

@@ -322,6 +322,20 @@ impl StatAcc {
         }
     }
 
+    /// `PREFIX_pbs.txt` columns: `(value, no_snps, f_ab, f_ac, f_bc)`.
+    #[must_use]
+    pub fn pbs_columns(
+        &self,
+        kind: &StatKind,
+    ) -> Option<(Option<f64>, u64, (Option<f64>, Option<f64>, Option<f64>))> {
+        match (self, kind) {
+            (Self::Pbs(acc), StatKind::Pbs { kind, .. }) => {
+                Some((acc.value(*kind), acc.n_sites(), acc.pair_fsts()))
+            }
+            _ => None,
+        }
+    }
+
     /// pixy `_fst.txt` columns: `(value, no_snps)`.
     #[must_use]
     pub fn fst_columns(&self, kind: &StatKind) -> Option<(Option<f64>, u64)> {

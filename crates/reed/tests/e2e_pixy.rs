@@ -45,7 +45,7 @@ chr1\t25\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t1/1\t0/0
 
 fn request(invariant: InvariantMode) -> StatsRequest {
     StatsRequest {
-        kinds: pixy_kinds(2, true, true, false, false, None),
+        kinds: pixy_kinds(2, true, true, false, false, None, None),
         gt_groups: vec![Some(0), Some(0), Some(1), Some(1)],
         window_size: 10,
         step: 10,
@@ -129,7 +129,7 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     let report = run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: run");
     let prefix = path.parent().expect("invariant: temp dir path").join("out");
-    let kinds = pixy_kinds(2, true, true, false, false, None);
+    let kinds = pixy_kinds(2, true, true, false, false, None, None);
     reed::pixy::write(
         &prefix,
         &report,
@@ -174,7 +174,7 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
 fn watterson_theta_and_tajima_d_hand_computed() {
     let path = write_fixture("theta", FIXTURE);
     let mut request = request(InvariantMode::Bypass);
-    request.kinds = pixy_kinds(2, false, false, true, true, None);
+    request.kinds = pixy_kinds(2, false, false, true, true, None, None);
     let report = run_stats(Some(&path), request, &budget()).expect("invariant: theta run");
 
     let w0 = &report.windows[0];
@@ -217,7 +217,7 @@ fn fst_hudson_and_wc84_hand_computed() {
         (reed::stats::FstKind::WeirCockerham84, "wc84"),
     ] {
         let mut request = request(InvariantMode::Bypass);
-        request.kinds = pixy_kinds(2, false, false, false, false, Some(kind));
+        request.kinds = pixy_kinds(2, false, false, false, false, Some(kind), None);
         let report = run_stats(Some(&path), request, &budget()).expect("invariant: fst run");
         let w0 = &report.windows[0];
         let fst_kind = StatKind::Fst { a: 0, b: 1, kind };
@@ -228,6 +228,73 @@ fn fst_hudson_and_wc84_hand_computed() {
         );
         let (_, no_snps) = w0.accs[0].fst_columns(&fst_kind).expect("columns");
         assert_eq!(no_snps, 2, "{name}: window [1,10] holds 2 sites");
+    }
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+}
+
+/// PBS regression on an explicit 3-population fixture. Expected values come
+/// from scikit-allel (`allel.pbs(..., window_size=3, normed=...)` and
+/// `allel.hudson_fst` per window), i.e. the reference named by
+/// 04-algorithms.md §5; `gold/popgen/compare_pbs.py` re-runs that check.
+const PBS_FIXTURE: &str = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tp1s0\tp1s1\tp1s2\tp1s3\tp2s0\tp2s1\tp2s2\tp2s3\tp3s0\tp3s1\tp3s2\tp3s3
+chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t0/0\t1/1\t0/1\t0/0\t0/0\t0/0\t0/0\t0/0\t0/0
+chr1\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/0\t0/0\t0/1\t1/1\t0/0\t0/0\t0/1\t0/1\t0/0\t0/0
+chr1\t30\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t1/1\t0/0\t0/0\t0/0\t0/0\t0/0\t1/1\t0/1\t0/0\t0/0
+chr1\t110\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t0/0\t1/1\t0/0\t0/0\t0/1\t0/0\t0/1\t1/1\t0/0\t0/0
+chr1\t120\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t0/0\t0/0\t0/0\t0/0\t0/0\t0/0\t0/1\t0/1\t0/0
+chr1\t130\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t0/0\t0/1\t0/0\t1/1\t0/0\t0/0\t0/0\t0/0\t0/0
+";
+
+#[test]
+fn pbs_matches_scikit_allel_reference() {
+    let path = write_fixture("pbs", PBS_FIXTURE);
+    // Groups: pop1 = samples 0..4, pop2 = 4..8, pop3 = 8..12.
+    let gt_groups: Vec<Option<u32>> = (0..12).map(|i| Some((i / 4) as u32)).collect();
+    for (kind, expected, expected_fst) in [
+        (
+            reed::stats::PbsKind::Yi2010,
+            [0.002309472928147316_f64, -0.051839214737420786],
+            [
+                (0.1428571428571429, 0.004608294930875617, 0.1428571428571429),
+                (0.05882352941176473, -0.12442396313364051, 0.15151515151515155),
+            ],
+        ),
+        (
+            reed::stats::PbsKind::PbsN1,
+            [0.001997019026245494, -0.046598561709660744],
+            [
+                (0.1428571428571429, 0.004608294930875617, 0.1428571428571429),
+                (0.05882352941176473, -0.12442396313364051, 0.15151515151515155),
+            ],
+        ),
+    ] {
+        let mut request = request(InvariantMode::Bypass);
+        request.gt_groups = gt_groups.clone();
+        request.window_size = 100;
+        request.step = 100;
+        request.kinds = pixy_kinds(3, false, false, false, false, None, Some(kind));
+        let report = run_stats(Some(&path), request, &budget()).expect("invariant: pbs run");
+        assert_eq!(report.windows.len(), 2);
+        let pbs_kind = StatKind::Pbs { a: 0, b: 1, c: 2, kind };
+        for (row, (want, want_fst)) in report.windows.iter().zip(expected.iter().zip(&expected_fst))
+        {
+            let (value, no_snps, (f_ab, f_ac, f_bc)) =
+                row.accs[0].pbs_columns(&pbs_kind).expect("pbs columns");
+            assert!(
+                (value.expect("pbs") - want).abs() < 1e-12,
+                "{kind:?}: {} vs {want}",
+                value.expect("pbs")
+            );
+            assert_eq!(no_snps, 3);
+            let got = (f_ab.expect("f_ab"), f_ac.expect("f_ac"), f_bc.expect("f_bc"));
+            for (g, w) in [got.0, got.1, got.2].iter().zip([want_fst.0, want_fst.1, want_fst.2]) {
+                assert!((g - w).abs() < 1e-12, "pair Fst {g} vs {w}");
+            }
+        }
     }
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
