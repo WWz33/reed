@@ -1,16 +1,20 @@
 //! Per-site and per-sample reports (02-cli.md §5.4): `--freq`, `--hardy`,
-//! `--het`, `--missing`, written in plink2's column layouts.
+//! `--het`, `--missing`, `--depth`, written in plink2's column layouts.
 //!
-//! Rows stream out of the ordered sink as chunks arrive, so memory stays
-//! bounded; the per-sample vectors fold at the end. Genotypes are decoded by
-//! the shared `SampleScanner` and counted by the shared counting kernel
-//! (`count_site_group`) — no report-specific genotype parser.
+//! Workers render each requested row into per-file byte buffers and the
+//! ordered sink only appends them (03-performance.md O1) — HWE, float
+//! formatting and the row text never touch the reducer thread.
+//!
+//! The job assembles itself from the request (O2): `--depth` alone decodes
+//! DP, `--het` alone builds the genotype planes, and per-site rows are only
+//! rendered for the reports that print them. Genotypes are decoded by the
+//! shared scanner and counted by the shared kernel.
 
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use reed_core::count::{count_site_group, SiteGroupCounts};
+use reed_core::count::SiteGroupCounts;
 use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters};
 use reed_core::math::hwe::hwe_exact_p;
 use reed_core::sample::SampleMask;
@@ -18,8 +22,8 @@ use reed_core::ChunkId;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
-use reed_io::vcf::line::LineRef;
 use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
+use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
 use reed_stats::IndividualFAcc;
 
@@ -58,56 +62,79 @@ pub struct ReportsOutcome {
     pub n_records: u64,
 }
 
-/// One site's report row (chrom/pos/id/ref/alt plus the counted classes).
-#[derive(Clone, Debug)]
-struct SiteRow {
-    chrom: Vec<u8>,
-    pos1: u64,
-    id: Vec<u8>,
-    reference: Vec<u8>,
-    alt: Vec<u8>,
-    counts: SiteGroupCounts,
-    /// Fully missing genotypes at the site.
-    n_missing: u32,
-    /// `(Σ DP, Σ DP², samples contributing)` for `--depth`.
-    depth: (f64, f64, u64),
+/// The reports that need per-site rows, and the fields each needs.
+#[derive(Clone, Copy, Debug, Default)]
+struct ReportPlan {
+    freq: bool,
+    hardy: bool,
+    vmiss: bool,
+    ldepth: bool,
+    smiss: bool,
+    het: bool,
+    depth: bool,
 }
 
-/// Worker → sink partial.
+impl ReportPlan {
+    fn from_request(request: &ReportRequest) -> Self {
+        Self {
+            freq: request.freq,
+            hardy: request.hardy,
+            vmiss: request.missing,
+            ldepth: request.depth,
+            smiss: request.missing,
+            het: request.het,
+            depth: request.depth,
+        }
+    }
+
+    /// Whether any per-site row is printed.
+    const fn sites(&self) -> bool {
+        self.freq || self.hardy || self.vmiss || self.ldepth
+    }
+}
+
+/// Worker → sink partial: rendered rows plus the per-sample accumulators.
 #[derive(Default)]
 struct ReportPartial {
-    sites: Vec<SiteRow>,
-    /// Per sample: fully missing genotype count.
+    freq: Vec<u8>,
+    hardy: Vec<u8>,
+    vmiss: Vec<u8>,
+    ldepth: Vec<u8>,
+    /// Per sample: fully missing genotype count (`--missing`).
     missing: Vec<u64>,
     /// Per sample: plink `--het` moment components.
     individual: Option<IndividualFAcc>,
-    /// Per sample: `(Σ DP, sites with a called genotype and a DP)`.
+    /// Per sample: `(Σ DP, sites with a called genotype and a DP)` (`--depth`).
     depth_sums: Vec<(f64, u64)>,
     n_records: u64,
 }
 
-/// The scan job: one record → one site row + per-sample updates.
+/// The scan job: one record → rendered rows + per-sample updates.
 struct ReportJob {
     n_samples: usize,
     policies: GenotypePolicies,
+    plan: ReportPlan,
 }
 
 /// Reused per-worker buffers.
 struct ReportScratch {
     scanner: GenotypeScanner,
-    planes: PlaneBlock,
+    /// Genotype planes: only when `--het` needs the per-sample moments.
+    planes: Option<PlaneBlock>,
     counters: PolicyCounters,
     mask: SampleMask,
 }
 
-/// The DP FORMAT column index in the scanner's int output.
-const DP_COLUMN: usize = 0;
-
 impl ReportScratch {
-    fn new(n_samples: usize, policies: GenotypePolicies) -> Self {
+    fn new(n_samples: usize, policies: GenotypePolicies, het: bool, depth: bool) -> Self {
         Self {
-            scanner: GenotypeScanner::new(n_samples, &[b"DP"], &[], policies),
-            planes: PlaneBlock::new(1, n_samples, false),
+            // DP is decoded only for `--depth` (O2).
+            scanner: if depth {
+                GenotypeScanner::new(n_samples, &[b"DP"], &[], policies)
+            } else {
+                GenotypeScanner::new(n_samples, &[], &[], policies)
+            },
+            planes: het.then(|| PlaneBlock::new(1, n_samples, false)),
             counters: PolicyCounters::default(),
             mask: SampleMask::all(n_samples),
         }
@@ -124,13 +151,11 @@ impl ChunkJob for ReportJob {
         body: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch.get_or_insert_with(|| ReportScratch::new(self.n_samples, self.policies));
-        let mut partial = ReportPartial {
-            missing: vec![0; self.n_samples],
-            individual: Some(IndividualFAcc::new(self.n_samples)),
-            depth_sums: vec![(0.0, 0); self.n_samples],
-            ..ReportPartial::default()
-        };
+        let scratch = scratch
+            .get_or_insert_with(|| {
+                ReportScratch::new(self.n_samples, self.policies, self.plan.het, self.plan.depth)
+            });
+        let mut partial = self.new_partial();
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
@@ -146,19 +171,31 @@ impl ChunkJob for ReportJob {
         line: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch.get_or_insert_with(|| ReportScratch::new(self.n_samples, self.policies));
-        let mut partial = ReportPartial {
-            missing: vec![0; self.n_samples],
-            individual: Some(IndividualFAcc::new(self.n_samples)),
-            depth_sums: vec![(0.0, 0); self.n_samples],
-            ..ReportPartial::default()
-        };
+        let scratch = scratch
+            .get_or_insert_with(|| {
+                ReportScratch::new(self.n_samples, self.policies, self.plan.het, self.plan.depth)
+            });
+        let mut partial = self.new_partial();
         self.push_line(line, scratch, &mut partial)?;
         Ok(partial)
     }
 }
 
 impl ReportJob {
+    /// Allocates the partial's per-sample accumulators for this request.
+    fn new_partial(&self) -> ReportPartial {
+        ReportPartial {
+            missing: if self.plan.smiss { vec![0; self.n_samples] } else { Vec::new() },
+            individual: self.plan.het.then(|| IndividualFAcc::new(self.n_samples)),
+            depth_sums: if self.plan.depth {
+                vec![(0.0, 0); self.n_samples]
+            } else {
+                Vec::new()
+            },
+            ..ReportPartial::default()
+        }
+    }
+
     fn push_line(
         &self,
         line: &[u8],
@@ -176,74 +213,204 @@ impl ReportJob {
             .scanner
             .scan(&lr, &site, &mut scratch.counters)
             .map_err(|e| EngineError::Job(e.to_string()))?;
-        scratch.planes.push_codes(0, out.codes);
 
+        // Counts straight from the codes — the planes are built only when
+        // `--het` needs the per-sample moments (O2).
         let mut counts = SiteGroupCounts::default();
-        count_site_group(
-            &scratch.planes.site_planes(0),
-            scratch.mask.words(),
-            u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX"),
-            &mut counts,
-        );
-
-        // Per-sample fully-missing genotypes, straight from the codes.
         let mut n_missing = 0_u32;
-        for (i, &code) in out.codes.iter().enumerate() {
+        for &code in out.codes {
+            counts.add_code(code);
             if code.is_fully_missing() {
-                partial.missing[i] += 1;
                 n_missing += 1;
+            }
+        }
+        if self.plan.smiss {
+            for (slot, &code) in partial.missing.iter_mut().zip(out.codes) {
+                if code.is_fully_missing() {
+                    *slot += 1;
+                }
             }
         }
 
         // vcftools depth: a sample contributes when its genotype is called
         // and the DP value is present.
-        let dp_column = out.int_columns.get(DP_COLUMN).map(Vec::as_slice).unwrap_or(&[]);
-        let mut site_dp_sum = 0.0_f64;
-        let mut site_dp_sq = 0.0_f64;
-        let mut site_dp_n = 0_u64;
-        for (i, &code) in out.codes.iter().enumerate() {
-            let dp = dp_column.get(i).copied().unwrap_or(INT_MISSING);
-            if code.is_fully_missing() || dp == INT_MISSING {
-                continue;
+        let mut site_depth = (0.0_f64, 0.0_f64, 0_u64);
+        if self.plan.depth {
+            let dp_column = out
+                .int_columns
+                .first()
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let mut sum = 0.0_f64;
+            let mut sq = 0.0_f64;
+            let mut n = 0_u64;
+            for (i, &code) in out.codes.iter().enumerate() {
+                let dp = dp_column.get(i).copied().unwrap_or(INT_MISSING);
+                if code.is_fully_missing() || dp == INT_MISSING {
+                    continue;
+                }
+                let dp = f64::from(dp);
+                partial.depth_sums[i].0 += dp;
+                partial.depth_sums[i].1 += 1;
+                sum += dp;
+                sq += dp * dp;
+                n += 1;
             }
-            let dp = f64::from(dp);
-            partial.depth_sums[i].0 += dp;
-            partial.depth_sums[i].1 += 1;
-            site_dp_sum += dp;
-            site_dp_sq += dp * dp;
-            site_dp_n += 1;
+            site_depth = (sum, sq, n);
         }
-        let site_depth = (site_dp_sum, site_dp_sq, site_dp_n);
 
         // plink `--het` moment components at biallelic sites.
-        let n_called_alleles = counts.n_called_alleles(
-            u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX"),
-        );
-        if n_called_alleles > 0 {
-            let p_alt = f64::from(counts.n_alt_alleles) / f64::from(n_called_alleles);
-            if let Some(individual) = &mut partial.individual {
-                individual.push_site(&scratch.planes, 0, &scratch.mask, p_alt);
+        let n_group = u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX");
+        if self.plan.het {
+            let planes = scratch
+                .planes
+                .as_mut()
+                .expect("invariant: --het builds the planes");
+            planes.push_codes(0, out.codes);
+            let n_called = counts.n_called_alleles(n_group);
+            if n_called > 0 {
+                let p_alt = f64::from(counts.n_alt_alleles) / f64::from(n_called);
+                if let Some(individual) = &mut partial.individual {
+                    individual.push_site(planes, 0, &scratch.mask, p_alt);
+                }
             }
         }
 
-        partial.sites.push(SiteRow {
-            chrom: lr.chrom().to_vec(),
-            pos1,
-            id: lr.id().to_vec(),
-            reference: lr.reference().to_vec(),
-            alt: lr.alts().to_vec(),
-            counts,
-            n_missing,
-            depth: site_depth,
-        });
+        if self.plan.sites() {
+            self.render_site(&lr, &site, pos1, &counts, n_missing, site_depth, partial);
+        }
         partial.n_records += 1;
         Ok(())
     }
+
+    /// Renders every requested per-site row for one record (O1: the worker
+    /// formats; the reducer only appends the bytes).
+    fn render_site(
+        &self,
+        lr: &LineRef<'_>,
+        site: &SiteView<'_>,
+        pos1: u64,
+        counts: &SiteGroupCounts,
+        n_missing: u32,
+        depth: (f64, f64, u64),
+        partial: &mut ReportPartial,
+    ) {
+        let chrom = site.contig_name;
+        let reference = site.reference;
+        let alt = site.alts;
+        let an = counts.n_called_alleles(
+            u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX"),
+        );
+        // plink2's layout needs an identifiable row: when the input ID is
+        // missing it synthesizes `chrom_pos` (same rule here).
+        let id_missing = lr.id() == b"." || lr.id().is_empty();
+        let mut write_prefix = |out: &mut Vec<u8>| {
+            out.extend_from_slice(chrom);
+            out.push(b'\t');
+            if id_missing {
+                out.extend_from_slice(chrom);
+                out.push(b'_');
+                let _ = write!(out, "{pos1}");
+            } else {
+                out.extend_from_slice(lr.id());
+            }
+        };
+
+        if self.plan.freq {
+            let out = &mut partial.freq;
+            write_prefix(out);
+            out.push(b'\t');
+            out.extend_from_slice(reference);
+            out.push(b'\t');
+            out.extend_from_slice(alt);
+            out.push(b'\t');
+            if an > 0 {
+                g6_into(out, f64::from(counts.n_alt_alleles) / f64::from(an));
+            } else {
+                out.extend_from_slice(b"NA");
+            }
+            let _ = write!(out, "\t{an}\n");
+        }
+        if self.plan.hardy {
+            let out = &mut partial.hardy;
+            write_prefix(out);
+            out.push(b'\t');
+            out.extend_from_slice(reference);
+            out.push(b'\t');
+            out.extend_from_slice(alt);
+            // A1 is the input's REF allele, AX the ALT — matching plink2's
+            // VCF-import output (verified against plink2 2.x on this data:
+            // A1 follows REF regardless of which allele is minor).
+            let called = counts.n_full_called();
+            let het = counts.n_het;
+            let _ = write!(out, "\t{}\t{}\t{}", counts.n_hom_ref, het, counts.n_hom_alt);
+            out.push(b'\t');
+            if called > 0 {
+                g6_into(out, f64::from(het) / f64::from(called));
+            } else {
+                out.extend_from_slice(b"NA");
+            }
+            out.push(b'\t');
+            let p_a1 = if an > 0 {
+                f64::from(counts.n_ref_alleles) / f64::from(an)
+            } else {
+                f64::NAN
+            };
+            if p_a1.is_nan() {
+                out.extend_from_slice(b"NA");
+            } else {
+                g6_into(out, 2.0 * p_a1 * (1.0 - p_a1));
+            }
+            out.push(b'\t');
+            let mac = 2 * counts.n_hom_ref.min(counts.n_hom_alt) + het;
+            if called == 0 {
+                out.extend_from_slice(b"NA");
+            } else {
+                g6_into(out, hwe_exact_p(called, mac, het));
+            }
+            out.push(b'\n');
+        }
+        if self.plan.vmiss {
+            let out = &mut partial.vmiss;
+            write_prefix(out);
+            let obs = u64::try_from(self.n_samples).unwrap_or(u64::MAX);
+            let _ = write!(out, "\t{n_missing}\t{obs}\t");
+            if obs > 0 {
+                g6_into(out, f64::from(n_missing) / obs as f64);
+            } else {
+                out.extend_from_slice(b"NA");
+            }
+            out.push(b'\n');
+        }
+        if self.plan.ldepth {
+            let out = &mut partial.ldepth;
+            out.extend_from_slice(chrom);
+            let _ = write!(out, "\t{pos1}\t");
+            let (sum, sq, n) = depth;
+            if n > 0 {
+                let mean = sum / n as f64;
+                // Sample variance (n − 1), vcftools' VAR_DEPTH.
+                let var = if n > 1 {
+                    (sq - sum * sum / n as f64) / (n - 1) as f64
+                } else {
+                    0.0
+                };
+                g6_into(out, mean);
+                out.push(b'\t');
+                g6_into(out, var.max(0.0));
+            } else {
+                out.extend_from_slice(b"NA\tNA");
+            }
+            out.push(b'\n');
+        }
+    }
 }
 
-/// Ordered consumer: streams per-site rows, folds per-sample vectors.
+/// Ordered consumer: appends the worker-rendered rows, folds per-sample
+/// vectors.
 struct ReportSink {
     request: ReportRequest,
+    plan: ReportPlan,
     n_samples: usize,
     sample_names: Vec<String>,
     afreq: Option<BufWriter<std::fs::File>>,
@@ -265,87 +432,28 @@ impl ReportSink {
             .map_err(|e| EngineError::Io(e.to_string()))?;
         Ok(BufWriter::new(file))
     }
-
-    fn write_site_rows(&mut self, sites: &[SiteRow]) -> Result<(), EngineError> {
-        for row in sites {
-            let n_group = u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX");
-            let an = row.counts.n_called_alleles(n_group);
-            let chrom = String::from_utf8_lossy(&row.chrom);
-            // plink2's layout needs an identifiable row: when the input ID is
-            // missing it synthesizes `chrom_pos` (same rule here).
-            let id = if row.id == b"." || row.id.is_empty() {
-                format!("{chrom}_{}", row.pos1)
-            } else {
-                String::from_utf8_lossy(&row.id).into_owned()
-            };
-            if let Some(w) = &mut self.afreq {
-                let freq = if an > 0 { g6(f64::from(row.counts.n_alt_alleles) / f64::from(an)) } else { "NA".into() };
-                writeln!(
-                    w,
-                    "{chrom}\t{id}\t{}\t{}\t{freq}\t{an}",
-                    String::from_utf8_lossy(&row.reference),
-                    String::from_utf8_lossy(&row.alt)
-                )
-                .map_err(|e| EngineError::Io(e.to_string()))?;
-            }
-            if let Some(w) = &mut self.hardy {
-                let called = row.counts.n_full_called();
-                // A1 is the input's REF allele, AX the ALT — matching plink2's
-                // VCF-import output (verified against plink2 2.x on this data:
-                // A1 follows REF regardless of which allele is minor).
-                let a1 = String::from_utf8_lossy(&row.reference).into_owned();
-                let ax = String::from_utf8_lossy(&row.alt).into_owned();
-                let (hom_a1, two_ax) = (row.counts.n_hom_ref, row.counts.n_hom_alt);
-                let het = row.counts.n_het;
-                let o_het = if called > 0 { g6(f64::from(het) / f64::from(called)) } else { "NA".into() };
-                let p_a1 = if an > 0 {
-                    f64::from(row.counts.n_ref_alleles) / f64::from(an)
-                } else {
-                    f64::NAN
-                };
-                let e_het = if p_a1.is_nan() { "NA".into() } else { g6(2.0 * p_a1 * (1.0 - p_a1)) };
-                let mac = 2 * row.counts.n_hom_ref.min(row.counts.n_hom_alt) + het;
-                let p = if called == 0 { "NA".into() } else { g6(hwe_exact_p(called, mac, het)) };
-                writeln!(w, "{chrom}\t{id}\t{a1}\t{ax}\t{hom_a1}\t{het}\t{two_ax}\t{o_het}\t{e_het}\t{p}")
-                    .map_err(|e| EngineError::Io(e.to_string()))?;
-            }
-            if let Some(w) = &mut self.vmiss {
-                let obs = u64::try_from(self.n_samples).unwrap_or(u64::MAX);
-                let f_miss = if obs > 0 { g6(f64::from(row.n_missing) / obs as f64) } else { "NA".into() };
-                writeln!(w, "{chrom}\t{id}\t{}\t{obs}\t{f_miss}", row.n_missing)
-                    .map_err(|e| EngineError::Io(e.to_string()))?;
-            }
-            if let Some(w) = &mut self.ldepth {
-                let (sum, sq, n) = row.depth;
-                let (mean, var) = if n > 0 {
-                    let mean = sum / n as f64;
-                    // Sample variance (n − 1), vcftools' VAR_DEPTH.
-                    let var = if n > 1 { (sq - sum * sum / n as f64) / (n - 1) as f64 } else { 0.0 };
-                    (g6(mean), g6(var.max(0.0)))
-                } else {
-                    ("NA".to_string(), "NA".to_string())
-                };
-                writeln!(w, "{chrom}\t{}\t{mean}\t{var}", row.pos1)
-                    .map_err(|e| EngineError::Io(e.to_string()))?;
-            }
-        }
-        Ok(())
-    }
 }
 
 impl OrderedSink<ReportPartial> for ReportSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut ReportPartial) -> Result<(), EngineError> {
         self.n_records += partial.n_records;
-        if self.request.freq || self.request.hardy || self.request.missing || self.request.depth {
-            self.write_site_rows(&partial.sites)?;
-        }
-        if self.request.depth {
+        let mut append = |writer: &mut Option<BufWriter<std::fs::File>>, bytes: &[u8]| {
+            if let Some(w) = writer {
+                w.write_all(bytes).map_err(|e| EngineError::Io(e.to_string()))?;
+            }
+            Ok::<(), EngineError>(())
+        };
+        append(&mut self.afreq, &partial.freq)?;
+        append(&mut self.hardy, &partial.hardy)?;
+        append(&mut self.vmiss, &partial.vmiss)?;
+        append(&mut self.ldepth, &partial.ldepth)?;
+        if self.plan.depth {
             for (dst, src) in self.depth_sums.iter_mut().zip(&partial.depth_sums) {
                 dst.0 += src.0;
                 dst.1 += src.1;
             }
         }
-        if self.request.missing {
+        if self.plan.smiss {
             for (dst, src) in self.missing.iter_mut().zip(&partial.missing) {
                 *dst += src;
             }
@@ -430,36 +538,63 @@ impl OrderedSink<ReportPartial> for ReportSink {
     }
 }
 
-/// `%g` with 6 significant digits, matching plink2's print precision.
-fn g6(x: f64) -> String {
+/// Appends `%g` with 6 significant digits, matching plink2's print precision.
+fn g6_into(out: &mut Vec<u8>, x: f64) {
     if !x.is_finite() {
-        return "NA".to_string();
+        out.extend_from_slice(b"NA");
+        return;
     }
     if x == 0.0 {
-        return "0".to_string();
+        out.push(b'0');
+        return;
     }
     let exponent = x.abs().log10().floor() as i32;
-    let s = if !(-4..6).contains(&exponent) {
+    if !(-4..6).contains(&exponent) {
         // Rust prints `2.18867e6` / `1.23456e-3`; printf %g prints
-        // `2.18867e+06` / `1.23456e-03`.
+        // `2.18867e+06` / `1.23456e-03`. The exponential form is rare, so a
+        // small temporary is fine here.
         let raw = format!("{x:.5e}");
         match raw.split_once('e') {
             Some((mantissa, exp)) => {
                 let exp: i32 = exp.parse().unwrap_or(0);
-                format!(
+                let mantissa = trim_trailing_zeros(mantissa);
+                let _ = write!(
+                    out,
                     "{}e{}{:02}",
-                    trim_trailing_zeros(mantissa),
+                    mantissa,
                     if exp < 0 { '-' } else { '+' },
                     exp.abs()
-                )
+                );
             }
-            None => raw,
+            None => out.extend_from_slice(raw.as_bytes()),
         }
     } else {
         let decimals = (5 - exponent).max(0) as usize;
-        format!("{x:.decimals$}")
-    };
-    trim_trailing_zeros(&s)
+        let start = out.len();
+        let _ = write!(out, "{x:.decimals$}");
+        trim_trailing_zeros_in_place(out, start);
+    }
+}
+
+/// `%g` with 6 significant digits as a `String` (per-sample files).
+fn g6(x: f64) -> String {
+    let mut buf = Vec::with_capacity(24);
+    g6_into(&mut buf, x);
+    String::from_utf8(buf).expect("invariant: g6 renders ASCII")
+}
+
+/// Strips trailing zeros (and a trailing dot) from a fixed-point rendering
+/// appended at `start` of `out` (integers keep their zeros: no dot present).
+fn trim_trailing_zeros_in_place(out: &mut Vec<u8>, start: usize) {
+    if !out[start..].contains(&b'.') {
+        return;
+    }
+    while out.len() > start && out.last() == Some(&b'0') {
+        out.pop();
+    }
+    if out.len() > start && out.last() == Some(&b'.') {
+        out.pop();
+    }
 }
 
 /// Strips trailing zeros (and a trailing dot) from a fixed-point rendering.
@@ -501,8 +636,10 @@ pub fn run_reports_opened(
 ) -> Result<ReportsOutcome, EngineError> {
     let crate::input::OpenedInput { mut source, facts } = opened;
     let n_samples = facts.n_samples();
+    let plan = ReportPlan::from_request(request);
     let job = ReportJob {
         n_samples,
+        plan,
         policies: GenotypePolicies {
             ploidy: PloidyPolicy::HaploidAsHalfCall,
             multiallelic: MultiallelicPolicy::CollapseAlt,
@@ -531,6 +668,7 @@ pub fn run_reports_opened(
     }
     let sink = ReportSink {
         request: request.clone(),
+        plan,
         n_samples,
         sample_names: facts.sample_names.clone(),
         afreq,
@@ -551,4 +689,26 @@ pub fn run_reports_opened(
         .expect("invariant: reports slot not poisoned")
         .take()
         .expect("invariant: sink finish stored the outcome"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The buffer renderer keeps `%g`-6-digits semantics (float formatting
+    /// must not drift: plink2 parity depends on it).
+    #[test]
+    fn g6_into_matches_the_string_form() {
+        for x in [
+            0.0, 1.0, 0.5, 0.3333333333, 1e-5, 1.23456789, 123456.0, 1234567.0, 0.000123456,
+            2.18867e6, 1.23456e-3, f64::NAN, 1.0 / 3.0,
+        ] {
+            let mut buf = Vec::new();
+            g6_into(&mut buf, x);
+            assert_eq!(String::from_utf8(buf).expect("ascii"), g6(x), "x={x}");
+        }
+        assert_eq!(g6(123456.0), "123456");
+        assert_eq!(g6(0.1), "0.1");
+        assert_eq!(g6(2.18867e6), "2.18867e+06");
+    }
 }

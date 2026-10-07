@@ -24,9 +24,11 @@
 
 | O3 | **根因不是缓冲池**：`-O v|z` 忽略 `-o`，`-Ov -o /dev/null` 实际把 35 GB 写到 stdout，基准测的是管道消费者（复现 13.3 s，reducer 的 `accept` 占 13.1 s）。修法：`-O` 只选格式、`-o` 命名文件；扩展名推断仅在无 `-O` 时生效。缓冲池与 mimalloc 都做了 A/B（`-Ov` 全量：系统分配器 2.9/3.0 s vs mimalloc 3.2/3.2 s；缓冲复用与 `mem::take` 均 2.9 s），按 03 §1 的"无收益则撤回"全部撤回，不引入池 | 见下 | `-Ov` 全量 56 线程 2.9–3.2 s（目标 ≤6 s）；`-Oz1` 5.4 s；gold 等价命令 9.0/9.3 s、1,768,759 条，`gold/scripts/check_parity.py` 对 `bcftools.full` **PASS**（位点 jaccard 1.0，基因型不一致 0）。新增 CLI 回归测试固定 `-O`/`-o` 组合与扩展名推断 |
 
+| O1+O2 | 报告改为 worker 内计算与渲染：`ReportPartial` 携带每个报告文件的字节缓冲（afreq/hardy/vmiss/ldepth），HWE 与 `%g`（`g6_into`，指数形式才用临时 String）都在 worker 完成，reducer 只按序 append。按请求装配：`SiteRow` 的四次 `to_vec()` 删除；计数改走 `SiteGroupCounts::add_code`（不再构平面），DP 只在 `--depth` 时解码，平面只在 `--het` 时构建 | 见下 | 全量单报告：`--hardy` 13.3 → **2.7 s**（目标 ≤3.5），`--freq` 2.86→2.61、`--missing` 2.82→2.58、`--het` 2.80→2.74、`--depth` 3.71→2.64；组合 `--freq --hardy --het --missing --depth` **3.0 s**（目标 ≤4）；7 个输出文件与改动前 **md5 全部相同**（全量 3,315,604 条） |
+
 ### 待办
 
-- V1 余项 O1–O2；V2 B0、V3 B1、V4 B3a、V5 B2、V6 B3b；清理 C1–C4、C7 与 CLI 一致性（04 §2）。
+- V2 B0、V3 B1、V4 B3a、V5 B2、V6 B3b；清理 C1–C4、C7 与 CLI 一致性（04 §2）。V1（O1–O5）完成。
 
 ### 与文档的偏差
 
