@@ -322,6 +322,17 @@ impl StatAcc {
         }
     }
 
+    /// pixy `_fst.txt` columns: `(value, no_snps)`.
+    #[must_use]
+    pub fn fst_columns(&self, kind: &StatKind) -> Option<(Option<f64>, u64)> {
+        match (self, kind) {
+            (Self::Fst(acc), StatKind::Fst { kind, .. }) => {
+                Some((acc.value(*kind), acc.n_sites()))
+            }
+            _ => None,
+        }
+    }
+
     /// pixy `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev,
     /// no_sites)`. The values are `None` where the denominator is undefined
     /// (pixy prints `NA` there); the site count is always present.

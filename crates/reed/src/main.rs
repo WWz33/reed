@@ -92,6 +92,11 @@ enum Command {
         /// window-average allele count, pixy)
         #[arg(long = "tajima-d")]
         tajima_d: bool,
+        /// Fst for all population pairs; `wc84` (Weir & Cockerham 1984,
+        /// default) or `hudson` (Hudson 1992 / Bhatia 2013)
+        #[arg(long, value_name = "wc84|hudson", num_args = 0..=1,
+              default_missing_value = "wc84")]
+        fst: Option<String>,
         /// Declare an all-variant input: window positions the file does not
         /// contain count as monomorphic with all samples called
         #[arg(long)]
@@ -210,6 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         dxy,
         theta,
         tajima_d,
+        fst,
         variant_only,
         bypass_invariant_check,
         force_samples,
@@ -274,7 +280,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with pixy's columns (02-cli.md §5).
-    if pi || dxy || theta || tajima_d {
+    if pi || dxy || theta || tajima_d || fst.is_some() {
         let step = if step == 0 { size } else { step };
         let invariant = if variant_only {
             reed::stats::InvariantMode::VariantOnly
@@ -288,7 +294,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             reed::stats::InvariantMode::Require
         };
         let pixy = reed::stats::PixyOptions { invariant };
-        let kinds = reed::stats::pixy_kinds(group_names.len(), pi, dxy, theta, tajima_d);
+        let fst_kind = match fst.as_deref() {
+            None => None,
+            Some("wc84") => Some(reed::stats::FstKind::WeirCockerham84),
+            Some("hudson") => Some(reed::stats::FstKind::Hudson),
+            Some(other) => {
+                return Err(format!("unknown --fst method {other:?} (expected wc84 or hudson)").into());
+            }
+        };
+        let kinds = reed::stats::pixy_kinds(group_names.len(), pi, dxy, theta, tajima_d, fst_kind);
         let request = StatsRequest {
             kinds: kinds.clone(),
             gt_groups,

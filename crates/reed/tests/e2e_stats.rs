@@ -277,7 +277,6 @@ fn default_kinds_covers_every_family() {
     assert!(keys.iter().any(|k| k.starts_with("dxy.")));
     assert!(keys.iter().any(|k| k.starts_with("fst.hudson.")));
     assert!(keys.iter().any(|k| k.starts_with("fst.weir_cockerham_84.")));
-    assert!(keys.iter().any(|k| k.starts_with("fst.nei_86.")));
     assert!(keys.iter().any(|k| k.starts_with("pbs.yi_2010.")));
     assert!(keys.iter().any(|k| k.starts_with("sfs.unfolded.")));
     assert!(keys.iter().any(|k| k.starts_with("theta_w.")));

@@ -35,6 +35,25 @@ pub fn write(
     let mut tajima_rows = String::from(
         "pop\tchromosome\twindow_pos_1\twindow_pos_2\ttajima_d\tno_sites\traw_pi\traw_watterson_theta\ttajima_d_stdev\n",
     );
+    // pixy prints `avg_wc_fst` / `avg_hudson_fst` (02-cli.md §5.4 lists the
+    // column as avg_wc84_fst; pixy's own name wins so downstream pixy
+    // scripts keep working).
+    // pixy's own column token: `avg_wc_fst` for Weir & Cockerham 1984 and
+    // `avg_hudson_fst` for Hudson, so downstream pixy scripts work unchanged
+    // (02-cli.md §5.4 spells the WC column avg_wc84_fst; pixy's name wins).
+    let fst_method = kinds.iter().find_map(|kind| match kind {
+        StatKind::Fst { kind, .. } => Some(match kind {
+            reed_stats::fst::FstKind::Hudson => "hudson",
+            reed_stats::fst::FstKind::WeirCockerham84 => "wc",
+        }),
+        _ => None,
+    });
+    let mut fst_rows = match fst_method {
+        Some(method) => format!(
+            "pop1\tpop2\tchromosome\twindow_pos_1\twindow_pos_2\tavg_{method}_fst\tno_snps\n"
+        ),
+        None => String::new(),
+    };
     let variant_only = pixy.invariant == InvariantMode::VariantOnly;
     for row in &report.windows {
         for (kind, acc) in kinds.iter().zip(&row.accs) {
@@ -115,6 +134,22 @@ pub fn write(
                         cell(stdev)
                     );
                 }
+                StatKind::Fst { a, b, .. } => {
+                    let Some((value, no_snps)) = acc.fst_columns(kind) else {
+                        continue;
+                    };
+                    let name_a = group_names.get(*a).map_or("?", String::as_str);
+                    let name_b = group_names.get(*b).map_or("?", String::as_str);
+                    let cell = match value {
+                        Some(v) => format!("{v}"),
+                        None => "NA".to_string(),
+                    };
+                    let _ = writeln!(
+                        fst_rows,
+                        "{name_a}\t{name_b}\t{}\t{}\t{}\t{cell}\t{no_snps}",
+                        row.contig, row.start1, row.end0
+                    );
+                }
                 _ => {}
             }
         }
@@ -133,6 +168,11 @@ pub fn write(
     if kinds.iter().any(|k| matches!(k, StatKind::ThetaW { .. })) {
         let path = with_suffix(prefix, "_watterson_theta.txt");
         std::fs::write(&path, theta_rows)?;
+        written.push(path);
+    }
+    if fst_method.is_some() {
+        let path = with_suffix(prefix, "_fst.txt");
+        std::fs::write(&path, fst_rows)?;
         written.push(path);
     }
     if kinds.iter().any(|k| matches!(k, StatKind::TajimaD { .. })) {

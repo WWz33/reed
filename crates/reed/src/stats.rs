@@ -31,7 +31,7 @@ use reed_io::vcf::fixed::parse_pos1;
 use reed_io::vcf::gt::tally_gt;
 use reed_io::vcf::line::LineRef;
 use reed_io::Locus;
-use reed_stats::fst::FstKind;
+pub use reed_stats::fst::FstKind;
 use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey, StatKind};
 use reed_stats::window::{BpBinning, ContigBins};
@@ -51,7 +51,7 @@ pub fn default_kinds(n_groups: usize) -> Vec<StatKind> {
         for b in (a + 1)..n_groups {
             kinds.push(StatKind::Dxy { a, b, per_bp: false });
             kinds.push(StatKind::Dxy { a, b, per_bp: true });
-            for kind in [FstKind::Hudson, FstKind::WeirCockerham84, FstKind::Nei86] {
+            for kind in [FstKind::Hudson, FstKind::WeirCockerham84] {
                 kinds.push(StatKind::Fst { a, b, kind });
             }
         }
@@ -73,7 +73,14 @@ pub fn default_kinds(n_groups: usize) -> Vec<StatKind> {
 /// The pixy-mode statistic set: π per group and/or dxy per pair, in output
 /// column order (02-cli.md §5.2).
 #[must_use]
-pub fn pixy_kinds(n_groups: usize, pi: bool, dxy: bool, theta: bool, tajima: bool) -> Vec<StatKind> {
+pub fn pixy_kinds(
+    n_groups: usize,
+    pi: bool,
+    dxy: bool,
+    theta: bool,
+    tajima: bool,
+    fst: Option<FstKind>,
+) -> Vec<StatKind> {
     let mut kinds = Vec::new();
     if pi {
         for group in 0..n_groups {
@@ -95,6 +102,13 @@ pub fn pixy_kinds(n_groups: usize, pi: bool, dxy: bool, theta: bool, tajima: boo
     if tajima {
         for group in 0..n_groups {
             kinds.push(StatKind::TajimaD { group, min_sites: 0 });
+        }
+    }
+    if let Some(kind) = fst {
+        for a in 0..n_groups {
+            for b in (a + 1)..n_groups {
+                kinds.push(StatKind::Fst { a, b, kind });
+            }
         }
     }
     kinds

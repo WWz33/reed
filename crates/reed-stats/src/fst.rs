@@ -1,7 +1,8 @@
-//! Between-group Fst: Hudson / Weir-Cockerham-84 / Nei-86
-//! (`docs/architecture-spec.md` §9.2), components identical to the oracle's
-//! `estimators::fst` (scikit-allel semantics), including the allel inclusion
-//! rule for Hudson and the `n = called // 2` floor of WC84.
+//! Between-group Fst: Hudson (1992) as Bhatia et al. 2013's ratio of sums
+//! and Weir & Cockerham (1984) variance components
+//! (`doc_v2/04-algorithms.md` §3). The components follow scikit-allel, which
+//! pixy calls, and are verified against pixy 2.2.4 in `gold/popgen`. Nei 1986
+//! is not implemented (04 §1).
 
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::sum::NeumaierSum;
@@ -15,8 +16,6 @@ pub enum FstKind {
     Hudson,
     /// Weir & Cockerham 1984 variance components (allel `fst`).
     WeirCockerham84,
-    /// Nei 1986 GST.
-    Nei86,
 }
 
 impl FstKind {
@@ -26,7 +25,6 @@ impl FstKind {
         match self {
             Self::Hudson => "hudson",
             Self::WeirCockerham84 => "weir_cockerham_84",
-            Self::Nei86 => "nei_86",
         }
     }
 }
@@ -57,28 +55,6 @@ impl WcAcc {
     }
 }
 
-/// Nei (1986) components summed over sites.
-#[derive(Clone, Debug, Default)]
-pub struct NeiAcc {
-    /// Within-group gene diversity summed over sites.
-    pub hs: NeumaierSum,
-    /// Total gene diversity summed over sites.
-    pub ht: NeumaierSum,
-    /// Contributing sites.
-    pub n_sites: u64,
-    /// Sites skipped.
-    pub n_skipped: u64,
-}
-
-impl NeiAcc {
-    fn merge(&mut self, other: &Self) {
-        self.hs.merge(&other.hs);
-        self.ht.merge(&other.ht);
-        self.n_sites += other.n_sites;
-        self.n_skipped += other.n_skipped;
-    }
-}
-
 /// Fst accumulator for one group pair. One pass fills every estimator's
 /// components (the integer `PairAcc` audit trail is estimator-independent,
 /// exactly as in the oracle).
@@ -94,7 +70,8 @@ pub struct FstAcc {
     hudson_any: bool,
     hudson_num_any: bool,
     wc: WcAcc,
-    nei: NeiAcc,
+    /// Every site pushed (pixy's `no_snps` column).
+    n_sites: u64,
 }
 
 impl FstAcc {
@@ -112,7 +89,7 @@ impl FstAcc {
             hudson_any: false,
             hudson_num_any: false,
             wc: WcAcc::default(),
-            nei: NeiAcc::default(),
+            n_sites: 0,
         }
     }
 
@@ -169,8 +146,6 @@ impl FstAcc {
         }
 
         // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
-        // Its guards are WC84-only: Nei86 below counts the same sites the
-        // oracle's independent per-estimator loop counts.
         if n_a == 0 || n_b == 0 {
             self.wc.n_skipped += 1;
         } else {
@@ -201,19 +176,7 @@ impl FstAcc {
             }
         }
 
-        // Nei 86 (independent of the WC84 guards).
-        if n_a == 0 || n_b == 0 {
-            self.nei.n_skipped += 1;
-        } else {
-            let p1 = u64::from(a.n_alt_alleles) as f64 / n_a as f64;
-            let p2 = u64::from(b.n_alt_alleles) as f64 / n_b as f64;
-            let hs = (2.0 * p1 * (1.0 - p1) + 2.0 * p2 * (1.0 - p2)) / 2.0;
-            let p_bar_alt = (p1 + p2) / 2.0;
-            let ht = 2.0 * p_bar_alt * (1.0 - p_bar_alt);
-            self.nei.hs.add(hs);
-            self.nei.ht.add(ht);
-            self.nei.n_sites += 1;
-        }
+        self.n_sites += 1;
     }
 
     /// Component-wise merge.
@@ -226,7 +189,7 @@ impl FstAcc {
         self.hudson_any |= other.hudson_any;
         self.hudson_num_any |= other.hudson_num_any;
         self.wc.merge(&other.wc);
-        self.nei.merge(&other.nei);
+        self.n_sites += other.n_sites;
     }
 
     /// Integer audit trail (within_a, within_b, between).
@@ -256,24 +219,19 @@ impl FstAcc {
         (total != 0.0).then(|| a / total)
     }
 
-    /// Nei-86 estimate.
-    #[must_use]
-    pub fn value_nei86(&self) -> Option<f64> {
-        if self.nei.n_sites == 0 {
-            return None;
-        }
-        let ht = self.nei.ht.value();
-        (ht != 0.0).then(|| 1.0 - self.nei.hs.value() / ht)
-    }
-
     /// The estimate for a kind.
     #[must_use]
     pub fn value(&self, kind: FstKind) -> Option<f64> {
         match kind {
             FstKind::Hudson => self.value_hudson(),
             FstKind::WeirCockerham84 => self.value_wc84(),
-            FstKind::Nei86 => self.value_nei86(),
         }
+    }
+
+    /// Sites pushed (pixy's `no_snps`).
+    #[must_use]
+    pub const fn n_sites(&self) -> u64 {
+        self.n_sites
     }
 }
 

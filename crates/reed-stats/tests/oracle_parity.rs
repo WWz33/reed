@@ -146,7 +146,7 @@ fn kinds() -> Vec<StatKind> {
         StatKind::Dxy { a: 1, b: 2, per_bp: true },
         StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson },
         StatKind::Fst { a: 0, b: 1, kind: FstKind::WeirCockerham84 },
-        StatKind::Fst { a: 1, b: 2, kind: FstKind::Nei86 },
+        StatKind::Fst { a: 1, b: 2, kind: FstKind::Hudson },
         StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::Yi2010 },
         StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::PbsN1 },
         StatKind::Sfs { group: 0, folded: false },
@@ -247,7 +247,7 @@ fn find<'a>(
         for (a, b, estimator, kind) in [
             (0_usize, 1_usize, FstEstimator::Hudson, FstKind::Hudson),
             (0, 1, FstEstimator::WeirCockerham84, FstKind::WeirCockerham84),
-            (1, 2, FstEstimator::Nei86, FstKind::Nei86),
+            (1, 2, FstEstimator::Hudson, FstKind::Hudson),
         ] {
             let oracle = fst(&window, &pops, u32::try_from(a).expect("static"), u32::try_from(b).expect("static"), estimator).unwrap();
             let acc = find(&accs, &kinds, |kind| {

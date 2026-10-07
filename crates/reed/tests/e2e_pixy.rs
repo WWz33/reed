@@ -45,7 +45,7 @@ chr1\t25\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t1/1\t0/0
 
 fn request(invariant: InvariantMode) -> StatsRequest {
     StatsRequest {
-        kinds: pixy_kinds(2, true, true, false, false),
+        kinds: pixy_kinds(2, true, true, false, false, None),
         gt_groups: vec![Some(0), Some(0), Some(1), Some(1)],
         window_size: 10,
         step: 10,
@@ -129,7 +129,7 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     let report = run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: run");
     let prefix = path.parent().expect("invariant: temp dir path").join("out");
-    let kinds = pixy_kinds(2, true, true, false, false);
+    let kinds = pixy_kinds(2, true, true, false, false, None);
     reed::pixy::write(
         &prefix,
         &report,
@@ -174,7 +174,7 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
 fn watterson_theta_and_tajima_d_hand_computed() {
     let path = write_fixture("theta", FIXTURE);
     let mut request = request(InvariantMode::Bypass);
-    request.kinds = pixy_kinds(2, false, false, true, true);
+    request.kinds = pixy_kinds(2, false, false, true, true, None);
     let report = run_stats(Some(&path), request, &budget()).expect("invariant: theta run");
 
     let w0 = &report.windows[0];
@@ -195,5 +195,39 @@ fn watterson_theta_and_tajima_d_hand_computed() {
     assert!((raw_theta.expect("raw_theta") - 6.0 / 11.0).abs() < 1e-15);
     assert!((stdev.expect("stdev") - 0.07422696190252039).abs() < 1e-15);
     assert_eq!(sites, 2);
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+}
+
+/// Hand-computed Fst on the pixy definitions (04-algorithms.md §3).
+///
+/// Pop1 = s0, s1; pop2 = s2, s3 (2 diploids each).
+/// Site 1: ac1 = ac2 = [3 ref, 1 alt] → p = (0.75, 0.25); h_between =
+///   1 − (0.75² + 0.25²) = 0.375; h1 = h2 = (4/3)·0.375 = 0.5 →
+///   Hudson num = 0.375 − 0.5 = −0.125, den = 0.375.
+/// Site 5: all ref → num = 0, den = 0.
+/// Site 25: ac1 = ac2 = [1 ref, 3 alt] → same as site 1 → num −0.125, den 0.375.
+/// Window [1,10] = sites 1 + 5 → Hudson = −0.125/0.375 = −1/3.
+/// WC84 at site 1 (n̄ = n_C = 2, p̄ = 0.75, s² = 0, h̄ = 0.5): a = −0.125,
+///   b = 0, c = 0.5 → −0.125/0.375 = −1/3 (site 5 adds zeros).
+#[test]
+fn fst_hudson_and_wc84_hand_computed() {
+    let path = write_fixture("fst", FIXTURE);
+    for (kind, name) in [
+        (reed::stats::FstKind::Hudson, "hudson"),
+        (reed::stats::FstKind::WeirCockerham84, "wc84"),
+    ] {
+        let mut request = request(InvariantMode::Bypass);
+        request.kinds = pixy_kinds(2, false, false, false, false, Some(kind));
+        let report = run_stats(Some(&path), request, &budget()).expect("invariant: fst run");
+        let w0 = &report.windows[0];
+        let fst_kind = StatKind::Fst { a: 0, b: 1, kind };
+        let value = w0.accs[0].value(&fst_kind, w0.bp).expect("fst value");
+        assert!(
+            (value + 1.0 / 3.0).abs() < 1e-12,
+            "{name}: got {value}, expected -1/3"
+        );
+        let (_, no_snps) = w0.accs[0].fst_columns(&fst_kind).expect("columns");
+        assert_eq!(no_snps, 2, "{name}: window [1,10] holds 2 sites");
+    }
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
