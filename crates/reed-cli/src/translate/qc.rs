@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use reed::qc_report::{run_qc_report, QcOptions};
+use reed::qc_report::{run_qc_report_opened, QcOptions};
 
 use crate::cli::QcCli;
 use crate::units::input_path;
@@ -18,8 +18,10 @@ pub fn run_qc(args: QcCli) -> Result<(), Box<dyn std::error::Error + Send + Sync
         std::thread::available_parallelism().expect("invariant: parallelism").get()
     });
     let started = std::time::Instant::now();
-    let outcome = run_qc_report(
-        input_path(&input).as_deref(),
+    let opened = reed::input::open(input_path(&input).as_deref())
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?;
+    let outcome = run_qc_report_opened(
+        opened,
         &QcOptions { threads, json: json.map(PathBuf::from) },
     )?;
     match out {

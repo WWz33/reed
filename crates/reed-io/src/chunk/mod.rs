@@ -34,6 +34,13 @@ pub struct ChunkBytes {
     pub first_in_block_offset: u64,
     /// The chunk holds plain VCF text, not BGZF blocks (uncompressed input).
     pub plain: bool,
+    /// Compressed offset of the chunk's first block within the input
+    /// (parallel indexing needs it to rebuild virtual offsets).
+    pub compressed_start: u64,
+    /// Per-block `(compressed length, inflated length)` pairs, in order
+    /// (empty for plain chunks). Walks the chunk's inflated text back to
+    /// `(compressed offset, in-block offset)` without inflating twice.
+    pub blocks: Vec<(u32, u32)>,
 }
 
 /// The inflated content of one chunk, split by line ownership.

@@ -76,6 +76,22 @@ pub struct FilterOptions {
     /// index maps them to; the spec's `targets` predicate drops records
     /// outside them.
     pub regions: Vec<reed_io::chunk::region::Region>,
+    /// Directory for the stdin spill of multi-pass runs (default: the
+    /// platform temp directory).
+    pub tmp_dir: Option<PathBuf>,
+}
+
+/// Pass1's source: the still-unconsumed first open (single-pass runs), else
+/// a fresh open of the replay path (a file, or the stdin spill).
+fn open_pass1(
+    first: &mut Option<crate::input::OpenedInput>,
+    replay_path: Option<&Path>,
+    opts: &FilterOptions,
+) -> Result<crate::input::OpenedInput, FilterError> {
+    match first.take() {
+        Some(opened) => Ok(opened),
+        None => crate::input::open_regions(replay_path, &opts.regions).map_err(io_err),
+    }
 }
 
 fn io_err(e: reed_io::error::IoError) -> FilterError {
@@ -102,19 +118,54 @@ pub fn run_filter(
     opts: &FilterOptions,
 ) -> Result<FilterReport, FilterError> {
     let t0 = Instant::now();
-    // One open for the header (the pass loops below open again per pass).
-    let (_source, facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
+    if input.is_none() && !opts.regions.is_empty() {
+        return Err(FilterError::Spec(
+            "regions need a seekable file, not stdin".into(),
+        ));
+    }
+    // ---- input: stdin streams straight into the single-pass pipeline;
+    // multi-pass runs (`--mind`) spill it once and delete the spill on every
+    // exit path (03-performance.md O5). The first open doubles as pass0's
+    // source when nothing consumes it before pass1. ----
+    let _spill: Option<crate::input::StdinSpill>;
+    let mut replay_path: Option<PathBuf> = input.map(Path::to_path_buf);
+    let mut first: Option<crate::input::OpenedInput>;
+    match input {
+        Some(p) => {
+            first = Some(crate::input::open_regions(Some(p), &opts.regions).map_err(io_err)?);
+            _spill = None;
+        }
+        None if spec.mind.is_some() => {
+            let guard =
+                crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
+            let path = guard.path().to_path_buf();
+            first = Some(crate::input::open_regions(Some(&path), &opts.regions).map_err(io_err)?);
+            replay_path = Some(path);
+            _spill = Some(guard);
+        }
+        None => {
+            first = Some(crate::input::open(None).map_err(io_err)?);
+            _spill = None;
+        }
+    }
+    let facts = first
+        .as_ref()
+        .expect("invariant: the input was just opened")
+        .facts
+        .clone();
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
     let mut plan = reed_filter::plan::compile(spec, &header, &opts.command_line)?;
     let strategy = match opts.strategy {
         Some(forced) => forced,
         None => match &spec.mind {
-            Some(_) if input.is_some() => {
+            Some(_) if replay_path.is_some() => {
                 // §11.4: the sketch path when the upper-bounded sketch fits
                 // the memory budget (records extrapolated from the first
                 // chunk's records/byte density).
-                let estimated = estimate_records(input.expect("invariant: guarded above"))?;
+                let estimated = estimate_records(
+                    replay_path.as_deref().expect("invariant: guarded above"),
+                )?;
                 reed_filter::plan::strategy::choose_for_max_missing(
                     estimated,
                     n_samples_in,
@@ -130,7 +181,8 @@ pub fn run_filter(
     // ---- pass0 (the sketch path also captures the per-chunk sketches the
     // mid stage turns into emit decisions) ----
     let sketch_pass = if strategy == ExecStrategy::SketchThenEmit {
-        Some(run_sketch_pass(input, n_samples_in, &plan, opts)?)
+        let opened = first.take().expect("invariant: pass0 consumes the first open");
+        Some(run_sketch_pass(opened, n_samples_in, &plan, opts)?)
     } else {
         None
     };
@@ -171,7 +223,8 @@ pub fn run_filter(
         let (n_records, counts): (u64, &[u64]) = match &sketch_pass {
             Some(sketch) => (sketch.n_records, &sketch.cohort_miss),
             None => {
-                missing_partial = run_missing_pass(input, &plan, opts)?;
+                let opened = first.take().expect("invariant: pass0 consumes the first open");
+                missing_partial = run_missing_pass(opened, &plan, opts)?;
                 (missing_partial.n_records, &missing_partial.counts)
             }
         };
@@ -309,9 +362,9 @@ pub fn run_filter(
         };
         // Header first (as BGZF block(s) on the compressed path).
         sink.out.write_header(&header_bytes).map_err(io_err)?;
-        let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
+        let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
-        run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         sketch_funnel
     } else {
         let job = FilterJob {
@@ -338,9 +391,9 @@ pub fn run_filter(
             slot: Arc::clone(&slot),
         };
         sink.out.write_header(&header_bytes).map_err(io_err)?;
-        let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
+        let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
-        run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         slot
             .lock()
             .expect("invariant: funnel slot not poisoned")

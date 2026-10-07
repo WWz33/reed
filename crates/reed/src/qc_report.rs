@@ -538,7 +538,21 @@ pub struct QcOutcome {
 ///
 /// Transport and job failures.
 pub fn run_qc_report(input: Option<&Path>, opts: &QcOptions) -> Result<QcOutcome, EngineError> {
-    let (mut source, facts) = crate::input::open(input).map_err(|e| EngineError::Io(e.to_string()))?;
+    let opened = crate::input::open(input).map_err(|e| EngineError::Io(e.to_string()))?;
+    run_qc_report_opened(opened, opts)
+}
+
+/// Runs the QC report over an already-opened input (the CLI opens once so
+/// stdin streams; doc_v3 03-performance.md O5).
+///
+/// # Errors
+///
+/// As [`run_qc_report`].
+pub fn run_qc_report_opened(
+    opened: crate::input::OpenedInput,
+    opts: &QcOptions,
+) -> Result<QcOutcome, EngineError> {
+    let crate::input::OpenedInput { mut source, facts } = opened;
     let n_samples = facts.n_samples();
     let job = QcJob { n_samples };
     let slot: Arc<Mutex<Option<QcReportAcc>>> = Arc::new(Mutex::new(None));

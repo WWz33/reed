@@ -136,6 +136,8 @@ fn make_chunks(text: &[u8], chunk_bytes: usize) -> Vec<ChunkBytes> {
             compressed: compressed.into_boxed_slice().into(),
             first_in_block_offset: 0,
             plain: false,
+            compressed_start: 0,
+            blocks: Vec::new(),
         });
     }
     chunks

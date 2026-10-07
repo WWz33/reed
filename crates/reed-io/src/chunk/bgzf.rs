@@ -19,6 +19,11 @@ pub struct BgzfChunkReader<R: Read> {
     /// Compressed bytes of the block where the header ends (chunk 0 starts
     /// here, so it is not read twice).
     pending_block: Option<Vec<u8>>,
+    /// Compressed offset of `pending_block`.
+    pending_block_offset: u64,
+    /// Compressed offset of the next byte to read (bytes consumed so far,
+    /// empty members included).
+    compressed_offset: u64,
     /// Offset of the first record inside that block's inflated text.
     first_in_block_offset: u64,
     header_done: bool,
@@ -56,6 +61,8 @@ impl<R: Read> BgzfChunkReader<R> {
             chunk_target,
             next_chunk_id: 0,
             pending_block: None,
+            pending_block_offset: 0,
+            compressed_offset: 0,
             first_in_block_offset: 0,
             header_done: false,
             last_was_eof_marker: false,
@@ -63,15 +70,16 @@ impl<R: Read> BgzfChunkReader<R> {
         }
     }
 
-    /// Reads one BGZF block (header + payload); `None` at the end of the
-    /// underlying stream.
+    /// Reads one BGZF block (header + payload) and its compressed offset;
+    /// `None` at the end of the underlying stream.
     ///
     /// Empty members (ISIZE = 0, including the canonical EOF marker) are
     /// skipped — concatenated BGZF files carry one at every join, and the
     /// stream ends only at the underlying EOF (01-review D2). A clean end
     /// without a trailing EOF marker warns once (htslib behavior).
-    fn read_block(&mut self) -> Result<Option<Vec<u8>>, IoError> {
+    fn read_block(&mut self) -> Result<Option<(Vec<u8>, u64)>, IoError> {
         loop {
+            let block_offset = self.compressed_offset;
             let mut header = [0_u8; BGZF_HEADER_LEN];
             let mut filled = 0;
             while filled < BGZF_HEADER_LEN {
@@ -101,12 +109,13 @@ impl<R: Read> BgzfChunkReader<R> {
             block.extend_from_slice(&header);
             block.resize(total, 0);
             self.inner.read_exact(&mut block[BGZF_HEADER_LEN..])?;
+            self.compressed_offset += total as u64;
             if is_empty_member(&block) {
                 self.last_was_eof_marker = is_eof_block(&block);
                 continue;
             }
             self.last_was_eof_marker = false;
-            return Ok(Some(block));
+            return Ok(Some((block, block_offset)));
         }
     }
 
@@ -130,13 +139,14 @@ impl<R: Read> BgzfChunkReader<R> {
     ) -> Result<HeaderScan, IoError> {
         let mut text = Vec::new();
         loop {
-            let Some(block) = self.read_block()? else {
+            let Some((block, block_offset)) = self.read_block()? else {
                 return Err(IoError::Header("no #CHROM line found in the stream".into()));
             };
             let text_len_before = text.len();
             inflater.inflate_block(&block, &mut text)?;
             if let Some(end) = find_chrom_line_end(&text) {
                 self.pending_block = Some(block);
+                self.pending_block_offset = block_offset;
                 // The offset is *within this block's* inflated text, not in
                 // the accumulated header text.
                 self.first_in_block_offset = (end - text_len_before) as u64;
@@ -156,17 +166,21 @@ impl<R: Read> BgzfChunkReader<R> {
         if !self.header_done {
             return Err(IoError::Header("scan_header must run before chunks".into()));
         }
-        let first = match self.pending_block.take() {
-            Some(block) => block,
+        let (first, compressed_start) = match self.pending_block.take() {
+            Some(block) => (block, self.pending_block_offset),
             None => match self.read_block()? {
-                Some(block) => block,
+                Some(pair) => pair,
                 None => return Ok(None),
             },
         };
+        let mut blocks = vec![block_pair(&first)];
         let mut compressed = first;
         while (compressed.len() as u64) < self.chunk_target {
             match self.read_block()? {
-                Some(block) => compressed.extend_from_slice(&block),
+                Some((block, _offset)) => {
+                    blocks.push(block_pair(&block));
+                    compressed.extend_from_slice(&block);
+                }
                 None => break,
             }
         }
@@ -177,8 +191,18 @@ impl<R: Read> BgzfChunkReader<R> {
             compressed: Arc::from(compressed.into_boxed_slice()),
             first_in_block_offset: std::mem::take(&mut self.first_in_block_offset),
             plain: false,
+            compressed_start,
+            blocks,
         }))
     }
+}
+
+/// One block's `(compressed length, inflated length)`.
+fn block_pair(block: &[u8]) -> (u32, u32) {
+    (
+        u32::try_from(block.len()).unwrap_or(u32::MAX),
+        crate::bgzf::block::block_inflated_size(block),
+    )
 }
 
 /// Offset just past the newline ending the `#CHROM` line, scanning text

@@ -302,13 +302,13 @@ impl OrderedSink<SketchPartial> for SketchSink {
 
 /// The sketch pass (engine run #1).
 pub(super) fn run_sketch_pass(
-    input: Option<&Path>,
+    opened: crate::input::OpenedInput,
     n_samples: usize,
     plan: &FilterPlan,
     opts: &FilterOptions,
 ) -> Result<SketchPassOutput, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
-    let (mut source, facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
+    let crate::input::OpenedInput { mut source, facts } = opened;
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
         facts
             .header
@@ -354,8 +354,8 @@ pub(super) fn sized_funnel(plan: &FilterPlan) -> FunnelPartial {
 
 pub(super) fn estimate_records(input: &Path) -> Result<u64, FilterError> {
     let file_len = std::fs::metadata(input).map_err(FilterError::from)?.len();
-    let (mut source, _facts) = crate::input::open(Some(input)).map_err(io_err)?;
-    let Some(chunk) = source.next_chunk().map_err(io_err)? else {
+    let mut opened = crate::input::open(Some(input)).map_err(io_err)?;
+    let Some(chunk) = opened.source.next_chunk().map_err(io_err)? else {
         return Ok(0);
     };
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();

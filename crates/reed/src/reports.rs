@@ -484,7 +484,22 @@ pub fn run_reports(
     request: &ReportRequest,
     budget: &ThreadBudget,
 ) -> Result<ReportsOutcome, EngineError> {
-    let (mut source, facts) = crate::input::open(input).map_err(EngineError::from)?;
+    let opened = crate::input::open(input).map_err(EngineError::from)?;
+    run_reports_opened(opened, request, budget)
+}
+
+/// Runs the requested reports over an already-opened input (the CLI opens
+/// once so stdin streams; doc_v3 03-performance.md O5).
+///
+/// # Errors
+///
+/// As [`run_reports`].
+pub fn run_reports_opened(
+    opened: crate::input::OpenedInput,
+    request: &ReportRequest,
+    budget: &ThreadBudget,
+) -> Result<ReportsOutcome, EngineError> {
+    let crate::input::OpenedInput { mut source, facts } = opened;
     let n_samples = facts.n_samples();
     let job = ReportJob {
         n_samples,

@@ -97,6 +97,8 @@ impl crate::chunk::ChunkSource for PlainChunkSource {
             compressed: Arc::from(self.buf.as_slice()),
             first_in_block_offset: offset,
             plain: true,
+            compressed_start: 0,
+            blocks: Vec::new(),
         }))
     }
 }

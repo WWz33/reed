@@ -35,6 +35,7 @@ pub struct RegionChunkSource<R: Read + Seek> {
     chunk_target: u64,
     next_chunk_id: u64,
     pending_block: Option<Vec<u8>>,
+    pending_block_offset: u64,
     first_in_block_offset: u64,
     done: bool,
 }
@@ -66,6 +67,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             pending_block: None,
+            pending_block_offset: 0,
             first_in_block_offset: start & 0xFFFF,
             done: false,
         })
@@ -73,7 +75,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
 
     /// Reads one block; `None` once the region's range is exhausted or the
     /// underlying stream ends.
-    fn read_block(&mut self) -> Result<Option<Vec<u8>>, IoError> {
+    fn read_block(&mut self) -> Result<Option<(Vec<u8>, u64)>, IoError> {
         if self.done {
             return Ok(None);
         }
@@ -104,8 +106,9 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         let mut block = Vec::with_capacity(total);
         block.extend_from_slice(&header);
         block.resize(total, 0);
+        let block_offset = position;
         self.inner.read_exact(&mut block[BGZF_HEADER_LEN..])?;
-        Ok(Some(block))
+        Ok(Some((block, block_offset)))
     }
 
     /// The next chunk of the range, or `None` at its end.
@@ -117,17 +120,21 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         if self.done && self.pending_block.is_none() {
             return Ok(None);
         }
-        let first = match self.pending_block.take() {
-            Some(block) => block,
+        let (first, compressed_start) = match self.pending_block.take() {
+            Some(block) => (block, self.pending_block_offset),
             None => match self.read_block()? {
-                Some(block) => block,
+                Some(pair) => pair,
                 None => return Ok(None),
             },
         };
+        let mut blocks = vec![block_pair(&first)];
         let mut compressed = first;
         while (compressed.len() as u64) < self.chunk_target {
             match self.read_block()? {
-                Some(block) => compressed.extend_from_slice(&block),
+                Some((block, _offset)) => {
+                    blocks.push(block_pair(&block));
+                    compressed.extend_from_slice(&block);
+                }
                 None => break,
             }
         }
@@ -138,6 +145,8 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             compressed: std::sync::Arc::from(compressed.into_boxed_slice()),
             first_in_block_offset: std::mem::take(&mut self.first_in_block_offset),
             plain: false,
+            compressed_start,
+            blocks,
         }))
     }
 }
@@ -158,10 +167,19 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             pending_block: None,
+            pending_block_offset: 0,
             first_in_block_offset: 0,
             done: true,
         }
     }
+}
+
+/// One block's `(compressed length, inflated length)`.
+fn block_pair(block: &[u8]) -> (u32, u32) {
+    (
+        u32::try_from(block.len()).unwrap_or(u32::MAX),
+        crate::bgzf::block::block_inflated_size(block),
+    )
 }
 
 /// The slice of the index API the region source needs (keeps reed-io free of

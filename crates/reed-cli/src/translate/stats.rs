@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use reed::stats::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
+use reed::stats::{assign_groups, default_kinds, run_stats_opened, Levels, StatsRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
 use crate::cli::StatsCli;
@@ -43,10 +43,32 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         skip_empty,
         out,
         threads,
+        tmp_dir,
     } = args;
 
-    let (_source, facts) = reed::input::open(input_path(&input).as_deref())
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?;
+    // Open once: stdin streams into the driver (03-performance.md O5). The
+    // only mode that reads twice is a report run asking for both families
+    // (per-site/per-sample reports and the QC summary) on stdin — that is
+    // spilled once, deleted on drop.
+    let input_file = input_path(&input);
+    let two_families =
+        (freq || hardy || het || missing || depth) && summary;
+    let spill = if input_file.is_none() && two_families {
+        Some(
+            reed::input::StdinSpill::new(tmp_dir.as_deref().map(Path::new))
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
+        )
+    } else {
+        None
+    };
+    let open_path: Option<PathBuf> = input_file
+        .clone()
+        .or_else(|| spill.as_ref().map(|s| s.path().to_path_buf()));
+    let mut opened = Some(
+        reed::input::open(open_path.as_deref())
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
+    );
+    let facts = &opened.as_ref().expect("invariant: just opened").facts;
     let sample_names: Vec<String> = facts.sample_names.clone();
 
     let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
@@ -98,11 +120,10 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
                 depth,
                 prefix: PathBuf::from(&prefix),
             };
-            let outcome = reed::reports::run_reports(
-                input_path(&input).as_deref(),
-                &request,
-                &budget,
-            )?;
+            let source = opened
+                .take()
+                .expect("invariant: the first family consumes the first open");
+            let outcome = reed::reports::run_reports_opened(source, &request, &budget)?;
             files.extend(outcome.files);
             eprintln!(
                 "{} records in {:.1}s -> {}",
@@ -113,8 +134,13 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
             );
         }
         if summary {
-            let outcome = reed::qc_report::run_qc_report(
-                input_path(&input).as_deref(),
+            let source = match opened.take() {
+                Some(source) => source,
+                None => reed::input::open(open_path.as_deref())
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
+            };
+            let outcome = reed::qc_report::run_qc_report_opened(
+                source,
                 &reed::qc_report::QcOptions { threads, json: None },
             )?;
             let mut path = std::ffi::OsString::from(&prefix);
@@ -186,7 +212,8 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
             contig_lengths,
             pixy: Some(pixy),
         };
-        let report = run_stats(input_path(&input).as_deref(), request, &budget)?;
+        let source = opened.take().expect("invariant: the windowed mode reads once");
+        let report = run_stats_opened(source, request, &budget)?;
         let Some(prefix) = out else {
             return Err("pixy mode writes files: pass -o PREFIX".into());
         };
@@ -224,7 +251,8 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         contig_lengths,
         pixy: None,
     };
-    let report = run_stats(input_path(&input).as_deref(), request, &budget)?;
+    let source = opened.take().expect("invariant: the windowed mode reads once");
+    let report = run_stats_opened(source, request, &budget)?;
     eprintln!(
         "{} windows, {} records, {} multiallelic skipped, {} chunks in {:.1}s",
         report.n_windows,

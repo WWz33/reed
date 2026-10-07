@@ -35,6 +35,18 @@ pub fn is_empty_member(block: &[u8]) -> bool {
     block.len() >= 8 && block[block.len() - 4..] == [0, 0, 0, 0]
 }
 
+/// The inflated size (ISIZE, the last 4 footer bytes) of a full BGZF block.
+///
+/// # Panics
+///
+/// Panics when `block` is shorter than the 8-byte footer (a caller
+/// invariant: `block` always comes from [`parse_block_size`]).
+#[must_use]
+pub fn block_inflated_size(block: &[u8]) -> u32 {
+    let n = block.len();
+    u32::from_le_bytes([block[n - 4], block[n - 3], block[n - 2], block[n - 1]])
+}
+
 /// Parses the fixed header; returns the **total** block size (BSIZE + 1).
 ///
 /// Returns `None` when the bytes are not a BGZF header (callers treat this

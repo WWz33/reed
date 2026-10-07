@@ -780,6 +780,21 @@ pub fn run_stats(
     request: StatsRequest,
     budget: &ThreadBudget,
 ) -> Result<StatsReport, EngineError> {
+    let opened = crate::input::open(path).map_err(EngineError::from)?;
+    run_stats_opened(opened, request, budget)
+}
+
+/// Runs windowed statistics over an already-opened input (the CLI opens
+/// once so stdin streams; doc_v3 03-performance.md O5).
+///
+/// # Errors
+///
+/// As [`run_stats`].
+pub fn run_stats_opened(
+    opened: crate::input::OpenedInput,
+    request: StatsRequest,
+    budget: &ThreadBudget,
+) -> Result<StatsReport, EngineError> {
     let grid = WindowGrid::Bp { size: request.window_size, step: request.step };
     grid.validate().map_err(|err| EngineError::Job(err.to_string()))?;
     let binning = BpBinning::from_grid(&grid)
@@ -800,7 +815,7 @@ pub fn run_stats(
         .map_err(|err| EngineError::Job(format!("invalid stats request: {err}")))?;
     let keys: Vec<StatKey> = request.kinds.iter().map(StatKind::key).collect();
 
-    let (mut source, header) = crate::input::open(path).map_err(EngineError::from)?;
+    let crate::input::OpenedInput { mut source, facts: header } = opened;
     if header.n_samples() != request.gt_groups.len() {
         return Err(EngineError::Job(format!(
             "request assigns {} samples but the header declares {}",

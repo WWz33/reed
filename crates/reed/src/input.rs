@@ -1,7 +1,15 @@
 //! Unified input entry (`doc_v2/03-architecture.md` §6): one open yields
 //! the chunk source *and* the header — there is no second header-only
-//! reopen. `-` (or `None`) reads BGZF VCF from stdin.
+//! reopen. `-` (or `None`) reads stdin.
+//!
+//! stdin streams straight into the chunk sources (the format probe's prefix
+//! is chained back), so a single-pass command starts computing before the
+//! producer finishes (03-performance.md O5). Commands that must read the
+//! input more than once (filter's passes) spill stdin once through
+//! [`StdinSpill`], which deletes the temporary file on drop — on error and
+//! early return as well.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use reed_io::chunk::plain::PlainChunkSource;
@@ -11,14 +19,22 @@ use reed_io::format::Format;
 use reed_io::header::HeaderFacts;
 use reed_io::IoError;
 
-/// Opens a BGZF VCF stream: file at `path`, or stdin when `None`. The
-/// returned source yields record chunks from the first record on; the facts
-/// carry the header text and the parsed noodles header.
+/// An opened input: the chunk source plus the header facts that were parsed
+/// while locating the first record.
+pub struct OpenedInput {
+    /// Chunks from the first record on.
+    pub source: Box<dyn ChunkSource>,
+    /// Header facts (noodles header, samples, contigs).
+    pub facts: HeaderFacts,
+}
+
+/// Opens a one-shot input: file at `path`, or stdin when `None`. stdin is
+/// streamed, not spilled — the caller must read it exactly once.
 ///
 /// # Errors
 ///
 /// [`IoError`] when the stream ends before a valid `#CHROM` header.
-pub fn open(path: Option<&Path>) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
+pub fn open(path: Option<&Path>) -> Result<OpenedInput, IoError> {
     open_regions(path, &[])
 }
 
@@ -34,7 +50,7 @@ pub fn open(path: Option<&Path>) -> Result<(Box<dyn ChunkSource>, HeaderFacts), 
 pub fn open_regions(
     path: Option<&Path>,
     regions: &[Region],
-) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
+) -> Result<OpenedInput, IoError> {
     if regions.is_empty() {
         return open_all(path);
     }
@@ -65,15 +81,14 @@ pub fn open_regions(
         regions,
         &facts.contig_names,
     )?;
-    Ok((Box::new(source), facts))
+    Ok(OpenedInput { source: Box::new(source), facts })
 }
 
 /// Reads enough of the stream to detect its format: the whole first BGZF
 /// block when the bytes are BGZF (the inflated content tells BGZF-VCF from
-/// BGZF-BCF), else a short prefix. The bytes are returned so the caller can
-/// chain them back onto the stream.
-fn sniff(reader: &mut impl std::io::Read) -> Result<(Vec<u8>, Option<Vec<u8>>), IoError> {
-    use std::io::Read as _;
+/// BGZF-BCF), else a short prefix. The raw bytes are returned so the caller
+/// can chain them back onto the stream.
+fn sniff(reader: &mut impl Read) -> Result<(Vec<u8>, Option<Vec<u8>>), IoError> {
     let mut header = [0_u8; reed_io::bgzf::block::BGZF_HEADER_LEN];
     let mut filled = 0;
     while filled < header.len() {
@@ -106,70 +121,117 @@ fn sniff(reader: &mut impl std::io::Read) -> Result<(Vec<u8>, Option<Vec<u8>>), 
     Ok((prefix, None))
 }
 
-/// The temp file a stdin stream is spilled to, so the drivers' several
-/// opens (header, then one per pass) all see the same bytes. Stdin cannot
-/// be re-read; a file can.
-fn stdin_spill() -> Result<&'static Path, IoError> {
-    use std::sync::OnceLock;
-    static SPILL: OnceLock<PathBuf> = OnceLock::new();
-    if let Some(path) = SPILL.get() {
-        return Ok(path);
-    }
-    let mut path = std::env::temp_dir();
-    path.push(format!("reed-stdin-{}.vcf", std::process::id()));
-    {
-        use std::io::Write as _;
+/// A stdin stream spilled to a temporary file so a multi-pass driver can
+/// re-read the same bytes. The file is removed when this guard drops —
+/// normal exit, error returns and early returns included (03-performance.md
+/// O5/04 §C6).
+pub struct StdinSpill {
+    path: PathBuf,
+}
+
+impl StdinSpill {
+    /// Spills stdin into `tmp_dir` (default: the platform temp directory).
+    ///
+    /// # Errors
+    ///
+    /// I/O failures creating or filling the temporary file.
+    pub fn new(tmp_dir: Option<&Path>) -> Result<Self, IoError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let dir = tmp_dir.map_or_else(std::env::temp_dir, Path::to_path_buf);
+        let path = dir.join(format!(
+            "reed-stdin-{}-{}.vcf",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
         let mut out = std::fs::File::create(&path)?;
         std::io::copy(&mut std::io::stdin(), &mut out)?;
+        out.sync_all()?;
+        Ok(Self { path })
     }
-    Ok(SPILL.get_or_init(|| path))
+
+    /// The temporary file holding the spilled bytes.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StdinSpill {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// Opens the whole stream (no region restriction), detecting the format by
 /// magic: BGZF VCF, plain VCF, plain gzip, BCF (03-architecture.md §6).
-fn open_all(path: Option<&Path>) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
-    let spilled;
-    let path = match path {
-        Some(p) => Some(p),
-        None => {
-            spilled = stdin_spill()?;
-            Some(spilled)
-        }
-    };
+/// stdin is wrapped directly, with the probe's bytes chained back.
+fn open_all(path: Option<&Path>) -> Result<OpenedInput, IoError> {
     match path {
-        Some(p) => {
-            let (prefix, inflated) = {
-                let mut file = std::fs::File::open(p)?;
-                sniff(&mut file)?
-            };
-            match Format::detect(&prefix, inflated.as_deref())? {
-                Format::VcfBgzf => {
-                    let file = std::fs::File::open(p)?;
-                    let (source, facts) = BgzfChunkSource::open(
-                        std::io::BufReader::with_capacity(1 << 20, file),
-                    )?;
-                    Ok((Box::new(source), facts))
-                }
-                Format::Vcf => {
-                    let file = std::fs::File::open(p)?;
-                    let (source, facts) = PlainChunkSource::open_vcf(file)?;
-                    Ok((Box::new(source), facts))
-                }
-                Format::VcfGzip => {
-                    let file = std::fs::File::open(p)?;
-                    eprintln!(
-                        "reed: warning: the input is plain gzip, not BGZF; decompression is \
-                         serial (repack with `bgzip` for parallel reads)"
-                    );
-                    let (source, facts) = PlainChunkSource::open_gzip(file)?;
-                    Ok((Box::new(source), facts))
-                }
-                Format::Bcf => Err(IoError::UnsupportedInput(
-                    "BCF input is not supported yet; convert with `bcftools view -Oz`",
-                )),
-            }
-        }
-        // `path` is always `Some` here (stdin was spilled above).
-        None => unreachable!("invariant: stdin is spilled to a file first"),
+        Some(p) => open_file(p),
+        None => open_stdin(),
     }
+}
+
+fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
+    let (prefix, inflated) = {
+        let mut file = std::fs::File::open(p)?;
+        sniff(&mut file)?
+    };
+    match Format::detect(&prefix, inflated.as_deref())? {
+        Format::VcfBgzf => {
+            let file = std::fs::File::open(p)?;
+            let (source, facts) =
+                BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
+            Ok(OpenedInput { source: Box::new(source), facts })
+        }
+        Format::Vcf => {
+            let file = std::fs::File::open(p)?;
+            let (source, facts) = PlainChunkSource::open_vcf(file)?;
+            Ok(OpenedInput { source: Box::new(source), facts })
+        }
+        Format::VcfGzip => {
+            let file = std::fs::File::open(p)?;
+            warn_serial_gzip();
+            let (source, facts) = PlainChunkSource::open_gzip(file)?;
+            Ok(OpenedInput { source: Box::new(source), facts })
+        }
+        Format::Bcf => Err(IoError::UnsupportedInput(
+            "BCF input is not supported yet; convert with `bcftools view -Oz`",
+        )),
+    }
+}
+
+/// Streams stdin: the format probe's prefix is chained back so the source
+/// sees every byte exactly once.
+fn open_stdin() -> Result<OpenedInput, IoError> {
+    let mut stdin = std::io::stdin();
+    let (prefix, inflated) = sniff(&mut stdin)?;
+    let format = Format::detect(&prefix, inflated.as_deref())?;
+    let reader = std::io::Cursor::new(prefix).chain(stdin);
+    match format {
+        Format::VcfBgzf => {
+            let (source, facts) = BgzfChunkSource::open(reader)?;
+            Ok(OpenedInput { source: Box::new(source), facts })
+        }
+        Format::Vcf => {
+            let (source, facts) = PlainChunkSource::open_vcf(reader)?;
+            Ok(OpenedInput { source: Box::new(source), facts })
+        }
+        Format::VcfGzip => {
+            warn_serial_gzip();
+            let (source, facts) = PlainChunkSource::open_gzip(reader)?;
+            Ok(OpenedInput { source: Box::new(source), facts })
+        }
+        Format::Bcf => Err(IoError::UnsupportedInput(
+            "BCF input is not supported yet; convert with `bcftools view -Oz`",
+        )),
+    }
+}
+
+fn warn_serial_gzip() {
+    eprintln!(
+        "reed: warning: the input is plain gzip, not BGZF; decompression is \
+         serial (repack with `bgzip` for parallel reads)"
+    );
 }

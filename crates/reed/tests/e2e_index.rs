@@ -81,7 +81,7 @@ fn query(index_path: &Path, vcf: &Path, contig: &str) -> Vec<String> {
 fn csi_index_resolves_queries() {
     let (dir, vcf) = write_fixture("csi", &rows());
     let outcome =
-        run_index(&vcf, WriteIndex::Csi, None).expect("invariant: index builds");
+        run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
     assert_eq!(outcome.n_records, 5);
     assert_eq!(outcome.path, dir.join("in.vcf.gz.csi"));
 
@@ -97,7 +97,7 @@ fn csi_index_resolves_queries() {
 #[test]
 fn tbi_is_written_and_refuses_wide_coordinates() {
     let (dir, vcf) = write_fixture("tbi", &rows());
-    let outcome = run_index(&vcf, WriteIndex::Tbi, None).expect("invariant: tbi builds");
+    let outcome = run_index(&vcf, WriteIndex::Tbi, None, 4).expect("invariant: tbi builds");
     assert!(outcome.path.to_string_lossy().ends_with(".tbi"));
     // The TBI has its own magic: read it with the tabix reader.
     use noodles::csi::BinningIndex as _;
@@ -109,7 +109,7 @@ fn tbi_is_written_and_refuses_wide_coordinates() {
     let mut wide = String::from(HEADER);
     wide.push_str("chr1\t600000000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     let (dir2, vcf2) = write_fixture("tbi-wide", &wide);
-    let err = run_index(&vcf2, WriteIndex::Tbi, None).expect_err("invariant: TBI refuses 6e8");
+    let err = run_index(&vcf2, WriteIndex::Tbi, None, 4).expect_err("invariant: TBI refuses 6e8");
     assert!(err.to_string().contains("TBI coordinates"), "{err}");
     let _ = std::fs::remove_dir_all(&dir2);
 }
@@ -120,7 +120,23 @@ fn unsorted_input_is_refused() {
     text.push_str("chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     text.push_str("chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     let (dir, vcf) = write_fixture("unsorted", &text);
-    let err = run_index(&vcf, WriteIndex::Csi, None).expect_err("invariant: unsorted refused");
+    let err = run_index(&vcf, WriteIndex::Csi, None, 4).expect_err("invariant: unsorted refused");
     assert!(err.to_string().contains("ascending"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// O4: the parallel index is byte-identical across thread counts (the chunk
+/// framing and the seam chain make the record starts thread-independent).
+#[test]
+fn index_bytes_are_thread_count_independent() {
+    let (dir, vcf) = write_fixture("indexthreads", &rows());
+    let a = dir.join("a.csi");
+    let b = dir.join("b.csi");
+    run_index(&vcf, WriteIndex::Csi, Some(&a), 1).expect("invariant: one thread");
+    run_index(&vcf, WriteIndex::Csi, Some(&b), 4).expect("invariant: four threads");
+    assert_eq!(
+        std::fs::read(&a).expect("invariant: a"),
+        std::fs::read(&b).expect("invariant: b")
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

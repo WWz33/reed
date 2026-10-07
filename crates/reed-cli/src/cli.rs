@@ -184,20 +184,32 @@ pub struct FilterCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
+    /// Directory for temporary files (the stdin spill of multi-pass runs)
+    #[arg(long, value_name = "DIR")]
+    pub tmp_dir: Option<String>,
 }
 
 
 /// Build a CSI (default) or TBI index for an existing BGZF VCF.
 #[derive(Args)]
 pub struct IndexCli {
-    /// Input BGZF VCF (.vcf.gz)
+    /// Input VCF/VCF.gz
     pub input: String,
-    /// Index flavor (default csi)
-    #[arg(short = 't', long = "type", value_name = "csi|tbi", default_value = "csi")]
-    pub index_type: String,
-    /// Write the index here instead of next to the input
+    /// Write a CSI index (default; bcftools `-c`)
+    #[arg(short = 'c', long = "csi", conflicts_with = "tbi")]
+    pub csi: bool,
+    /// Write a TBI index instead (bcftools `-t`)
+    #[arg(short = 't', long = "tbi")]
+    pub tbi: bool,
+    /// Write the index here instead of next to the input (bcftools `-o`)
     #[arg(short, long)]
-    pub out: Option<String>,
+    pub output: Option<String>,
+    /// Overwrite an existing index (bcftools `-f`)
+    #[arg(short, long)]
+    pub force: bool,
+    /// Worker threads (default: all cores)
+    #[arg(long)]
+    pub threads: Option<usize>,
 }
 
 
@@ -291,5 +303,9 @@ pub struct StatsCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
+    /// Directory for temporary files (the stdin spill of report runs that
+    /// read twice)
+    #[arg(long, value_name = "DIR")]
+    pub tmp_dir: Option<String>,
 }
 

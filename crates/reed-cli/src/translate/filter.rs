@@ -22,7 +22,7 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
     // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
     // once with names to keep, once with a `^`-prefixed removal list — but
     // two sources of the same polarity are a conflict, not a silent pick.
-    let mut parse_list = |list: &str| -> Result<(bool, Vec<String>), String> {
+    let parse_list = |list: &str| -> Result<(bool, Vec<String>), String> {
         let exclude = list.trim_start().starts_with('^');
         let names: Vec<String> = list
             .trim_start_matches('^')
@@ -325,6 +325,7 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         report_json: report.as_ref().map(PathBuf::from),
         force_samples: *force_samples,
         regions,
+        tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
     };
     let report = reed::filter::run_filter(input_path(input).as_deref(), &spec_v2, &opts)?;
     eprintln!(

@@ -15,6 +15,13 @@
 
 开发中发现并修复的缺陷（非文档列出）：pass0 的 `FunnelPartial` 未按规则数初始化，`eval_head` 的 `zip` 空转使头部规则被跳过（SinglePass/TwoPass 的 `--mind` 因此按旧口径统计）；pass0 的扫描器未带计划 FORMAT 列，掩码未参与缺失计数。
 
+### V1 串行瓶颈与资源
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| O5 | stdin 单遍任务直接流式（探测前缀用 `Read::chain` 接回）；多遍任务（`--mind`）落盘到 `--tmp-dir`，`StdinSpill` 的 Drop 在正常/错误/提前返回时删除；`reed stats`/`qc`/reports 的 CLI 改为一次 open 并把 source 交给 driver（`run_*_opened`）；报告模式两族同用时 stdin 落盘一次 | 见下 | 新 CLI 测试 3 条：单遍 stdin 与文件输出一致且无临时文件；多遍 stdin 与文件输出正文一致且 spill 删除；错误路径同样删除。`/tmp` 历史残留 5 个已清空 |
+| O4 | `reed index` 并行：`ChunkBytes` 携带 `compressed_start` + 每块 `(压缩长, ISIZE)`；worker 从 chunk 文本偏移换算虚拟偏移，reducer 按序配对相邻记录起点（末条到文件尾）并调用 `Indexer::add`；`eval` 无；`-c/-t/-o/-f/--threads` 对齐 bcftools | 见下 | 1 GB 子集 480,952 条：56 线程 0.47 s、单线程 10.4 s，1/3/56 线程 CSI sha256 相同；全量 `clean.vcf.gz`（7.0 GB，3,315,604 条）2.7 s（bcftools index 142 s）；bcftools 用 reed 的索引查询与流式扫描逐字节一致（子集与全量各 2 个区域） |
+
 ### 待办
 
-- V1 O1–O5、V2 B0、V3 B1、V4 B3a、V5 B2、V6 B3b；清理 C1–C4、C7 与 CLI 一致性（04 §2）。
+- V1 余项 O1–O3；V2 B0、V3 B1、V4 B3a、V5 B2、V6 B3b；清理 C1–C4、C7 与 CLI 一致性（04 §2）。

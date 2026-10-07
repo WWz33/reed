@@ -7,7 +7,6 @@
 //! This runs the same pipeline the single pass runs (`RecordPipeline`), so
 //! the three strategies cannot drift.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use reed_engine::budget::ThreadBudget;
@@ -20,7 +19,7 @@ use reed_filter::FilterError;
 use reed_core::ChunkId;
 
 use super::record_pipeline::{PipelineOptions, RecordPipeline};
-use super::{ferr, io_err, FilterOptions};
+use super::{ferr, FilterOptions};
 
 /// Pass0 partial: per-sample fully-missing GT counts after masking, over
 /// head-surviving records.
@@ -147,12 +146,12 @@ impl ChunkJob for MissingJob {
 }
 
 pub(super) fn run_missing_pass(
-    input: Option<&Path>,
+    opened: crate::input::OpenedInput,
     plan: &FilterPlan,
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
-    let (mut source, facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
+    let crate::input::OpenedInput { mut source, facts } = opened;
     let job = MissingJob {
         plan: Arc::new(plan.clone()),
         n_samples: facts.header.sample_names().len(),
