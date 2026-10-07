@@ -26,8 +26,8 @@
 | 项 | 内容 | 验证 |
 |---|---|---|
 | 唯一窗口网格（04 §4） | 从位置 1 起 `[1,w]`、`[1+s,w+s]`…；末窗截断到 contig 长度；空窗输出 NA | 手算 fixture 测试（窗口 1/11/21）；pixy 与 vcftools 同为该网格 |
-| π / dxy（04 §3） | Σdiffs/Σcomps（π）、Σcross/Σn_A n_B（dxy），缺失数据按 pixy 逐位点计数；整数分量 diffs/comparables/missing 全部输出 | **pixy 2.2.4 bypass 模式逐位一致**（全量 9,501 窗 × 3 群体，最大相对误差 2e-14；子集同） |
-| `--variant-only` | 窗口内文件未出现的位点视为单态且全部调用：π 分母加 `(L−|S|)·C(2N,2)`，dxy 加 `(L−|S|)·2N_A·2N_B` | **vcftools `--window-pi` 逐行一致**（子集 60/60 行，按 vcftools 打印精度；全量待 pixy 完成后并入） |
+| π / dxy（04 §3） | Σdiffs/Σcomps（π）、Σcross/Σn_A n_B（dxy），缺失数据按 pixy 逐位点计数；整数分量 diffs/comparables/missing 全部输出 | **pixy 2.2.4 bypass 模式逐位一致**：全量 9,490 窗 × 3 群体（28,470 行，含空窗 NA）最大相对误差 4.8e-14；子集同 |
+| `--variant-only` | 窗口内文件未出现的位点视为单态且全部调用：π 分母加 `(L−|S|)·C(2N,2)`，dxy 加 `(L−|S|)·2N_A·2N_B` | **vcftools `--window-pi` 一致**：全量 28,410 行，最大相对差 1.05e-5（vcftools 逐位点 n/(n−1) 校正 vs pixy/reed 比值之和；容差 1e-4）。速度：reed 5.2 s vs vcftools 10 m 47 s |
 | 不变位点检查（04 §3） | 记录级 `ALT="."` 计数；无不变位点且未声明 `--variant-only`/`--bypass-invariant-check` 时报错（与 pixy 的检查同口径） | 回归测试；all-sites fixture 上默认模式与 pixy 默认模式逐列一致 |
 | pixy 列布局（02-cli §5.4） | `PREFIX_pi.txt` / `PREFIX_dxy.txt` / `PREFIX.log`，列名与 pixy 相同，缺失 `NA` | 手算 fixture 测试 + gold/popgen/compare.py |
 | CLI 增量（R5 的 stats 部分） | `--pop/--populations`、`--pi`、`--dxy`、`--window/--size`（100k/1M 单位）、`--step`、`--variant-only`、`--bypass-invariant-check`、`-o PREFIX` | 上述对拍 |
@@ -39,6 +39,14 @@ R7 未完成部分（仍属 R7，按 04 §3 逐个落地）：Watterson θ（逐
 （窗口平均 n、方差一次）、Fst `wc84`/`hudson`（Bhatia 比值之和）、PBS（三对独立 Hudson）、
 SFS 投影、多等位位点的逐等位推广（当前多等位记录跳过，本数据集为 0 条）、
 `--sfs/--freq/--hardy/--het/--missing/--depth/--summary` 的 plink2/vcftools/bcftools 布局输出。
+
+### 与参照物的两处约定差异（非数值错误，已在对拍脚本中显式处理）
+
+1. **末窗坐标**：reed 按 04 §4 把每个 contig 的末窗截断到 contig 长度；pixy 打印整窗大小。
+   数值相同，比较以窗口起点为标识。
+2. **末窗分母**：`--variant-only` 下 reed 只把 contig 长度内的缺失位置计入分母；vcftools/pixy
+   按整窗计数，把 contig 末端之外的位点也算作单态。vcftools 对比排除每 contig 的末窗
+   （每群体 20 行）并打印排除数。D7 要求 header 必须有 contig 长度正是为这条截断规则。
 
 ## 偏差记录（06-roadmap.md §4.6）
 
