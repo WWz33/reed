@@ -29,40 +29,90 @@ pub fn write(
     let mut dxy_rows = String::from(
         "pop1\tpop2\tchromosome\twindow_pos_1\twindow_pos_2\tavg_dxy\tno_sites\tcount_diffs\tcount_comparisons\tcount_missing\n",
     );
+    let mut theta_rows = String::from(
+        "pop\tchromosome\twindow_pos_1\twindow_pos_2\tavg_watterson_theta\tno_sites\traw_watterson_theta\tno_var_sites\tweighted_no_sites\n",
+    );
+    let mut tajima_rows = String::from(
+        "pop\tchromosome\twindow_pos_1\twindow_pos_2\ttajima_d\tno_sites\traw_pi\traw_watterson_theta\ttajima_d_stdev\n",
+    );
     let variant_only = pixy.invariant == InvariantMode::VariantOnly;
     for row in &report.windows {
         for (kind, acc) in kinds.iter().zip(&row.accs) {
-            let (Some((diffs, comparable, missing)), Some(n_sites)) =
-                (acc.pair_counts(), acc.n_present())
-            else {
-                continue;
-            };
-            // Empty windows (no site of the file falls in them) print NA,
-            // like pixy (04-algorithms.md §4).
-            let value = if n_sites == 0 {
-                "NA".to_string()
-            } else {
-                match value_of(acc, kind, row.bp, variant_only) {
-                    Some(v) => format!("{v}"),
-                    None => "NA".to_string(),
-                }
-            };
             match kind {
-                StatKind::Pi { group, .. } => {
+                StatKind::Pi { .. } | StatKind::Dxy { .. } => {
+                    let (Some((diffs, comparable, missing)), Some(n_sites)) =
+                        (acc.pair_counts(), acc.n_present())
+                    else {
+                        continue;
+                    };
+                    // Empty windows (no site of the file falls in them) print
+                    // NA, like pixy (04-algorithms.md §4).
+                    let value = if n_sites == 0 {
+                        "NA".to_string()
+                    } else {
+                        match value_of(acc, kind, row.bp, variant_only) {
+                            Some(v) => format!("{v}"),
+                            None => "NA".to_string(),
+                        }
+                    };
+                    match kind {
+                        StatKind::Pi { group, .. } => {
+                            let name = group_names.get(*group).map_or("?", String::as_str);
+                            let _ = writeln!(
+                                pi_rows,
+                                "{name}\t{}\t{}\t{}\t{value}\t{n_sites}\t{diffs}\t{comparable}\t{missing}",
+                                row.contig, row.start1, row.end0
+                            );
+                        }
+                        StatKind::Dxy { a, b, .. } => {
+                            let name_a = group_names.get(*a).map_or("?", String::as_str);
+                            let name_b = group_names.get(*b).map_or("?", String::as_str);
+                            let _ = writeln!(
+                                dxy_rows,
+                                "{name_a}\t{name_b}\t{}\t{}\t{}\t{value}\t{n_sites}\t{diffs}\t{comparable}\t{missing}",
+                                row.contig, row.start1, row.end0
+                            );
+                        }
+                        _ => unreachable!("guarded above"),
+                    }
+                }
+                StatKind::ThetaW { group, .. } => {
+                    let Some((raw, no_sites, no_var, weighted)) = acc.theta_columns() else {
+                        continue;
+                    };
                     let name = group_names.get(*group).map_or("?", String::as_str);
+                    let avg = match value_of(acc, kind, row.bp, variant_only) {
+                        Some(v) => format!("{v}"),
+                        None => "NA".to_string(),
+                    };
                     let _ = writeln!(
-                        pi_rows,
-                        "{name}\t{}\t{}\t{}\t{value}\t{n_sites}\t{diffs}\t{comparable}\t{missing}",
+                        theta_rows,
+                        "{name}\t{}\t{}\t{}\t{avg}\t{no_sites}\t{raw}\t{no_var}\t{weighted}",
                         row.contig, row.start1, row.end0
                     );
                 }
-                StatKind::Dxy { a, b, .. } => {
-                    let name_a = group_names.get(*a).map_or("?", String::as_str);
-                    let name_b = group_names.get(*b).map_or("?", String::as_str);
+                StatKind::TajimaD { group, .. } => {
+                    let Some((raw_pi, raw_theta, stdev, no_sites)) = acc.tajima_columns() else {
+                        continue;
+                    };
+                    let name = group_names.get(*group).map_or("?", String::as_str);
+                    let cell = |v: Option<f64>| match v {
+                        Some(v) => format!("{v}"),
+                        None => "NA".to_string(),
+                    };
+                    let d = match acc.value(kind, row.bp) {
+                        Some(v) => format!("{v}"),
+                        None => "NA".to_string(),
+                    };
                     let _ = writeln!(
-                        dxy_rows,
-                        "{name_a}\t{name_b}\t{}\t{}\t{}\t{value}\t{n_sites}\t{diffs}\t{comparable}\t{missing}",
-                        row.contig, row.start1, row.end0
+                        tajima_rows,
+                        "{name}\t{}\t{}\t{}\t{d}\t{no_sites}\t{}\t{}\t{}",
+                        row.contig,
+                        row.start1,
+                        row.end0,
+                        cell(raw_pi),
+                        cell(raw_theta),
+                        cell(stdev)
                     );
                 }
                 _ => {}
@@ -78,6 +128,16 @@ pub fn write(
     if kinds.iter().any(|k| matches!(k, StatKind::Dxy { .. })) {
         let path = with_suffix(prefix, "_dxy.txt");
         std::fs::write(&path, dxy_rows)?;
+        written.push(path);
+    }
+    if kinds.iter().any(|k| matches!(k, StatKind::ThetaW { .. })) {
+        let path = with_suffix(prefix, "_watterson_theta.txt");
+        std::fs::write(&path, theta_rows)?;
+        written.push(path);
+    }
+    if kinds.iter().any(|k| matches!(k, StatKind::TajimaD { .. })) {
+        let path = with_suffix(prefix, "_tajima_d.txt");
+        std::fs::write(&path, tajima_rows)?;
         written.push(path);
     }
     let log = format!(

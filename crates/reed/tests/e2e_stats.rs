@@ -118,13 +118,15 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
          sfs.unfolded.0\ttheta_w.total.0\ttheta_w.bp.0\ttajima_d.0\n",
     );
     // Window [1,100]: π = 1/2; π_bp = (1 + 0)/100; dxy = 4/8; Hudson = 0/1;
-    // SFS alt=1 once; θ = S/a₁(2) = 1; n = 2 gives Tajima variance 0 → '.'.
-    expected.push_str("chr1\t1\t100\t0.5\t0.01\t0.5\t0\t1\t1\t0.01\t.\n");
+    // SFS alt=1 once; θ (pixy: per-site n) = (1/a(2) + 0/a(2))/2 sites = 0.5,
+    // per bp 0.005; n = 2 gives Tajima variance 0 → '.'.
+    expected.push_str("chr1\t1\t100\t0.5\t0.01\t0.5\t0\t1\t0.5\t0.005\t.\n");
     // Window [101,200]: no sites — undefined statistics stay '.', the SFS
     // bins are all zero.
     expected.push_str("chr1\t101\t200\t.\t.\t.\t.\t0\t.\t.\t.\n");
     // Window [201,300]: the single 1/1 site is monomorphic-ALT for A
-    // (n_chrom = 2), so π = 0; dxy = 4/4; Hudson num/den = 1/1.
+    // (k = 1 distinct allele → 0 mutations), so π = 0 and θ = 0;
+    // dxy = 4/4; Hudson num/den = 1/1.
     expected.push_str("chr1\t201\t300\t0\t0\t1\t1\t0\t0\t0\t.\n");
 
     for threads in [1_usize, 2, 4, 7] {
@@ -179,16 +181,16 @@ fn contig_and_genome_levels_aggregate_the_bins() {
 
     // Contig totals by hand: π diffs 1 over comps 1+1+1 = 3 (each site
     // has n = 2 chromosomes → one comparable pair);
-    // dxy 8/12; Hudson num 1 over den 2; SFS [1]; θ S=1 over 3 sites;
-    // per-bp divides by the 300 bp span.
+    // dxy 8/12; Hudson num 1 over den 2; SFS [1]; θ (pixy) = raw 1 over the
+    // 3 sites with calls = 1/3; per-bp divides by the 300 bp span.
     let contig = &got[3];
     assert_cell(contig, 3, Some(1.0 / 3.0), "contig π");
     assert_cell(contig, 4, Some(1.0 / 300.0), "contig π_bp");
     assert_cell(contig, 5, Some(2.0 / 3.0), "contig dxy");
     assert_cell(contig, 6, Some(0.5), "contig Hudson");
     assert_eq!(contig[7], "1", "contig SFS");
-    assert_cell(contig, 8, Some(1.0), "contig θ");
-    assert_cell(contig, 9, Some(1.0 / 300.0), "contig θ_bp");
+    assert_cell(contig, 8, Some(1.0 / 3.0), "contig θ");
+    assert_cell(contig, 9, Some(1.0 / 900.0), "contig θ_bp");
     // The genome row's values equal the contig row's (one contig in the
     // fixture); the label/span columns differ by construction.
     for (a, b) in got[3][3..].iter().zip(&got[4][3..]) {

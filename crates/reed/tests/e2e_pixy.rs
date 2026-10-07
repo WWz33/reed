@@ -45,7 +45,7 @@ chr1\t25\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t1/1\t0/0
 
 fn request(invariant: InvariantMode) -> StatsRequest {
     StatsRequest {
-        kinds: pixy_kinds(2, true, true),
+        kinds: pixy_kinds(2, true, true, false, false),
         gt_groups: vec![Some(0), Some(0), Some(1), Some(1)],
         window_size: 10,
         step: 10,
@@ -129,7 +129,7 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     let report = run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: run");
     let prefix = path.parent().expect("invariant: temp dir path").join("out");
-    let kinds = pixy_kinds(2, true, true);
+    let kinds = pixy_kinds(2, true, true, false, false);
     reed::pixy::write(
         &prefix,
         &report,
@@ -158,5 +158,42 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     let empty: Vec<&str> = lines.next().expect("row").split('\t').collect();
     assert_eq!(&empty[..4], ["pop1", "chr1", "11", "20"]);
     assert_eq!(&empty[4..], ["NA", "0", "0", "0", "0"]);
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+}
+
+/// Hand-computed Watterson θ and Tajima's D on the pixy definitions
+/// (04-algorithms.md §3), using only the first site's window.
+///
+/// Site 1 for pop1 (s0 = 0/1, s1 = 0/0): n = 4 observed alleles, k = 2 →
+/// one mutation; a(4) = 1 + 1/2 + 1/3 = 11/6 → raw θ = 6/11 = 0.545454…;
+/// window [1,10] also contains the invariant site 5 (n = 4, no mutation),
+/// so no_sites = 2 and avg θ = raw/2 = 3/11.
+/// raw π = Σ per-site π = (3·1)/6 + 0 = 0.5; S = 1; mean n = round(8/2) = 4
+/// → e1 = 0.0055092…, stdev = 0.0742270 → D = (0.5 − 0.5454545)/0.0742270.
+#[test]
+fn watterson_theta_and_tajima_d_hand_computed() {
+    let path = write_fixture("theta", FIXTURE);
+    let mut request = request(InvariantMode::Bypass);
+    request.kinds = pixy_kinds(2, false, false, true, true);
+    let report = run_stats(Some(&path), request, &budget()).expect("invariant: theta run");
+
+    let w0 = &report.windows[0];
+    let theta_kind = StatKind::ThetaW { group: 0, per_bp: false };
+    let theta = w0.accs[0].value(&theta_kind, w0.bp).expect("theta");
+    assert!((theta - 3.0 / 11.0).abs() < 1e-15, "{theta}");
+    let (raw, no_sites, no_var, _weighted) = w0.accs[0].theta_columns().expect("columns");
+    assert!((raw - 6.0 / 11.0).abs() < 1e-15, "{raw}");
+    assert_eq!((no_sites, no_var), (2, 1));
+
+    let tajima_kind = StatKind::TajimaD { group: 0, min_sites: 0 };
+    // kinds = [theta pop1, theta pop2, tajima pop1, tajima pop2].
+    let d = w0.accs[2].value(&tajima_kind, w0.bp).expect("tajima");
+    let expected = (0.5 - 6.0 / 11.0) / 0.07422696190252039;
+    assert!((d - expected).abs() < 1e-12, "{d} vs {expected}");
+    let (raw_pi, raw_theta, stdev, sites) = w0.accs[2].tajima_columns().expect("columns");
+    assert!((raw_pi.expect("raw_pi") - 0.5).abs() < 1e-15);
+    assert!((raw_theta.expect("raw_theta") - 6.0 / 11.0).abs() < 1e-15);
+    assert!((stdev.expect("stdev") - 0.07422696190252039).abs() < 1e-15);
+    assert_eq!(sites, 2);
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }

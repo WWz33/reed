@@ -294,14 +294,47 @@ impl StatAcc {
         }
     }
 
-    /// π/dxy with the `--variant-only` denominator completion
-    /// (04-algorithms.md §3); other statistics are unaffected.
+    /// π/dxy/θ with the `--variant-only` denominator completion
+    /// (04-algorithms.md §3); ratio statistics (Fst, PBS, Tajima's D) are
+    /// unaffected.
     #[must_use]
     pub fn value_variant_only(&self, kind: &StatKind, window_bp: u64) -> Option<f64> {
         match (self, kind) {
             (Self::Pi(acc), StatKind::Pi { .. }) => acc.value_variant_only(window_bp),
             (Self::Dxy(acc), StatKind::Dxy { .. }) => acc.value_variant_only(window_bp),
+            (Self::Theta(acc), StatKind::ThetaW { .. }) => acc.value_variant_only(window_bp),
             _ => self.value(kind, window_bp),
+        }
+    }
+
+    /// pixy `_watterson_theta.txt` columns:
+    /// `(raw_theta, no_sites, no_var_sites, weighted_no_sites)`.
+    #[must_use]
+    pub fn theta_columns(&self) -> Option<(f64, u64, u64, f64)> {
+        match self {
+            Self::Theta(acc) => Some((
+                acc.raw_theta(),
+                acc.n_sites(),
+                acc.n_var_sites(),
+                acc.weighted_no_sites(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// pixy `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev,
+    /// no_sites)`. The values are `None` where the denominator is undefined
+    /// (pixy prints `NA` there); the site count is always present.
+    #[must_use]
+    pub fn tajima_columns(&self) -> Option<(Option<f64>, Option<f64>, Option<f64>, u64)> {
+        match self {
+            Self::Tajima(acc) => Some((
+                Some(acc.raw_pi()),
+                Some(acc.raw_theta()),
+                acc.d_stdev(),
+                acc.site_tally().0,
+            )),
+            _ => None,
         }
     }
 

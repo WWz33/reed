@@ -216,11 +216,12 @@ fn find<'a>(
                 let acc = find(&accs, &kinds, |kind| matches!(kind, StatKind::Sfs { folded: false, .. }));
                 let StatAcc::Sfs(sfs_acc) = acc else { unreachable!("built for Sfs") };
                 assert_eq!(sfs_acc.bins(), spectrum.counts.as_slice(), "case {case} SFS bins");
-                let tajima = tajima_d(&window, &pops, group, 0).unwrap();
-                let acc = find(&accs, &kinds, |kind| matches!(kind, StatKind::TajimaD { .. }));
-                let StatAcc::Tajima(t_acc) = acc else { unreachable!("built for Tajima") };
-                assert_eq!(t_acc.segregating(), tajima.segregating, "case {case} S");
-                assert_close(t_acc.value(0), tajima.value(), "Tajima's D");
+                // θ and Tajima's D no longer follow the v0.2 oracle: doc_v2
+                // 04-algorithms.md §1 retires the complete-case / site-count
+                // semantics in favour of pixy's mutation-count form
+                // (k − 1 per site), which the gold/popgen pixy parity locks
+                // instead (crates/reed/tests/e2e_pixy.rs).
+                let _ = tajima_d(&window, &pops, group, 0);
             }
             if group == 1 {
                 let spectrum = sfs(&window, &pops, group, true).unwrap();
@@ -229,20 +230,9 @@ fn find<'a>(
                 assert_eq!(sfs_acc.bins(), spectrum.counts.as_slice(), "case {case} folded bins");
             }
             if group == 2 {
-                let watterson = watterson_theta(&window, &pops, group).unwrap();
-                let acc = find(&accs, &kinds, |kind| matches!(kind, StatKind::ThetaW { .. }));
-                let StatAcc::Theta(theta_acc) = acc else { unreachable!("built for Theta") };
-                assert_eq!(
-                    theta_acc.segregating(),
-                    watterson.segregating,
-                    "case {case} θ segregating"
-                );
-                assert_close(theta_acc.value_total(), watterson.total_theta(), "θ_W total");
-                assert_close(
-                    theta_acc.value_per_bp(WINDOW),
-                    watterson.theta_per_bp(),
-                    "θ_W per bp",
-                );
+                // θ_W is pixy's per-allele-class form now (see the Tajima
+                // note above); the oracle's site-count θ is retired.
+                let _ = watterson_theta(&window, &pops, group);
             }
         }
 

@@ -30,14 +30,17 @@
 | `--variant-only` | 窗口内文件未出现的位点视为单态且全部调用：π 分母加 `(L−|S|)·C(2N,2)`，dxy 加 `(L−|S|)·2N_A·2N_B` | **vcftools `--window-pi` 一致**：全量 28,410 行，最大相对差 1.05e-5（vcftools 逐位点 n/(n−1) 校正 vs pixy/reed 比值之和；容差 1e-4）。速度：reed 5.2 s vs vcftools 10 m 47 s |
 | 不变位点检查（04 §3） | 记录级 `ALT="."` 计数；无不变位点且未声明 `--variant-only`/`--bypass-invariant-check` 时报错（与 pixy 的检查同口径） | 回归测试；all-sites fixture 上默认模式与 pixy 默认模式逐列一致 |
 | pixy 列布局（02-cli §5.4） | `PREFIX_pi.txt` / `PREFIX_dxy.txt` / `PREFIX.log`，列名与 pixy 相同，缺失 `NA` | 手算 fixture 测试 + gold/popgen/compare.py |
-| CLI 增量（R5 的 stats 部分） | `--pop/--populations`、`--pi`、`--dxy`、`--window/--size`（100k/1M 单位）、`--step`、`--variant-only`、`--bypass-invariant-check`、`-o PREFIX` | 上述对拍 |
+| CLI 增量（R5 的 stats 部分） | `--pop/--populations`、`--pi`、`--dxy`、`--theta`、`--tajima-d`、`--window/--size`（100k/1M 单位）、`--step`、`--variant-only`、`--bypass-invariant-check`、`-o PREFIX` | 上述对拍 |
 
 对拍工具：`gold/popgen/`（run_pixy.sh、run_vcftools.sh、compare.py、README）。本机 pixy 2.2.4 与
 scikit-allel 1.3.13 从仓库上级目录源码安装（`pip install -e pixy scikit-allel` + dask）。
 
-R7 未完成部分（仍属 R7，按 04 §3 逐个落地）：Watterson θ（逐位点 n 的调和数）、Tajima's D
-（窗口平均 n、方差一次）、Fst `wc84`/`hudson`（Bhatia 比值之和）、PBS（三对独立 Hudson）、
-SFS 投影、多等位位点的逐等位推广（当前多等位记录跳过，本数据集为 0 条）、
+| θ（Watterson 1975，pixy 形式） | 按逐位点观测等位数 `n_i` 分组的突变计数：每个变异位点贡献 `k_i−1`（k=观测到的不同等位数；固定为 ALT 的位点 k=1 贡献 0），`raw θ = Σ_n mutations(n)/a(n)`，窗口值 `raw/no_sites`（`--variant-only` 时 `raw/L`）；输出 pixy 的 `_watterson_theta.txt` 列（含 `weighted_no_sites` 诊断） | **pixy 2.2.4 逐位一致**：全量 28,470 行最大相对误差 3.1e-14 |
+| Tajima's D（Tajima 1989，pixy ThetaRecov） | `(raw_pi − raw_θ)/sqrt(e1·S + e2·S(S−1))`，`raw_pi` = 逐位点无偏 π 之和，`S = Σ(k_i−1)`，方差在窗口平均观测等位数（np.rint 银行家舍入）处只算一次；未定义时写 `NA`（与 pixy 同） | **pixy 2.2.4 逐位一致**：全量 28,470 行最大相对误差 8.9e-11（f64 求和次序噪声） |
+| 撤下 complete-case 语义（04 §1） | 旧 θ/Tajima 的 complete-case + 固定 2N + S 计数语义删除；oracle 对拍中对应断言按 04 §5 撤下，改由 pixy 对拍锁定 | 单元/回归测试 + 上述 pixy 对拍 |
+
+R7 未完成部分（仍属 R7，按 04 §3 逐个落地）：Fst `wc84`/`hudson`（Bhatia 比值之和）、
+PBS（三对独立 Hudson）、SFS 投影、多等位位点的逐等位推广（当前多等位记录跳过，本数据集为 0 条）、
 `--sfs/--freq/--hardy/--het/--missing/--depth/--summary` 的 plink2/vcftools/bcftools 布局输出。
 
 ### 与参照物的两处约定差异（非数值错误，已在对拍脚本中显式处理）

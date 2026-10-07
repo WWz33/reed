@@ -84,6 +84,14 @@ enum Command {
         /// dxy per population pair (Nei 1987; missing data: pixy)
         #[arg(long)]
         dxy: bool,
+        /// Watterson's θ per population (Watterson 1975; per-allele-class
+        /// mutation counts, pixy)
+        #[arg(long)]
+        theta: bool,
+        /// Tajima's D per population (Tajima 1989; denominator once at the
+        /// window-average allele count, pixy)
+        #[arg(long = "tajima-d")]
+        tajima_d: bool,
         /// Declare an all-variant input: window positions the file does not
         /// contain count as monomorphic with all samples called
         #[arg(long)]
@@ -200,6 +208,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         groups,
         pi,
         dxy,
+        theta,
+        tajima_d,
         variant_only,
         bypass_invariant_check,
         force_samples,
@@ -264,7 +274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with pixy's columns (02-cli.md §5).
-    if pi || dxy {
+    if pi || dxy || theta || tajima_d {
         let step = if step == 0 { size } else { step };
         let invariant = if variant_only {
             reed::stats::InvariantMode::VariantOnly
@@ -278,7 +288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             reed::stats::InvariantMode::Require
         };
         let pixy = reed::stats::PixyOptions { invariant };
-        let kinds = reed::stats::pixy_kinds(group_names.len(), pi, dxy);
+        let kinds = reed::stats::pixy_kinds(group_names.len(), pi, dxy, theta, tajima_d);
         let request = StatsRequest {
             kinds: kinds.clone(),
             gt_groups,
