@@ -7,8 +7,12 @@
 //! `POS`, `TYPE`, `N_ALT`, `N_SAMPLES`, the built-ins `AC`, `AN`, `AF`,
 //! `MAC`, `MAF`, `N_MISSING`, `F_MISSING` (INFO value when present, else
 //! genotype-derived), `INFO/TAG` and bare tags, comparisons
-//! (`== = != < <= > >=`), logic (`&& || & |`), `!` and parentheses.
-//! Not yet supported: `FMT/TAG`, subscripts, regex `~ !~`, arithmetic.
+//! (`== = != < <= > >=`), the match operators `~`/`!~` over literal
+//! patterns with optional `^`/`$` anchors, logic (`&& || & |`), `!` and
+//! parentheses.
+//! Not yet supported: `FMT/TAG`, subscripts, general regular expressions
+//! (any pattern metacharacter beyond the anchors is reported, never
+//! reinterpreted), arithmetic.
 
 pub mod lexer;
 pub mod parser;
@@ -187,8 +191,12 @@ pub fn check(expr: &Expr, info_tags: &[String]) -> Result<(), String> {
         Expr::Subscript(_, _) => {
             Err("subscripts ([0], [*]) are not supported yet".to_string())
         }
-        Expr::Cmp(op @ ("~" | "!~"), _, _) => {
-            Err(format!("the regular-expression operator {op} is not supported yet"))
+        Expr::Cmp(op @ ("~" | "!~"), lhs, rhs) => {
+            let Expr::Str(pattern) = &**rhs else {
+                return Err(format!("the right-hand side of {op} must be a string literal"));
+            };
+            check_pattern(pattern)?;
+            check(lhs, info_tags)
         }
         Expr::Info(tag) | Expr::Bare(tag) => {
             if Field::from_name(tag).is_none() && !info_tags.iter().any(|t| t == tag) {
@@ -210,6 +218,16 @@ pub fn check(expr: &Expr, info_tags: &[String]) -> Result<(), String> {
 #[must_use]
 pub fn eval(expr: &Expr, site: &SiteValues<'_>) -> bool {
     match expr {
+        Expr::Cmp(op @ ("~" | "!~"), a, b) => {
+            let (Some(left), Some(Expr::Str(pattern))) = (value(a, site), Some(&**b)) else {
+                return false;
+            };
+            if matches!(left, Val::Missing) {
+                return false;
+            }
+            let hit = matches_pattern(pattern, &left.as_text());
+            if *op == "~" { hit } else { !hit }
+        }
         Expr::Cmp(op, a, b) => {
             let (Some(left), Some(right)) = (value(a, site), value(b, site)) else {
                 return false;
@@ -329,6 +347,38 @@ fn info_value<'a>(info: &'a [u8], tag: &[u8]) -> Option<Val<'a>> {
     None
 }
 
+/// Characters that turn a pattern into a general regular expression, which
+/// this subset does not implement (02-cli.md §4: report, never reinterpret).
+const REGEX_META: &[char] = &['.', '*', '+', '?', '[', ']', '(', ')', '{', '}', '|', '\\'];
+
+/// Validates a `~`/`!~` pattern: literal text with optional `^`/`$` anchors.
+fn check_pattern(pattern: &str) -> Result<(), String> {
+    let body = pattern.strip_prefix('^').unwrap_or(pattern);
+    let body = body.strip_suffix('$').unwrap_or(body);
+    if let Some(bad) = body.chars().find(|c| REGEX_META.contains(c)) {
+        return Err(format!(
+            "regular-expression metacharacter {bad:?} is not supported yet (only literal patterns with ^/$ anchors)"
+        ));
+    }
+    Ok(())
+}
+
+/// Matches a validated pattern against a value: `^` anchors the start, `$`
+/// the end, otherwise the literal must occur anywhere (bcftools' `~`).
+#[must_use]
+pub fn matches_pattern(pattern: &str, text: &str) -> bool {
+    let anchored_start = pattern.starts_with('^');
+    let anchored_end = pattern.ends_with('$') && pattern.len() > usize::from(anchored_start);
+    let body = pattern.strip_prefix('^').unwrap_or(pattern);
+    let body = if anchored_end { &body[..body.len() - 1] } else { body };
+    match (anchored_start, anchored_end) {
+        (true, true) => text == body,
+        (true, false) => text.starts_with(body),
+        (false, true) => text.ends_with(body),
+        (false, false) => text.contains(body),
+    }
+}
+
 /// Comparison with bcftools' rules: numeric when both sides parse as
 /// numbers, otherwise byte-wise.
 fn compare(op: &str, left: &Val<'_>, right: &Val<'_>) -> bool {
@@ -420,9 +470,24 @@ mod tests {
     fn unsupported_constructs_are_reported() {
         assert!(parse_and_check("FMT/DP>10", &[]).unwrap_err().contains("not supported yet"));
         assert!(parse_and_check("INFO/AC[0]>1", &["AC".into()]).unwrap_err().contains("subscripts"));
-        assert!(parse_and_check("ID~\"rs\"", &[]).unwrap_err().contains("regular-expression"));
+        assert!(parse_and_check("ID~\"rs[0-9]\"", &[]).unwrap_err().contains("metacharacter"));
+        assert!(parse_and_check("ID~QSOMETHING", &[]).unwrap_err().contains("string literal"));
         assert!(parse_and_check("NOSUCH>1", &[]).unwrap_err().contains("not declared"));
         assert!(parse_and_check("QUAL>", &[]).is_err());
+    }
+
+    #[test]
+    fn literal_patterns_with_anchors() {
+        let tags: [&str; 0] = [];
+        let s = site(b".", Some(1.0), None);
+        // ID is "." here; use FILTER/CHROM for the string values.
+        assert!(ev("CHROM~\"chr\"", &s, &tags));
+        assert!(ev("CHROM~\"^chr1$\"", &s, &tags));
+        assert!(!ev("CHROM~\"^hr1$\"", &s, &tags));
+        assert!(ev("CHROM!~\"^chr2\"", &s, &tags));
+        assert!(!ev("CHROM~\"nope\"", &s, &tags));
+        assert!(ev("FILTER~\"ASS\"", &s, &tags));
+        assert!(!ev("FILTER~\"^ASS\"", &s, &tags));
     }
 
     #[test]

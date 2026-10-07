@@ -143,8 +143,16 @@ R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF �
 | `FilterSpecV2::to_args()`（03 §8 `spec/render.rs`） | spec → 规范 flag 向量：cohort、regions（含 `^` 排除合并成一个 `-t`）、`-v/-V/-m/-M/-f/-i/-e`、三种掩码拼写、`--geno/--maf/--max-maf/--mac/--max-mac/--hwe [midp]`、`-x/--fill-tags/-I`；`min_qual` 渲染为等价的 `-i QUAL>=P` | `reed-cli` 往返测试：`spec_from_flags(to_args(spec)) == spec`，且渲染结果就是测试里手写的规范命令（20 个 flag 全覆盖） |
 | `##reed_filterCommand` | provenance 新增该行 = `to_args().join(" ")`，与 CLI 只有一种拼写 | 冒烟：`-v snv --max-maf 0.4 -x … -I` |
 
-**R5 仍未完成**：§4 表达式的 `FMT/TAG`、下标 `[0]`/`[*]`、正则 `~ !~`，以及依赖它们的 `--set-gts .`
-（= `bcftools filter -S . -e EXPR`）。现有子集对不支持的写法明确报 "not supported yet"，不会换语义执行。
+| 匹配运算符 `~ !~`（§4 子集） | 支持**字面模式 + `^`/`$` 锚点**（`ID~"^Chr01_3"`）；其他正则元字符（`. * + ? [ ] ( ) { } \|`）在 `check` 阶段报 "not supported yet"，不会按别的语义执行；`!~` = 取反 | 与 bcftools 对拍：`-i 'ID~"^Chr01_3"'` 607 条、位点集合逐字节一致；`-i 'FILTER~"PASS"'` 2934 条一致 |
+
+**R5 仍未完成**：§4 表达式的 `FMT/TAG`（含下标 `[0]`/`[*]`，需要把 FORMAT 值按样本喂给求值器）与依赖它的
+`--set-gts .`（= `bcftools filter -S . -i/-e EXPR`，掩码语义已在子集上实测：`-i` 在表达式为假（含缺失）时掩码，
+`-e` 在表达式为真时掩码，只改 GT、保留其余 FORMAT 子字段）。通用正则（非字面模式）同样未实现。
+以上写法在 `check` 阶段明确报 "not supported yet"。
+
+**已记录的一处参照物缺陷**：本机 bcftools 1.24 的 `!~` 与 `~` 行为相同（`-i 'ID!~"zzz"'` 返回 0 条、
+`-i 'FILTER!~"PASS"'` 返回 0 条，`-e 'ID!~"zzz"'` 返回全部），与其手册"不匹配"的定义相反。
+reed 按手册实现 `!~`（取反），因此这一条不与本机 bcftools 对拍。
 
 ## 偏差记录（06-roadmap.md §4.6）
 
