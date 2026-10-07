@@ -6,6 +6,7 @@
 //! makes reed's output deterministic (§2 principle 5).
 
 pub mod bgzf;
+pub mod plain;
 pub mod region;
 
 use std::ops::Range;
@@ -31,6 +32,8 @@ pub struct ChunkBytes {
     /// Inflated-text offset where records start (nonzero only for the chunk
     /// that carries the end of the header).
     pub first_in_block_offset: u64,
+    /// The chunk holds plain VCF text, not BGZF blocks (uncompressed input).
+    pub plain: bool,
 }
 
 /// The inflated content of one chunk, split by line ownership.
@@ -85,6 +88,11 @@ pub fn inflate_chunk<'a>(
     scratch: &'a mut Vec<u8>,
 ) -> Result<InflatedChunk<'a>, IoError> {
     scratch.clear();
+    if chunk.plain {
+        // Uncompressed input: the "compressed" bytes are the text itself.
+        scratch.extend_from_slice(&chunk.compressed);
+        return Ok(split_text(chunk, scratch));
+    }
     let mut compressed: &[u8] = chunk.compressed.as_ref();
     while !compressed.is_empty() {
         let Some(total) = crate::bgzf::block::parse_block_size(compressed) else {
@@ -96,47 +104,43 @@ pub fn inflate_chunk<'a>(
         inflater.inflate_block(&compressed[..total], scratch)?;
         compressed = &compressed[total..];
     }
+    Ok(split_text(chunk, scratch))
+}
+
+/// Splits already-inflated text into head/body/tail line ownership.
+fn split_text<'a>(chunk: &ChunkBytes, scratch: &'a mut Vec<u8>) -> InflatedChunk<'a> {
     let text: &'a [u8] = scratch.as_slice();
 
     let scan_start = if chunk.first_in_block_offset > 0 {
-        // This chunk carries the end of the header; records start right
-        // after the #CHROM line, so the head is complete by construction.
-        usize::try_from(chunk.first_in_block_offset).map_err(|_| IoError::MalformedBgzf {
-            locus: None,
-            reason: "header offset overflows usize",
-        })?
+        usize::try_from(chunk.first_in_block_offset).unwrap_or(0)
     } else {
         0
     };
 
-    // First chunk (or header-carrying chunk): all text from scan_start on is
-    // owned; there is no head fragment.
     if scan_start > 0 || chunk.id.get() == 0 {
-        return Ok(InflatedChunk {
+        return InflatedChunk {
             text,
             body: owned_body_range(text, scan_start),
             head: None,
             tail: tail_range(text),
-        });
+        };
     }
 
-    // Later chunks: the head fragment runs to (and includes) the first \n.
     let Some(first_nl) = memchr::memchr(b'\n', &text[scan_start..]) else {
-        // Degenerate: no newline in the whole chunk — everything is head.
-        return Ok(InflatedChunk {
+        return InflatedChunk {
             text,
             body: scan_start..scan_start,
             head: Some(scan_start..text.len()),
             tail: None,
-        });
+        };
     };
     let head_end = scan_start + first_nl + 1;
-    Ok(InflatedChunk {
+    InflatedChunk {
         text,
         body: owned_body_range(text, head_end),
         head: Some(scan_start..head_end),
         tail: tail_range(text),
-    })
+    }
 }
 
 /// Range of complete lines: from `from` to one past the last `\n`.

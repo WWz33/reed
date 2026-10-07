@@ -137,6 +137,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             id,
             compressed: std::sync::Arc::from(compressed.into_boxed_slice()),
             first_in_block_offset: std::mem::take(&mut self.first_in_block_offset),
+            plain: false,
         }))
     }
 }

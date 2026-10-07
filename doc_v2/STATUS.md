@@ -74,7 +74,17 @@ R5 未完成：`-t/-T` 流式区域、`-R` 区域文件、`-O b/u`（BCF 编码�
 |---|---|---|
 | `-r/--regions`（02-cli §2、§6） | 新 `reed_io::chunk::region`：`RegionChunkSource` 用索引把区域映射成压缩字节区间，只读该区间；`FileIndex` 嗅探 BGZF 压缩的 CSI/TBI 魔数并查询。索引的虚拟偏移低 16 位就是首记录在块内的偏移，直接作为 chunk 的 `first_in_block_offset`（无需 inflate 对齐）。记录级区域判定仍由 spec 的 `targets` 谓词完成，索引只省 I/O | 与 `bcftools view -r` 逐字节一致：子集 6 个区域用例（含文件头开始、多区域、空区域）；全量 `Chr05:1.0-1.1 Mb` 用 `reed index` 建的 CSI 查询 245 条、0.08 s（对比读整个 6.6 GB）；`run_reed.sh` 的 REGION 路径跑通 |
 
-R6 未完成：未压缩 VCF / 普通 gzip / BCF 输入、BCF 输出（`-Ob/-Ou`）、`-t/-T` 流式区域、`-R` 区域文件。
+### R6（续：`-t/-T`、普通 VCF / gzip 输入）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| `-t/--targets`、`-T/--targets-file`（02-cli §2） | 流式区域：复用 spec 的 `targets` 谓词，不需要索引；`-T` 每行一个区域，`^` 前缀表示排除 | 与 `bcftools view -t` 位点集合一致（368 条）；`-T` 含 `^` 排除用例 24 条 |
+| 普通 VCF 输入 | `PlainChunkSource`：按 1 MiB 文本切块（`ChunkBytes.plain`，`inflate_chunk` 直通），接缝规则与 BGZF 相同 | 与 BGZF 输出逐字节一致（回归测试 `plain_and_bgzf_inputs_agree`） |
+| 普通 gzip 输入 | `PlainChunkSource::open_gzip`（flate2 串行解压，读入时警告"非 BGZF，解压串行"） | 三种格式 + bcftools 参照同一 md5 |
+| 格式探测接入 | `reed::input::open` 按魔数分流：BGZF VCF / 普通 VCF / gzip / BCF（BCF 明确报"not supported yet"）；探测按 BGZF 块长精确读首块（VCF 与 BCF 之分需要解压后的内容） | 上述三种格式 filter 与 stats 输出均一致 |
+| stdin（`-`） | 首次使用时把 stdin 落盘为临时文件，后续多次 open（header + 各 pass）读同一份字节；三种格式的 stdin 结果与文件一致 | 手动验证 filter/stats |
+
+R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF 解码/编码层（现有管道是文本行导向），是 R6 里最大的一块，单独一轮做。
 
 ## 偏差记录（06-roadmap.md §4.6）
 

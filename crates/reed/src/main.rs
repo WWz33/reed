@@ -45,6 +45,13 @@ enum Command {
         /// needs an index next to the input (bcftools `-r`)
         #[arg(short = 'r', long = "regions", value_name = "LIST")]
         regions: Option<String>,
+        /// Regions to keep, streamed without an index (bcftools `-t`)
+        #[arg(short = 't', long = "targets", value_name = "LIST")]
+        targets: Option<String>,
+        /// Regions to keep, one per line (bcftools `-T`); `^` prefix
+        /// excludes
+        #[arg(short = 'T', long = "targets-file", value_name = "FILE")]
+        targets_file: Option<String>,
         /// Samples to keep: comma-separated names (bcftools `-s`)
         #[arg(short = 's', long = "samples", value_name = "LIST")]
         samples: Option<String>,
@@ -321,6 +328,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Command::Filter {
         input,
         regions,
+        targets,
+        targets_file,
         samples,
         samples_file,
         keep,
@@ -354,6 +363,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return run_filter_cli(FilterCli {
             input,
             regions,
+            targets,
+            targets_file,
             samples,
             samples_file,
             keep,
@@ -613,6 +624,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 struct FilterCli {
     input: String,
     regions: Option<String>,
+    targets: Option<String>,
+    targets_file: Option<String>,
     samples: Option<String>,
     samples_file: Option<String>,
     keep: Option<String>,
@@ -669,13 +682,33 @@ fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, S
         spec.cohort = Some(CohortRule::RemoveList(path.clone()));
     }
 
-    // ---- regions (02-cli.md §2): the spec predicate, validated here ----
-    if let Some(list) = &cli.regions {
-        for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+    // ---- regions (02-cli.md §2): the spec predicate, validated here.
+    // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----
+    let mut add_regions = |list: &str, include: bool| -> Result<(), String> {
+        for raw in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            let (token, include) = match raw.strip_prefix('^') {
+                Some(rest) => (rest, false),
+                None => (raw, include),
+            };
             reed_filter::spec::Region::parse(token)
                 .map_err(|e| format!("invalid region {token:?}: {e}"))?;
-            spec.targets.include.push(token.to_string());
+            if include {
+                spec.targets.include.push(token.to_string());
+            } else {
+                spec.targets.exclude.push(token.to_string());
+            }
         }
+        Ok(())
+    };
+    if let Some(list) = &cli.regions {
+        add_regions(list, true)?;
+    }
+    if let Some(list) = &cli.targets {
+        add_regions(list, true)?;
+    }
+    if let Some(path) = &cli.targets_file {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
     }
 
     // ---- site: variant class / alleles / FILTER ----

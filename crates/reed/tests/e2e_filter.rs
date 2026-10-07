@@ -558,3 +558,31 @@ fn record_wider_than_one_block_round_trips() {
     assert_eq!(out_lines[1], wide.trim_end(), "wide record must round-trip byte-identical");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// R6 gate (03-architecture.md §6): the same data as plain VCF and as BGZF
+/// VCF must produce identical filter output; stdin reads both through the
+/// same entry.
+#[test]
+fn plain_and_bgzf_inputs_agree() {
+    let dir = std::env::temp_dir().join(format!("reed-formats-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let text = fixture_text(400);
+
+    let plain = dir.join("in.vcf");
+    std::fs::write(&plain, &text).expect("invariant: write plain");
+    let bgzf_path = dir.join("in.vcf.gz");
+    std::fs::write(&bgzf_path, bgzf(&text, 512)).expect("invariant: write bgzf");
+
+    let spec = FilterSpecV2::default();
+    let out_plain = dir.join("plain.out.vcf.gz");
+    let out_bgzf = dir.join("bgzf.out.vcf.gz");
+    let rp = run_filter(Some(&plain), &spec, &options(None, &out_plain)).expect("invariant: plain run");
+    let rb = run_filter(Some(&bgzf_path), &spec, &options(None, &out_bgzf)).expect("invariant: bgzf run");
+    assert_eq!(rp.n_output_records, rb.n_output_records);
+    assert_eq!(
+        std::fs::read(&out_plain).expect("invariant: read"),
+        std::fs::read(&out_bgzf).expect("invariant: read"),
+        "plain and BGZF inputs must produce byte-identical output"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

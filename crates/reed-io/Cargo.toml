@@ -11,6 +11,7 @@ reed-core.workspace = true
 noodles.workspace = true
 libdeflater.workspace = true
 memchr.workspace = true
+flate2.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
 

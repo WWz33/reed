@@ -14,3 +14,10 @@ pub mod vcf;
 // crates (reed-filter) have no direct noodles dependency.
 pub use noodles::vcf as noodles_vcf;
 pub use error::{IoError, Locus};
+
+/// The total byte length of a BGZF block from its 18-byte header, when the
+/// header is present in `bytes`.
+#[must_use]
+pub fn bgzf_total_size(bytes: &[u8]) -> Option<usize> {
+    crate::bgzf::block::parse_block_size(bytes)
+}
