@@ -71,12 +71,26 @@ enum Command {
     /// Windowed statistics (π, dxy, Fst, PBS, SFS, θ_W, Tajima's D) over a
     /// BGZF VCF, as additive accumulators with byte-deterministic output.
     Stats {
-        /// Input BGZF VCF (.vcf.gz)
+        /// Input BGZF VCF (.vcf.gz); `-` for stdin
         input: String,
         /// Groups file: `sample<TAB>population` rows, no header (pixy
         /// populations-file format)
-        #[arg(short, long)]
+        #[arg(short, long, alias = "pop", alias = "populations")]
         groups: String,
+        /// π per population (Nei & Li 1979; missing data: Korunes & Samuk
+        /// 2021 = pixy)
+        #[arg(long)]
+        pi: bool,
+        /// dxy per population pair (Nei 1987; missing data: pixy)
+        #[arg(long)]
+        dxy: bool,
+        /// Declare an all-variant input: window positions the file does not
+        /// contain count as monomorphic with all samples called
+        #[arg(long)]
+        variant_only: bool,
+        /// Compute over the sites the file contains (overestimates π/dxy)
+        #[arg(long)]
+        bypass_invariant_check: bool,
         /// Skip group-file rows naming samples absent from the header
         /// (default: error, pixy behavior)
         #[arg(long)]
@@ -85,11 +99,11 @@ enum Command {
         /// whose header lacks ##contig lines
         #[arg(long)]
         contig_lengths_path: Option<String>,
-        /// Window size in bp
-        #[arg(long, default_value_t = 100_000)]
+        /// Window size in bp (accepts 100k, 1M, 100kb)
+        #[arg(long = "window", alias = "size", default_value = "100000", value_parser = parse_size)]
         size: u64,
-        /// Window step in bp
-        #[arg(long, default_value_t = 50_000)]
+        /// Window step in bp (default: the window size)
+        #[arg(long, default_value = "0", value_parser = parse_size)]
         step: u64,
         /// Output levels, comma-separated: window,contig,genome
         #[arg(long, default_value = "window")]
@@ -104,6 +118,32 @@ enum Command {
         #[arg(long)]
         threads: Option<usize>,
     },
+}
+
+/// Length parser for window/step: plain bp, or k/kb/M/Mb suffixes
+/// (02-cli.md §2).
+fn parse_size(text: &str) -> Result<u64, String> {
+    let lower = text.trim().to_ascii_lowercase();
+    let (digits, scale) = if let Some(rest) = lower.strip_suffix("kb") {
+        (rest, 1_000_u64)
+    } else if let Some(rest) = lower.strip_suffix('k') {
+        (rest, 1_000)
+    } else if let Some(rest) = lower.strip_suffix("mb") {
+        (rest, 1_000_000)
+    } else if let Some(rest) = lower.strip_suffix('m') {
+        (rest, 1_000_000)
+    } else if let Some(rest) = lower.strip_suffix("bp") {
+        (rest, 1)
+    } else {
+        (lower.as_str(), 1)
+    };
+    let value: u64 = digits
+        .trim()
+        .parse()
+        .map_err(|_| format!("{text:?} is not a length (use bp, k/kb, M/Mb)"))?;
+    value
+        .checked_mul(scale)
+        .ok_or_else(|| format!("{text:?} is too large"))
 }
 
 /// `-` means stdin; everything else is a file path.
@@ -158,6 +198,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let Command::Stats {
         input,
         groups,
+        pi,
+        dxy,
+        variant_only,
+        bypass_invariant_check,
         force_samples,
         contig_lengths_path,
         size,
@@ -211,15 +255,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
-    let request = StatsRequest {
-        kinds: default_kinds(group_names.len()),
-        gt_groups,
-        window_size: size,
-        step,
-        levels: Levels::parse(&levels)?,
-        skip_empty,
-        contig_lengths,
-    };
     let threads = threads
         .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))
         .unwrap_or_else(|| {
@@ -227,6 +262,71 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
     let budget = ThreadBudget { threads, mem: MemBudget::default_half_memory() };
 
+    // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
+    // with pixy's columns (02-cli.md §5).
+    if pi || dxy {
+        let step = if step == 0 { size } else { step };
+        let invariant = if variant_only {
+            reed::stats::InvariantMode::VariantOnly
+        } else if bypass_invariant_check {
+            eprintln!(
+                "reed stats: warning: --bypass-invariant-check computes over present sites \
+                 only; π and dxy are overestimated"
+            );
+            reed::stats::InvariantMode::Bypass
+        } else {
+            reed::stats::InvariantMode::Require
+        };
+        let pixy = reed::stats::PixyOptions { invariant };
+        let kinds = reed::stats::pixy_kinds(group_names.len(), pi, dxy);
+        let request = StatsRequest {
+            kinds: kinds.clone(),
+            gt_groups,
+            window_size: size,
+            step,
+            levels: Levels { window: true, contig: false, genome: false },
+            skip_empty: false,
+            contig_lengths,
+            pixy: Some(pixy),
+        };
+        let report = run_stats(input_path(&input).as_deref(), request, &budget)?;
+        let Some(prefix) = out else {
+            return Err("pixy mode writes files: pass -o PREFIX".into());
+        };
+        let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+        let written = reed::pixy::write(
+            Path::new(&prefix),
+            &report,
+            &group_names,
+            &kinds,
+            pixy,
+            &command_line,
+            env!("CARGO_PKG_VERSION"),
+        )?;
+        eprintln!(
+            "{} windows, {} records in {:.1}s -> {}",
+            report.n_windows,
+            report.n_records,
+            report.elapsed.as_secs_f64(),
+            written
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return Ok(());
+    }
+
+    let request = StatsRequest {
+        kinds: default_kinds(group_names.len()),
+        gt_groups,
+        window_size: size,
+        step: if step == 0 { size } else { step },
+        levels: Levels::parse(&levels)?,
+        skip_empty,
+        contig_lengths,
+        pixy: None,
+    };
     let report = run_stats(input_path(&input).as_deref(), request, &budget)?;
     eprintln!(
         "{} windows, {} records, {} multiallelic skipped, {} chunks in {:.1}s",

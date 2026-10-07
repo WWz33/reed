@@ -70,6 +70,26 @@ pub fn default_kinds(n_groups: usize) -> Vec<StatKind> {
     kinds
 }
 
+/// The pixy-mode statistic set: π per group and/or dxy per pair, in output
+/// column order (02-cli.md §5.2).
+#[must_use]
+pub fn pixy_kinds(n_groups: usize, pi: bool, dxy: bool) -> Vec<StatKind> {
+    let mut kinds = Vec::new();
+    if pi {
+        for group in 0..n_groups {
+            kinds.push(StatKind::Pi { group, per_bp: false });
+        }
+    }
+    if dxy {
+        for a in 0..n_groups {
+            for b in (a + 1)..n_groups {
+                kinds.push(StatKind::Dxy { a, b, per_bp: false });
+            }
+        }
+    }
+    kinds
+}
+
 /// Which output levels to emit (§8.7). Window rows always carry the same
 /// columns; contig rows aggregate each contig's bins, the genome row
 /// aggregates everything — all three are plain accumulator merges, so PBS
@@ -108,6 +128,46 @@ impl Levels {
     }
 }
 
+/// How the input's invariant sites are treated (04-algorithms.md §3,
+/// 02-cli.md §5.3). pixy's rule: an all-sites input is the default, and
+/// anything else must be declared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvariantMode {
+    /// The input must contain invariant sites (pixy's check); a file with
+    /// only variant sites fails at the end of the run.
+    Require,
+    /// `--variant-only`: the file has only variant sites; absent window
+    /// positions count as monomorphic with all samples called, so π/dxy
+    /// denominators are completed by `(L − |S|) · pairs`.
+    VariantOnly,
+    /// `--bypass-invariant-check`: compute over the sites the file contains
+    /// (overestimates π and dxy; the caller warns).
+    Bypass,
+}
+
+/// pixy-layout window output (02-cli.md §5.4): π/dxy files with the
+/// integer audit columns.
+#[derive(Clone, Copy, Debug)]
+pub struct PixyOptions {
+    /// Invariant-site policy.
+    pub invariant: InvariantMode,
+}
+
+/// One window's row, structured for the writers.
+#[derive(Clone, Debug)]
+pub struct WindowRow {
+    /// Contig name.
+    pub contig: String,
+    /// 1-based inclusive start.
+    pub start1: u64,
+    /// 1-based inclusive end.
+    pub end0: u64,
+    /// Window span in bp (the per-bp denominator).
+    pub bp: u64,
+    /// Accumulators in `kinds` order.
+    pub accs: Vec<StatAcc>,
+}
+
 /// One `run_stats` request: statistics, group assignment, window grid.
 #[derive(Clone, Debug)]
 pub struct StatsRequest {
@@ -129,6 +189,9 @@ pub struct StatsRequest {
     /// a length for every contig with records and is never fabricated
     /// (01-review D7).
     pub contig_lengths: HashMap<Vec<u8>, u64>,
+    /// `Some` = pixy-layout output mode (structured rows, invariant-site
+    /// policy); `None` = the wide debug TSV.
+    pub pixy: Option<PixyOptions>,
 }
 
 /// The run's output and counters.
@@ -136,6 +199,12 @@ pub struct StatsRequest {
 pub struct StatsReport {
     /// TSV: a header line, then one row per selected level.
     pub tsv: String,
+    /// Structured window rows (pixy mode only).
+    pub windows: Vec<WindowRow>,
+    /// Site-wide invariant sites seen in the input.
+    pub n_invariant_sites: u64,
+    /// Records with ALT = `.` (pixy's all-sites check).
+    pub n_no_alt_records: u64,
     /// Window-level rows emitted.
     pub n_windows: u64,
     /// Records absorbed into windows.
@@ -203,6 +272,10 @@ pub struct StatsPartial {
     segments: Vec<SegmentPartial>,
     n_records: u64,
     n_multiallelic_skipped: u64,
+    /// Site-wide invariant sites (no ALT called by any sample).
+    n_invariant_sites: u64,
+    /// Records whose ALT column is `.` (pixy's all-sites marker).
+    n_no_alt_records: u64,
 }
 
 /// The chunk job: line → `LineRef` → GT tallies → group count row → the
@@ -314,6 +387,9 @@ impl StatsJob {
                 ));
             }
         }
+        if lr.alts() == b"." {
+            partial.n_no_alt_records += 1;
+        }
         if memchr::memchr(b',', lr.alts()).is_some() {
             partial.n_multiallelic_skipped += 1;
             return Ok(());
@@ -355,6 +431,9 @@ impl StatsJob {
         segment.bins.push_site(pos0, row, any_alt);
         segment.first_pos0 = segment.first_pos0.min(pos0);
         segment.last_pos0 = pos0;
+        if !any_alt {
+            partial.n_invariant_sites += 1;
+        }
         partial.n_records += 1;
         Ok(())
     }
@@ -363,6 +442,9 @@ impl StatsJob {
 /// Everything the sink hands back through the shared slot at `finish`.
 struct SinkOutput {
     rows: String,
+    windows: Vec<WindowRow>,
+    n_invariant_sites: u64,
+    n_no_alt_records: u64,
     n_windows: u64,
     n_records: u64,
     n_multiallelic_skipped: u64,
@@ -376,7 +458,8 @@ struct CurrentContig {
     totals: Vec<StatAcc>,
     first_pos0: u64,
     last_pos0: u64,
-    /// First window start (a multiple of the stride, legacy anchoring §5.9).
+    /// Grid origin: windows start at 0 (1-based position 1), the
+    /// pixy/vcftools grid (04-algorithms.md §4).
     anchor: u64,
     /// Start of the next window to emit (the watermark frontier).
     next_start: u64,
@@ -396,6 +479,14 @@ struct StatsSink {
     seed: Vec<StatAcc>,
     levels: Levels,
     skip_empty: bool,
+    /// pixy-layout mode (structured rows + invariant policy).
+    pixy: Option<PixyOptions>,
+    /// Structured rows (pixy mode only).
+    windows: Vec<WindowRow>,
+    /// Site-wide invariant sites seen.
+    n_invariant_sites: u64,
+    /// Records with ALT = `.` (pixy's all-sites check).
+    n_no_alt_records: u64,
     contig_len: HashMap<Vec<u8>, u64>,
     current: Option<CurrentContig>,
     closed: Vec<Vec<u8>>,
@@ -412,6 +503,8 @@ impl OrderedSink<StatsPartial> for StatsSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut StatsPartial) -> Result<(), EngineError> {
         self.n_records += partial.n_records;
         self.n_multiallelic_skipped += partial.n_multiallelic_skipped;
+        self.n_invariant_sites += partial.n_invariant_sites;
+        self.n_no_alt_records += partial.n_no_alt_records;
         for mut segment in std::mem::take(&mut partial.segments) {
             let mut current = match self.current.take() {
                 Some(mut cur) if cur.name == segment.contig => {
@@ -454,11 +547,27 @@ impl OrderedSink<StatsPartial> for StatsSink {
             let totals = self.genome_totals.clone();
             self.write_row("genome", 0, bp, bp, &totals);
         }
+        // pixy's all-sites check (04-algorithms.md §3): a file with no
+        // invariant sites must be declared with --variant-only or
+        // --bypass-invariant-check.
+        if matches!(self.pixy, Some(PixyOptions { invariant: InvariantMode::Require }))
+            && self.n_no_alt_records == 0
+        {
+            return Err(EngineError::Job(format!(
+                "input has no invariant sites ({} records, none with ALT = \".\"): declare \
+                 --variant-only for an all-variant file, or --bypass-invariant-check to compute \
+                 over present sites only (both overestimate π/dxy denominators)",
+                self.n_records
+            )));
+        }
         *self
             .out
             .lock()
             .expect("invariant: stats slot not poisoned") = Some(SinkOutput {
             rows: self.rows,
+            windows: std::mem::take(&mut self.windows),
+            n_invariant_sites: self.n_invariant_sites,
+            n_no_alt_records: self.n_no_alt_records,
             n_windows: self.n_windows,
             n_records: self.n_records,
             n_multiallelic_skipped: self.n_multiallelic_skipped,
@@ -476,7 +585,9 @@ impl StatsSink {
         width: u64,
         seed: &[StatAcc],
     ) -> CurrentContig {
-        let anchor = (segment.first_pos0 / step) * step;
+        // Grid from position 1: `[1, w]`, `[1+s, w+s]`, … (04 §4).
+        let anchor = 0;
+        let _ = step;
         let mut cur = CurrentContig {
             name: segment.contig.clone(),
             bins: ContigBins::new(BpBinning::new(width), seed),
@@ -567,6 +678,19 @@ impl StatsSink {
     /// Writes one TSV row at any level; `bp` is the span's base-pair count
     /// (the AccessibleBp/per-bp denominator at that level).
     fn write_row(&mut self, contig: &str, start1: u64, end0: u64, bp: u64, accs: &[StatAcc]) {
+        let variant_only = matches!(
+            self.pixy,
+            Some(PixyOptions { invariant: InvariantMode::VariantOnly })
+        );
+        if self.pixy.is_some() {
+            self.windows.push(WindowRow {
+                contig: contig.to_string(),
+                start1,
+                end0,
+                bp,
+                accs: accs.to_vec(),
+            });
+        }
         self.rows.push_str(contig);
         self.rows.push('\t');
         self.rows.push_str(&start1.to_string());
@@ -583,10 +707,17 @@ impl StatsSink {
                         self.rows.push_str(&bin.to_string());
                     }
                 }
-                None => match acc.value(kind, bp) {
-                    Some(value) => self.rows.push_str(&format!("{value}")),
-                    None => self.rows.push('.'),
-                },
+                None => {
+                    let value = if variant_only {
+                        acc.value_variant_only(kind, bp)
+                    } else {
+                        acc.value(kind, bp)
+                    };
+                    match value {
+                        Some(value) => self.rows.push_str(&format!("{value}")),
+                        None => self.rows.push('.'),
+                    }
+                }
             }
         }
         self.rows.push('\n');
@@ -663,6 +794,10 @@ pub fn run_stats(
         seed: accs.clone(),
         levels: request.levels,
         skip_empty: request.skip_empty,
+        pixy: request.pixy,
+        windows: Vec::new(),
+        n_invariant_sites: 0,
+        n_no_alt_records: 0,
         contig_len: (*contig_len).clone(),
         current: None,
         closed: Vec::new(),
@@ -691,6 +826,9 @@ pub fn run_stats(
     tsv.push_str(&output.rows);
     Ok(StatsReport {
         tsv,
+        windows: output.windows,
+        n_invariant_sites: output.n_invariant_sites,
+        n_no_alt_records: output.n_no_alt_records,
         n_windows: output.n_windows,
         n_records: output.n_records,
         n_multiallelic_skipped: output.n_multiallelic_skipped,

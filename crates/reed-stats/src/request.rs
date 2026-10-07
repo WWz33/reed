@@ -294,6 +294,43 @@ impl StatAcc {
         }
     }
 
+    /// π/dxy with the `--variant-only` denominator completion
+    /// (04-algorithms.md §3); other statistics are unaffected.
+    #[must_use]
+    pub fn value_variant_only(&self, kind: &StatKind, window_bp: u64) -> Option<f64> {
+        match (self, kind) {
+            (Self::Pi(acc), StatKind::Pi { .. }) => acc.value_variant_only(window_bp),
+            (Self::Dxy(acc), StatKind::Dxy { .. }) => acc.value_variant_only(window_bp),
+            _ => self.value(kind, window_bp),
+        }
+    }
+
+    /// Sites present in the window for π/dxy (`|S|`); `None` for others.
+    #[must_use]
+    pub const fn n_present(&self) -> Option<u64> {
+        match self {
+            Self::Pi(acc) => Some(acc.n_present()),
+            Self::Dxy(acc) => Some(acc.n_present()),
+            _ => None,
+        }
+    }
+
+    /// Integer audit components `(diffs, comparable, missing)` for π/dxy.
+    #[must_use]
+    pub const fn pair_counts(&self) -> Option<(u64, u64, u64)> {
+        match self {
+            Self::Pi(acc) => {
+                let c = acc.counts();
+                Some((c.diffs, c.comparable, c.missing))
+            }
+            Self::Dxy(acc) => {
+                let c = acc.counts();
+                Some((c.diffs, c.comparable, c.missing))
+            }
+            _ => None,
+        }
+    }
+
     /// The SFS bins when this is the SFS accumulator.
     #[must_use]
     pub fn sfs_bins(&self) -> Option<&[u64]> {

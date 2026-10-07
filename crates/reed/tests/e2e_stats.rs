@@ -71,6 +71,7 @@ fn request_with(
         levels,
         skip_empty,
         contig_lengths,
+        pixy: None,
     }
 }
 

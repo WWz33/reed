@@ -79,6 +79,12 @@ impl MemBudget {
         Self { bytes }
     }
 
+    /// Half of physical memory; tests use this to avoid `u64::MAX` pools.
+    #[must_use]
+    pub fn from_half_memory_for_tests() -> Self {
+        Self::default_half_memory()
+    }
+
     /// Default: 50% of physical memory (Linux; other platforms: unlimited).
     #[must_use]
     pub fn default_half_memory() -> Self {

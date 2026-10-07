@@ -118,4 +118,21 @@ impl PiAcc {
     pub const fn site_tally(&self) -> (u64, u64) {
         (self.n_variant_sites, self.n_invariant_sites)
     }
+
+    /// Sites the window's file actually contained (`|S|` in 04-algorithms §3).
+    #[must_use]
+    pub const fn n_present(&self) -> u64 {
+        self.n_variant_sites + self.n_invariant_sites
+    }
+
+    /// π with the `--variant-only` denominator completion: every position of
+    /// the window the file does not contain counts as monomorphic with all
+    /// `2N` chromosomes called, i.e. `(L − |S|) · C(2N, 2)` extra comparable
+    /// pairs (04-algorithms.md §3; same convention as vcftools --window-pi).
+    #[must_use]
+    pub fn value_variant_only(&self, window_bp: u64) -> Option<f64> {
+        let absent = window_bp.saturating_sub(self.n_present());
+        let comparable = self.counts.comparable + absent * self.total_pairs;
+        (comparable > 0).then(|| self.counts.diffs as f64 / comparable as f64)
+    }
 }

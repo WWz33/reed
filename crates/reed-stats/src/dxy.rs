@@ -77,4 +77,20 @@ impl DxyAcc {
         (self.counts.comparable > 0 && window_bp > 0)
             .then(|| self.sum_site_means.value() / window_bp as f64)
     }
+
+    /// Sites the window's file actually contained (`|S|`).
+    #[must_use]
+    pub const fn n_present(&self) -> u64 {
+        self.n_variant_sites + self.n_invariant_sites
+    }
+
+    /// dxy with the `--variant-only` denominator completion: absent window
+    /// positions count as monomorphic with all called, adding
+    /// `(L − |S|) · 2N_A · 2N_B` comparable cross pairs (04-algorithms.md §3).
+    #[must_use]
+    pub fn value_variant_only(&self, window_bp: u64) -> Option<f64> {
+        let absent = window_bp.saturating_sub(self.n_present());
+        let comparable = self.counts.comparable + absent * self.total_pairs;
+        (comparable > 0).then(|| self.counts.diffs as f64 / comparable as f64)
+    }
 }

@@ -21,6 +21,25 @@
 | R3 §4.2 | 按字节内存预算 = 背压：reader 取 footprint（压缩 × 8）许可、reducer 交付后归还；仅单 chunk 超全预算才报错；驱动预算默认半物理内存（修复 D5） | f708ea0 | `memory_budget_bounds_in_flight_bytes` 在途峰值 ≤ 预算测试；tiny 预算仍报 MemBudgetExceeded |
 | R3 §4.3 | run_sequential 删除，单一代码路径；watcher 线程删除，内外共用一个 Abort 通道 | f708ea0 | 全量 stats 输出 56/7/2 线程 md5 一致；filter 正文 56/7 线程一致 |
 
+### R7（部分：π/dxy 已对齐，其余待续）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| 唯一窗口网格（04 §4） | 从位置 1 起 `[1,w]`、`[1+s,w+s]`…；末窗截断到 contig 长度；空窗输出 NA | 手算 fixture 测试（窗口 1/11/21）；pixy 与 vcftools 同为该网格 |
+| π / dxy（04 §3） | Σdiffs/Σcomps（π）、Σcross/Σn_A n_B（dxy），缺失数据按 pixy 逐位点计数；整数分量 diffs/comparables/missing 全部输出 | **pixy 2.2.4 bypass 模式逐位一致**（全量 9,501 窗 × 3 群体，最大相对误差 2e-14；子集同） |
+| `--variant-only` | 窗口内文件未出现的位点视为单态且全部调用：π 分母加 `(L−|S|)·C(2N,2)`，dxy 加 `(L−|S|)·2N_A·2N_B` | **vcftools `--window-pi` 逐行一致**（子集 60/60 行，按 vcftools 打印精度；全量待 pixy 完成后并入） |
+| 不变位点检查（04 §3） | 记录级 `ALT="."` 计数；无不变位点且未声明 `--variant-only`/`--bypass-invariant-check` 时报错（与 pixy 的检查同口径） | 回归测试；all-sites fixture 上默认模式与 pixy 默认模式逐列一致 |
+| pixy 列布局（02-cli §5.4） | `PREFIX_pi.txt` / `PREFIX_dxy.txt` / `PREFIX.log`，列名与 pixy 相同，缺失 `NA` | 手算 fixture 测试 + gold/popgen/compare.py |
+| CLI 增量（R5 的 stats 部分） | `--pop/--populations`、`--pi`、`--dxy`、`--window/--size`（100k/1M 单位）、`--step`、`--variant-only`、`--bypass-invariant-check`、`-o PREFIX` | 上述对拍 |
+
+对拍工具：`gold/popgen/`（run_pixy.sh、run_vcftools.sh、compare.py、README）。本机 pixy 2.2.4 与
+scikit-allel 1.3.13 从仓库上级目录源码安装（`pip install -e pixy scikit-allel` + dask）。
+
+R7 未完成部分（仍属 R7，按 04 §3 逐个落地）：Watterson θ（逐位点 n 的调和数）、Tajima's D
+（窗口平均 n、方差一次）、Fst `wc84`/`hudson`（Bhatia 比值之和）、PBS（三对独立 Hudson）、
+SFS 投影、多等位位点的逐等位推广（当前多等位记录跳过，本数据集为 0 条）、
+`--sfs/--freq/--hardy/--het/--missing/--depth/--summary` 的 plink2/vcftools/bcftools 布局输出。
+
 ## 偏差记录（06-roadmap.md §4.6）
 
 1. **§4.4 类型化 EngineError 暂缓**：45 处 `Job(String)` 全部经 Display 渲染，
@@ -46,6 +65,7 @@
 
 - **R2** 统一记录解码（GtCode/GenotypeScanner/FormatLayoutCache）：修复 D10、D13
   （当前数据为二倍体，D13 无实际影响）；`##reed_ascertainment` 与清单门仍在。
+  多等位逐等位计数（04 §3）也依赖这一层。
 - **R4** 输出层模块化（BlockWriter/OrderedOutput 移入 reed-io/src/write）：
   行为已由 R0 的按字节切块 + 跨块索引跟踪实现，模块搬家未做。
 - **R5** CLI 重写：reed-cli crate、`--pi/--dxy/--fst/--theta/--tajima-d/--pbs/--sfs/
