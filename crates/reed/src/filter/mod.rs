@@ -79,6 +79,9 @@ pub struct FilterOptions {
     /// Directory for the stdin spill of multi-pass runs (default: the
     /// platform temp directory).
     pub tmp_dir: Option<PathBuf>,
+    /// Explicit output compression (`-O v|z`); `None` infers it from the
+    /// output path's extension.
+    pub output_compressed: Option<bool>,
 }
 
 /// Pass1's source: the still-unconsumed first open (single-pass runs), else
@@ -283,16 +286,19 @@ pub fn run_filter(
     // Extension inference (01-review D12): .vcf.gz/.vcf.bgz (or any .gz/
     // .bgz) compress; BCF output is refused until the BCF encoder exists —
     // a silent text-VCF-in-.bcf is worse than a loud error.
-    let gz_out = match &opts.output {
-        None => false,
-        Some(p) => match p.extension().and_then(|e| e.to_str()) {
-            Some("gz") | Some("bgz") => true,
-            Some("bcf") => {
-                return Err(FilterError::Spec(
-                    "BCF output is not supported yet; use a .vcf.gz output".into(),
-                ))
-            }
-            _ => false,
+    let gz_out = match opts.output_compressed {
+        Some(compressed) => compressed,
+        None => match &opts.output {
+            None => false,
+            Some(p) => match p.extension().and_then(|e| e.to_str()) {
+                Some("gz") | Some("bgz") => true,
+                Some("bcf") => {
+                    return Err(FilterError::Spec(
+                        "BCF output is not supported yet; use a .vcf.gz output".into(),
+                    ))
+                }
+                _ => false,
+            },
         },
     };
     let writer: Box<dyn Write + Send> = match &opts.output {
@@ -556,10 +562,13 @@ struct OutputSink {
     slot: Arc<Mutex<Option<FunnelPartial>>>,
 }
 
+
 impl OrderedSink<FilterPartial> for OutputSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut FilterPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
-        self.out.accept_chunk(&partial.output).map_err(job_err)
+        let t = std::time::Instant::now();
+        let r = self.out.accept_chunk(&partial.output).map_err(job_err);
+        r
     }
 
     fn finish(self) -> Result<u64, EngineError> {

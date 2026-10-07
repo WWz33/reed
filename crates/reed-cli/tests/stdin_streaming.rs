@@ -185,3 +185,43 @@ fn spill_is_removed_on_error_exit() {
     assert!(leftovers.is_empty(), "spill deleted on the error path: {leftovers:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 04 §2: `-O` picks the output format, `-o` names the file. `-O v` used to
+/// force stdout and ignore `-o`, which sent a full 35 GB run into the caller's
+/// pipe (and made the `-Ov` benchmarks measure the pipe consumer).
+#[test]
+fn output_type_and_path_compose() {
+    let dir = std::env::temp_dir().join(format!("reed-o-args-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+
+    let plain = dir.join("out.vcf");
+    let plain_run = run(
+        &["filter", input.to_str().unwrap(), "-Ov", "-o", plain.to_str().unwrap()],
+        None,
+    );
+    assert!(plain_run.status.success(), "{}", String::from_utf8_lossy(&plain_run.stderr));
+    assert!(plain_run.stdout.is_empty(), "-o redirects the output");
+    let text = std::fs::read_to_string(&plain).expect("invariant: plain output");
+    assert!(text.starts_with("##fileformat="), "{text:.80}");
+
+    let compressed = dir.join("out.dat");
+    let gz_run = run(
+        &["filter", input.to_str().unwrap(), "-Oz1", "-o", compressed.to_str().unwrap()],
+        None,
+    );
+    assert!(gz_run.status.success(), "{}", String::from_utf8_lossy(&gz_run.stderr));
+    assert_eq!(&std::fs::read(&compressed).expect("invariant: read")[..2], &[0x1f, 0x8b]);
+
+    // Without -O the extension still infers the format.
+    let inferred = dir.join("out.vcf.gz");
+    let inf_run = run(
+        &["filter", input.to_str().unwrap(), "-o", inferred.to_str().unwrap()],
+        None,
+    );
+    assert!(inf_run.status.success(), "{}", String::from_utf8_lossy(&inf_run.stderr));
+    assert_eq!(&std::fs::read(&inferred).expect("invariant: read")[..2], &[0x1f, 0x8b]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

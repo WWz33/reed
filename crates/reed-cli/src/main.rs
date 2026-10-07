@@ -10,6 +10,7 @@ use clap::Parser;
 
 use cli::{Cli, Command};
 
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match Cli::parse().command {
         Command::Qc(args) => translate::qc::run_qc(args),

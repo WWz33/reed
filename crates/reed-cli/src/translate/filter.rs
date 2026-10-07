@@ -259,10 +259,11 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
     let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism().expect("invariant: parallelism").get()
     });
-    // -O v|z[level]: explicit output type; the extension is inferred when
-    // it is absent. b/u are refused until the BCF encoder lands (R6).
-    let (output, compress_level) = match output_type.as_deref() {
-        None => (out.clone().map(PathBuf::from), *compress_level),
+    // -O v|z[level]: explicit output type, `-o` names the file (the
+    // extension is only inferred when -O is absent). b/u are refused until
+    // the BCF encoder lands.
+    let (output, compress_level, output_compressed) = match output_type.as_deref() {
+        None => (out.clone().map(PathBuf::from), *compress_level, None),
         Some(spec) => {
             let (kind, level) = spec.split_at(1);
             let level = if level.is_empty() {
@@ -271,17 +272,8 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
                 level.parse::<u8>().map_err(|_| format!("invalid -O level in {spec:?}"))?
             };
             match kind {
-                "v" => (None, level),
-                "z" => {
-                    let path = out.clone().ok_or("the compressed output type needs -o FILE")?;
-                    let path = PathBuf::from(path);
-                    let path = if path.extension().and_then(|e| e.to_str()) == Some("gz") {
-                        path
-                    } else {
-                        PathBuf::from(format!("{}.gz", path.display()))
-                    };
-                    (Some(path), level)
-                }
+                "v" => (out.clone().map(PathBuf::from), level, Some(false)),
+                "z" => (out.clone().map(PathBuf::from), level, Some(true)),
                 other => {
                     return Err(format!(
                         "output type {other:?} is not supported yet (use v or z; BCF is R6)"
@@ -326,6 +318,7 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         force_samples: *force_samples,
         regions,
         tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
+        output_compressed,
     };
     let report = reed::filter::run_filter(input_path(input).as_deref(), &spec_v2, &opts)?;
     eprintln!(
