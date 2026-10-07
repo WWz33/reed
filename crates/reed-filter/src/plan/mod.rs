@@ -36,6 +36,8 @@ pub enum HeadRule {
     /// The variant class must be one of these (`snv | mnv | indel |
     /// symbolic | ref`), evaluated with reed-core's `classify_variant`.
     VariantClass(Vec<String>),
+    /// The record's ALT count must be at least this.
+    MinAltAlleles(u32),
     /// The record's ALT count must not exceed this.
     MaxAltAlleles(u32),
     /// The FILTER column must be one of these (`.` never passes).
@@ -44,6 +46,16 @@ pub enum HeadRule {
     MinQual(f32),
     /// One numeric INFO predicate.
     Info(InfoRule),
+    /// A bcftools expression (02-cli.md §4): `include` must hold, `exclude`
+    /// must not.
+    Expr {
+        /// Funnel id (`site.include#N` / `site.exclude#N`).
+        id: String,
+        /// Whether the expression is an `-i` (true = keep) or `-e`.
+        include: bool,
+        /// The compiled predicate.
+        expr: crate::expr::Expr,
+    },
 }
 
 impl HeadRule {
@@ -53,6 +65,7 @@ impl HeadRule {
         match self {
             Self::Regions { .. } => "site.regions".to_string(),
             Self::VariantClass(_) => "site.variant_class".to_string(),
+            Self::MinAltAlleles(_) => "site.min_alt_alleles".to_string(),
             Self::MaxAltAlleles(_) => "site.max_alt_alleles".to_string(),
             Self::RequireFilter(_) => "site.filter".to_string(),
             Self::MinQual(_) => "site.qual".to_string(),
@@ -60,6 +73,7 @@ impl HeadRule {
                 let tag = String::from_utf8_lossy(&rule.tag);
                 format!("site.info.{tag}")
             }
+            Self::Expr { id, .. } => id.clone(),
         }
     }
 }
@@ -93,8 +107,17 @@ pub struct MaskRule {
 }
 
 /// A compiled post-mask rule.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum TailRule {
+    /// A genotype-derived bcftools expression (evaluated after masking).
+    Expr {
+        /// Funnel id (`after_mask.include#N` / `after_mask.exclude#N`).
+        id: String,
+        /// Whether the expression is an `-i` (true = keep) or `-e`.
+        include: bool,
+        /// The compiled predicate.
+        expr: crate::expr::Expr,
+    },
     /// Site missing-rate cap (denominator: kept samples).
     MaxMissing(f64),
     /// MAF lower bound.
@@ -108,12 +131,13 @@ pub enum TailRule {
 impl TailRule {
     /// The stable funnel id (§11.5).
     #[must_use]
-    pub fn id(self) -> &'static str {
+    pub fn id(&self) -> String {
         match self {
-            Self::MaxMissing(_) => "after_mask.missing",
-            Self::MinMaf(_) => "after_mask.maf",
-            Self::MinMac(_) => "after_mask.mac",
-            Self::MinHweP(_) => "after_mask.hwe",
+            Self::Expr { id, .. } => id.clone(),
+            Self::MaxMissing(_) => "after_mask.missing".to_string(),
+            Self::MinMaf(_) => "after_mask.maf".to_string(),
+            Self::MinMac(_) => "after_mask.mac".to_string(),
+            Self::MinHweP(_) => "after_mask.hwe".to_string(),
         }
     }
 }
@@ -189,6 +213,9 @@ pub fn compile(
     if !spec.site.variant_class.is_empty() {
         head.push(HeadRule::VariantClass(spec.site.variant_class.clone()));
     }
+    if spec.site.min_alt_alleles > 0 {
+        head.push(HeadRule::MinAltAlleles(spec.site.min_alt_alleles));
+    }
     if spec.site.max_alt_alleles > 0 {
         head.push(HeadRule::MaxAltAlleles(spec.site.max_alt_alleles));
     }
@@ -202,6 +229,29 @@ pub fn compile(
             return Err(FilterError::Spec(format!("min_qual out of range [0,inf): {q}")));
         }
         head.push(HeadRule::MinQual(q));
+    }
+    // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
+    // genotype-dependent ones after the mask stage ----
+    let info_tags: Vec<String> = info_defs.keys().cloned().collect();
+    for (index, text) in spec.site.include.iter().enumerate() {
+        let expr = crate::expr::parse_and_check(text, &info_tags)
+            .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
+        if expr.references_genotypes() {
+            return Err(FilterError::Spec(format!(
+                "-i {text:?} reads genotype-derived values and belongs in [site_after_mask]"
+            )));
+        }
+        head.push(HeadRule::Expr { id: format!("site.include#{}", index + 1), include: true, expr });
+    }
+    for (index, text) in spec.site.exclude.iter().enumerate() {
+        let expr = crate::expr::parse_and_check(text, &info_tags)
+            .map_err(|e| FilterError::Spec(format!("-e {text:?}: {e}")))?;
+        if expr.references_genotypes() {
+            return Err(FilterError::Spec(format!(
+                "-e {text:?} reads genotype-derived values and belongs in [site_after_mask]"
+            )));
+        }
+        head.push(HeadRule::Expr { id: format!("site.exclude#{}", index + 1), include: false, expr });
     }
     let multiallelics_possible = spec.policy.multiallelic
         == crate::spec::MultiallelicPolicy::Allow
@@ -306,11 +356,50 @@ pub fn compile(
         tail.push(TailRule::MinHweP(p));
     }
 
+    for (index, text) in spec.site_after_mask.include.iter().enumerate() {
+        let expr = crate::expr::parse_and_check(text, &info_tags)
+            .map_err(|e| FilterError::Spec(format!("-i {text:?} (after mask): {e}")))?;
+        if !expr.references_genotypes() {
+            return Err(FilterError::Spec(format!(
+                "-i {text:?} does not read genotype-derived values and belongs in [site]"
+            )));
+        }
+        tail.push(TailRule::Expr {
+            id: format!("after_mask.include#{}", index + 1),
+            include: true,
+            expr,
+        });
+    }
+    for (index, text) in spec.site_after_mask.exclude.iter().enumerate() {
+        let expr = crate::expr::parse_and_check(text, &info_tags)
+            .map_err(|e| FilterError::Spec(format!("-e {text:?} (after mask): {e}")))?;
+        if !expr.references_genotypes() {
+            return Err(FilterError::Spec(format!(
+                "-e {text:?} does not read genotype-derived values and belongs in [site]"
+            )));
+        }
+        tail.push(TailRule::Expr {
+            id: format!("after_mask.exclude#{}", index + 1),
+            include: false,
+            expr,
+        });
+    }
+
     // ---- strategy (§11.4; SketchThenEmit selection is M5b) ----
-    let strategy = match &spec.cohort {
-        Some(crate::spec::CohortRule::MaxMissing(_)) => ExecStrategy::TwoPassReparse,
-        Some(crate::spec::CohortRule::KeepList(_)) | Some(crate::spec::CohortRule::RemoveList(_))
-        | None => ExecStrategy::SinglePass,
+    // The sketch path evaluates tail rules in the mid stage, where the
+    // record bytes are gone; a genotype-derived expression therefore forces
+    // the single-pass path (02-cli.md §4: expressions run on the record).
+    let has_tail_expr = tail.iter().any(|r| matches!(r, TailRule::Expr { .. }));
+    let strategy = if has_tail_expr {
+        ExecStrategy::SinglePass
+    } else {
+        match &spec.cohort {
+            Some(crate::spec::CohortRule::MaxMissing(_)) => ExecStrategy::TwoPassReparse,
+            Some(crate::spec::CohortRule::KeepList(_))
+            | Some(crate::spec::CohortRule::KeepNames(_))
+            | Some(crate::spec::CohortRule::RemoveList(_))
+            | None => ExecStrategy::SinglePass,
+        }
     };
 
     // ---- recompute + stale ----

@@ -67,6 +67,11 @@ pub fn eval_head(
                 let class = classify_variant(reference, primary);
                 classes.iter().any(|c| class_matches(class, c))
             }
+            HeadRule::MinAltAlleles(min) => {
+                let n = u32::try_from(alts.iter().filter(|&&b| b == b',').count() + 1)
+                    .unwrap_or(u32::MAX);
+                n >= *min
+            }
             HeadRule::MaxAltAlleles(max) => {
                 let n = u32::try_from(alts.iter().filter(|&&b| b == b',').count() + 1)
                     .unwrap_or(u32::MAX);
@@ -81,6 +86,15 @@ pub fn eval_head(
                     .is_some_and(|v| f64::from(v) >= f64::from(*q))
             }
             HeadRule::Info(rule) => eval_info(line, rule, scratch),
+            HeadRule::Expr { include, expr, .. } => {
+                let values = crate::expr::SiteValues::from_line(line, pos1, None);
+                let truth = crate::expr::eval(expr, &values);
+                if *include {
+                    truth
+                } else {
+                    !truth
+                }
+            }
         };
         if !ok {
             return false;

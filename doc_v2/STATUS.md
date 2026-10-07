@@ -57,7 +57,16 @@ scikit-allel 1.3.13 从仓库上级目录源码安装（`pip install -e pixy sci
 | 删除 `REED_THREADS`（02-cli §0、05 §2.7） | 线程只由 `--threads` 决定 | — |
 | 索引器共用 | filter 的写出索引与 `reed index` 共用 `reed::index::Indexer`（filter 重新导出 `WriteIndex` 保持 API） | 全量 filter 对拍仍通过 |
 
-R5 未完成：bcftools 表达式子集（`-i/-e`）与由此才可删除的 `--spec/--conf`/TOML、`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、`gold/scripts/run_reed.sh`。
+### R5（续：表达式、flag CLI、删 TOML）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| bcftools 表达式子集（02-cli §4） | 新 `reed_filter::expr`：词法 + 语法（Pratt）+ 校验 + 求值。支持 `QUAL/FILTER/ID/CHROM/POS/TYPE/N_ALT/N_SAMPLES`、`AC/AN/AF/MAC/MAF/N_MISSING/F_MISSING`（INFO 有则取 INFO，否则按基因型）、`INFO/TAG` 与裸名、比较 `== = != < <= > >=`、逻辑 `&& \|\| & \|`、`!`、括号；缺失值比较为假。`FMT/`、下标、正则 `~ !~`、算术 → 明确报 "not supported yet"（不换语义执行） | 对 bcftools 逐表达式对拍：`-i/-e` 共 7 个表达式（含真正丢记录的 `QD<8`、`FS>1.5 && MQ>55`）位点集合逐字节一致；基因型依赖的 `F_MISSING<0.05`（走 mask 之后的 tail 路径）同样一致 |
+| flag 版过滤 CLI（02-cli §3、§6） | `-s/-S/--keep/--remove/--force-samples`、`-v/--types`、`--snps-only[=just-acgt]`、`-m/-M`（bcftools 计 REF+ALT，内部换算成 ALT 数）、`-f`、`-i/-e`（按是否依赖基因型路由到掩码前/后）、`--min-dp/--max-dp/--min-gq`（缺失不掩码）、`--geno/--maf/--mac/--hwe [midp]`、`-x`、`--fill-tags`、`-O v\|z[level]`、`-W` | **gold 等价命令与 gold 逐字节一致**：全量 3,315,604 → 1,768,759，GT md5 `e9efcc63…`、AC/AN/NS md5 `09459e65…`，9.7 s |
+| 删除 TOML/conf（02-cli §0、§7） | `--spec`/`--conf`、`read_spec_toml`、`FilterSpecV2::from_toml_str`、`spec::compat`、`toml` 依赖全部删除；spec 只由 CLI 参数（或测试直接构造）产生 | 全量测试 278 通过；gold 对拍通过 |
+| `gold/scripts/run_reed.sh`（02-cli §8） | 从 `filters.conf` 生成 flag 命令，与另外三个工具共用 `samples.keep.txt` | 全量运行成功，输出与 gold 一致 |
+
+R5 未完成：`-r/-R/-t/-T` 区域（需索引/流式区域，R6）、`-O b/u`（BCF 编码器，R6）、`FMT/` 表达式与下标/正则、`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、`-I/--no-update`、`--max-maf/--max-mac`、`-V`、`--set-gts .`。
 
 ## 偏差记录（06-roadmap.md §4.6）
 

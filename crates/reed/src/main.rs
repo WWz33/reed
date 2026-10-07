@@ -41,12 +41,76 @@ enum Command {
     Filter {
         /// Input BGZF VCF (.vcf.gz)
         input: String,
-        /// Filter spec as TOML (§11.1)
-        #[arg(long, conflicts_with = "conf")]
-        spec: Option<String>,
-        /// Filter spec as the gold KEY=VALUE conf (compat path)
+        /// Samples to keep: comma-separated names (bcftools `-s`)
+        #[arg(short = 's', long = "samples", value_name = "LIST")]
+        samples: Option<String>,
+        /// Samples to keep: one name per line (bcftools `-S`)
+        #[arg(short = 'S', long = "samples-file", value_name = "FILE")]
+        samples_file: Option<String>,
+        /// Samples to keep (plink2/vcftools spelling)
+        #[arg(long, value_name = "FILE")]
+        keep: Option<String>,
+        /// Samples to drop
+        #[arg(long, value_name = "FILE")]
+        remove: Option<String>,
+        /// Sample lists naming samples absent from the header only warn
         #[arg(long)]
-        conf: Option<String>,
+        force_samples: bool,
+        /// Variant types to keep: snps,mnps,indels,other,ref (bcftools `-v`)
+        #[arg(short = 'v', long = "types", value_name = "LIST")]
+        types: Option<String>,
+        /// Keep only SNP sites (`=just-acgt` restricts ALT to A/C/G/T)
+        #[arg(long, value_name = "just-acgt", num_args = 0..=1,
+              default_missing_value = "just-acgt")]
+        snps_only: Option<String>,
+        /// Minimum allele count, REF+ALT (bcftools `-m`)
+        #[arg(short = 'm', long = "min-alleles", value_name = "INT")]
+        min_alleles: Option<u32>,
+        /// Maximum allele count, REF+ALT (bcftools `-M`)
+        #[arg(short = 'M', long = "max-alleles", value_name = "INT")]
+        max_alleles: Option<u32>,
+        /// Keep records whose FILTER is in LIST (bcftools `-f`)
+        #[arg(short = 'f', long = "apply-filters", value_name = "LIST")]
+        apply_filters: Option<String>,
+        /// bcftools expression: keep records that satisfy it (repeatable;
+        /// 02-cli.md §4 subset)
+        #[arg(short = 'i', long = "include", value_name = "EXPR")]
+        include: Vec<String>,
+        /// bcftools expression: drop records that satisfy it (repeatable)
+        #[arg(short = 'e', long = "exclude", value_name = "EXPR")]
+        exclude: Vec<String>,
+        /// Mask genotypes with FMT/DP below INT (missing DP never masks)
+        #[arg(long, value_name = "INT")]
+        min_dp: Option<u32>,
+        /// Mask genotypes with FMT/DP above INT
+        #[arg(long, value_name = "INT")]
+        max_dp: Option<u32>,
+        /// Mask genotypes with FMT/GQ below INT
+        #[arg(long, value_name = "INT")]
+        min_gq: Option<u32>,
+        /// Drop sites whose missing rate (after masking) exceeds FLOAT
+        #[arg(long, value_name = "FLOAT")]
+        geno: Option<f64>,
+        /// Minimum minor allele frequency (after masking)
+        #[arg(long, value_name = "FLOAT")]
+        maf: Option<f64>,
+        /// Minimum minor allele count (after masking)
+        #[arg(long, value_name = "INT")]
+        mac: Option<u32>,
+        /// HWE exact-test p lower bound (`P`, optional `midp`)
+        #[arg(long, value_name = "P [midp]", num_args = 1..=2)]
+        hwe: Vec<String>,
+        /// Remove these INFO tags (bcftools `-x`)
+        #[arg(short = 'x', long = "remove-info", value_name = "LIST")]
+        remove_info: Option<String>,
+        /// Recompute and write these INFO tags (bcftools `+fill-tags`)
+        #[arg(long, value_name = "LIST")]
+        fill_tags: Option<String>,
+        /// Output type: v (plain VCF) or z (BGZF VCF), with an optional
+        /// compression level (`-Oz6`); b/u are refused until the BCF encoder
+        /// lands
+        #[arg(short = 'O', long = "output-type", value_name = "v|z[0-9]")]
+        output_type: Option<String>,
         /// Output VCF (.vcf.gz) — omit for plain VCF on the path/stdout
         #[arg(short, long)]
         out: Option<String>,
@@ -251,13 +315,61 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
     if let Command::Filter {
-        input, spec, conf, out, write_index, compress_level, report, strategy, threads,
+        input,
+        samples,
+        samples_file,
+        keep,
+        remove,
+        force_samples,
+        types,
+        snps_only,
+        min_alleles,
+        max_alleles,
+        apply_filters,
+        include,
+        exclude,
+        min_dp,
+        max_dp,
+        min_gq,
+        geno,
+        maf,
+        mac,
+        hwe,
+        remove_info,
+        fill_tags,
+        output_type,
+        out,
+        write_index,
+        compress_level,
+        report,
+        strategy,
+        threads,
     } = command
     {
         return run_filter_cli(FilterCli {
             input,
-            spec,
-            conf,
+            samples,
+            samples_file,
+            keep,
+            remove,
+            force_samples,
+            types,
+            snps_only,
+            min_alleles,
+            max_alleles,
+            apply_filters,
+            include,
+            exclude,
+            min_dp,
+            max_dp,
+            min_gq,
+            geno,
+            maf,
+            mac,
+            hwe,
+            remove_info,
+            fill_tags,
+            output_type,
             out,
             write_index,
             compress_level,
@@ -494,8 +606,28 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 struct FilterCli {
     input: String,
-    spec: Option<String>,
-    conf: Option<String>,
+    samples: Option<String>,
+    samples_file: Option<String>,
+    keep: Option<String>,
+    remove: Option<String>,
+    force_samples: bool,
+    types: Option<String>,
+    snps_only: Option<String>,
+    min_alleles: Option<u32>,
+    max_alleles: Option<u32>,
+    apply_filters: Option<String>,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    min_dp: Option<u32>,
+    max_dp: Option<u32>,
+    min_gq: Option<u32>,
+    geno: Option<f64>,
+    maf: Option<f64>,
+    mac: Option<u32>,
+    hwe: Vec<String>,
+    remove_info: Option<String>,
+    fill_tags: Option<String>,
+    output_type: Option<String>,
     out: Option<String>,
     write_index: Option<String>,
     compress_level: u8,
@@ -504,28 +636,163 @@ struct FilterCli {
     threads: Option<usize>,
 }
 
-fn run_filter_cli(
-    FilterCli {
+/// Translates the CLI flags into a typed [`FilterSpecV2`] (02-cli.md §3, §6).
+///
+/// # Errors
+///
+/// Unknown tokens (variant types, output type) and malformed expressions.
+fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
+    use reed_filter::spec::{
+        CohortRule, FilterSpecV2, GenotypeMaskRule, OnMissing,
+    };
+    let mut spec = FilterSpecV2::default();
+
+    // ---- samples (cohort) ----
+    if let Some(list) = &cli.samples {
+        let names: Vec<String> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect();
+        spec.cohort = Some(CohortRule::KeepNames(names));
+    } else if let Some(path) = cli.samples_file.as_ref().or(cli.keep.as_ref()) {
+        spec.cohort = Some(CohortRule::KeepList(path.clone()));
+    } else if let Some(path) = &cli.remove {
+        spec.cohort = Some(CohortRule::RemoveList(path.clone()));
+    }
+
+    // ---- site: variant class / alleles / FILTER ----
+    if let Some(list) = &cli.types {
+        for token in list.split(',') {
+            let class = match token.trim() {
+                "snps" | "snp" | "snv" | "snvs" => "snv",
+                "mnps" | "mnp" | "mnv" => "mnv",
+                "indels" | "indel" => "indel",
+                "other" | "symbolic" => "symbolic",
+                "ref" => "ref",
+                other => return Err(format!("unknown variant type {other:?}")),
+            };
+            spec.site.variant_class.push(class.to_string());
+        }
+    }
+    if let Some(modifier) = &cli.snps_only {
+        if !matches!(modifier.as_str(), "just-acgt") {
+            return Err(format!("unknown --snps-only modifier {modifier:?}"));
+        }
+        if !spec.site.variant_class.iter().any(|c| c == "snv") {
+            spec.site.variant_class.push("snv".to_string());
+        }
+    }
+    // bcftools counts REF+ALT, the spec counts ALTs.
+    if let Some(m) = cli.min_alleles {
+        spec.site.min_alt_alleles = m.saturating_sub(1);
+    }
+    if let Some(m) = cli.max_alleles {
+        spec.site.max_alt_alleles = m.saturating_sub(1);
+    }
+    if let Some(list) = &cli.apply_filters {
+        spec.site.require_filter = list
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+
+    // ---- expressions (02-cli.md §4): route by genotype dependence ----
+    for (text, include) in cli
+        .include
+        .iter()
+        .map(|t| (t, true))
+        .chain(cli.exclude.iter().map(|t| (t, false)))
+    {
+        let expr = reed_filter::expr::parse(text)
+            .map_err(|e| format!("{} {text:?}: {e}", if include { "-i" } else { "-e" }))?;
+        let genotype_derived = expr.references_genotypes();
+        match (include, genotype_derived) {
+            (true, false) => spec.site.include.push(text.clone()),
+            (true, true) => spec.site_after_mask.include.push(text.clone()),
+            (false, false) => spec.site.exclude.push(text.clone()),
+            (false, true) => spec.site_after_mask.exclude.push(text.clone()),
+        }
+    }
+
+    // ---- genotype masking (plink2 semantics: missing never masks) ----
+    let mut mask = |field: &str, when: String| {
+        spec.genotype.mask_if.push(GenotypeMaskRule {
+            field: field.to_string(),
+            when,
+            on_missing: OnMissing::Keep,
+        });
+    };
+    if let Some(v) = cli.min_dp {
+        mask("DP", format!("< {v}"));
+    }
+    if let Some(v) = cli.max_dp {
+        mask("DP", format!("> {v}"));
+    }
+    if let Some(v) = cli.min_gq {
+        mask("GQ", format!("< {v}"));
+    }
+
+    // ---- after-mask site rules ----
+    if let Some(g) = cli.geno {
+        spec.site_after_mask.max_missing = Some(g);
+    }
+    if let Some(m) = cli.maf {
+        spec.site_after_mask.min_maf = Some(m);
+    }
+    if let Some(m) = cli.mac {
+        spec.site_after_mask.min_mac = m;
+    }
+    if !cli.hwe.is_empty() {
+        let p: f64 = cli.hwe[0]
+            .parse()
+            .map_err(|_| format!("invalid --hwe p-value {:?}", cli.hwe[0]))?;
+        spec.site_after_mask.min_hwe_p = Some(p);
+        if cli.hwe.get(1).is_some_and(|m| m == "midp") {
+            spec.site_after_mask.hwe_mode = reed_filter::spec::HweMode::MidP;
+        }
+    }
+
+    // ---- INFO ----
+    if let Some(list) = &cli.remove_info {
+        spec.recompute.drop_stale = list
+            .split(',')
+            .map(str::trim)
+            .map(|t| t.strip_prefix("INFO/").unwrap_or(t).to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+    }
+    if let Some(list) = &cli.fill_tags {
+        spec.recompute.tags = list
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    Ok(spec)
+}
+
+fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let FilterCli {
         input,
-        spec,
-        conf,
         out,
         write_index,
         compress_level,
         report,
         strategy,
         threads,
-    }: FilterCli,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let spec_v2 = match (spec, conf) {
-        (Some(path), _) => reed::filter::read_spec_toml(Path::new(&path))?,
-        (None, Some(path)) => reed_filter::spec::compat::from_gold_conf(Path::new(&path))?,
-        (None, None) => {
-            return Err("one of --spec <filter.toml> or --conf <filters.conf> is required".into());
-        }
-    };
+        output_type,
+        force_samples,
+        ..
+    } = &cli;
+    let spec_v2 = spec_from_flags(&cli)?;
     let strategy = strategy
-        .map(|s| match s.as_str() {
+        .as_deref()
+        .map(|s| match s {
             "single_pass" => Ok(reed_filter::plan::ExecStrategy::SinglePass),
             "two_pass_reparse" => Ok(reed_filter::plan::ExecStrategy::TwoPassReparse),
             "sketch_then_emit" => Ok(reed_filter::plan::ExecStrategy::SketchThenEmit),
@@ -536,15 +803,48 @@ fn run_filter_cli(
     let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism().expect("invariant: parallelism").get()
     });
+    // -O v|z[level]: explicit output type; the extension is inferred when
+    // it is absent. b/u are refused until the BCF encoder lands (R6).
+    let (output, compress_level) = match output_type.as_deref() {
+        None => (out.clone().map(PathBuf::from), *compress_level),
+        Some(spec) => {
+            let (kind, level) = spec.split_at(1);
+            let level = if level.is_empty() {
+                *compress_level
+            } else {
+                level.parse::<u8>().map_err(|_| format!("invalid -O level in {spec:?}"))?
+            };
+            match kind {
+                "v" => (None, level),
+                "z" => {
+                    let path = out.clone().ok_or("the compressed output type needs -o FILE")?;
+                    let path = PathBuf::from(path);
+                    let path = if path.extension().and_then(|e| e.to_str()) == Some("gz") {
+                        path
+                    } else {
+                        PathBuf::from(format!("{}.gz", path.display()))
+                    };
+                    (Some(path), level)
+                }
+                other => {
+                    return Err(format!(
+                        "output type {other:?} is not supported yet (use v or z; BCF is R6)"
+                    )
+                    .into())
+                }
+            }
+        }
+    };
     let opts = reed::filter::FilterOptions {
         threads,
-        output: out.map(PathBuf::from),
+        output,
         write_index: reed::filter::WriteIndex::parse(write_index.as_deref())?,
         compress_level,
         strategy,
         command_line,
         quiet: false,
-        report_json: report.map(PathBuf::from),
+        report_json: report.as_ref().map(PathBuf::from),
+        force_samples: *force_samples,
     };
     let report = reed::filter::run_filter(input_path(&input).as_deref(), &spec_v2, &opts)?;
     eprintln!(

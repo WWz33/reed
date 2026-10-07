@@ -7,9 +7,23 @@ use crate::plan::TailRule;
 
 /// Evaluates the tail rules in order; increments `hits[i]` for every rule
 /// the site passes and returns whether it survives.
-pub fn eval_tail(counts: &SiteCounts, n_samples_out: usize, rules: &[TailRule], hits: &mut [u64]) -> bool {
+pub fn eval_tail(
+    values: &crate::expr::SiteValues<'_>,
+    counts: &SiteCounts,
+    n_samples_out: usize,
+    rules: &[TailRule],
+    hits: &mut [u64],
+) -> bool {
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
+            TailRule::Expr { include, expr, .. } => {
+                let truth = crate::expr::eval(expr, values);
+                if *include {
+                    truth
+                } else {
+                    !truth
+                }
+            }
             TailRule::MaxMissing(m) => {
                 n_samples_out > 0
                     && f64::from_u64(counts.n_missing) / f64::from_u64(n_samples_out as u64) <= *m

@@ -5,7 +5,6 @@
 use std::io::Write;
 
 use reed::filter::{run_filter, FilterOptions};
-use reed_filter::spec::compat::from_gold_kv;
 use reed_filter::spec::{FilterSpecV2, OnMissing};
 use reed_filter::FilterError;
 use std::collections::HashMap;
@@ -101,27 +100,54 @@ fn write_fixture(name: &str, n_records: usize) -> std::path::PathBuf {
     path
 }
 
-/// The gold conf as key-value (the parity spec, minus runner keys).
-fn gold_kv() -> HashMap<String, String> {
-    [
-        ("SAMPLE_MISS_MAX", "0.9"),
-        ("KEEP_BIALLELIC_SNPS", "1"),
-        ("REQUIRE_PASS", "1"),
-        ("MIN_QUAL", "30"),
-        ("INFO_QD_MIN", "4.0"),
-        ("INFO_FS_MAX", "50.0"),
-        ("INFO_MQ_MIN", "40.0"),
-        ("INFO_SOR_MAX", "3.0"),
-        ("SITE_MISS_MAX", "0.5"),
-        ("MAF_MIN", "0.05"),
-        ("HWE_MIN", "0"),
-        ("GT_DP_MIN", "5"),
-        ("GT_DP_MAX", "100"),
-        ("GT_GQ_MIN", "20"),
-    ]
-    .iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+/// The gold pipeline as a typed spec (the flags of 02-cli.md §6 expressed
+/// through the spec types; the flag-based CLI builds exactly this).
+fn gold_spec() -> FilterSpecV2 {
+    use reed_filter::spec::{
+        CohortRule, GenotypeMaskRule, GenotypeRules, InfoPredicate, OnMissing, RecomputeSpec,
+        SiteRulesV2, TailRules,
+    };
+    FilterSpecV2 {
+        cohort: Some(CohortRule::MaxMissing(0.9)),
+        site: SiteRulesV2 {
+            variant_class: vec!["snv".into()],
+            max_alt_alleles: 1,
+            require_filter: vec!["PASS".into()],
+            min_qual: Some(30.0),
+            info: [
+                ("QD", ">= 4.0"),
+                ("FS", "<= 50.0"),
+                ("MQ", ">= 40.0"),
+                ("SOR", "<= 3.0"),
+            ]
+            .iter()
+            .map(|(tag, keep_if)| InfoPredicate {
+                tag: (*tag).into(),
+                keep_if: (*keep_if).into(),
+                on_missing: OnMissing::Pass,
+                quantifier: None,
+            })
+            .collect(),
+            ..SiteRulesV2::default()
+        },
+        genotype: GenotypeRules {
+            mask_if: [("DP", "< 5"), ("DP", "> 100"), ("GQ", "< 20")]
+                .iter()
+                .map(|(field, when)| GenotypeMaskRule {
+                    field: (*field).into(),
+                    when: (*when).into(),
+                    on_missing: OnMissing::Keep,
+                })
+                .collect(),
+        },
+        site_after_mask: TailRules {
+            max_missing: Some(0.5),
+            min_maf: Some(0.05),
+            ..TailRules::default()
+        },
+        recompute: RecomputeSpec::all(),
+        ..FilterSpecV2::default()
+    }
 }
 
 fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::Path) -> FilterOptions {
@@ -134,6 +160,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
         command_line: "test".to_string(),
         quiet: true,
         report_json: None,
+        force_samples: false,
     }
 }
 
@@ -141,7 +168,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
 fn single_pass_and_two_pass_reparse_produce_identical_output() {
     let dir_path = write_fixture("strategies", 6_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+    let spec: FilterSpecV2 = gold_spec();
 
     let out_single = dir.join("single.vcf.gz");
     let out_two = dir.join("two.vcf.gz");
@@ -183,7 +210,7 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
 fn output_is_deterministic_across_thread_counts() {
     let dir_path = write_fixture("determinism", 6_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+    let spec: FilterSpecV2 = gold_spec();
 
     let mut reference: Option<Vec<u8>> = None;
     for threads in [1_usize, 3, 8] {
@@ -220,15 +247,14 @@ fn spec_validation_rejects_unknown_tags_and_ranges() {
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
 
     // Unknown INFO tag: rejected at compile time, before any record.
-    let kv = gold_kv();
-    let mut spec = from_gold_kv(&kv).expect("invariant: valid kv");
+    let mut spec = gold_spec();
     spec.site.info[0].tag = "NotDeclared".to_string();
     let err = run_filter(Some(&dir_path.as_path()), &spec, &options(None, &dir.join("o.vcf.gz")))
         .expect_err("invariant: unknown tag rejected");
     assert!(err.to_string().contains("NotDeclared"), "{err}");
 
     // Threshold out of range.
-    let mut spec = from_gold_kv(&kv).expect("invariant: valid kv");
+    let mut spec = gold_spec();
     spec.site_after_mask.min_maf = Some(0.9);
     let err = run_filter(Some(&dir_path.as_path()), &spec, &options(None, &dir.join("o.vcf.gz")))
         .expect_err("invariant: maf range rejected");
@@ -238,98 +264,20 @@ fn spec_validation_rejects_unknown_tags_and_ranges() {
 }
 
 #[test]
-fn compat_conf_matches_the_toml_path() {
-    // The conf reader and the TOML reader must land on the same spec for
-    // the gold parameters (§11.1: "保证与 TOML 等价").
-    let conf_spec = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
-    let toml = r#"
-[cohort]
-max_missing = 0.9
-
-[site]
-variant_class = ["snv"]
-max_alt_alleles = 1
-require_filter = ["PASS"]
-min_qual = 30.0
-
-[[site.info]]
-tag = "QD"
-keep_if = ">= 4.0"
-
-[[site.info]]
-tag = "FS"
-keep_if = "<= 50.0"
-
-[[site.info]]
-tag = "MQ"
-keep_if = ">= 40.0"
-
-[[site.info]]
-tag = "SOR"
-keep_if = "<= 3.0"
-
-[[genotype.mask_if]]
-field = "DP"
-when = "< 5"
-
-[[genotype.mask_if]]
-field = "DP"
-when = "> 100"
-
-[[genotype.mask_if]]
-field = "GQ"
-when = "< 20"
-
-[site_after_mask]
-max_missing = 0.5
-min_maf = 0.05
-
-[recompute]
-tags = ["AC", "AN", "NS", "MAF", "HWE"]
-"#;
-    let toml_spec = FilterSpecV2::from_toml_str(toml).expect("invariant: valid toml");
-    assert_eq!(conf_spec.cohort, toml_spec.cohort);
-    // INFO predicates compare by parsed comparison (the conf formats
-    // 4.0 as 4; the semantics are what matter, §11.1).
-    let cmps = |spec: &FilterSpecV2| -> Vec<(String, reed_filter::spec::predicate::Cmp)> {
-        spec.site
-            .info
-            .iter()
-            .map(|r| {
-                (
-                    r.tag.clone(),
-                    reed_filter::spec::predicate::Cmp::parse(&r.keep_if)
-                        .expect("invariant: valid cmp"),
-                )
-            })
-            .collect()
-    };
-    assert_eq!(cmps(&conf_spec), cmps(&toml_spec));
-    assert_eq!(conf_site(&conf_spec).info, conf_site(&toml_spec).info);
-    assert_eq!(conf_spec.genotype, toml_spec.genotype);
-    assert_eq!(conf_spec.site_after_mask, toml_spec.site_after_mask);
-    assert_eq!(conf_spec.recompute.tags, toml_spec.recompute.tags);
-}
-
-fn conf_site(spec: &FilterSpecV2) -> reed_filter::spec::SiteRulesV2 {
-    // The conf path pushes "snv" into variant_class like the TOML; compare
-    // as sorted sets to stay insensitive to declaration order.
-    let mut s = spec.site.clone();
-    s.variant_class.sort();
-    s
-}
-
-#[test]
 fn mask_default_on_missing_is_keep() {
-    let toml = r#"
-[[genotype.mask_if]]
-field = "DP"
-when = "< 5"
-"#;
-    let spec = FilterSpecV2::from_toml_str(&format!("{HEADER}\n{toml}"))
-        .expect("invariant: toml parses");
-    // The mask default is Keep directly at the spec level (§11.1) and the
-    // compiler accepts it.
+    use reed_filter::spec::{GenotypeMaskRule, GenotypeRules};
+    // The mask default is Keep at the spec level (§11.1): a missing DP/GQ
+    // never masks (plink2 semantics), and the compiler accepts it.
+    let spec = FilterSpecV2 {
+        genotype: GenotypeRules {
+            mask_if: vec![GenotypeMaskRule {
+                field: "DP".into(),
+                when: "< 5".into(),
+                on_missing: OnMissing::Keep,
+            }],
+        },
+        ..FilterSpecV2::default()
+    };
     assert_eq!(spec.genotype.mask_if[0].on_missing, OnMissing::Keep);
     let dir_path = write_fixture("maskdefault", 5);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
@@ -343,7 +291,7 @@ when = "< 5"
 fn provenance_and_ascertainment_are_written() {
     let dir_path = write_fixture("provenance", 30);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+    let spec: FilterSpecV2 = gold_spec();
     let out = dir.join("o.vcf.gz");
     run_filter(Some(&dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
 
@@ -392,7 +340,7 @@ fn _assert_error_type(e: FilterError) -> FilterError {
 fn all_three_strategies_produce_identical_bytes() {
     let dir_path = write_fixture("three-strategies", 8_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+    let spec: FilterSpecV2 = gold_spec();
 
     let mut hashes = Vec::new();
     for (name, strategy) in [
@@ -422,7 +370,7 @@ fn all_three_strategies_produce_identical_bytes() {
 fn sketch_funnel_matches_the_single_pass_funnel() {
     let dir_path = write_fixture("sketch-funnel", 6_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = from_gold_kv(&gold_kv()).expect("invariant: valid kv");
+    let spec: FilterSpecV2 = gold_spec();
 
     let single = run_filter(
         Some(&dir_path.as_path()),
@@ -479,6 +427,7 @@ mod write_index {
             command_line: "test".into(),
             quiet: true,
             report_json: None,
+            force_samples: false,
         }
     }
 

@@ -11,6 +11,9 @@ pub enum CohortRule {
     /// Keep exactly the listed samples (one per line; `#` comments allowed).
     #[serde(rename = "keep_list")]
     KeepList(String),
+    /// Keep exactly these sample names (bcftools' inline `-s` list).
+    #[serde(rename = "keep_names")]
+    KeepNames(Vec<String>),
     /// Drop the listed samples.
     #[serde(rename = "remove_list")]
     RemoveList(String),

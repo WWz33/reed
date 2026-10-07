@@ -1,17 +1,11 @@
 //! The filter specification (§11.1): typed, serde-serializable, validated
 //! at plan-compile time against the input header.
 //!
-//! Two sources feed the same v2 spec:
-//! - TOML (`FilterSpecV2::from_toml_str` / a serde ` Deserialize`), and
-//! - [`compat::from_gold_conf`], the `gold/config/filters.conf` KEY=VALUE
-//!   reader that exists only to serve the gold parity run (equivalence
-//!   with the TOML path is test-locked).
-//!
-//! The v0.2 spec lives on as [`legacy`] (the old `reed-filter` binary
-//! keeps working until 0.5.0, decision D14).
+//! One source feeds the v2 spec: the CLI flags (02-cli.md §3), translated
+//! into these types by `reed-cli`; tests construct it directly. There is no
+//! TOML or conf file format (02-cli.md §0).
 
 pub mod cohort;
-pub mod compat;
 pub mod mask;
 pub mod predicate;
 pub mod recompute;
@@ -57,6 +51,18 @@ pub struct SiteRulesV2 {
     /// Keep only these variant classes (`snv | mnv | indel | symbolic | ref`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variant_class: Vec<String>,
+    /// `-i` expressions that do not read genotype-derived quantities
+    /// (02-cli.md §4): the record must satisfy every one of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    /// `-e` expressions that do not read genotype-derived quantities: a
+    /// record satisfying any of them is dropped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    /// Minimum ALT allele count (`0` = off) — bcftools' `-m` counts all
+    /// alleles, so `-m 2` becomes `min_alt_alleles = 1`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub min_alt_alleles: u32,
     /// Maximum ALT allele count (`0`/absent = unlimited).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub max_alt_alleles: u32,
@@ -98,6 +104,13 @@ pub struct GenotypeRules {
 /// Post-mask site rules (`[site_after_mask]`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TailRules {
+    /// `-i` expressions that read genotype-derived quantities (evaluated
+    /// after the mask stage, 02-cli.md §4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    /// `-e` expressions that read genotype-derived quantities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
     /// Site missing-rate cap (denominator: kept samples).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_missing: Option<f64>,
@@ -167,13 +180,4 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
-impl FilterSpecV2 {
-    /// Parses the TOML form.
-    ///
-    /// # Errors
-    ///
-    /// [`crate::FilterError::Spec`] on invalid TOML or an invalid schema.
-    pub fn from_toml_str(text: &str) -> Result<Self, crate::FilterError> {
-        toml::from_str(text).map_err(|e| crate::FilterError::Spec(format!("invalid TOML: {e}")))
-    }
-}
+

@@ -26,7 +26,6 @@ use reed_filter::eval::mask::eval_mask;
 use reed_filter::eval::tail::eval_tail;
 use reed_filter::funnel::{FilterReport, FunnelPartial};
 use reed_filter::plan::{ExecStrategy, FilterPlan, HeadRule};
-use reed_filter::spec::compat::from_gold_conf;
 use reed_filter::spec::{CohortRule as CohortRuleV2, FilterSpecV2};
 use reed_filter::FilterError;
 use reed_io::bgzf::block::EOF_BLOCK;
@@ -68,6 +67,9 @@ pub struct FilterOptions {
     pub quiet: bool,
     /// Write the JSON report here.
     pub report_json: Option<PathBuf>,
+    /// Sample lists naming samples absent from the header only warn
+    /// (bcftools `--force-samples`).
+    pub force_samples: bool,
 }
 
 fn io_err(e: reed_io::error::IoError) -> FilterError {
@@ -142,12 +144,19 @@ pub fn run_filter(
             };
             build_keep(keep_vec, &header, &mut plan)?
         }
-        Some(CohortRuleV2::KeepList(path)) => {
-            build_keep(keep_list_from_file(Path::new(path), &header, true)?, &header, &mut plan)?
+        Some(CohortRuleV2::KeepList(path)) => build_keep(
+            keep_list_from_file(Path::new(path), &header, true, opts.force_samples)?,
+            &header,
+            &mut plan,
+        )?,
+        Some(CohortRuleV2::KeepNames(names)) => {
+            build_keep(keep_list_from_names(names, &header, opts.force_samples)?, &header, &mut plan)?
         }
-        Some(CohortRuleV2::RemoveList(path)) => {
-            build_keep(keep_list_from_file(Path::new(path), &header, false)?, &header, &mut plan)?
-        }
+        Some(CohortRuleV2::RemoveList(path)) => build_keep(
+            keep_list_from_file(Path::new(path), &header, false, opts.force_samples)?,
+            &header,
+            &mut plan,
+        )?,
     };
     let n_samples_out = keep.iter().filter(|&&k| k).count();
     let subset = n_samples_out < n_samples_in;
@@ -414,25 +423,52 @@ fn build_keep(
     Ok((Arc::from(keep), mask))
 }
 
-/// Reads a keep/remove list (one sample per line, `#` comments).
-fn keep_list_from_file(path: &Path, header: &vcf::Header, keep_mode: bool) -> Result<Vec<bool>, FilterError> {
+/// Reads a keep/remove list (one sample per line, `#` comments). Unknown
+/// samples are an error unless `force` (bcftools `--force-samples`).
+fn keep_list_from_file(
+    path: &Path,
+    header: &vcf::Header,
+    keep_mode: bool,
+    force: bool,
+) -> Result<Vec<bool>, FilterError> {
     let text = std::fs::read_to_string(path).map_err(FilterError::from)?;
-    let mut keep = vec![!keep_mode; header.sample_names().len()];
+    let names: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    keep_list_from_names(&names, header, force).map(|mut keep| {
+        if !keep_mode {
+            for k in &mut keep {
+                *k = !*k;
+            }
+        }
+        keep
+    })
+}
+
+/// Builds the keep mask from an inline sample list.
+fn keep_list_from_names(
+    names: &[String],
+    header: &vcf::Header,
+    force: bool,
+) -> Result<Vec<bool>, FilterError> {
     let index: HashMap<&str, usize> = header
         .sample_names()
         .iter()
         .enumerate()
         .map(|(i, name)| (name.as_str(), i))
         .collect();
-    for line in text.lines() {
-        let name = line.trim();
-        if name.is_empty() || name.starts_with('#') {
-            continue;
+    let mut keep = vec![false; header.sample_names().len()];
+    for name in names {
+        match index.get(name.as_str()) {
+            Some(&i) => keep[i] = true,
+            None if force => eprintln!("reed filter: warning: sample {name:?} is not in the header"),
+            None => {
+                return Err(FilterError::Spec(format!("sample {name:?} is not in the header")))
+            }
         }
-        let i = *index
-            .get(name)
-            .ok_or_else(|| FilterError::Spec(format!("sample {name:?} is not in the header")))?;
-        keep[i] = keep_mode;
     }
     Ok(keep)
 }
@@ -832,7 +868,17 @@ impl FilterJob {
         let _ = masked_any;
 
         // ---- tail stage ----
-        if !eval_tail(&scratch.counts, self.n_samples_out, &plan.tail, &mut scratch.funnel.tail_hits) {
+        let tail_values = reed_filter::expr::SiteValues::from_line(
+            &lr,
+            pos1,
+            Some(reed_filter::expr::GtCounts {
+                ac: scratch.counts.ac,
+                an: scratch.counts.an,
+                n_missing: scratch.counts.n_missing,
+                n_samples: self.n_samples_out as u64,
+            }),
+        );
+        if !eval_tail(&tail_values, &scratch.counts, self.n_samples_out, &plan.tail, &mut scratch.funnel.tail_hits) {
             scratch.funnel.n_input += 1;
             return Ok(());
         }
@@ -1105,17 +1151,6 @@ fn eprint_report(report: &FilterReport) {
         report.n_input_records, report.n_output_records,
         report.n_samples_out, report.n_samples_in, report.strategy, report.elapsed_secs);
 }
-
-/// Reads a v2 spec from a TOML file.
-///
-/// # Errors
-///
-/// [`FilterError`] when the file cannot be read or parsed.
-pub fn read_spec_toml(path: &Path) -> Result<FilterSpecV2, FilterError> {
-    let text = std::fs::read_to_string(path).map_err(FilterError::from)?;
-    FilterSpecV2::from_toml_str(&text)
-}
-
 
 // ------------------------------------------------------------ SketchThenEmit
 
@@ -1496,7 +1531,13 @@ fn mid_stage(
                 het: c.het,
                 hom_alt: c.hom_alt,
             };
-            if eval_tail(&counts, n_samples_out, &plan.tail, &mut funnel.tail_hits) {
+            let tail_values = reed_filter::expr::SiteValues::from_counts(reed_filter::expr::GtCounts {
+                ac: counts.ac,
+                an: counts.an,
+                n_missing: counts.n_missing,
+                n_samples: n_samples_out as u64,
+            });
+            if eval_tail(&tail_values, &counts, n_samples_out, &plan.tail, &mut funnel.tail_hits) {
                 survivor_bits[s / 64] |= 1 << (s % 64);
                 let mut infos = Vec::new();
                 fill_info_set(&counts, &plan.recompute, &mut infos);
