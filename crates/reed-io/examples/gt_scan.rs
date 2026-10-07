@@ -15,9 +15,9 @@ use crossbeam_channel::bounded;
 use reed_core::genotype::{GenotypePolicies, PlaneBlock, PolicyCounters};
 use reed_io::chunk::bgzf::BgzfChunkReader;
 use reed_io::chunk::inflate_chunk;
-use reed_io::vcf::fixed::parse_pos1;
+use reed_io::vcf::genotype_scan::GenotypeScanner;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::sample_scan::SampleScanner;
+use reed_io::vcf::site::SiteView;
 use reed_io::Locus;
 
 #[allow(clippy::too_many_lines)]
@@ -49,7 +49,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         t_header
     );
 
-    let policies = GenotypePolicies::default();
+    let policies = GenotypePolicies {
+        ploidy: reed_core::genotype::PloidyPolicy::HaploidAsHalfCall,
+        multiallelic: reed_core::genotype::MultiallelicPolicy::CollapseAlt,
+        ..GenotypePolicies::default()
+    };
     let (chunk_tx, chunk_rx) = bounded::<reed_io::chunk::ChunkBytes>(2 * n_workers);
     let (result_tx, result_rx) =
         bounded::<ChunkResult>(2 * n_workers);
@@ -77,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 move || {
                     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
                     let mut scratch = Vec::new();
-                    let mut scanner = SampleScanner::new(&[]);
+                    let mut scanner = GenotypeScanner::new(n_samples, &[], &[], policies);
                     let mut planes = PlaneBlock::new(0, n_samples, false);
                     let mut counters = PolicyCounters::default();
                     while let Ok(chunk) = chunk_rx.recv() {
@@ -88,7 +92,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             &mut scanner,
                             &mut planes,
                             &mut counters,
-                            &policies,
                         );
                         let out = match result {
                             Ok(out) => out,
@@ -118,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         partials.sort_by_key(|p| p.chunk_id);
         let mut n_records = 0_u64;
         let mut fragment: Option<Vec<u8>> = None;
-        let mut seam_scanner = SampleScanner::new(&[]);
+        let mut seam_scanner = GenotypeScanner::new(n_samples, &[], &[], policies);
         let mut seam_planes = PlaneBlock::new(1, n_samples, false);
         let mut seam_counters = PolicyCounters::default();
         for partial in &partials {
@@ -131,7 +134,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         &mut seam_scanner,
                         &mut seam_planes,
                         &mut seam_counters,
-                        &policies,
                     )?;
                     n_records += 1;
                 } else {
@@ -186,10 +188,9 @@ fn scan_chunk(
     chunk: &reed_io::chunk::ChunkBytes,
     inflater: &mut reed_io::bgzf::inflate::Inflater,
     scratch: &mut Vec<u8>,
-    scanner: &mut SampleScanner,
+    scanner: &mut GenotypeScanner,
     planes: &mut PlaneBlock,
     counters: &mut PolicyCounters,
-    policies: &GenotypePolicies,
 ) -> Result<ChunkPartial, reed_io::IoError> {
     let view = inflate_chunk(chunk, inflater, scratch)?;
     planes.resize_sites(2_000);
@@ -203,15 +204,12 @@ fn scan_chunk(
             locus: Locus { contig_name: "?".into(), pos1: 0 },
             reason: "fewer than 9 tabs in a record line",
         })?;
-        let locus = reed_io::Locus {
-            contig_name: String::from_utf8_lossy(line.chrom()).into_owned(),
-            pos1: 0,
-        };
-        let pos1 = parse_pos1(line.pos_text(), &locus)?;
+        let site = SiteView::parse(&line)?;
         if site_idx >= planes.n_sites() {
             planes.resize_sites(planes.n_sites() * 2 + 1);
         }
-        scanner.scan_record(&line, site_idx, pos1, planes, &mut [], policies, counters)?;
+        let out = scanner.scan(&line, &site, counters)?;
+        planes.push_codes(site_idx, out.codes);
         site_idx += 1;
         n_records += 1;
     }
@@ -225,20 +223,17 @@ fn scan_chunk(
 
 fn process_seam_line(
     seam: &[u8],
-    scanner: &mut SampleScanner,
+    scanner: &mut GenotypeScanner,
     planes: &mut PlaneBlock,
     counters: &mut PolicyCounters,
-    policies: &GenotypePolicies,
 ) -> Result<(), reed_io::IoError> {
     planes.resize_sites(1);
     let line = LineRef::parse(seam).ok_or_else(|| reed_io::IoError::MalformedRecord {
         locus: reed_io::Locus { contig_name: "seam".into(), pos1: 0 },
         reason: "fewer than 9 tabs in a seam record",
     })?;
-    let locus = reed_io::Locus {
-        contig_name: String::from_utf8_lossy(line.chrom()).into_owned(),
-        pos1: 0,
-    };
-    let pos1 = parse_pos1(line.pos_text(), &locus)?;
-    scanner.scan_record(&line, 0, pos1, planes, &mut [], policies, counters)
+    let site = SiteView::parse(&line)?;
+    let out = scanner.scan(&line, &site, counters)?;
+    planes.push_codes(0, out.codes);
+    Ok(())
 }

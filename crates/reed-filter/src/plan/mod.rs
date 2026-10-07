@@ -104,6 +104,8 @@ pub struct MaskRule {
     pub on_missing: OnMissing,
     /// Position of this rule's field in `int_fields` (the scan order).
     pub int_column: usize,
+    /// Position in `float_fields` when the header types the field Float.
+    pub float_column: Option<usize>,
 }
 
 /// A compiled post-mask rule.
@@ -170,6 +172,13 @@ pub struct FilterPlan {
     pub strategy: ExecStrategy,
     /// FORMAT fields the mask needs scanned, in scan order.
     pub int_fields: Vec<Vec<u8>>,
+    /// Float-typed FORMAT fields the mask needs scanned, in scan order (the
+    /// decoder types its columns; Float-typed rules read these).
+    pub float_fields: Vec<Vec<u8>>,
+    /// Decode policies the scanner executes (ploidy from the spec; ALT
+    /// indices above 1 always collapse, counted, because the site-level
+    /// `multiallelic` policy is the biallelic gate below).
+    pub policies: reed_core::genotype::GenotypePolicies,
     /// Stale INFO tags (bytes for the editor).
     pub stale_tags: Vec<Vec<u8>>,
     /// Recompute flags.
@@ -304,12 +313,14 @@ pub fn compile(
     // ---- mask rules ----
     let mut mask = Vec::new();
     let mut int_fields: Vec<Vec<u8>> = Vec::new();
+    let mut float_fields: Vec<Vec<u8>> = Vec::new();
     for rule in &spec.genotype.mask_if {
         let (ty, _number) = format_defs
             .get(&rule.field)
             .copied()
             .ok_or_else(|| FilterError::Spec(format!("FORMAT field {} is not declared in the header", rule.field)))?;
         validate_numeric(&rule.field, ty)?;
+        let is_float = matches!(ty, format::Type::Float);
         let cmp = crate::spec::predicate::Cmp::parse(&rule.when)?;
         // The mask default is keep (§11.1): an omitted on_missing
         // deserializes to the enum default (Pass) and normalizes to Keep.
@@ -317,14 +328,25 @@ pub fn compile(
             OnMissing::Keep | OnMissing::Pass => OnMissing::Keep,
             OnMissing::Mask | OnMissing::Fail => OnMissing::Mask,
         };
-        let int_column = match int_fields.iter().position(|f| *f == rule.field.as_bytes()) {
+        let column_of = |fields: &mut Vec<Vec<u8>>| match fields.iter().position(|f| *f == rule.field.as_bytes()) {
             Some(i) => i,
             None => {
-                int_fields.push(rule.field.as_bytes().to_vec());
-                int_fields.len() - 1
+                fields.push(rule.field.as_bytes().to_vec());
+                fields.len() - 1
             }
         };
-        mask.push(MaskRule { field: rule.field.as_bytes().to_vec(), cmp, on_missing, int_column });
+        let (int_column, float_column) = if is_float {
+            (0, Some(column_of(&mut float_fields)))
+        } else {
+            (column_of(&mut int_fields), None)
+        };
+        mask.push(MaskRule {
+            field: rule.field.as_bytes().to_vec(),
+            cmp,
+            on_missing,
+            int_column,
+            float_column,
+        });
     }
 
     // ---- tail rules (fixed order §11.2) ----
@@ -425,12 +447,27 @@ pub fn compile(
         &plan_hash,
     );
 
+    let policies = reed_core::genotype::GenotypePolicies {
+        ploidy: match spec.policy.ploidy {
+            crate::spec::PloidyPolicy::RequireDiploid => {
+                reed_core::genotype::PloidyPolicy::RequireDiploid
+            }
+            crate::spec::PloidyPolicy::AllowHaploid => {
+                reed_core::genotype::PloidyPolicy::HaploidAsHalfCall
+            }
+        },
+        multiallelic: reed_core::genotype::MultiallelicPolicy::CollapseAlt,
+        ..reed_core::genotype::GenotypePolicies::default()
+    };
+
     Ok(FilterPlan {
         head,
         mask,
         tail,
         strategy,
         int_fields,
+        float_fields,
+        policies,
         stale_tags,
         recompute,
         ascertainment,

@@ -19,6 +19,9 @@ struct Cli {
     command: Command,
 }
 
+// Clap's derive builds one owned variant per subcommand; the enum is parsed
+// exactly once at startup, so the padding between variants is irrelevant.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Quality-control report (§10): bcftools-stats-compatible output plus
@@ -929,7 +932,7 @@ fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send
         force_samples: *force_samples,
         regions,
     };
-    let report = reed::filter::run_filter(input_path(&input).as_deref(), &spec_v2, &opts)?;
+    let report = reed::filter::run_filter(input_path(input).as_deref(), &spec_v2, &opts)?;
     eprintln!(
         "reed filter: {} -> {} records in {:.1}s",
         report.n_input_records, report.n_output_records, report.elapsed_secs

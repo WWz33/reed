@@ -1,10 +1,11 @@
-//! VCF text fast paths: line column views, fixed-column parsing, INFO
-//! fragment iteration and the single-pass sample-column scanner
-//! (`docs/architecture-spec.md` §6.3–§6.4).
+//! VCF text fast paths: line column views, fixed-column parsing, site views,
+//! INFO fragment iteration, the FORMAT layout cache and the single-pass
+//! genotype scanner (`doc_v2/03-architecture.md` §3).
 
 pub mod fixed;
-pub mod gt;
+pub mod format_layout;
+pub mod genotype_scan;
 pub mod info;
 pub mod line;
 pub mod line_edit;
-pub mod sample_scan;
+pub mod site;

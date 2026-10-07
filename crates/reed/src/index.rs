@@ -268,12 +268,13 @@ pub fn run_index(
                 String::from_utf8_lossy(&chrom)
             )));
         };
-        if let Some((prev_tid, prev_pos1)) = last_pos1 {
-            if prev_tid == tid && pos1 < prev_pos1 {
-                return Err(EngineError::Job(format!(
-                    "{locus}: positions are not ascending (indexing needs sorted input)"
-                )));
-            }
+        if let Some((prev_tid, prev_pos1)) = last_pos1
+            && prev_tid == tid
+            && pos1 < prev_pos1
+        {
+            return Err(EngineError::Job(format!(
+                "{locus}: positions are not ascending (indexing needs sorted input)"
+            )));
         }
         if let Some((p_tid, p_pos1, p_ref_len, p_start)) = pending.take() {
             let name = String::from_utf8_lossy(&contig_names[p_tid as usize]).into_owned();

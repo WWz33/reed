@@ -24,7 +24,8 @@ pub use coord::{Interval0, Interval1, Pos0, Pos1};
 pub use count::{CountTable, SiteGroupCounts};
 pub use error::CoreError;
 pub use genotype::{
-    GenotypePolicies, HalfCallPolicy, MultiallelicPolicy, Ploidy, PloidyPolicy, PolicyCounters,
+    GtCode, GenotypePolicies, HalfCallPolicy, MultiallelicPolicy, Ploidy, PloidyPolicy,
+    PolicyCounters,
 };
 pub use grid::{BinId, BpWindow, RegionSet, SitesWindow, WindowGrid};
 pub use group::{Group, GroupFileOptions, GroupTable};

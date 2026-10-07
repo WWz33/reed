@@ -772,6 +772,7 @@ dependencies = [
  "libdeflater",
  "memchr",
  "noodles",
+ "proptest",
  "reed-core",
  "thiserror",
 ]

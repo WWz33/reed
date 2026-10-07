@@ -27,10 +27,11 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
 use reed_io::chunk::{BgzfChunkSource, ChunkSource};
-use reed_io::vcf::fixed::parse_pos1;
-use reed_io::vcf::gt::tally_gt;
+use reed_core::count::code_has_alt;
+use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PloidyPolicy, PolicyCounters};
+use reed_io::vcf::genotype_scan::GenotypeScanner;
+use reed_io::vcf::site::SiteView;
 use reed_io::vcf::line::LineRef;
-use reed_io::Locus;
 pub use reed_stats::fst::FstKind;
 pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey, StatKind};
@@ -315,15 +316,36 @@ pub struct StatsJob {
     width: u64,
     n_groups: usize,
     gt_groups: Arc<[Option<u32>]>,
+    n_samples: usize,
     seed: Arc<[StatAcc]>,
     /// Declared contig lengths (header + `--contig-lengths`); positions
     /// beyond the declared length are rejected (01-review D8).
     contig_len: Arc<HashMap<Vec<u8>, u64>>,
 }
 
+/// Worker scratch: the group count row, the shared record decoder and its
+/// per-record policy counters.
+#[derive(Default)]
+pub struct StatsScratch {
+    row: Vec<SiteGroupCounts>,
+    scanner: Option<GenotypeScanner>,
+    counters: PolicyCounters,
+}
+
+/// The statistics decode policies: haploid calls are half calls and ALT
+/// indices above 1 collapse onto the single ALT allele (pixy's biallelic
+/// view; multi-allelic records are skipped before the scan anyway).
+fn stats_policies() -> GenotypePolicies {
+    GenotypePolicies {
+        ploidy: PloidyPolicy::HaploidAsHalfCall,
+        multiallelic: MultiallelicPolicy::CollapseAlt,
+        ..GenotypePolicies::default()
+    }
+}
+
 impl ChunkJob for StatsJob {
     type Partial = StatsPartial;
-    type Scratch = Vec<SiteGroupCounts>;
+    type Scratch = StatsScratch;
 
     fn run_chunk(
         &self,
@@ -364,9 +386,9 @@ impl ChunkJob for StatsJob {
 }
 
 impl StatsJob {
-    fn reset_row(&self, row: &mut Vec<SiteGroupCounts>) {
-        row.clear();
-        row.resize(self.n_groups, SiteGroupCounts::default());
+    fn reset_row(&self, scratch: &mut StatsScratch) {
+        scratch.row.clear();
+        scratch.row.resize(self.n_groups, SiteGroupCounts::default());
     }
 
     fn push_line(
@@ -374,12 +396,13 @@ impl StatsJob {
         line: &[u8],
         current: &mut Option<SegmentPartial>,
         partial: &mut StatsPartial,
-        row: &mut [SiteGroupCounts],
+        scratch: &mut StatsScratch,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::Job("record line has fewer than 9 columns".into()));
         };
-        let chrom = lr.chrom();
+        let site = SiteView::parse(&lr).map_err(|err| EngineError::Job(err.to_string()))?;
+        let chrom = site.contig_name;
         match current {
             Some(segment) if segment.contig == chrom => {}
             _ => {
@@ -394,57 +417,47 @@ impl StatsJob {
                 });
             }
         }
-        let locus = |pos1: u64| Locus {
-            contig_name: String::from_utf8_lossy(chrom).into_owned(),
-            pos1,
-        };
-        let pos1 =
-            parse_pos1(lr.pos_text(), &locus(0)).map_err(|err| EngineError::Job(err.to_string()))?;
+        let pos1 = site.pos1;
         let Some(pos0) = pos1.checked_sub(1) else {
-            let here = locus(0);
-            return Err(EngineError::Job(format!("{here}: POS is zero")));
+            return Err(EngineError::Job(format!("{}: POS is zero", site.locus())));
         };
         // Input contract (04-algorithms.md §6): positions ascending within a
         // contig, never beyond the declared length.
-        if let Some(&len) = self.contig_len.get(chrom) {
-            if pos1 > len {
-                return Err(EngineError::Job(
-                    reed_core::CoreError::PositionBeyondContigLength {
-                        contig_name: String::from_utf8_lossy(chrom).into_owned(),
-                        pos1,
-                        len_bp: len,
-                    }
-                    .to_string(),
-                ));
-            }
+        if let Some(&len) = self.contig_len.get(chrom)
+            && pos1 > len
+        {
+            return Err(EngineError::Job(
+                reed_core::CoreError::PositionBeyondContigLength {
+                    contig_name: String::from_utf8_lossy(chrom).into_owned(),
+                    pos1,
+                    len_bp: len,
+                }
+                .to_string(),
+            ));
         }
-        if lr.alts() == b"." {
+        if site.is_invariant() {
             partial.n_no_alt_records += 1;
         }
-        if memchr::memchr(b',', lr.alts()).is_some() {
+        if site.n_alt() > 1 {
             partial.n_multiallelic_skipped += 1;
             return Ok(());
         }
+        let StatsScratch { row, scanner, counters } = scratch;
         for counts in row.iter_mut() {
             *counts = SiteGroupCounts::default();
         }
+        *counters = PolicyCounters::default();
+        let n_samples = self.n_samples;
+        let scanner = scanner
+            .get_or_insert_with(|| GenotypeScanner::new(n_samples, &[], &[], stats_policies()));
+        let out = scanner
+            .scan(&lr, &site, counters)
+            .map_err(|err| EngineError::Job(err.to_string()))?;
         let mut any_alt = false;
-        for (sample_idx, sample) in lr.samples_text().split(|&b| b == b'\t').enumerate() {
-            let Some(t) = tally_gt(sample) else {
-                let here = locus(pos1);
-                return Err(EngineError::Job(format!(
-                    "{here}: GT has more than two alleles"
-                )));
-            };
-            any_alt |= t.n_alt > 0;
+        for (sample_idx, &code) in out.codes.iter().enumerate() {
+            any_alt |= code_has_alt(code);
             if let Some(group) = self.gt_groups.get(sample_idx).copied().flatten() {
-                let counts = &mut row[group as usize];
-                counts.n_ref_alleles += t.n_ref;
-                counts.n_alt_alleles += t.n_alt;
-                counts.n_hom_ref += t.n_hom_ref;
-                counts.n_het += t.n_het;
-                counts.n_hom_alt += t.n_hom_alt;
-                counts.n_half_called += t.n_half;
+                row[group as usize].add_code(code);
             }
         }
         let segment = current
@@ -812,7 +825,8 @@ pub fn run_stats(
     let job = StatsJob {
         width: binning.width(),
         n_groups,
-        gt_groups: request.gt_groups.into(),
+        gt_groups: request.gt_groups.clone().into(),
+        n_samples: request.gt_groups.len(),
         seed: accs.clone().into(),
         contig_len: Arc::clone(&contig_len),
     };

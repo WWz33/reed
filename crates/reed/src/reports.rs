@@ -18,10 +18,9 @@ use reed_core::ChunkId;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
-use reed_io::vcf::fixed::parse_pos1;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::sample_scan::SampleScanner;
-use reed_io::Locus;
+use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
+use reed_io::vcf::site::SiteView;
 use reed_stats::IndividualFAcc;
 
 /// Which reports to write.
@@ -95,15 +94,25 @@ struct ReportJob {
 
 /// Reused per-worker buffers.
 struct ReportScratch {
-    scanner: SampleScanner,
+    scanner: GenotypeScanner,
     planes: PlaneBlock,
-    int_out: Vec<Vec<u32>>,
     counters: PolicyCounters,
     mask: SampleMask,
 }
 
 /// The DP FORMAT column index in the scanner's int output.
 const DP_COLUMN: usize = 0;
+
+impl ReportScratch {
+    fn new(n_samples: usize, policies: GenotypePolicies) -> Self {
+        Self {
+            scanner: GenotypeScanner::new(n_samples, &[b"DP"], &[], policies),
+            planes: PlaneBlock::new(1, n_samples, false),
+            counters: PolicyCounters::default(),
+            mask: SampleMask::all(n_samples),
+        }
+    }
+}
 
 impl ChunkJob for ReportJob {
     type Partial = ReportPartial;
@@ -115,13 +124,7 @@ impl ChunkJob for ReportJob {
         body: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch.get_or_insert_with(|| ReportScratch {
-            scanner: SampleScanner::new(&[b"DP"]),
-            planes: PlaneBlock::new(1, self.n_samples, false),
-            int_out: vec![Vec::new()],
-            counters: PolicyCounters::default(),
-            mask: SampleMask::all(self.n_samples),
-        });
+        let scratch = scratch.get_or_insert_with(|| ReportScratch::new(self.n_samples, self.policies));
         let mut partial = ReportPartial {
             missing: vec![0; self.n_samples],
             individual: Some(IndividualFAcc::new(self.n_samples)),
@@ -143,13 +146,7 @@ impl ChunkJob for ReportJob {
         line: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch.get_or_insert_with(|| ReportScratch {
-            scanner: SampleScanner::new(&[b"DP"]),
-            planes: PlaneBlock::new(1, self.n_samples, false),
-            int_out: vec![Vec::new()],
-            counters: PolicyCounters::default(),
-            mask: SampleMask::all(self.n_samples),
-        });
+        let scratch = scratch.get_or_insert_with(|| ReportScratch::new(self.n_samples, self.policies));
         let mut partial = ReportPartial {
             missing: vec![0; self.n_samples],
             individual: Some(IndividualFAcc::new(self.n_samples)),
@@ -171,25 +168,13 @@ impl ReportJob {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::Job("record line has fewer than 9 columns".into()));
         };
-        let locus = Locus { contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(), pos1: 0 };
-        let pos1 = parse_pos1(lr.pos_text(), &locus).map_err(|e| EngineError::Job(e.to_string()))?;
-        // The scanner appends to `int_out`, so the column buffers reset per
-        // record (the planes are fully overwritten per site).
-        for column in &mut scratch.int_out {
-            column.clear();
-        }
-        scratch
+        let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+        let pos1 = site.pos1;
+        let out = scratch
             .scanner
-            .scan_record(
-                &lr,
-                0,
-                pos1,
-                &mut scratch.planes,
-                &mut scratch.int_out,
-                &self.policies,
-                &mut scratch.counters,
-            )
+            .scan(&lr, &site, &mut scratch.counters)
             .map_err(|e| EngineError::Job(e.to_string()))?;
+        scratch.planes.push_codes(0, out.codes);
 
         let mut counts = SiteGroupCounts::default();
         count_site_group(
@@ -199,15 +184,10 @@ impl ReportJob {
             &mut counts,
         );
 
-        // Per-sample fully-missing genotypes (word planes → one pass per sample).
-        let planes = scratch.planes.site_planes(0);
+        // Per-sample fully-missing genotypes, straight from the codes.
         let mut n_missing = 0_u32;
-        for i in 0..self.n_samples {
-            let word = i / 64;
-            let bit = 1_u64 << (i % 64);
-            let both_missing = planes.slot0_miss.get(word).is_some_and(|w| w & bit != 0)
-                && planes.slot1_miss.get(word).is_some_and(|w| w & bit != 0);
-            if both_missing {
+        for (i, &code) in out.codes.iter().enumerate() {
+            if code.is_fully_missing() {
                 partial.missing[i] += 1;
                 n_missing += 1;
             }
@@ -215,17 +195,13 @@ impl ReportJob {
 
         // vcftools depth: a sample contributes when its genotype is called
         // and the DP value is present.
-        let dp_column = scratch.int_out.get(DP_COLUMN).map(Vec::as_slice).unwrap_or(&[]);
+        let dp_column = out.int_columns.get(DP_COLUMN).map(Vec::as_slice).unwrap_or(&[]);
         let mut site_dp_sum = 0.0_f64;
         let mut site_dp_sq = 0.0_f64;
         let mut site_dp_n = 0_u64;
-        for i in 0..self.n_samples {
-            let word = i / 64;
-            let bit = 1_u64 << (i % 64);
-            let both_missing = planes.slot0_miss.get(word).is_some_and(|w| w & bit != 0)
-                && planes.slot1_miss.get(word).is_some_and(|w| w & bit != 0);
-            let dp = dp_column.get(i).copied().unwrap_or(reed_io::vcf::sample_scan::INT_MISSING);
-            if both_missing || dp == reed_io::vcf::sample_scan::INT_MISSING {
+        for (i, &code) in out.codes.iter().enumerate() {
+            let dp = dp_column.get(i).copied().unwrap_or(INT_MISSING);
+            if code.is_fully_missing() || dp == INT_MISSING {
                 continue;
             }
             let dp = f64::from(dp);
@@ -461,7 +437,7 @@ fn g6(x: f64) -> String {
         return "0".to_string();
     }
     let exponent = x.abs().log10().floor() as i32;
-    let s = if exponent < -4 || exponent >= 6 {
+    let s = if !(-4..6).contains(&exponent) {
         // Rust prints `2.18867e6` / `1.23456e-3`; printf %g prints
         // `2.18867e+06` / `1.23456e-03`.
         let raw = format!("{x:.5e}");

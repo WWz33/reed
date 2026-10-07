@@ -230,6 +230,12 @@ pub enum StatAcc {
     Tajima(TajimaAcc),
 }
 
+/// pixy `_pbs.txt` columns: `(value, no_snps, f_ab, f_ac, f_bc)`.
+pub type PbsColumns = (Option<f64>, u64, (Option<f64>, Option<f64>, Option<f64>));
+
+/// pixy `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev, no_sites)`.
+pub type TajimaColumns = (Option<f64>, Option<f64>, Option<f64>, u64);
+
 impl StatAcc {
     /// Absorbs one site's count row; `all_variant` is the site-wide
     /// "any ALT called" flag (variant/invariant site tallies).
@@ -324,10 +330,7 @@ impl StatAcc {
 
     /// `PREFIX_pbs.txt` columns: `(value, no_snps, f_ab, f_ac, f_bc)`.
     #[must_use]
-    pub fn pbs_columns(
-        &self,
-        kind: &StatKind,
-    ) -> Option<(Option<f64>, u64, (Option<f64>, Option<f64>, Option<f64>))> {
+    pub fn pbs_columns(&self, kind: &StatKind) -> Option<PbsColumns> {
         match (self, kind) {
             (Self::Pbs(acc), StatKind::Pbs { kind, .. }) => {
                 Some((acc.value(*kind), acc.n_sites(), acc.pair_fsts()))
@@ -351,7 +354,7 @@ impl StatAcc {
     /// no_sites)`. The values are `None` where the denominator is undefined
     /// (pixy prints `NA` there); the site count is always present.
     #[must_use]
-    pub fn tajima_columns(&self) -> Option<(Option<f64>, Option<f64>, Option<f64>, u64)> {
+    pub fn tajima_columns(&self) -> Option<TajimaColumns> {
         match self {
             Self::Tajima(acc) => Some((
                 Some(acc.raw_pi()),

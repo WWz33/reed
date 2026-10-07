@@ -1,14 +1,18 @@
-//! Genotype representation: bit planes and explicit decoding policies.
+//! Genotype representation: one-byte codes and explicit decoding policies.
 //!
 //! All consumers (statistics, filtering, QC) share this one decoder so that
 //! half calls, haploid genotypes and multi-allelic sites mean the same thing
 //! everywhere (`docs/architecture-spec.md` §5.4, fixing legacy issue A6).
+//! [`GtCode::from_alleles`] is the only place the policies execute;
+//! [`write_genotype`] is the plane-writing adapter on top of it.
 
+pub mod gt_code;
 pub mod planes;
 pub mod policy;
 
 use crate::error::CoreError;
 
+pub use gt_code::{GtCode, STATE_ALT, STATE_MISSING, STATE_REF};
 pub use planes::{
     PlaneBlock, SitePlanes, N_BASE_PLANES, PLANE_PHASED, PLANE_SLOT0_ALT, PLANE_SLOT0_MISS,
     PLANE_SLOT1_ALT, PLANE_SLOT1_MISS,
@@ -27,7 +31,8 @@ pub enum Ploidy {
     Diploid,
 }
 
-/// Writes one genotype into the planes of `site_idx` for `sample_idx`.
+/// Decodes one genotype and writes it into the planes of `site_idx` for
+/// `sample_idx`.
 ///
 /// `slots` holds the allele index per slot with `None` for a missing slot
 /// (allele `0` = REF, `1..` = ALT). `ploidy` is what the input text showed:
@@ -50,139 +55,9 @@ pub fn write_genotype(
     policies: &GenotypePolicies,
     counters: &mut PolicyCounters,
 ) -> Result<(), CoreError> {
-    match ploidy {
-        Ploidy::Haploid => {
-            let Some(allele) = slots[0] else {
-                // A haploid `.` is a fully missing call; no policy involved.
-                block.set_slot(site_idx, sample_idx, 0, false, true);
-                block.set_slot(site_idx, sample_idx, 1, false, true);
-                block.set_phased(site_idx, sample_idx, phased);
-                return Ok(());
-            };
-            match policies.ploidy {
-                PloidyPolicy::RequireDiploid => Err(CoreError::PolicyRejected(
-                    "haploid genotype under PloidyPolicy::RequireDiploid",
-                )),
-                PloidyPolicy::HaploidAsHomozygous => {
-                    counters.n_haploid_as_homozygous += 1;
-                    let alt = alt_bit(allele, *policies, counters)?;
-                    block.set_slot(site_idx, sample_idx, 0, alt, false);
-                    block.set_slot(site_idx, sample_idx, 1, alt, false);
-                    block.set_phased(site_idx, sample_idx, phased);
-                    Ok(())
-                }
-                PloidyPolicy::HaploidAsHalfCall => {
-                    counters.n_haploid_as_half_call += 1;
-                    write_half_call(
-                        block,
-                        site_idx,
-                        sample_idx,
-                        0,
-                        allele,
-                        phased,
-                        *policies,
-                        counters,
-                    )
-                }
-            }
-        }
-        Ploidy::Diploid => match (slots[0], slots[1]) {
-            (None, None) => {
-                block.set_slot(site_idx, sample_idx, 0, false, true);
-                block.set_slot(site_idx, sample_idx, 1, false, true);
-                block.set_phased(site_idx, sample_idx, phased);
-                Ok(())
-            }
-            (Some(allele), None) => write_half_call(
-                block,
-                site_idx,
-                sample_idx,
-                0,
-                allele,
-                phased,
-                *policies,
-                counters,
-            ),
-            (None, Some(allele)) => write_half_call(
-                block,
-                site_idx,
-                sample_idx,
-                1,
-                allele,
-                phased,
-                *policies,
-                counters,
-            ),
-            (Some(a), Some(b)) => {
-                let alt0 = alt_bit(a, *policies, counters)?;
-                let alt1 = alt_bit(b, *policies, counters)?;
-                block.set_slot(site_idx, sample_idx, 0, alt0, false);
-                block.set_slot(site_idx, sample_idx, 1, alt1, false);
-                block.set_phased(site_idx, sample_idx, phased);
-                Ok(())
-            }
-        },
-    }
-}
-
-/// Handles a diploid genotype with exactly one called slot (and the haploid
-/// genotypes that `PloidyPolicy::HaploidAsHalfCall` routes here).
-//
-// Same rationale as [`write_genotype`]: the parameters are the fields of one
-// half-call genotype plus the policy bundle and counters.
-#[allow(clippy::too_many_arguments)]
-fn write_half_call(
-    block: &mut PlaneBlock,
-    site_idx: usize,
-    sample_idx: usize,
-    called_slot: usize,
-    allele: u16,
-    phased: bool,
-    policies: GenotypePolicies,
-    counters: &mut PolicyCounters,
-) -> Result<(), CoreError> {
-    let missing_slot = 1 - called_slot;
-    match policies.half_call {
-        HalfCallPolicy::TreatAsMissing => {
-            counters.n_half_call_as_missing += 1;
-            block.set_slot(site_idx, sample_idx, 0, false, true);
-            block.set_slot(site_idx, sample_idx, 1, false, true);
-            block.set_phased(site_idx, sample_idx, phased);
-            Ok(())
-        }
-        HalfCallPolicy::AlleleLevel => {
-            let alt = alt_bit(allele, policies, counters)?;
-            block.set_slot(site_idx, sample_idx, called_slot, alt, false);
-            block.set_slot(site_idx, sample_idx, missing_slot, false, true);
-            block.set_phased(site_idx, sample_idx, phased);
-            Ok(())
-        }
-    }
-}
-
-/// Resolves one called allele index to its ALT bit under the multi-allelic
-/// policy (`0` = REF, `1` = ALT, `>= 2` = policy).
-fn alt_bit(
-    allele: u16,
-    policies: GenotypePolicies,
-    counters: &mut PolicyCounters,
-) -> Result<bool, CoreError> {
-    match allele {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => match policies.multiallelic {
-            MultiallelicPolicy::Reject => Err(CoreError::PolicyRejected(
-                "allele index above 1 under MultiallelicPolicy::Reject",
-            )),
-            MultiallelicPolicy::CollapseAlt => {
-                counters.n_multiallelic_collapsed += 1;
-                Ok(true)
-            }
-            MultiallelicPolicy::SplitPerAlt => Err(CoreError::Unimplemented(
-                "MultiallelicPolicy::SplitPerAlt plane sets",
-            )),
-        },
-    }
+    let code = GtCode::from_alleles(slots, ploidy, phased, policies, counters)?;
+    block.set_code(site_idx, sample_idx, code);
+    Ok(())
 }
 
 #[cfg(test)]

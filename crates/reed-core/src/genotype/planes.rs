@@ -147,6 +147,37 @@ impl PlaneBlock {
         write(self, miss_plane, miss);
     }
 
+    /// Writes one decoded genotype into the planes of a site/sample.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `site >= n_sites` or `sample >= n_samples`.
+    pub fn set_code(&mut self, site: usize, sample: usize, code: crate::genotype::GtCode) {
+        for slot in 0..2 {
+            self.set_slot(
+                site,
+                sample,
+                slot,
+                code.slot_alt(slot),
+                code.slot_missing(slot),
+            );
+        }
+        self.set_phased(site, sample, code.phased());
+    }
+
+    /// Writes one record's codes (one per sample, in sample order) into the
+    /// planes of `site` (`docs/architecture-spec.md` §3.3: the one linear
+    /// conversion from codes to bit planes).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `site >= n_sites` or `codes.len() > n_samples`.
+    pub fn push_codes(&mut self, site: usize, codes: &[crate::genotype::GtCode]) {
+        for (sample, &code) in codes.iter().enumerate() {
+            self.set_code(site, sample, code);
+        }
+    }
+
     /// Sets one sample's phased bit for a site; a no-op on non-phased blocks.
     ///
     /// # Panics

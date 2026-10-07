@@ -33,11 +33,11 @@ use reed_io::bgzf::deflate::Deflater;
 use reed_io::chunk::ChunkSource;
 use noodles;
 use reed_io::noodles_vcf as vcf;
-use reed_io::vcf::fixed::parse_pos1;
-use reed_io::Locus;
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan, InfoValueOut};
-use reed_io::vcf::sample_scan::SampleScanner;
+use reed_core::genotype::{GenotypePolicies, PolicyCounters, STATE_ALT, STATE_MISSING};
+use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
+use reed_io::vcf::site::{ContigTable, SiteView};
 
 use crate::index::Indexer;
 // Re-exported so `reed::filter::WriteIndex` keeps working (the type now
@@ -134,7 +134,7 @@ pub fn run_filter(
             let (n_records, counts): (u64, &[u64]) = match &sketch_pass {
                 Some(sketch) => (sketch.n_records, &sketch.cohort_miss),
                 None => {
-                    missing_partial = run_missing_pass(input, n_samples_in, opts)?;
+                    missing_partial = run_missing_pass(input, n_samples_in, plan.policies, opts)?;
                     (missing_partial.n_records, &missing_partial.counts)
                 }
             };
@@ -519,11 +519,12 @@ pub struct MissingPartial {
 /// The GT-only missing-count job (`TwoPassReparse` pass0).
 pub struct MissingJob {
     n_samples: usize,
+    policies: GenotypePolicies,
 }
 
 impl ChunkJob for MissingJob {
     type Partial = MissingPartial;
-    type Scratch = (Option<SampleScanner>, Vec<u64>);
+    type Scratch = (Option<GenotypeScanner>, Vec<u64>, PolicyCounters);
 
     fn run_chunk(
         &self,
@@ -531,8 +532,11 @@ impl ChunkJob for MissingJob {
         body: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let (scanner, miss) = scratch;
-        let scanner = scanner.get_or_insert_with(|| SampleScanner::new(&[]));
+        let (scanner, miss, counters) = scratch;
+        let n_samples = self.n_samples;
+        let scanner = scanner.get_or_insert_with(|| {
+            GenotypeScanner::new(n_samples, &[], &[], self.policies)
+        });
         miss.clear();
         miss.resize(self.n_samples, 0);
         let mut n_records = 0_u64;
@@ -543,64 +547,55 @@ impl ChunkJob for MissingJob {
             let Some(lr) = LineRef::parse(line) else {
                 return Err(EngineError::Job("record line has fewer than 9 columns".into()));
             };
-            let pos1 = parse_pos1(lr.pos_text(), &Locus { contig_name: String::new(), pos1: 0 }).map_err(|e| EngineError::Job(e.to_string()))?;
-            let mut any = false;
-            scanner
-                .scan_fields(&lr, |i, gt, _| {
-                    if let Some(gt) = gt {
-                        if is_fully_missing(gt) {
-                            miss[i] += 1;
-                            any = true;
-                        }
-                    } else {
-                        miss[i] += 1;
-                        any = true;
-                    }
-                })
+            let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+            *counters = PolicyCounters::default();
+            let out = scanner
+                .scan(&lr, &site, counters)
                 .map_err(|e| EngineError::Job(e.to_string()))?;
-            let _ = any;
+            for (i, &code) in out.codes.iter().enumerate() {
+                if code.is_fully_missing() {
+                    miss[i] += 1;
+                }
+            }
             n_records += 1;
-            let _ = pos1;
         }
         Ok(MissingPartial { n_records, counts: miss.clone() })
     }
 
     fn run_seam(&self, _id: ChunkId, line: &[u8], scratch: &mut Self::Scratch) -> Result<Self::Partial, EngineError> {
-        let (scanner, miss) = scratch;
-        let scanner = scanner.get_or_insert_with(|| SampleScanner::new(&[]));
+        let (scanner, miss, counters) = scratch;
+        let n_samples = self.n_samples;
+        let scanner = scanner.get_or_insert_with(|| {
+            GenotypeScanner::new(n_samples, &[], &[], self.policies)
+        });
         miss.clear();
         miss.resize(self.n_samples, 0);
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::Job("seam record has fewer than 9 columns".into()));
         };
-        scanner
-            .scan_fields(&lr, |i, gt, _| {
-                let missing = match gt {
-                    Some(gt) => is_fully_missing(gt),
-                    None => true,
-                };
-                if missing {
-                    miss[i] += 1;
-                }
-            })
+        let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+        *counters = PolicyCounters::default();
+        let out = scanner
+            .scan(&lr, &site, counters)
             .map_err(|e| EngineError::Job(e.to_string()))?;
+        for (i, &code) in out.codes.iter().enumerate() {
+            if code.is_fully_missing() {
+                miss[i] += 1;
+            }
+        }
         Ok(MissingPartial { n_records: 1, counts: miss.clone() })
     }
-}
-
-/// `./.` or `.` (both alleles missing).
-fn is_fully_missing(gt: &[u8]) -> bool {
-    gt.iter().all(|&b| b == b'.' || b == b'/' || b == b'|')
 }
 
 fn run_missing_pass(
     input: Option<&Path>,
     n_samples: usize,
+    policies: GenotypePolicies,
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
     let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
-    let job = MissingJob { n_samples };
+    let job = MissingJob { n_samples, policies };
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
     let sink = SumSink { total: Arc::clone(&total) };
     let abort = reed_engine::abort::abort();
@@ -686,7 +681,11 @@ pub struct FilterJob {
 
 /// Worker scratch (reused across chunks).
 pub struct WorkerScratch {
-    scanner: SampleScanner,
+    scanner: GenotypeScanner,
+    /// Contig table for the record's tid (last-hit cached).
+    contigs: ContigTable,
+    /// Per-record decode policy triggers, folded into the funnel.
+    counters: PolicyCounters,
     head: HeadScratch,
     masked: Bitset,
     mask_values: Vec<Option<f64>>,
@@ -698,7 +697,6 @@ pub struct WorkerScratch {
     blocks: Vec<OutBlock>,
     raw: Vec<u8>,
     deflater: Option<Deflater>,
-    last_contig: (Vec<u8>, u32),
     funnel: FunnelPartial,
 }
 
@@ -752,15 +750,17 @@ impl ChunkJob for FilterJob {
 
 impl FilterJob {
     fn build_scratch(&self) -> WorkerScratch {
+        let int_keys: Vec<&[u8]> = self.plan.int_fields.iter().map(Vec::as_slice).collect();
+        let float_keys: Vec<&[u8]> = self.plan.float_fields.iter().map(Vec::as_slice).collect();
         WorkerScratch {
-            scanner: SampleScanner::new(
-                &self
-                    .plan
-                    .int_fields
-                    .iter()
-                    .map(Vec::as_slice)
-                    .collect::<Vec<_>>(),
+            scanner: GenotypeScanner::new(
+                self.n_samples_in,
+                &int_keys,
+                &float_keys,
+                self.plan.policies,
             ),
+            contigs: ContigTable::new(self.contig_names.iter().cloned()),
+            counters: PolicyCounters::default(),
             head: HeadScratch::new(),
             masked: Bitset::new(self.n_samples_in),
             mask_values: vec![None; self.plan.mask.len()],
@@ -772,7 +772,6 @@ impl FilterJob {
             blocks: Vec::new(),
             raw: Vec::new(),
             deflater: self.compressed.then(|| Deflater::new(i32::from(self.level)).expect("invariant: level")),
-            last_contig: (Vec::new(), 0),
             funnel: FunnelPartial {
                 head_hits: vec![0; self.plan.head.len()],
                 tail_hits: vec![0; self.plan.tail.len()],
@@ -787,8 +786,11 @@ impl FilterJob {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::Job("record line has fewer than 9 columns".into()));
         };
-        let pos1 =
-            parse_pos1(lr.pos_text(), &Locus { contig_name: String::new(), pos1: 0 }).map_err(|e| EngineError::Job(e.to_string()))?;
+        // The contig table is the index's tid space: a record on an
+        // undeclared contig has no addressable tid and must fail loudly.
+        let site = SiteView::parse_declared(&lr, &mut scratch.contigs)
+            .map_err(|e| EngineError::Job(e.to_string()))?;
+        let pos1 = site.pos1;
 
         // ---- head stage (§11.2: order is semantics) ----
         if !eval_head(&lr, pos1, &plan.head, &mut scratch.funnel.head_hits, &mut scratch.head) {
@@ -802,21 +804,40 @@ impl FilterJob {
             scratch.masked.set(bit, false);
         }
         scratch.counts = SiteCounts::default();
+        scratch.counters = PolicyCounters::default();
+        let scan_result = scratch.scanner.scan(&lr, &site, &mut scratch.counters);
+        let out = match scan_result {
+            Ok(out) => out,
+            Err(e) => return Err(EngineError::Job(e.to_string())),
+        };
+        scratch.funnel.policy.add_decode(&scratch.counters);
         let keep = &self.keep;
-        let mut masked_any = false;
         let mask_rules = &plan.mask;
-        let scan_result = scratch.scanner.scan_fields(&lr, |i, gt, ints| {
+        for (i, &code) in out.codes.iter().enumerate() {
             // One observation per mask RULE: rule i reads its own scanned
             // column, so several rules may share one field (DP<5 and
             // DP>100 both read DP).
             for (rule, v) in mask_rules.iter().zip(scratch.mask_values.iter_mut()) {
-                *v = ints
-                    .get(rule.int_column)
-                    .and_then(|raw| raw.and_then(parse_f64_field));
+                *v = match rule.float_column {
+                    Some(j) => out
+                        .float_columns
+                        .get(j)
+                        .and_then(|column| column.get(i))
+                        .copied()
+                        .filter(|x| !x.is_nan())
+                        .map(f64::from),
+                    None => out
+                        .int_columns
+                        .get(rule.int_column)
+                        .and_then(|column| column.get(i))
+                        .copied()
+                        .filter(|&x| x != INT_MISSING)
+                        .map(f64::from),
+                };
             }
             let kept = keep.get(i).copied().unwrap_or(true);
             if !kept {
-                return;
+                continue;
             }
             let hit = eval_mask(&scratch.mask_values, mask_rules);
             if let Some(rule_index) = hit {
@@ -825,51 +846,31 @@ impl FilterJob {
                 // per-rule counters here include already-missing samples).
                 scratch.funnel.mask_hits[rule_index] += 1;
                 scratch.masked.set(i, true);
-                masked_any = true;
             }
-            // Called-ness from the GT text (half-calls are called).
-            let (a, b) = match gt {
-                Some(g) => parse_gt(g),
-                None => (None, None),
-            };
             let masked = hit.is_some();
-            match (a, b) {
-                (None, None) => {
-                    // already missing: not a called→missing transition
-                    scratch.counts.n_missing += 1;
-                }
-                (x, y) => {
-                    if masked {
-                        scratch.funnel.masked_gt += 1;
-                        scratch.counts.n_missing += 1;
-                    } else {
-                        // count_site semantics, inlined
-                        scratch.counts.ns += 1;
-                        match (x, y) {
-                            (Some(x), Some(y)) => {
-                                scratch.counts.an += 2;
-                                let n_alt = u64::from(x > 0) + u64::from(y > 0);
-                                scratch.counts.ac += n_alt;
-                                match n_alt {
-                                    0 => scratch.counts.hom_ref += 1,
-                                    1 => scratch.counts.het += 1,
-                                    _ => scratch.counts.hom_alt += 1,
-                                }
-                            }
-                            (Some(x), None) | (None, Some(x)) => {
-                                scratch.counts.an += 1;
-                                scratch.counts.ac += u64::from(x > 0);
-                            }
-                            (None, None) => unreachable!("handled above"),
-                        }
-                    }
+            if !code.is_called_any() {
+                // already missing: not a called→missing transition
+                scratch.counts.n_missing += 1;
+            } else if masked {
+                scratch.funnel.masked_gt += 1;
+                scratch.counts.n_missing += 1;
+            } else {
+                // count_site semantics, from the decoded slots.
+                let (s0, s1) = (code.slot_state(0), code.slot_state(1));
+                let n_alt = u64::from(s0 == STATE_ALT) + u64::from(s1 == STATE_ALT);
+                let n_miss = u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
+                scratch.counts.ns += 1;
+                scratch.counts.an += 2 - n_miss;
+                scratch.counts.ac += n_alt;
+                match (n_miss, n_alt) {
+                    (0, 0) => scratch.counts.hom_ref += 1,
+                    (0, 1) => scratch.counts.het += 1,
+                    (0, _) => scratch.counts.hom_alt += 1,
+                    // Half-calls feed AN/AC/NS but no genotype class.
+                    _ => {}
                 }
             }
-        });
-        if let Err(e) = scan_result {
-            return Err(EngineError::Job(e.to_string()));
         }
-        let _ = masked_any;
 
         // ---- tail stage ----
         let tail_values = reed_filter::expr::SiteValues::from_line(
@@ -908,8 +909,10 @@ impl FilterJob {
             // a record wider than the 65,280-byte member limit must span
             // blocks instead of corrupting one (htslib behavior). The
             // record's index entry anchors at its start offset.
-            let tid = self.tid_of(lr.chrom(), scratch)?;
-            let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
+            let tid = site
+                .contig
+                .expect("invariant: parse_declared resolved the contig");
+            let ref_len = u32::try_from(site.reference.len()).unwrap_or(1).max(1);
             let uoffset = u32::try_from(scratch.block_buf.len())
                 .expect("invariant: pending block below u32::MAX");
             scratch.records.push((tid, pos1, ref_len, uoffset));
@@ -921,27 +924,6 @@ impl FilterJob {
             scratch.raw.extend_from_slice(&scratch.edit_buf);
         }
         Ok(())
-    }
-
-    fn tid_of(&self, chrom: &[u8], scratch: &mut WorkerScratch) -> Result<u32, EngineError> {
-        if scratch.last_contig.0 == chrom {
-            return Ok(scratch.last_contig.1);
-        }
-        // The contig table is the index's tid space: a record on an
-        // undeclared contig has no addressable tid and must fail loudly.
-        let Some(tid) = self
-            .contig_names
-            .iter()
-            .position(|name| name == chrom)
-            .and_then(|i| u32::try_from(i).ok())
-        else {
-            return Err(EngineError::Job(format!(
-                "{}: contig is not declared in the header",
-                String::from_utf8_lossy(chrom)
-            )));
-        };
-        scratch.last_contig = (chrom.to_vec(), tid);
-        Ok(tid)
     }
 
     /// Deflates one block of at most [`BGZF_BLOCK_SIZE`] bytes. Records that
@@ -988,44 +970,6 @@ fn gt_subfield_index(format_text: &[u8]) -> Option<u8> {
         .split(|&b| b == b':')
         .position(|k| k == b"GT")
         .and_then(|i| u8::try_from(i).ok())
-}
-
-/// Parses a GT subfield: `(allele0, allele1)` with `None` = missing.
-/// `None` alleles beyond two → policy error handled by the caller? The
-/// polyploid case returns `(None, None)` + flag; for M5 the biallelic gate
-/// makes it unreachable in practice.
-fn parse_gt(gt: &[u8]) -> (Option<u16>, Option<u16>) {
-    let mut out = [None, None];
-    let mut seen = 0;
-    for token in gt.split(|&b| b == b'/' || b == b'|') {
-        if seen >= 2 {
-            break;
-        }
-        if token != b"." && !token.is_empty() {
-            let mut v = 0_u16;
-            let ok = token.iter().all(|&b| b.is_ascii_digit());
-            if ok {
-                for &b in token {
-                    v = v.saturating_mul(10).saturating_add(u16::from(b - b'0'));
-                }
-                out[seen] = Some(v);
-            }
-        }
-        seen += 1;
-    }
-    if seen == 1 {
-        // Haploid: normalize to a half-call.
-        let only = out[0];
-        out = [only, None];
-    }
-    (out[0], out[1])
-}
-
-fn parse_f64_field(raw: &[u8]) -> Option<f64> {
-    if raw == b"." || raw.is_empty() {
-        return None;
-    }
-    std::str::from_utf8(raw).ok().and_then(|s| s.parse().ok())
 }
 
 // ---------------------------------------------------------------- sink
@@ -1219,7 +1163,7 @@ pub struct ChunkSketch {
 
 /// Worker scratch of the sketch pass.
 struct SketchScratch {
-    scanner: SampleScanner,
+    scanner: GenotypeScanner,
     head: HeadScratch,
     mask_values: Vec<Option<f64>>,
     p0a: Vec<u64>,
@@ -1228,6 +1172,7 @@ struct SketchScratch {
     p1m: Vec<u64>,
     rule_bits: Vec<Vec<u64>>,
     miss: Vec<u64>,
+    counters: PolicyCounters,
     funnel: FunnelPartial,
 }
 
@@ -1311,8 +1256,11 @@ impl ChunkJob for SketchJob {
 impl SketchJob {
     fn build_scratch(&self) -> SketchScratch {
         SketchScratch {
-            scanner: SampleScanner::new(
+            scanner: GenotypeScanner::new(
+                self.n_samples,
                 &self.plan.int_fields.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+                &self.plan.float_fields.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+                self.plan.policies,
             ),
             head: HeadScratch::new(),
             mask_values: vec![None; self.plan.mask.len()],
@@ -1322,6 +1270,7 @@ impl SketchJob {
             p1m: vec![0; self.w],
             rule_bits: vec![vec![0; self.w]; self.plan.mask.len()],
             miss: vec![0; self.n_samples],
+            counters: PolicyCounters::default(),
             funnel: FunnelPartial {
                 head_hits: vec![0; self.plan.head.len()],
                 tail_hits: vec![0; self.plan.tail.len()],
@@ -1345,8 +1294,8 @@ impl SketchJob {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::Job("record line has fewer than 9 columns".into()));
         };
-        let pos1 = parse_pos1(lr.pos_text(), &Locus { contig_name: String::new(), pos1: 0 })
-            .map_err(|e| EngineError::Job(e.to_string()))?;
+        let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+        let pos1 = site.pos1;
         let passed = eval_head(&lr, pos1, &plan.head, &mut scratch.funnel.head_hits, &mut scratch.head);
         if passed {
             for v in [&mut scratch.p0a, &mut scratch.p0m, &mut scratch.p1a, &mut scratch.p1m] {
@@ -1361,34 +1310,53 @@ impl SketchJob {
         // for head survivors (§11.4 pass0).
         let site_open = passed;
         let mask_rules = &plan.mask;
-        scratch.scanner.scan_fields(&lr, |i, gt, ints| {
-            let (a, b) = gt.map_or((None, None), parse_gt);
-            if a.is_none() && b.is_none()
+        scratch.counters = PolicyCounters::default();
+        let out = scratch.scanner.scan(&lr, &site, &mut scratch.counters)?;
+        scratch.funnel.policy.add_decode(&scratch.counters);
+        for (i, &code) in out.codes.iter().enumerate() {
+            if code.is_fully_missing()
                 && let Some(slot) = scratch.miss.get_mut(i)
             {
                 *slot += 1;
             }
             if !site_open {
-                return;
+                continue;
             }
             let (word, bit) = (i / 64, 1_u64 << (i % 64));
-            match a {
-                Some(x) if x > 0 => scratch.p0a[word] |= bit,
-                Some(_) => {}
-                None => scratch.p0m[word] |= bit,
+            if code.slot_alt(0) {
+                scratch.p0a[word] |= bit;
             }
-            match b {
-                Some(x) if x > 0 => scratch.p1a[word] |= bit,
-                Some(_) => {}
-                None => scratch.p1m[word] |= bit,
+            if code.slot_missing(0) {
+                scratch.p0m[word] |= bit;
+            }
+            if code.slot_alt(1) {
+                scratch.p1a[word] |= bit;
+            }
+            if code.slot_missing(1) {
+                scratch.p1m[word] |= bit;
             }
             for (rule, v) in mask_rules.iter().zip(scratch.mask_values.iter_mut()) {
-                *v = ints.get(rule.int_column).and_then(|raw| raw.and_then(parse_f64_field));
+                *v = match rule.float_column {
+                    Some(j) => out
+                        .float_columns
+                        .get(j)
+                        .and_then(|column| column.get(i))
+                        .copied()
+                        .filter(|x| !x.is_nan())
+                        .map(f64::from),
+                    None => out
+                        .int_columns
+                        .get(rule.int_column)
+                        .and_then(|column| column.get(i))
+                        .copied()
+                        .filter(|&x| x != INT_MISSING)
+                        .map(f64::from),
+                };
             }
             if let Some(rule_index) = eval_mask(&scratch.mask_values, mask_rules) {
                 scratch.rule_bits[rule_index][word] |= bit;
             }
-        })?;
+        }
         if passed {
             fragment.push_site(
                 &[&scratch.p0a, &scratch.p0m, &scratch.p1a, &scratch.p1m],
@@ -1595,7 +1563,7 @@ struct EmitScratch {
     blocks: Vec<OutBlock>,
     raw: Vec<u8>,
     deflater: Option<Deflater>,
-    last_contig: (Vec<u8>, u32),
+    contigs: ContigTable,
     mask_bitset: Bitset,
 }
 
@@ -1678,7 +1646,7 @@ impl EmitJob {
             blocks: Vec::new(),
             raw: Vec::new(),
             deflater: self.compressed.then(|| Deflater::new(i32::from(self.level)).expect("invariant: level")),
-            last_contig: (Vec::new(), 0),
+            contigs: ContigTable::new(self.contig_names.iter().cloned()),
             mask_bitset: Bitset::new(self.n_samples_in),
         }
     }
@@ -1694,8 +1662,9 @@ impl EmitJob {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::Job("survivor line has fewer than 9 columns".into()));
         };
-        let pos1 = parse_pos1(lr.pos_text(), &Locus { contig_name: String::new(), pos1: 0 })
+        let site = SiteView::parse_declared(&lr, &mut scratch.contigs)
             .map_err(|e| EngineError::Job(e.to_string()))?;
+        let pos1 = site.pos1;
         let stale: Vec<&[u8]> = self.plan.stale_tags.iter().map(Vec::as_slice).collect();
         // Refresh the reusable mask bitset from the emit's words.
         for (word, src) in scratch.mask_bitset.words_mut().iter_mut().zip(&emit.mask_words) {
@@ -1714,8 +1683,10 @@ impl EmitJob {
         if self.compressed {
             // Byte-boundary cutting, records may span blocks (as in
             // FilterJob::push_line).
-            let tid = self.tid_of(lr.chrom(), scratch)?;
-            let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
+            let tid = site
+                .contig
+                .expect("invariant: parse_declared resolved the contig");
+            let ref_len = u32::try_from(site.reference.len()).unwrap_or(1).max(1);
             let uoffset = u32::try_from(scratch.block_buf.len())
                 .expect("invariant: pending block below u32::MAX");
             scratch.records.push((tid, pos1, ref_len, uoffset));
@@ -1729,24 +1700,6 @@ impl EmitJob {
         Ok(())
     }
 
-    fn tid_of(&self, chrom: &[u8], scratch: &mut EmitScratch) -> Result<u32, EngineError> {
-        if scratch.last_contig.0 == chrom {
-            return Ok(scratch.last_contig.1);
-        }
-        let Some(tid) = self
-            .contig_names
-            .iter()
-            .position(|name| name == chrom)
-            .and_then(|i| u32::try_from(i).ok())
-        else {
-            return Err(EngineError::Job(format!(
-                "{}: contig is not declared in the header",
-                String::from_utf8_lossy(chrom)
-            )));
-        };
-        scratch.last_contig = (chrom.to_vec(), tid);
-        Ok(tid)
-    }
 
     fn cut_block(&self, scratch: &mut EmitScratch) -> Result<(), EngineError> {
         if scratch.block_buf.is_empty() {

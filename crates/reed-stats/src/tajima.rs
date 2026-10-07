@@ -81,7 +81,7 @@ impl TajimaAcc {
         // np.rint semantics: round half to even, matching pixy's
         // `int(np.rint(total_allele_count / num_sites))`.
         let mean_n = (self.theta.total_allele_count() as f64 / sites as f64).round_ties_even();
-        if !(mean_n >= 2.0) {
+        if mean_n < 2.0 {
             return None;
         }
         let n = usize::try_from(mean_n as u64).unwrap_or(usize::MAX);

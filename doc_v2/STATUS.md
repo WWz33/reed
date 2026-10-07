@@ -87,14 +87,41 @@ R5 未完成：`-t/-T` 流式区域、`-R` 区域文件、`-O b/u`（BCF 编码�
 
 R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF 解码/编码层（现有管道是文本行导向），是 R6 里最大的一块，单独一轮做。
 
+## R2 统一记录解码（完成）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| `GtCode`（03 §3.3） | `reed-core/src/genotype/gt_code.rs`：每样本 1 字节（低 4 位 = 两个槽状态 REF/ALT/缺失，bit4 定相、bit5 原始单倍体），`masked()` 保留 haploid 位；**策略只在 `GtCode::from_alleles` 一处执行**（ploidy / multiallelic / half-call），每次触发放进 `PolicyCounters` | 单元测试（9 种状态、掩码、单倍体三策略、多等位 Reject/CollapseAlt、TreatAsMissing 计数）；`write_genotype` 变为 3 行适配器，其全部旧测试不改语义通过 |
+| `PlaneBlock::set_code` / `push_codes`（03 §3.3） | 代码 → 位平面的唯一线性转换；sketch/报告/示例改走它 | reed-core 既有平面/计数测试全绿 |
+| `FormatLayoutCache`（03 §3.2） | `reed-io/src/vcf/format_layout.rs`：FORMAT → `Layout { gt_index, int_indices, float_indices, last_needed }`，按索引出借（**不再每条记录 clone**），到 64 个不同 FORMAT 自动清空 | 单元测试（索引、缺键、last_needed 早停） |
+| `SiteView` + `ContigTable`（03 §3.2） | `reed-io/src/vcf/site.rs`：POS/REF/ALT/N_ALT/QUAL/FILTER/INFO 零分配视图；CHROM→tid 带上次命中缓存，`parse_declared` 对未声明 contig 报错（D4 语义） | 单元测试；filter 的 tid 解析与索引写出改用同一视图（`tid_of`/`last_contig` 删除） |
+| `GenotypeScanner`（03 §3.4） | `reed-io/src/vcf/genotype_scan.rs`：单遍扫描样本区，输出 `&[GtCode]` + 计划内整数/浮点列（`INT_MISSING` / NaN）+（可选）原始等位下标；**零分配**（缓冲复用、布局不 clone、子字段只切到 `last_needed`、样本列数在同一遍统计）；插入/删除旧 `sample_scan.rs`、`gt.rs`（D10、§3.1「只有一条解码路径」） | 差分测试 `tests/genotype_scan_vs_noodles.rs`（逐记录对 noodles 参考解码）；2000 例 proptest 全量性 + 参考一致性 + 变异文本不 panic（`tests/genotype_scan_fuzz.rs`，替代 60 s fuzz 目标） |
+| 消费者迁移（03 §3.5） | stats（`SiteGroupCounts::add_code` 直方图）、filter（单遍掩码/计数、sketch 位图、reduce 缺失计数、MissingJob 全走 codes）、reports（codes→planes + codes 缺失统计）、qc/summary（`tracking_alleles` 保留逐等位 AC/PSC 语义） | 见下方门 |
+| D13（P0 语义） | 策略真正执行：默认 `require_diploid` 下被调用的单倍体报错（此前被静默截断成半调用）、多倍体报错（此前静默丢第 3 个等位）、非数字等位报错（此前当缺失）；`filter` 报告新增 `policy_counters`（5 个触发的实测计数） | 新 e2e：默认策略拒绝单倍体/多倍体；`allow_haploid` 下 `haploid_as_half_call=1`、`multiallelic_collapsed=1`，记录正文逐字节保留 |
+| D10（P1 性能） | 每条记录 348 次 `Vec` 分配 + `Layout` clone + 额外样本计数扫描全部删除 | 全量 filter user CPU 439 s（R5 门 507 s，−13%）；正文 md5 不变 |
+
+**R2 门（全部通过）**：
+
+1. filter 输出与 R2 之前逐字节相同：全量 3,315,604 → 1,768,759，解压正文 md5 `7aedc59ac7…` 等于 R3 门产物 `/tmp/gate2.filter.vcf.gz`；GT 与 AC/AN/NS 的 bcftools query md5 等于 `gold/out/full/gold.vcf.gz`（与 bcftools 的差异仍只有 INFO 标签顺序，R5 起既有）。
+2. stats TSV 与 R7 产物逐字节相同（`/tmp/popgen_full/reed_full_bypass_{pi,dxy}.txt`），且对 pixy `--bypass_invariant_check` 最大相对误差 0.0（28,470 行）。
+3. `--freq/--hardy/--het/--missing/--depth/--summary` 八个文件与 R2 之前逐字节相同（全量 3,315,604 记录）。
+4. 差分测试对 noodles 通过；proptest 全量性/变异测试通过；`cargo test --workspace` 294 通过 / 0 失败；`cargo clippy --workspace --all-targets` 无 `clippy::all` 错误。
+
+**R2 的既知偏差**：
+
+- 解码策略在 flag CLI 上不可调（`[policy]` 随 TOML 删除）：默认即 `require_diploid` + 位点级双等位门。
+  有单倍体（chrY/线粒体）数据时 filter 现在会报错，需要时再加 `--ploidy` 类开关（plan/spec 层已支持）。
+- 字段类型化：mask 规则按 header 把 Integer 字段读成 `u32`、Float 字段读成 `f32`（此前一律按文本再 parse 成 f64）；
+  整数语义逐字节相同（gold 的 DP/GQ），Float 型 FORMAT 掩码字段的边界比较可能有 1 ulp 差异。
+- 多等位逐等位统计（04 §3 推广）仍待 R7 收尾：本层已把原始等位下标保留（`ScanOutput::alleles`），但 stats 仍在记录级跳过多等位位点。
+
 ## 偏差记录（06-roadmap.md §4.6）
 
 1. **§4.4 类型化 EngineError 暂缓**：45 处 `Job(String)` 全部经 Display 渲染，
    当前无消费者检查 source 链，改动为纯机械 churn。待 R2 统一解码时一并落地。
 2. **spec/compat.rs（--conf）保留**：删除清单把它排在 R5（新参数语言）一起，
    提前删除会中途切断 gold 管线。R5 落地 `run_reed.sh` 翻译后删除。
-3. **reed-io/vcf/gt.rs（tally_gt）保留**：唯一消费者是 stats 驱动，
-   R2 的 GenotypeScanner 落地时删除。
+3. ~~**reed-io/vcf/gt.rs（tally_gt）保留**~~：R2 已删除（`SampleScanner`/`tally_gt`/`parse_gt` 全部下线，见 R2 段）。
 4. **R0 性能数字的环境口径**：输入在 /sri（NFS，共享机器），wall 随页缓存
    状态在 13–42 s 波动；user CPU 时间恒定（filter 8m31s，A/B 对 R0 无回归）。
    results.tsv 中注明口径。
@@ -110,17 +137,13 @@ R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF �
 
 ## 未完成（按 06-roadmap.md §3 顺序）
 
-- **R2** 统一记录解码（GtCode/GenotypeScanner/FormatLayoutCache）：修复 D10、D13
-  （当前数据为二倍体，D13 无实际影响）；`##reed_ascertainment` 与清单门仍在。
-  多等位逐等位计数（04 §3）也依赖这一层。
+- ~~**R2** 统一记录解码~~ → 已完成，见上方「R2 统一记录解码（完成）」。
 - **R4** 输出层模块化（BlockWriter/OrderedOutput 移入 reed-io/src/write）：
   行为已由 R0 的按字节切块 + 跨块索引跟踪实现，模块搬家未做。
-- **R5** CLI 重写：reed-cli crate、`--pi/--dxy/--fst/--theta/--tajima-d/--pbs/--sfs/
-  --freq/--hardy/--het/--missing/--depth/--summary`、`--pop/--window/--step/
-  --variant-only`、bcftools 表达式子集、删除 --spec/--conf/TOML/REED_THREADS。
-- **R6** 输入/输出补全：未压缩 VCF、普通 gzip、BCF 输入；`-r/-R` 区域；BCF 输出。
-- **R7** 统计对齐：按 04 §3 唯一定义重写估计器（pixy 缺失数据处理、多等位推广、
-  窗口网格从 1 起、`--variant-only` 分母补全、不变位点检查）。注意：本机有
-  vcftools/plink2/bcftools，无 pixy/easySFS/scikit-allel，04 §5 对拍表中只有
-  vcftools/plink2 的行可本地执行。
-- **R8** 更多参考实现（LD、f 统计、联合 SFS）。
+- **R5 未完成**：`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、
+  `FMT/` 表达式与下标/正则、`-I/--no-update`、`--max-maf/--max-mac`、`-V`、`--set-gts`。
+- **R6 未完成**：BCF 输入、BCF 输出（`-Ob/-Ou`）。
+- **R7 未完成**：SFS 投影 CLI（`--sfs --proj N`，dadi/fastsimcoal2 文件）、
+  多等位逐等位计数（解码层已保留原始等位下标，stats 仍在记录级跳过多等位位点）。
+- **R8** 更多参考实现：LD（plink2/vcftools 对拍）、Patterson f 统计、联合 SFS
+  的 CLI 出口与 gold 对拍尚未落地（`reed-stats` 内已有 LD / Patterson 累加器）。

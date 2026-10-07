@@ -53,14 +53,44 @@ pub struct FilterReport {
     pub elapsed_secs: f64,
 }
 
-/// Policy trigger counters (§11.5).
+/// Policy trigger counters (§11.5): the decode-level transformations the
+/// scanner applied, mirroring `reed_core::genotype::PolicyCounters`.
+/// Rejections are errors, so they never appear in a written report.
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct PolicyCounters {
-    /// Records rejected for haploid/polyploid calls under
-    /// `require_diploid`.
-    pub ploidy_rejections: u64,
-    /// Records rejected as multiallelic under `reject`.
-    pub multiallelic_rejections: u64,
+    /// Haploid genotypes converted to half calls (`allow_haploid`).
+    pub haploid_as_half_call: u64,
+    /// Haploid genotypes duplicated into homozygous calls.
+    pub haploid_as_homozygous: u64,
+    /// Haploid genotypes zeroed to missing.
+    pub haploid_as_missing: u64,
+    /// Half calls (including haploid-as-half-call) zeroed to missing.
+    pub half_call_as_missing: u64,
+    /// ALT alleles with index > 1 collapsed onto the single ALT bit.
+    pub multiallelic_collapsed: u64,
+}
+
+impl PolicyCounters {
+    /// The counters the decoder produced for one record.
+    #[must_use]
+    pub fn from_decode(c: &reed_core::genotype::PolicyCounters) -> Self {
+        Self {
+            haploid_as_half_call: c.n_haploid_as_half_call,
+            haploid_as_homozygous: c.n_haploid_as_homozygous,
+            haploid_as_missing: c.n_haploid_as_missing,
+            half_call_as_missing: c.n_half_call_as_missing,
+            multiallelic_collapsed: c.n_multiallelic_collapsed,
+        }
+    }
+
+    /// Adds the triggers of one decoded record.
+    pub fn add_decode(&mut self, c: &reed_core::genotype::PolicyCounters) {
+        self.haploid_as_half_call += c.n_haploid_as_half_call;
+        self.haploid_as_homozygous += c.n_haploid_as_homozygous;
+        self.haploid_as_missing += c.n_haploid_as_missing;
+        self.half_call_as_missing += c.n_half_call_as_missing;
+        self.multiallelic_collapsed += c.n_multiallelic_collapsed;
+    }
 }
 
 /// Additive funnel partial (one per chunk; summed in chunk order).
@@ -115,7 +145,10 @@ impl FunnelPartial {
         self.masked_gt += other.masked_gt;
         self.n_input += other.n_input;
         self.n_output += other.n_output;
-        self.policy.ploidy_rejections += other.policy.ploidy_rejections;
-        self.policy.multiallelic_rejections += other.policy.multiallelic_rejections;
+        self.policy.haploid_as_half_call += other.policy.haploid_as_half_call;
+        self.policy.haploid_as_homozygous += other.policy.haploid_as_homozygous;
+        self.policy.haploid_as_missing += other.policy.haploid_as_missing;
+        self.policy.half_call_as_missing += other.policy.half_call_as_missing;
+        self.policy.multiallelic_collapsed += other.policy.multiallelic_collapsed;
     }
 }

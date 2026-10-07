@@ -18,7 +18,11 @@ use reed_io::chunk::{BgzfChunkSource, ChunkSource};
 use reed_io::vcf::fixed::{parse_pos1, parse_qual};
 use reed_io::vcf::info::info_fragments;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::sample_scan::SampleScanner;
+use reed_core::genotype::{
+    GenotypePolicies, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
+};
+use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
+use reed_io::vcf::site::SiteView;
 use reed_io::Locus;
 use reed_qc::report::{acgt, alt_class, is_transition, subst_index, PscAcc, QcReportAcc};
 
@@ -44,13 +48,16 @@ struct QcPartial {
 
 /// Worker scratch: scanner + INFO fragment ranges + per-record allele state.
 struct QcScratch {
-    scanner: SampleScanner,
+    scanner: GenotypeScanner,
     n_samples: usize,
     /// Per-sample allele index pairs of the current record.
     gt_pairs: Vec<[Option<u16>; 2]>,
     /// Per-record per-ALT allele counts and AN (all samples).
     ac: Vec<u64>,
     an: u64,
+    /// Per-record policy triggers (the summary never rejects a record for a
+    /// tolerable policy trigger; `Reject`/`RequireDiploid` still error).
+    counters: PolicyCounters,
 }
 
 impl ChunkJob for QcJob {
@@ -90,11 +97,25 @@ impl ChunkJob for QcJob {
 impl QcJob {
     fn build_scratch(&self) -> QcScratch {
         QcScratch {
-            scanner: SampleScanner::new(&[b"DP"]),
+            // bcftools stats counts multi-allelic AC per allele and treats
+            // haploid calls as half calls, so the decode collapses ALT
+            // indices above 1 while the raw indices stay available below.
+            scanner: GenotypeScanner::new(
+                self.n_samples,
+                &[b"DP"],
+                &[],
+                GenotypePolicies {
+                    ploidy: PloidyPolicy::HaploidAsHalfCall,
+                    multiallelic: MultiallelicPolicy::CollapseAlt,
+                    ..GenotypePolicies::default()
+                },
+            )
+            .tracking_alleles(),
             n_samples: self.n_samples,
             gt_pairs: vec![[None, None]; self.n_samples],
             ac: Vec::new(),
             an: 0,
+            counters: PolicyCounters::default(),
         }
     }
 
@@ -205,8 +226,16 @@ impl QcJob {
         let mut af_counts: Option<(Vec<u64>, u64)> = None;
         let mut n_nonref_samples = 0;
         let mut i_nonref = 0_usize;
-        scratch.scanner.scan_fields(&lr, |i, gt, ints| {
-            let pair = gt.map_or([None, None], parse_gt_pair);
+        scratch.counters = PolicyCounters::default();
+        let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+        let out = scratch
+            .scanner
+            .scan(&lr, &site, &mut scratch.counters)
+            .map_err(|e| EngineError::Job(e.to_string()))?;
+        let raw_alleles = out.alleles.expect("invariant: QcScratch tracks alleles");
+        let dp_column = out.int_columns.first().map(Vec::as_slice).unwrap_or(&[]);
+        for (i, [a, b]) in raw_alleles.as_chunks::<2>().0.iter().enumerate() {
+            let pair = [*a, *b];
             scratch.gt_pairs[i] = pair;
             for allele in pair {
                 match allele {
@@ -272,18 +301,13 @@ impl QcJob {
                 i_nonref = i;
             }
             // Genotype DP (PSC depth + DP section).
-            let dp: Option<u32> = ints
-                .first()
-                .copied()
-                .flatten()
-                .and_then(|raw| std::str::from_utf8(raw).ok())
-                .and_then(|t| t.parse::<u32>().ok());
+            let dp = dp_column.get(i).copied().filter(|&v| v != INT_MISSING);
             if let Some(dp) = dp {
                 acc.dp_genotypes.push(dp);
                 psc.dp_sum += u64::from(dp);
                 psc.dp_n += 1;
             }
-        })?;
+        }
 
         // ---- AF/SiS allele counts (INFO/AC+AN preferred, GT fallback) ----
         let info = lr.info_text();
