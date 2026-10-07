@@ -13,11 +13,15 @@ pub struct RecomputeSpec {
     /// `annotate -x` list by default).
     #[serde(default = "default_drop_stale", skip_serializing_if = "Vec::is_empty")]
     pub drop_stale: Vec<String>,
+    /// bcftools `view -I`: do not update `INFO/AC,INFO/AN` when samples are
+    /// dropped (the update is the default, 02-cli.md §3.5).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_update: bool,
 }
 
 impl Default for RecomputeSpec {
     fn default() -> Self {
-        Self { tags: Vec::new(), drop_stale: default_drop_stale() }
+        Self { tags: Vec::new(), drop_stale: default_drop_stale(), no_update: false }
     }
 }
 
@@ -35,6 +39,7 @@ impl RecomputeSpec {
         Self {
             tags: ["AC", "AN", "NS", "MAF", "HWE"].iter().map(ToString::to_string).collect(),
             drop_stale: default_drop_stale(),
+            no_update: false,
         }
     }
 

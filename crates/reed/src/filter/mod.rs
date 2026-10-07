@@ -171,6 +171,18 @@ pub fn run_filter(
     };
     let n_samples_out = keep.iter().filter(|&&k| k).count();
     let subset = n_samples_out < n_samples_in;
+    // bcftools `view` updates INFO/AC,INFO/AN when samples are dropped; only
+    // masking leaves them stale, like `bcftools filter -S .`
+    // (02-cli.md §3.5). `-I/--no-update` suppresses the update.
+    if subset && !plan.no_update {
+        plan.recompute.ac = true;
+        plan.recompute.an = true;
+        for tag in ["AC", "AN"] {
+            if !plan.stale_tags.iter().any(|t| t == tag.as_bytes()) {
+                plan.stale_tags.push(tag.as_bytes().to_vec());
+            }
+        }
+    }
 
     // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions ----
     let sketch_out: Option<(FunnelPartial, std::collections::HashMap<u64, Arc<ChunkDecision>>)> =

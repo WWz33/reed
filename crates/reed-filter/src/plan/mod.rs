@@ -36,6 +36,8 @@ pub enum HeadRule {
     /// The variant class must be one of these (`snv | mnv | indel |
     /// symbolic | ref`), evaluated with reed-core's `classify_variant`.
     VariantClass(Vec<String>),
+    /// The variant class must not be any of these (bcftools `-V`).
+    ExcludeVariantClass(Vec<String>),
     /// The record's ALT count must be at least this.
     MinAltAlleles(u32),
     /// The record's ALT count must not exceed this.
@@ -65,6 +67,7 @@ impl HeadRule {
         match self {
             Self::Regions { .. } => "site.regions".to_string(),
             Self::VariantClass(_) => "site.variant_class".to_string(),
+            Self::ExcludeVariantClass(_) => "site.exclude_variant_class".to_string(),
             Self::MinAltAlleles(_) => "site.min_alt_alleles".to_string(),
             Self::MaxAltAlleles(_) => "site.max_alt_alleles".to_string(),
             Self::RequireFilter(_) => "site.filter".to_string(),
@@ -124,8 +127,12 @@ pub enum TailRule {
     MaxMissing(f64),
     /// MAF lower bound.
     MinMaf(f64),
+    /// MAF upper bound.
+    MaxMaf(f64),
     /// Minor-allele-count lower bound.
     MinMac(u32),
+    /// Minor-allele-count upper bound.
+    MaxMac(u32),
     /// HWE exact-test p lower bound.
     MinHweP(f64),
 }
@@ -138,7 +145,9 @@ impl TailRule {
             Self::Expr { id, .. } => id.clone(),
             Self::MaxMissing(_) => "after_mask.missing".to_string(),
             Self::MinMaf(_) => "after_mask.maf".to_string(),
+            Self::MaxMaf(_) => "after_mask.max_maf".to_string(),
             Self::MinMac(_) => "after_mask.mac".to_string(),
+            Self::MaxMac(_) => "after_mask.max_mac".to_string(),
             Self::MinHweP(_) => "after_mask.hwe".to_string(),
         }
     }
@@ -183,6 +192,8 @@ pub struct FilterPlan {
     pub stale_tags: Vec<Vec<u8>>,
     /// Recompute flags.
     pub recompute: RecomputeFlags,
+    /// `-I/--no-update`: never add the automatic `AC/AN` update.
+    pub no_update: bool,
     /// The derived ascertainment (cohort filled at runtime, §11.7).
     pub ascertainment: Ascertainment,
     /// Provenance: canonical spec JSON + sha256 + command line.
@@ -221,6 +232,9 @@ pub fn compile(
     }
     if !spec.site.variant_class.is_empty() {
         head.push(HeadRule::VariantClass(spec.site.variant_class.clone()));
+    }
+    if !spec.site.exclude_variant_class.is_empty() {
+        head.push(HeadRule::ExcludeVariantClass(spec.site.exclude_variant_class.clone()));
     }
     if spec.site.min_alt_alleles > 0 {
         head.push(HeadRule::MinAltAlleles(spec.site.min_alt_alleles));
@@ -363,8 +377,17 @@ pub fn compile(
         }
         tail.push(TailRule::MinMaf(m));
     }
+    if let Some(m) = spec.site_after_mask.max_maf {
+        if !(0.0..=0.5).contains(&m) {
+            return Err(FilterError::Spec(format!("max_maf out of range [0,0.5]: {m}")));
+        }
+        tail.push(TailRule::MaxMaf(m));
+    }
     if spec.site_after_mask.min_mac > 0 {
         tail.push(TailRule::MinMac(spec.site_after_mask.min_mac));
+    }
+    if spec.site_after_mask.max_mac > 0 {
+        tail.push(TailRule::MaxMac(spec.site_after_mask.max_mac));
     }
     if let Some(p) = spec.site_after_mask.min_hwe_p {
         if spec.site_after_mask.hwe_mode == crate::spec::HweMode::MidP {
@@ -425,6 +448,7 @@ pub fn compile(
     };
 
     // ---- recompute + stale ----
+    let no_update = spec.recompute.no_update;
     let recompute = RecomputeFlags {
         ac: spec.recompute.wants("AC"),
         an: spec.recompute.wants("AN"),
@@ -441,8 +465,11 @@ pub fn compile(
     let ascertainment = derive_ascertainment(
         has_site_rules,
         &spec.site.variant_class,
+        &spec.site.exclude_variant_class,
         spec.site_after_mask.min_maf,
+        spec.site_after_mask.max_maf,
         spec.site_after_mask.min_mac,
+        spec.site_after_mask.max_mac,
         &mask,
         &plan_hash,
     );
@@ -470,6 +497,7 @@ pub fn compile(
         policies,
         stale_tags,
         recompute,
+        no_update,
         ascertainment,
         provenance,
     })

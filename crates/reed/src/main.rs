@@ -76,6 +76,9 @@ enum Command {
         /// Variant types to keep: snps,mnps,indels,other,ref (bcftools `-v`)
         #[arg(short = 'v', long = "types", value_name = "LIST")]
         types: Option<String>,
+        /// Variant types to drop (bcftools `-V/--exclude-types`)
+        #[arg(short = 'V', long = "exclude-types", value_name = "LIST")]
+        exclude_types: Option<String>,
         /// Keep only SNP sites (`=just-acgt` restricts ALT to A/C/G/T)
         #[arg(long, value_name = "just-acgt", num_args = 0..=1,
               default_missing_value = "just-acgt")]
@@ -111,9 +114,19 @@ enum Command {
         /// Minimum minor allele frequency (after masking)
         #[arg(long, value_name = "FLOAT")]
         maf: Option<f64>,
+        /// Maximum minor allele frequency (after masking)
+        #[arg(long, value_name = "FLOAT")]
+        max_maf: Option<f64>,
         /// Minimum minor allele count (after masking)
         #[arg(long, value_name = "INT")]
         mac: Option<u32>,
+        /// Maximum minor allele count (after masking)
+        #[arg(long, value_name = "INT")]
+        max_mac: Option<u32>,
+        /// Do not update INFO/AC,INFO/AN when samples are dropped
+        /// (bcftools `view -I`; the update is the default)
+        #[arg(short = 'I', long = "no-update")]
+        no_update: bool,
         /// HWE exact-test p lower bound (`P`, optional `midp`)
         #[arg(long, value_name = "P [midp]", num_args = 1..=2)]
         hwe: Vec<String>,
@@ -343,6 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         remove,
         force_samples,
         types,
+        exclude_types,
         snps_only,
         min_alleles,
         max_alleles,
@@ -354,7 +368,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         min_gq,
         geno,
         maf,
+        max_maf,
         mac,
+        max_mac,
+        no_update,
         hwe,
         remove_info,
         fill_tags,
@@ -379,6 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             remove,
             force_samples,
             types,
+            exclude_types,
             snps_only,
             min_alleles,
             max_alleles,
@@ -390,7 +408,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             min_gq,
             geno,
             maf,
+            max_maf,
             mac,
+            max_mac,
+            no_update,
             hwe,
             remove_info,
             fill_tags,
@@ -641,6 +662,7 @@ struct FilterCli {
     remove: Option<String>,
     force_samples: bool,
     types: Option<String>,
+    exclude_types: Option<String>,
     snps_only: Option<String>,
     min_alleles: Option<u32>,
     max_alleles: Option<u32>,
@@ -652,7 +674,10 @@ struct FilterCli {
     min_gq: Option<u32>,
     geno: Option<f64>,
     maf: Option<f64>,
+    max_maf: Option<f64>,
     mac: Option<u32>,
+    max_mac: Option<u32>,
+    no_update: bool,
     hwe: Vec<String>,
     remove_info: Option<String>,
     fill_tags: Option<String>,
@@ -725,17 +750,26 @@ fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, S
     }
 
     // ---- site: variant class / alleles / FILTER ----
+    let variant_class = |token: &str| -> Result<&'static str, String> {
+        Ok(match token.trim() {
+            "snps" | "snp" | "snv" | "snvs" => "snv",
+            "mnps" | "mnp" | "mnv" => "mnv",
+            "indels" | "indel" => "indel",
+            "other" | "symbolic" => "symbolic",
+            "ref" => "ref",
+            other => return Err(format!("unknown variant type {other:?}")),
+        })
+    };
     if let Some(list) = &cli.types {
         for token in list.split(',') {
-            let class = match token.trim() {
-                "snps" | "snp" | "snv" | "snvs" => "snv",
-                "mnps" | "mnp" | "mnv" => "mnv",
-                "indels" | "indel" => "indel",
-                "other" | "symbolic" => "symbolic",
-                "ref" => "ref",
-                other => return Err(format!("unknown variant type {other:?}")),
-            };
-            spec.site.variant_class.push(class.to_string());
+            spec.site.variant_class.push(variant_class(token)?.to_string());
+        }
+    }
+    if let Some(list) = &cli.exclude_types {
+        for token in list.split(',') {
+            spec.site
+                .exclude_variant_class
+                .push(variant_class(token)?.to_string());
         }
     }
     if let Some(modifier) = &cli.snps_only {
@@ -805,9 +839,16 @@ fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, S
     if let Some(m) = cli.maf {
         spec.site_after_mask.min_maf = Some(m);
     }
+    if let Some(m) = cli.max_maf {
+        spec.site_after_mask.max_maf = Some(m);
+    }
     if let Some(m) = cli.mac {
         spec.site_after_mask.min_mac = m;
     }
+    if let Some(m) = cli.max_mac {
+        spec.site_after_mask.max_mac = m;
+    }
+    spec.recompute.no_update = cli.no_update;
     if !cli.hwe.is_empty() {
         let p: f64 = cli.hwe[0]
             .parse()

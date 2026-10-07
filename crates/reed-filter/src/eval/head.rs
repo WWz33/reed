@@ -67,6 +67,14 @@ pub fn eval_head(
                 let class = classify_variant(reference, primary);
                 classes.iter().any(|c| class_matches(class, c))
             }
+            HeadRule::ExcludeVariantClass(classes) => {
+                let primary = match memchr::memchr(b',', alts) {
+                    Some(i) => &alts[..i],
+                    None => alts,
+                };
+                let class = classify_variant(reference, primary);
+                !classes.iter().any(|c| class_matches(class, c))
+            }
             HeadRule::MinAltAlleles(min) => {
                 let n = u32::try_from(alts.iter().filter(|&&b| b == b',').count() + 1)
                     .unwrap_or(u32::MAX);

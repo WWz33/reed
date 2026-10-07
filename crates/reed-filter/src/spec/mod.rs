@@ -51,6 +51,9 @@ pub struct SiteRulesV2 {
     /// Keep only these variant classes (`snv | mnv | indel | symbolic | ref`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variant_class: Vec<String>,
+    /// Drop these variant classes (bcftools `-V/--exclude-types`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_variant_class: Vec<String>,
     /// `-i` expressions that do not read genotype-derived quantities
     /// (02-cli.md §4): the record must satisfy every one of them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -117,9 +120,15 @@ pub struct TailRules {
     /// MAF lower bound (recomputed from GT).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_maf: Option<f64>,
+    /// MAF upper bound (plink2 `--max-maf`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_maf: Option<f64>,
     /// Minor-allele-count lower bound (`0` = off).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub min_mac: u32,
+    /// Minor-allele-count upper bound (`0` = off).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub max_mac: u32,
     /// HWE exact-test p lower bound (`0`/absent = off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_hwe_p: Option<f64>,

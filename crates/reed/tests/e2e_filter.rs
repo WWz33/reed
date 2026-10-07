@@ -657,3 +657,77 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
     assert!(text.contains("\t1/2:30:99"), "multi-allelic text preserved: {text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// R5: the bounds added with the flag set — `-V/--exclude-types`,
+/// `--max-maf`, `--max-mac` — filter the same sites as their mirrors.
+#[test]
+fn exclude_types_and_allele_bounds_are_mirrors() {
+    use reed_filter::spec::SiteRulesV2;
+    let dir_path = write_fixture("bounds", 400);
+    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+
+    let run = |spec: &FilterSpecV2, name: &str| {
+        let out = dir.join(format!("{name}.vcf.gz"));
+        let report =
+            run_filter(Some(&dir_path.as_path()), spec, &options(None, &out)).expect("invariant: run");
+        let text = {
+            use std::io::Read;
+            let mut reader = noodles::bgzf::io::Reader::new(
+                std::fs::File::open(&out).expect("invariant: output"),
+            );
+            let mut s = String::new();
+            reader.read_to_string(&mut s).expect("invariant: read");
+            s
+        };
+        (report.n_output_records, text)
+    };
+
+    let snv_only = FilterSpecV2 {
+        site: SiteRulesV2 { variant_class: vec!["snv".into()], ..SiteRulesV2::default() },
+        ..FilterSpecV2::default()
+    };
+    let exclude_indels = FilterSpecV2 {
+        site: SiteRulesV2 {
+            exclude_variant_class: vec!["indel".into(), "mnv".into()],
+            ..SiteRulesV2::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let (n_snv, _) = run(&snv_only, "snv");
+    let (n_excl, _) = run(&exclude_indels, "excl");
+    assert_eq!(n_snv, n_excl, "-V indels,mnps must keep exactly the SNVs (fixture has no symbolic/ref)");
+
+    // MAF band: [0.1, 0.5] keeps exactly what max_maf leaves.
+    let min_maf = FilterSpecV2 {
+        site_after_mask: reed_filter::spec::TailRules {
+            min_maf: Some(0.1),
+            ..reed_filter::spec::TailRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let with_max = FilterSpecV2 {
+        site_after_mask: reed_filter::spec::TailRules {
+            min_maf: Some(0.1),
+            max_maf: Some(0.5),
+            ..reed_filter::spec::TailRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let (n_min, _) = run(&min_maf, "min");
+    let (n_max, _) = run(&with_max, "max");
+    assert_eq!(n_min, n_max, "MAF <= 0.5 is implied by the fixture's MAF distribution");
+    assert!(n_min < 400, "the MAF floor must drop something: {n_min}");
+
+    // MAC upper bound mirrors the MAF one at 2N = 8 alleles.
+    let max_mac = FilterSpecV2 {
+        site_after_mask: reed_filter::spec::TailRules {
+            min_maf: Some(0.1),
+            max_mac: 4,
+            ..reed_filter::spec::TailRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let (n_mac, _) = run(&max_mac, "mac");
+    assert!(n_mac <= n_max, "MAC <= 4 is a stricter band than MAF <= 0.5");
+    let _ = std::fs::remove_dir_all(&dir);
+}

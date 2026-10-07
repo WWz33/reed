@@ -12,8 +12,11 @@ use reed_core::manifest::v2::{Ascertainment, CohortState, GenotypeState, Invaria
 pub fn derive_ascertainment(
     has_site_rules: bool,
     variant_class: &[String],
+    exclude_variant_class: &[String],
     min_maf: Option<f64>,
+    max_maf: Option<f64>,
     min_mac: u32,
+    max_mac: u32,
     mask_rules: &[crate::plan::MaskRule],
     plan_hash: &str,
 ) -> Ascertainment {
@@ -22,9 +25,12 @@ pub fn derive_ascertainment(
     } else {
         SiteSet::Complete
     };
-    let invariants = if (variant_class.iter().any(|c| c != "ref"))
+    let invariants = if variant_class.iter().any(|c| c != "ref")
+        || exclude_variant_class.iter().any(|c| c != "ref")
         || min_maf.is_some_and(|m| m > 0.0)
+        || max_maf.is_some_and(|m| m < 0.5)
         || min_mac > 0
+        || max_mac > 0
     {
         InvariantSet::Absent
     } else {
