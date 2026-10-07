@@ -45,6 +45,9 @@ enum Command {
         /// needs an index next to the input (bcftools `-r`)
         #[arg(short = 'r', long = "regions", value_name = "LIST")]
         regions: Option<String>,
+        /// Regions to keep, one per line; needs an index (bcftools `-R`)
+        #[arg(short = 'R', long = "regions-file", value_name = "FILE")]
+        regions_file: Option<String>,
         /// Regions to keep, streamed without an index (bcftools `-t`)
         #[arg(short = 't', long = "targets", value_name = "LIST")]
         targets: Option<String>,
@@ -328,6 +331,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Command::Filter {
         input,
         regions,
+        regions_file,
         targets,
         targets_file,
         samples,
@@ -363,6 +367,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return run_filter_cli(FilterCli {
             input,
             regions,
+            regions_file,
             targets,
             targets_file,
             samples,
@@ -624,6 +629,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 struct FilterCli {
     input: String,
     regions: Option<String>,
+    regions_file: Option<String>,
     targets: Option<String>,
     targets_file: Option<String>,
     samples: Option<String>,
@@ -702,6 +708,10 @@ fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, S
     };
     if let Some(list) = &cli.regions {
         add_regions(list, true)?;
+    }
+    if let Some(path) = &cli.regions_file {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
     }
     if let Some(list) = &cli.targets {
         add_regions(list, true)?;
@@ -885,7 +895,18 @@ fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send
         }
     };
     let mut regions = Vec::new();
-    if let Some(list) = &cli.regions {
+    let indexed_list = match (&cli.regions, &cli.regions_file) {
+        (Some(list), _) => Some(list.clone()),
+        (None, Some(path)) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("{path}: {e}"))?
+                .lines()
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        (None, None) => None,
+    };
+    if let Some(list) = &indexed_list {
         for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             let parsed = reed_filter::spec::Region::parse(token)
                 .map_err(|e| format!("invalid region {token:?}: {e}"))?;

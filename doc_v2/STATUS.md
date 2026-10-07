@@ -78,6 +78,7 @@ R5 未完成：`-t/-T` 流式区域、`-R` 区域文件、`-O b/u`（BCF 编码�
 
 | 项 | 内容 | 验证 |
 |---|---|---|
+| `-R/--regions-file`（02-cli §2） | 与 `-r` 同一路径，区域从文件逐行读（每行与 `-r` 的写法相同） | reed 内 `-R` ≡ `-r`（同区域列表逐字节一致）；注：bcftools 的 `-R` 文件语法不同（本机实测它对 `CHROM:START-END` 行返回 0），故对拍走 `-r` 路径 |
 | `-t/--targets`、`-T/--targets-file`（02-cli §2） | 流式区域：复用 spec 的 `targets` 谓词，不需要索引；`-T` 每行一个区域，`^` 前缀表示排除 | 与 `bcftools view -t` 位点集合一致（368 条）；`-T` 含 `^` 排除用例 24 条 |
 | 普通 VCF 输入 | `PlainChunkSource`：按 1 MiB 文本切块（`ChunkBytes.plain`，`inflate_chunk` 直通），接缝规则与 BGZF 相同 | 与 BGZF 输出逐字节一致（回归测试 `plain_and_bgzf_inputs_agree`） |
 | 普通 gzip 输入 | `PlainChunkSource::open_gzip`（flate2 串行解压，读入时警告"非 BGZF，解压串行"） | 三种格式 + bcftools 参照同一 md5 |
