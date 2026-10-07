@@ -40,47 +40,13 @@ use reed_io::vcf::line::LineRef;
 use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan, InfoValueOut};
 use reed_io::vcf::sample_scan::SampleScanner;
 
+use crate::index::Indexer;
+// Re-exported so `reed::filter::WriteIndex` keeps working (the type now
+// lives with the `reed index` command it is shared with).
+pub use crate::index::WriteIndex;
+
 /// BGZF maximum uncompressed payload per block (htslib `BGZF_BLOCK_SIZE`).
 const BGZF_BLOCK_SIZE: usize = 65_280;
-
-/// TBI coordinates are limited to 29 bits (htslib); anything wider needs CSI.
-const TBI_MAX_POS1: u64 = (1 << 29) - 1;
-
-/// Which index flavor `--write-index` produces. CSI is the default (bcftools
-/// parity): it has no contig-count or 512 Mb coordinate ceiling.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum WriteIndex {
-    /// No index.
-    None,
-    /// Coordinate-sorted index (`.csi`), the default.
-    #[default]
-    Csi,
-    /// Tabix index (`.tbi`); positions ≥ 2^29 are refused.
-    Tbi,
-}
-
-impl WriteIndex {
-    /// Parses the optional `--write-index[=csi|tbi]` value.
-    ///
-    /// # Errors
-    ///
-    /// On an unknown flavor name.
-    pub fn parse(value: Option<&str>) -> Result<Self, FilterError> {
-        match value {
-            None | Some("") | Some("csi") => Ok(Self::Csi),
-            Some("tbi") => Ok(Self::Tbi),
-            Some(other) => Err(FilterError::Spec(format!(
-                "unknown index flavor {other:?} (expected csi or tbi)"
-            ))),
-        }
-    }
-
-    /// Whether an index is requested at all.
-    #[must_use]
-    pub const fn is_some(self) -> bool {
-        !matches!(self, Self::None)
-    }
-}
 
 /// Run options.
 #[derive(Clone, Debug, Default)]
@@ -1013,57 +979,6 @@ fn parse_f64_field(raw: &[u8]) -> Option<f64> {
 }
 
 // ---------------------------------------------------------------- sink
-
-/// The index writer, per flavor. CSI is keyed by header contig id; TBI maps
-/// names itself and is limited to 29-bit coordinates.
-enum Indexer {
-    Csi(Box<noodles::csi::binning_index::indexer::Indexer<noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex>>, usize),
-    Tbi(Box<noodles::tabix::index::Indexer>),
-}
-
-impl Indexer {
-    fn add(
-        &mut self,
-        name: &str,
-        tid: u32,
-        pos1: u64,
-        ref_len: u32,
-        voff_start: u64,
-        voff_end: u64,
-    ) -> Result<(), EngineError> {
-        use noodles::bgzf::VirtualPosition;
-        use noodles::core::Position as CorePosition;
-        use noodles::csi::binning_index::index::reference_sequence::bin::Chunk;
-        let chunk = Chunk::new(
-            VirtualPosition::from(voff_start),
-            VirtualPosition::from(voff_end),
-        );
-        let start = usize::try_from(pos1)
-            .ok()
-            .and_then(|p| CorePosition::try_from(p).ok())
-            .ok_or_else(|| EngineError::Job(format!("index position {pos1} out of range")))?;
-        let end_pos1 = pos1.saturating_add(u64::from(ref_len.saturating_sub(1)));
-        let end = usize::try_from(end_pos1)
-            .ok()
-            .and_then(|p| CorePosition::try_from(p).ok())
-            .ok_or_else(|| EngineError::Job(format!("index end {end_pos1} out of range")))?;
-        match self {
-            Indexer::Csi(indexer, _) => indexer
-                .add_record(Some((usize::try_from(tid).expect("invariant: tid < u32::MAX"), start, end, true)), chunk)
-                .map_err(|e| EngineError::Job(format!("index add_record: {e}"))),
-            Indexer::Tbi(indexer) => {
-                if end_pos1 > TBI_MAX_POS1 {
-                    return Err(EngineError::Job(format!(
-                        "{end_pos1}: TBI coordinates are limited to {TBI_MAX_POS1}; use CSI (--write-index=csi)"
-                    )));
-                }
-                indexer
-                    .add_record(name, start, end, chunk)
-                    .map_err(|e| EngineError::Job(format!("index add_record: {e}")))
-            }
-        }
-    }
-}
 
 /// The ordered output sink: appends worker blocks in chunk order, tracks
 /// virtual offsets, and feeds the indexer while writing (§6.6).

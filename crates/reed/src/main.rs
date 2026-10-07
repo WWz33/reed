@@ -68,6 +68,19 @@ enum Command {
         threads: Option<usize>,
     },
 
+    /// Build a CSI (default) or TBI index for an existing BGZF VCF, like
+    /// `bcftools index`.
+    Index {
+        /// Input BGZF VCF (.vcf.gz)
+        input: String,
+        /// Index flavor (default csi)
+        #[arg(short = 't', long = "type", value_name = "csi|tbi", default_value = "csi")]
+        index_type: String,
+        /// Write the index here instead of next to the input
+        #[arg(short, long)]
+        out: Option<String>,
+    },
+
     /// Windowed statistics (π, dxy, Fst, PBS, SFS, θ_W, Tajima's D) over a
     /// BGZF VCF, as additive accumulators with byte-deterministic output.
     Stats {
@@ -194,11 +207,9 @@ fn input_path(arg: &str) -> Option<PathBuf> {
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let command = Cli::parse().command;
     if let Command::Qc { input, json, out, threads } = &command {
-        let threads = threads
-            .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))
-            .unwrap_or_else(|| {
-                std::thread::available_parallelism().expect("invariant: parallelism").get()
-            });
+        let threads = threads.unwrap_or_else(|| {
+            std::thread::available_parallelism().expect("invariant: parallelism").get()
+        });
         let started = std::time::Instant::now();
         let outcome = reed::qc_report::run_qc_report(
             input_path(input).as_deref(),
@@ -215,6 +226,26 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "reed qc: {} records, {} samples in {:.1}s",
             outcome.report.summary.n_records,
             outcome.report.n_samples,
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(());
+    }
+    if let Command::Index { input, index_type, out } = &command {
+        let flavor = match index_type.as_str() {
+            "csi" => reed::index::WriteIndex::Csi,
+            "tbi" => reed::index::WriteIndex::Tbi,
+            other => return Err(format!("unknown index type {other:?} (expected csi or tbi)").into()),
+        };
+        let started = std::time::Instant::now();
+        let outcome = reed::index::run_index(
+            Path::new(input),
+            flavor,
+            out.as_deref().map(Path::new),
+        )?;
+        eprintln!(
+            "reed index: {} records -> {} in {:.1}s",
+            outcome.n_records,
+            outcome.path.display(),
             started.elapsed().as_secs_f64()
         );
         return Ok(());
@@ -298,11 +329,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
-    let threads = threads
-        .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism().expect("invariant: parallelism").get()
-        });
+    let threads = threads.unwrap_or_else(|| {
+        std::thread::available_parallelism().expect("invariant: parallelism").get()
+    });
     let budget = ThreadBudget { threads, mem: MemBudget::default_half_memory() };
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
@@ -504,11 +533,9 @@ fn run_filter_cli(
         })
         .transpose()?;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-    let threads = threads
-        .or_else(|| std::env::var("REED_THREADS").ok().and_then(|t| t.parse().ok()))
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism().expect("invariant: parallelism").get()
-        });
+    let threads = threads.unwrap_or_else(|| {
+        std::thread::available_parallelism().expect("invariant: parallelism").get()
+    });
     let opts = reed::filter::FilterOptions {
         threads,
         output: out.map(PathBuf::from),

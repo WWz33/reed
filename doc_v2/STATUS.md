@@ -49,6 +49,16 @@ scikit-allel 1.3.13 从仓库上级目录源码安装（`pip install -e pixy sci
    按整窗计数，把 contig 末端之外的位点也算作单态。vcftools 对比排除每 contig 的末窗
    （每群体 20 行）并打印排除数。D7 要求 header 必须有 contig 长度正是为这条截断规则。
 
+### R5（部分：`reed index`、去环境变量）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| `reed index`（02-cli §1、§2） | `-t csi\|tbi`（默认 csi）、`-o` 指定路径；顺序扫描按虚拟偏移建块，chunk = [本记录起点, 下一条记录起点)；CSI 用 min_shift 14/depth 6 覆盖全部 VCF 合法坐标，TBI 拒绝 ≥ 2^29 位置；乱序输入报错 | bcftools 用 reed 建的索引查询，4 个区域与无索引流式扫描（`-t`）逐字节一致；CSI 与 TBI 均通过；全量 3,315,604 记录 48.7 s |
+| 删除 `REED_THREADS`（02-cli §0、05 §2.7） | 线程只由 `--threads` 决定 | — |
+| 索引器共用 | filter 的写出索引与 `reed index` 共用 `reed::index::Indexer`（filter 重新导出 `WriteIndex` 保持 API） | 全量 filter 对拍仍通过 |
+
+R5 未完成：bcftools 表达式子集（`-i/-e`）与由此才可删除的 `--spec/--conf`/TOML、`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、`gold/scripts/run_reed.sh`。
+
 ## 偏差记录（06-roadmap.md §4.6）
 
 1. **§4.4 类型化 EngineError 暂缓**：45 处 `Job(String)` 全部经 Display 渲染，
