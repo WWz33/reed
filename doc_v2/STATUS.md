@@ -131,6 +131,21 @@ R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF �
 03 §9 的其余建议（mid_stage 用 rayon 并行并按 chunk id 存 `Vec`、sketch 溢写 `--tmp-dir`、stats 输出流式化、
 `ContigBins` 改 `VecDeque`、`HeaderBundle` 统一）属可选优化，未在 R4 门内，未做。
 
+## R5 收尾（完成，除 §4 的 FMT 部分）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| `reed-cli` crate（03 §7） | 新 crate：`cli.rs`（clap `Args` 结构体，一个子命令一个；`Command::Filter(FilterCli)` 形式取代枚举内联字段）、`units.rs`（`parse_size`、`input_path`）、`translate/{filter,stats,qc,index}.rs`（flag → 类型化请求 → 驱动调用）、`main.rs`（只做分发）。`reed` 库不再依赖 clap（`[[bin]]` 删除） | 二进制行为不变：gold 正文 md5 与移动前一致；`filter --help`/`index`/`stats` 冒烟通过；308 测试 |
+| `-V/--exclude-types` | `HeadRule::ExcludeVariantClass` = `-v` 的补集 | 与 bcftools `-V indels` 位点集合一致（子集 fixture） |
+| `--max-maf/--max-mac` | `TailRule::MaxMaf/MaxMac`；ascertainment 把 MAF 上界视为"不变位点已缺"的证据 | `--max-maf 0.1` 与 plink2 保留完全相同的 323 个位点（键排序后 md5 相同） |
+| `-I/--no-update` 与自动 AC/AN | 默认按 bcftools view 语义：剔除样本时重算 `INFO/AC,INFO/AN`（只做掩码不算）；`-I` 关闭 | 保留 20 个样本时首条记录 AC=2/AN=40，与 `bcftools view -s` 相同；加 `-I` 保留输入陈旧值 |
+| `--mind FLOAT`（02-cli.md §3.1 的缺口） | 补上 plink2 语义的样本缺失率阈值（掩码后计算），落在 `CohortRule::MaxMissing` | 单元测试 + 往返测试 |
+| `FilterSpecV2::to_args()`（03 §8 `spec/render.rs`） | spec → 规范 flag 向量：cohort、regions（含 `^` 排除合并成一个 `-t`）、`-v/-V/-m/-M/-f/-i/-e`、三种掩码拼写、`--geno/--maf/--max-maf/--mac/--max-mac/--hwe [midp]`、`-x/--fill-tags/-I`；`min_qual` 渲染为等价的 `-i QUAL>=P` | `reed-cli` 往返测试：`spec_from_flags(to_args(spec)) == spec`，且渲染结果就是测试里手写的规范命令（20 个 flag 全覆盖） |
+| `##reed_filterCommand` | provenance 新增该行 = `to_args().join(" ")`，与 CLI 只有一种拼写 | 冒烟：`-v snv --max-maf 0.4 -x … -I` |
+
+**R5 仍未完成**：§4 表达式的 `FMT/TAG`、下标 `[0]`/`[*]`、正则 `~ !~`，以及依赖它们的 `--set-gts .`
+（= `bcftools filter -S . -e EXPR`）。现有子集对不支持的写法明确报 "not supported yet"，不会换语义执行。
+
 ## 偏差记录（06-roadmap.md §4.6）
 
 1. **§4.4 类型化 EngineError 暂缓**：45 处 `Job(String)` 全部经 Display 渲染，
@@ -155,8 +170,7 @@ R6 未完成：BCF 输入、BCF 输出（`-Ob/-Ou`）。二者需要一个 BCF �
 
 - ~~**R2** 统一记录解码~~ → 已完成，见上方「R2 统一记录解码（完成）」。
 - ~~**R4** 输出层模块化~~ → 已完成，见上方「R4 输出层（完成）」。
-- **R5 未完成**：`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、
-  `FMT/` 表达式与下标/正则、`-I/--no-update`、`--max-maf/--max-mac`、`-V`、`--set-gts`。
+- **R5 未完成**：`FMT/` 表达式、下标 `[0]`/`[*]`、正则 `~ !~`，以及 `--set-gts .`（依赖 FMT 表达式）。
 - **R6 未完成**：BCF 输入、BCF 输出（`-Ob/-Ou`）。
 - **R7 未完成**：SFS 投影 CLI（`--sfs --proj N`，dadi/fastsimcoal2 文件）、
   多等位逐等位计数（解码层已保留原始等位下标，stats 仍在记录级跳过多等位位点）。

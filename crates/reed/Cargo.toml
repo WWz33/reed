@@ -17,7 +17,6 @@ reed-filter.workspace = true
 sha2.workspace = true
 noodles.workspace = true
 bstr.workspace = true
-clap.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
@@ -27,7 +26,3 @@ name = "qc_summary"
 
 [lints]
 workspace = true
-
-[[bin]]
-name = "reed"
-path = "src/main.rs"

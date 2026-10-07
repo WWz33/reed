@@ -10,6 +10,7 @@ pub mod mask;
 pub mod predicate;
 pub mod recompute;
 pub mod region;
+pub mod render;
 
 use serde::{Deserialize, Serialize};
 

@@ -14,6 +14,9 @@ pub struct Provenance {
     pub version: String,
     /// `##reed_command=`.
     pub command: String,
+    /// `##reed_filterCommand=` (the canonical flag spelling of the spec,
+    /// `FilterSpecV2::to_args`; 02-cli.md §1).
+    pub filter_command: String,
     /// `##reed_filter_spec=` (canonical JSON).
     pub canonical_json: String,
     /// `##reed_filter_sha256=`.
@@ -41,6 +44,7 @@ impl Provenance {
         Ok(Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
             command: command_line.to_string(),
+            filter_command: spec.to_args().join(" "),
             canonical_json: canonical,
             sha256,
         })
@@ -52,6 +56,7 @@ impl Provenance {
         vec![
             (String::from("reed_version"), self.version.clone()),
             (String::from("reed_command"), self.command.clone()),
+            (String::from("reed_filterCommand"), self.filter_command.clone()),
             (String::from("reed_filter_spec"), self.canonical_json.clone()),
             (String::from("reed_filter_sha256"), self.sha256.clone()),
             (String::from("reed_ascertainment"), ascertainment.to_string()),

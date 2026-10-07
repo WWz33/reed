@@ -1,0 +1,23 @@
+[package]
+name = "reed-cli"
+description = "The `reed` binary: clap arguments, unit parsing, flag-to-spec translation, error rendering."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+reed.workspace = true
+reed-core.workspace = true
+reed-io.workspace = true
+reed-engine.workspace = true
+reed-stats.workspace = true
+reed-filter.workspace = true
+
+[[bin]]
+name = "reed"
+path = "src/main.rs"
+
+[lints]
+workspace = true

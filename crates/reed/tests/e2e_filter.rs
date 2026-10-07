@@ -669,7 +669,7 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
     let run = |spec: &FilterSpecV2, name: &str| {
         let out = dir.join(format!("{name}.vcf.gz"));
         let report =
-            run_filter(Some(&dir_path.as_path()), spec, &options(None, &out)).expect("invariant: run");
+            run_filter(Some(dir_path.as_path()), spec, &options(None, &out)).expect("invariant: run");
         let text = {
             use std::io::Read;
             let mut reader = noodles::bgzf::io::Reader::new(

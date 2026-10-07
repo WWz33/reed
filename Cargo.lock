@@ -708,7 +708,6 @@ name = "reed"
 version = "0.3.0"
 dependencies = [
  "bstr",
- "clap",
  "memchr",
  "noodles",
  "reed-core",
@@ -719,6 +718,19 @@ dependencies = [
  "reed-stats",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "reed-cli"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "reed",
+ "reed-core",
+ "reed-engine",
+ "reed-filter",
+ "reed-io",
+ "reed-stats",
 ]
 
 [[package]]
