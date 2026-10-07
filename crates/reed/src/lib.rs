@@ -6,5 +6,6 @@ pub mod filter;
 pub mod input;
 pub mod pixy;
 pub mod qc;
+pub mod reports;
 pub mod qc_report;
 pub mod stats;

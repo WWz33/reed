@@ -74,9 +74,9 @@ enum Command {
         /// Input BGZF VCF (.vcf.gz); `-` for stdin
         input: String,
         /// Groups file: `sample<TAB>population` rows, no header (pixy
-        /// populations-file format)
+        /// populations-file format); required by the windowed/pixy modes
         #[arg(short, long, alias = "pop", alias = "populations")]
-        groups: String,
+        groups: Option<String>,
         /// π per population (Nei & Li 1979; missing data: Korunes & Samuk
         /// 2021 = pixy)
         #[arg(long)]
@@ -101,6 +101,22 @@ enum Command {
         /// three groups
         #[arg(long)]
         pbs: bool,
+        /// Per-site allele frequencies (PREFIX.afreq, plink2 layout)
+        #[arg(long)]
+        freq: bool,
+        /// Per-site HWE exact test and observed/expected heterozygosity
+        /// (PREFIX.hardy, plink2 layout)
+        #[arg(long)]
+        hardy: bool,
+        /// Per-sample inbreeding coefficient F (PREFIX.het, plink2 layout)
+        #[arg(long)]
+        het: bool,
+        /// Per-sample and per-site missingness (PREFIX.smiss, PREFIX.vmiss)
+        #[arg(long)]
+        missing: bool,
+        /// QC summary in bcftools-stats format (PREFIX.stats)
+        #[arg(long)]
+        summary: bool,
         /// Report PBSn1 (Malaspinas et al. 2016) instead of the raw PBS
         #[arg(long)]
         pbs_normed: bool,
@@ -225,6 +241,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         fst,
         pbs,
         pbs_normed,
+        freq,
+        hardy,
+        het,
+        missing,
+        summary,
         variant_only,
         bypass_invariant_check,
         force_samples,
@@ -243,14 +264,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (_source, facts) = reed::input::open(input_path(&input).as_deref())
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?;
     let sample_names: Vec<String> = facts.sample_names.clone();
-    let (gt_groups, group_names) =
-        assign_groups(Path::new(&groups), &sample_names, force_samples)?;
-    eprintln!(
-        "{} samples, {} groups: {}",
-        sample_names.len(),
-        group_names.len(),
-        group_names.join(", ")
-    );
 
     let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
         .header
@@ -286,6 +299,61 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             std::thread::available_parallelism().expect("invariant: parallelism").get()
         });
     let budget = ThreadBudget { threads, mem: MemBudget::default_half_memory() };
+
+    // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
+    // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts.
+    if freq || hardy || het || missing || summary {
+        let Some(prefix) = out.clone() else {
+            return Err("report mode writes files: pass -o PREFIX".into());
+        };
+        let mut files = Vec::new();
+        if freq || hardy || het || missing {
+            let request = reed::reports::ReportRequest {
+                freq,
+                hardy,
+                het,
+                missing,
+                prefix: PathBuf::from(&prefix),
+            };
+            let outcome = reed::reports::run_reports(
+                input_path(&input).as_deref(),
+                &request,
+                &budget,
+            )?;
+            files.extend(outcome.files);
+            eprintln!(
+                "{} records in {:.1}s -> {}",
+                outcome.n_records,
+                // reports are fast; report wall time via the outcome count only
+                0.0,
+                files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        if summary {
+            let outcome = reed::qc_report::run_qc_report(
+                input_path(&input).as_deref(),
+                &reed::qc_report::QcOptions { threads, json: None },
+            )?;
+            let mut path = std::ffi::OsString::from(&prefix);
+            path.push(".stats");
+            std::fs::write(std::path::PathBuf::from(&path), &outcome.bcftools_text)?;
+            files.push(std::path::PathBuf::from(path));
+        }
+        return Ok(());
+    }
+
+    // Windowed modes need the populations file.
+    let Some(groups) = groups else {
+        return Err("a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into());
+    };
+    let (gt_groups, group_names) =
+        assign_groups(Path::new(&groups), &sample_names, force_samples)?;
+    eprintln!(
+        "{} samples, {} groups: {}",
+        sample_names.len(),
+        group_names.len(),
+        group_names.join(", ")
+    );
 
     // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with pixy's columns (02-cli.md §5).
