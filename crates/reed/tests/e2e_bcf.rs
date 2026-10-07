@@ -1,0 +1,154 @@
+//! BCF input gates (doc_v3 02-bcf.md B1/B3a): the same file in VCF.gz and
+//! BCF must produce identical statistics, report files and filter output.
+
+use std::path::{Path, PathBuf};
+
+use reed::filter::{run_filter, FilterOptions};
+use reed::stats::{run_stats, Levels, PixyOptions, StatsRequest};
+use reed_engine::budget::{MemBudget, ThreadBudget};
+use reed_filter::spec::FilterSpecV2;
+
+/// The fixtures live with the decoder (reed-io); the drivers read them from
+/// here so one binary fixture serves both test suites.
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../reed-io/tests/fixtures/bcf")
+        .join(name)
+}
+
+/// A per-test scratch directory (the tests run in parallel).
+fn dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("reed-bcf-e2e-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    dir
+}
+
+/// Inflates a whole BGZF buffer (the filter writes BGZF text).
+fn inflate_bgzf(bytes: &[u8]) -> String {
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut text = Vec::new();
+    let mut rest = bytes;
+    while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
+        inflater
+            .inflate_block(&rest[..total], &mut text)
+            .expect("invariant: output inflates");
+        rest = &rest[total..];
+    }
+    String::from_utf8(text).expect("invariant: VCF text")
+}
+
+fn budget() -> ThreadBudget {
+    ThreadBudget { threads: 4, mem: MemBudget::from_bytes(u64::MAX) }
+}
+
+fn request() -> StatsRequest {
+    StatsRequest {
+        kinds: reed::stats::pixy_kinds(2, true, true, true, false, None, None),
+        gt_groups: vec![Some(0), Some(0), Some(1)].into(),
+        window_size: 1000,
+        step: 1000,
+        levels: Levels { window: true, contig: false, genome: false },
+        skip_empty: true,
+        contig_lengths: std::collections::HashMap::new(),
+        pixy: Some(PixyOptions { invariant: reed::stats::InvariantMode::VariantOnly }),
+    }
+}
+
+/// `stats` over the BCF fixture equals the same run over the VCF.gz fixture.
+#[test]
+fn stats_output_is_identical_across_formats() {
+    let bcf = run_stats(Some(&fixture("fix.bcf")), request(), &budget()).expect("invariant: bcf");
+    let vcf = run_stats(Some(&fixture("fix.vcf.gz")), request(), &budget())
+        .expect("invariant: vcf.gz");
+    assert_eq!(bcf.tsv, vcf.tsv);
+    assert_eq!(bcf.n_records, vcf.n_records);
+}
+
+/// Reports read FORMAT values: the BCF renderer feeds the same scanner.
+#[test]
+fn reports_are_identical_across_formats() {
+    let dir = dir("reports");
+    let bcf_prefix = dir.join("b");
+    let vcf_prefix = dir.join("v");
+    let request = |prefix: &Path| reed::reports::ReportRequest {
+        freq: true,
+        hardy: true,
+        het: true,
+        missing: true,
+        depth: true,
+        prefix: prefix.to_path_buf(),
+    };
+    reed::reports::run_reports(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
+        .expect("invariant: bcf reports");
+    reed::reports::run_reports(Some(&fixture("fix.vcf.gz")), &request(&vcf_prefix), &budget())
+        .expect("invariant: vcf reports");
+    for suffix in [".afreq", ".hardy", ".het", ".smiss", ".vmiss", ".idepth", ".ldepth.mean"] {
+        let read = |prefix: &Path| {
+            let mut p = prefix.as_os_str().to_os_string();
+            p.push(suffix);
+            std::fs::read(PathBuf::from(p)).expect("invariant: report file")
+        };
+        assert_eq!(read(&bcf_prefix), read(&vcf_prefix), "report {suffix}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Filtering BCF input writes the same VCF text as filtering VCF.gz input.
+#[test]
+fn filter_output_is_identical_across_formats() {
+    let dir = dir("filter");
+    let spec = FilterSpecV2 {
+        site: reed_filter::spec::SiteRulesV2 {
+            min_qual: Some(50.0),
+            ..reed_filter::spec::SiteRulesV2::default()
+        },
+        genotype: reed_filter::spec::GenotypeRules {
+            mask_if: vec![reed_filter::spec::GenotypeMaskRule {
+                field: "DP".into(),
+                when: "< 8".into(),
+                on_missing: reed_filter::spec::OnMissing::Keep,
+            }],
+            ..reed_filter::spec::GenotypeRules::default()
+        },
+        // The fixture carries a haploid call (chr2:500).
+        policy: reed_filter::spec::PolicyRules {
+            ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let run = |input: &Path, out: &Path| {
+        let opts = FilterOptions {
+            threads: 4,
+            output: Some(out.to_path_buf()),
+            write_index: reed::filter::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            quiet: true,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: Some(true),
+        };
+        run_filter(Some(input), &spec, &opts)
+    };
+    let bcf_out = dir.join("b.vcf.gz");
+    let vcf_out = dir.join("v.vcf.gz");
+    let a = run(&fixture("fix.bcf"), &bcf_out).expect("invariant: bcf filter");
+    let b = run(&fixture("fix.vcf.gz"), &vcf_out).expect("invariant: vcf filter");
+    assert_eq!(a.n_output_records, b.n_output_records);
+    // The fixtures carry different `##bcftools_viewCommand` provenance, so
+    // compare the records and the rest of the header minus that one line.
+    let body = |path: &Path| {
+        let text = inflate_bgzf(&std::fs::read(path).expect("invariant: output"));
+        text.lines()
+            .filter(|l| !l.starts_with("##bcftools_viewCommand"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(body(&bcf_out), body(&vcf_out));
+    let _ = std::fs::remove_dir_all(&dir);
+}

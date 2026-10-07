@@ -552,14 +552,16 @@ pub fn run_qc_report_opened(
     opened: crate::input::OpenedInput,
     opts: &QcOptions,
 ) -> Result<QcOutcome, EngineError> {
-    let crate::input::OpenedInput { mut source, facts } = opened;
-    let n_samples = facts.n_samples();
+    let n_samples = opened.facts.n_samples();
     let job = QcJob { n_samples };
     let slot: Arc<Mutex<Option<QcReportAcc>>> = Arc::new(Mutex::new(None));
     let sink = QcSink { acc: Some(QcReportAcc::new(u32::try_from(n_samples).unwrap_or(u32::MAX))), out: Arc::clone(&slot) };
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
     let abort = reed_engine::abort::abort();
-    run(source.as_mut(), &job, sink, &budget, &abort)?;
+    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+    let crate::input::OpenedInput { mut source, .. } = opened;
+    let report = run(source.as_mut(), &job, sink, &budget, &abort)?;
+    job.finish(report.n_chunks, true)?;
     let report = slot
         .lock()
         .expect("invariant: qc slot not poisoned")

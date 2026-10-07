@@ -151,15 +151,18 @@ pub(super) fn run_missing_pass(
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
-    let crate::input::OpenedInput { mut source, facts } = opened;
-    let job = MissingJob {
-        plan: Arc::new(plan.clone()),
-        n_samples: facts.header.sample_names().len(),
-    };
+    let n_samples = opened.facts.header.sample_names().len();
+    let abort = reed_engine::abort::abort();
+    let job = crate::bcf_input::InputJob::new(
+        MissingJob { plan: Arc::new(plan.clone()), n_samples },
+        &opened,
+        &abort,
+    );
+    let crate::input::OpenedInput { mut source, .. } = opened;
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
     let sink = SumSink { total: Arc::clone(&total) };
-    let abort = reed_engine::abort::abort();
-    run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+    let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+    job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
     Ok(total
         .lock()
         .expect("invariant: missing slot not poisoned")

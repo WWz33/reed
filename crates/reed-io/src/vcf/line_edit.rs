@@ -223,18 +223,32 @@ fn replace_gt_subfield(field: &[u8], gt_index: Option<u8>, out: &mut Vec<u8>) {
 /// VCF, zero mismatches).
 #[must_use]
 pub fn format_g6(v: f64) -> String {
+    let mut buf = Vec::with_capacity(24);
+    format_g6_into(&mut buf, v);
+    String::from_utf8(buf).expect("invariant: %g renders ASCII")
+}
+
+/// [`format_g6`] appended to a byte buffer (the renderer's hot path avoids
+/// one allocation per value).
+pub fn format_g6_into(out: &mut Vec<u8>, v: f64) {
+    use std::io::Write as _;
     if v == 0.0 {
-        return "0".to_string();
+        out.push(b'0');
+        return;
     }
     if v.is_nan() {
-        return "nan".to_string();
+        out.extend_from_slice(b"nan");
+        return;
     }
     if v.is_infinite() {
-        return if v < 0.0 { "-inf".into() } else { "inf".into() };
+        out.extend_from_slice(if v < 0.0 { b"-inf" } else { b"inf" });
+        return;
     }
     // The style is chosen from the exponent of the value rounded to 6
     // significant digits (C %g semantics).
-    let scientific = format!("{:.6e}", v.abs());
+    // Six significant digits first, then pick the style from the exponent
+    // *after* rounding (C %g: 999999.5 rounds to 1e+06, not 9.99999e5).
+    let scientific = format!("{:.5e}", v.abs());
     let exp10: i32 = scientific
         .split('e')
         .nth(1)
@@ -243,7 +257,20 @@ pub fn format_g6(v: f64) -> String {
     if (-4..6).contains(&exp10) {
         let precision = (5 - exp10).max(0) as usize;
         let s = format!("{v:.precision$}");
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
+        // htslib culls trailing zeros only past a decimal point: an integer
+        // like 128440 must keep its zeros (the pre-BCF version stripped
+        // them, which only showed for values >= 1e5).
+        match s.split_once('.') {
+            Some((int, frac)) => {
+                let frac = frac.trim_end_matches('0');
+                out.extend_from_slice(int.as_bytes());
+                if !frac.is_empty() {
+                    out.push(b'.');
+                    out.extend_from_slice(frac.as_bytes());
+                }
+            }
+            None => out.extend_from_slice(s.as_bytes()),
+        }
     } else {
         // Scientific: 5 fractional digits, trailing zeros stripped,
         // exponent at least two digits with a sign.
@@ -251,8 +278,12 @@ pub fn format_g6(v: f64) -> String {
         let (mantissa, exp) = mantissa_exp.split_once('e').expect("invariant: e-form");
         let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
         let exp: i32 = exp.parse().expect("invariant: integer exponent");
-        let sign = if exp < 0 { '-' } else { '+' };
-        format!("{mantissa}e{sign}{:02}", exp.abs())
+        let _ = write!(
+            out,
+            "{mantissa}e{}{:02}",
+            if exp < 0 { '-' } else { '+' },
+            exp.abs()
+        );
     }
 }
 

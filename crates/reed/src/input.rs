@@ -26,6 +26,9 @@ pub struct OpenedInput {
     pub source: Box<dyn ChunkSource>,
     /// Header facts (noodles header, samples, contigs).
     pub facts: HeaderFacts,
+    /// Present when the input is BCF: the tag dictionaries the renderer
+    /// needs (doc_v3 02-bcf.md B1).
+    pub bcf: Option<std::sync::Arc<reed_io::bcf::BcfDict>>,
 }
 
 /// Opens a one-shot input: file at `path`, or stdin when `None`. stdin is
@@ -57,6 +60,11 @@ pub fn open_regions(
     let Some(p) = path else {
         return Err(IoError::UnsupportedInput("regions need a seekable file, not stdin"));
     };
+    let format = {
+        let mut probe = std::fs::File::open(p)?;
+        let (prefix, inflated) = sniff(&mut probe)?;
+        Format::detect(&prefix, inflated.as_deref())?
+    };
     let file = std::fs::File::open(p)?;
     let (_, facts) =
         BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
@@ -81,7 +89,12 @@ pub fn open_regions(
         regions,
         &facts.contig_names,
     )?;
-    Ok(OpenedInput { source: Box::new(source), facts })
+    let bcf = if format == Format::Bcf {
+        Some(std::sync::Arc::new(reed_io::bcf::BcfDict::from_header(&facts.text)?))
+    } else {
+        None
+    };
+    Ok(OpenedInput { source: Box::new(source), facts, bcf })
 }
 
 /// Reads enough of the stream to detect its format: the whole first BGZF
@@ -183,22 +196,28 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
             let file = std::fs::File::open(p)?;
             let (source, facts) =
                 BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
-            Ok(OpenedInput { source: Box::new(source), facts })
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
         }
         Format::Vcf => {
             let file = std::fs::File::open(p)?;
             let (source, facts) = PlainChunkSource::open_vcf(file)?;
-            Ok(OpenedInput { source: Box::new(source), facts })
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
         }
         Format::VcfGzip => {
             let file = std::fs::File::open(p)?;
             warn_serial_gzip();
             let (source, facts) = PlainChunkSource::open_gzip(file)?;
-            Ok(OpenedInput { source: Box::new(source), facts })
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
         }
-        Format::Bcf => Err(IoError::UnsupportedInput(
-            "BCF input is not supported yet; convert with `bcftools view -Oz`",
-        )),
+        Format::Bcf => {
+            // BCF shares the BGZF chunk source; the dictionaries come from
+            // the header text embedded in the file.
+            let file = std::fs::File::open(p)?;
+            let (source, facts) =
+                BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
+            let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: Some(std::sync::Arc::new(dict)) })
+        }
     }
 }
 
@@ -212,20 +231,22 @@ fn open_stdin() -> Result<OpenedInput, IoError> {
     match format {
         Format::VcfBgzf => {
             let (source, facts) = BgzfChunkSource::open(reader)?;
-            Ok(OpenedInput { source: Box::new(source), facts })
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
         }
         Format::Vcf => {
             let (source, facts) = PlainChunkSource::open_vcf(reader)?;
-            Ok(OpenedInput { source: Box::new(source), facts })
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
         }
         Format::VcfGzip => {
             warn_serial_gzip();
             let (source, facts) = PlainChunkSource::open_gzip(reader)?;
-            Ok(OpenedInput { source: Box::new(source), facts })
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
         }
-        Format::Bcf => Err(IoError::UnsupportedInput(
-            "BCF input is not supported yet; convert with `bcftools view -Oz`",
-        )),
+        Format::Bcf => {
+            let (source, facts) = BgzfChunkSource::open(reader)?;
+            let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
+            Ok(OpenedInput { source: Box::new(source), facts, bcf: Some(std::sync::Arc::new(dict)) })
+        }
     }
 }
 

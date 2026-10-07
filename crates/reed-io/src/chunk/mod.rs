@@ -6,6 +6,7 @@
 //! makes reed's output deterministic (§2 principle 5).
 
 pub mod bgzf;
+pub mod framing;
 pub mod plain;
 pub mod region;
 

@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::bounded;
 use reed_core::ChunkId;
+use reed_io::chunk::framing::RecordFraming;
 use reed_io::chunk::{inflate_chunk, ChunkBytes, ChunkSource};
+
+pub use reed_io::chunk::ChunkBytes as ChunkBytesExport;
 
 use crate::abort::{Abort, AbortSignal, FirstError};
 use crate::budget::{BytePermits, ThreadBudget};
@@ -45,6 +48,13 @@ pub trait ChunkJob: Sync {
     type Partial: Send + Default;
     /// Worker-local reusable buffers.
     type Scratch: Send + Default;
+
+    /// How the chunk's inflated text is delimited into records. With
+    /// [`RecordFraming::Raw`] the engine hands the job the whole text and
+    /// leaves seam stitching to it (the job owns the frame chain).
+    fn framing(&self) -> RecordFraming {
+        RecordFraming::Newline
+    }
 
     /// Processes the chunk's complete records (newline-terminated lines).
     ///
@@ -296,16 +306,21 @@ where
                         };
                         let chunk = in_flight.chunk;
                         let started = Instant::now();
+                        let framing = job.framing();
                         let outcome = catch_unwind(AssertUnwindSafe(|| {
                             let view =
                                 inflate_chunk(&chunk, &mut inflater, &mut inflate_scratch)?;
-                            let partial =
-                                job.run_chunk(&chunk, view.body_bytes(view.text), &mut scratch)?;
-                            Ok::<_, EngineError>((
-                                partial,
-                                view.head_bytes(view.text).map(Vec::from),
-                                view.tail_bytes(view.text).map(Vec::from),
-                            ))
+                            let (body, head, tail) = match framing {
+                                RecordFraming::Newline => (
+                                    view.body_bytes(view.text),
+                                    view.head_bytes(view.text).map(Vec::from),
+                                    view.tail_bytes(view.text).map(Vec::from),
+                                ),
+                                // The job walks the length prefixes itself.
+                                RecordFraming::Raw => (view.text, None, None),
+                            };
+                            let partial = job.run_chunk(&chunk, body, &mut scratch)?;
+                            Ok::<_, EngineError>((partial, head, tail))
                         }));
                         worker_busy_ns.fetch_add(
                             started.elapsed().as_nanos() as u64,

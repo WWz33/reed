@@ -15,7 +15,9 @@ use reed_core::ChunkId;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
-use reed_io::chunk::BgzfChunkSource;
+use reed_engine::frame_chain::{FrameChain, SharedChain};
+use reed_io::bcf::{record_len, record_site, VirtualMap};
+use reed_io::chunk::framing::RecordFraming;
 use reed_io::chunk::{inflate_chunk, ChunkBytes};
 use reed_io::vcf::fixed::parse_pos1;
 use reed_io::vcf::line::LineRef;
@@ -41,7 +43,7 @@ pub struct IndexOutcome {
 
 /// One record start (in chunk order).
 #[derive(Clone, Copy, Debug)]
-struct RecordStart {
+pub(super) struct RecordStart {
     tid: u32,
     pos1: u64,
     ref_len: u32,
@@ -51,7 +53,7 @@ struct RecordStart {
 
 /// A chunk's slice of the record-start sequence.
 #[derive(Default)]
-struct IndexPartial {
+pub(super) struct IndexPartial {
     /// The chunk's first line, when it is a fresh record (the reducer drops
     /// it when the previous chunk left a partial line to complete).
     head: Option<RecordStart>,
@@ -198,6 +200,159 @@ impl ChunkJob for IndexJob {
     }
 }
 
+/// The BCF index job: same entries as the text job, but the framing walks
+/// length prefixes and the chain carries the crossing record's start.
+pub(super) struct BcfIndexJob {
+    chain: SharedChain,
+}
+
+impl ChunkJob for BcfIndexJob {
+    type Partial = IndexPartial;
+    type Scratch = ();
+
+    fn framing(&self) -> RecordFraming {
+        RecordFraming::Raw
+    }
+
+    fn run_chunk(
+        &self,
+        chunk: &ChunkBytes,
+        text: &[u8],
+        _scratch: &mut Self::Scratch,
+    ) -> Result<Self::Partial, EngineError> {
+        let chunk_id = chunk.id.get();
+        let skip = if chunk_id == 0 {
+            usize::try_from(chunk.first_in_block_offset).unwrap_or(0)
+        } else {
+            0
+        };
+        let map = VirtualMap { chunk_start: chunk.compressed_start, blocks: &chunk.blocks };
+        let mut carried = self.chain.wait(chunk_id)?;
+        let mut partial = IndexPartial::default();
+        let mut guard = self.chain.publish_guard(chunk_id + 1);
+        if skip >= text.len() {
+            guard.publish(Default::default());
+            return Ok(partial);
+        }
+        let body_start;
+        let body_end;
+        if carried.is_empty() {
+            body_start = skip;
+            body_end = walk_bcf_records(text, skip);
+        } else {
+            let total = declared_total(&carried.head, text).ok_or_else(|| {
+                EngineError::Job("BCF record length prefix is truncated".into())
+            })?;
+            let need = total.saturating_sub(carried.prefix_len as usize);
+            if need > text.len() {
+                // The record still spans this chunk: keep the header bytes.
+                let mut head = carried.head;
+                let extra = 24_usize.saturating_sub(head.len()).min(text.len());
+                head.extend_from_slice(&text[..extra]);
+                carried.prefix_len += text.len() as u64;
+                guard.publish(reed_engine::frame_chain::Carried {
+                    head,
+                    prefix_len: carried.prefix_len,
+                    voff: carried.voff,
+                });
+                return Ok(partial);
+            }
+            body_start = need;
+            body_end = walk_bcf_records(text, need);
+            partial.head = Some(entry_at(&carried.head, text, body_start, carried.voff)?);
+        }
+        // Publish the crossing record of the next chunk (its first 24 bytes
+        // carry everything the index decodes).
+        let mut head = text[body_end..].to_vec();
+        head.truncate(24);
+        guard.publish(reed_engine::frame_chain::Carried {
+            head,
+            prefix_len: (text.len() - body_end) as u64,
+            voff: map.voff(body_end),
+        });
+        let mut q = body_start;
+        while q < body_end {
+            let len = record_len(&text[q..]).expect("invariant: walked records are complete");
+            // The shared block starts after the 8-byte length prefix.
+            let (tid, pos0, rlen) =
+                record_site(&text[q + 8..]).map_err(EngineError::from)?;
+            partial.body.push(RecordStart {
+                tid: u32::try_from(tid)
+                    .map_err(|_| EngineError::Job("negative BCF contig index".into()))?,
+                pos1: u64::try_from(pos0).unwrap_or(0) + 1,
+                ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
+                voff: map.voff(q),
+            });
+            q += len;
+        }
+        Ok(partial)
+    }
+
+    fn run_seam(
+        &self,
+        _id: ChunkId,
+        _line: &[u8],
+        _scratch: &mut Self::Scratch,
+    ) -> Result<Self::Partial, EngineError> {
+        Err(EngineError::Job("internal: the BCF index never receives seam lines".into()))
+    }
+}
+
+/// Walks length prefixes; the returned offset is where the crossing record
+/// starts (== `text.len()` when the chunk ends record-aligned).
+fn walk_bcf_records(text: &[u8], from: usize) -> usize {
+    let mut p = from;
+    while let Some(len) = record_len(&text[p..]) {
+        p += len;
+    }
+    p
+}
+
+/// The total length declared by the record's first eight bytes, taken from
+/// `head` and (when `head` is short) the start of `text`.
+fn declared_total(head: &[u8], text: &[u8]) -> Option<usize> {
+    if head.len() >= 8 {
+        return reed_io::bcf::declared_len(head);
+    }
+    let need = 8 - head.len();
+    let mut buf = [0_u8; 8];
+    buf[..head.len()].copy_from_slice(head);
+    buf[head.len()..].copy_from_slice(&text[..need]);
+    reed_io::bcf::declared_len(&buf)
+}
+
+/// Decodes a crossing record's entry: `head` holds the record's leading
+/// bytes (length prefix included), completed by the start of `text` when
+/// the previous chunk held fewer than 20 bytes.
+fn entry_at(
+    head: &[u8],
+    text: &[u8],
+    body_start: usize,
+    voff: u64,
+) -> Result<RecordStart, EngineError> {
+    // chrom/pos/rlen sit at record offsets 8..20.
+    let mut buf = [0_u8; 20];
+    let held = head.len().min(20);
+    buf[..held].copy_from_slice(&head[..held]);
+    if held < 20 {
+        // The record's own bytes continue after the carried prefix; the
+        // missing bytes are the *first* ones of this chunk.
+        let missing = 20 - held;
+        if text.len() < missing {
+            return Err(EngineError::Job("BCF record header spans multiple chunks".into()));
+        }
+        buf[held..].copy_from_slice(&text[..missing]);
+    }
+    let _ = body_start;
+    let (tid, pos0, rlen) = record_site(&buf[8..]).map_err(EngineError::from)?;
+    Ok(RecordStart {
+        tid: u32::try_from(tid).map_err(|_| EngineError::Job("negative BCF contig index".into()))?,
+        pos1: u64::try_from(pos0).unwrap_or(0) + 1,
+        ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
+        voff,
+    })
+}
+
 /// The ordered sink: pairs consecutive starts into chunks and feeds the
 /// indexer; the last record ends at `eof_voff`.
 struct IndexSink {
@@ -297,13 +452,16 @@ pub fn run_index(
             PathBuf::from(s)
         }
     };
-    let file = std::fs::File::open(input).map_err(|e| EngineError::Io(e.to_string()))?;
     // The compressed file size bounds the last record's chunk.
-    let eof_voff = file.metadata().map_err(|e| EngineError::Io(e.to_string()))?.len() << 16;
-    let (source, facts) =
-        BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file)).map_err(job)?;
+    let eof_voff = std::fs::metadata(input)
+        .map_err(|e| EngineError::Io(e.to_string()))?
+        .len()
+        << 16;
+    let mut opened = crate::input::open(Some(input)).map_err(job)?;
+    let is_bcf = opened.bcf.is_some();
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
-        facts
+        opened
+            .facts
             .contig_names
             .iter()
             .map(|n| n.as_bytes().to_vec())
@@ -328,9 +486,23 @@ pub fn run_index(
         mem: reed_engine::budget::MemBudget::default_half_memory(),
     };
     let abort = reed_engine::abort::abort();
-    let job = IndexJob { contig_names: Arc::clone(&contig_names) };
-    let mut source = source;
-    run(&mut source, &job, sink, &budget, &abort)?;
+    let report = if is_bcf {
+        let chain = Arc::new(FrameChain::new(abort.signal.clone()));
+        chain.publish(0, reed_engine::frame_chain::Carried::default());
+        let job = BcfIndexJob { chain: Arc::clone(&chain) };
+        let report = run(opened.source.as_mut(), &job, sink, &budget, &abort)?;
+        chain.finish();
+        if chain.peek(report.n_chunks).is_some_and(|carried| !carried.is_empty()) {
+            return Err(EngineError::Job(
+                "BCF input ends inside a record (truncated file)".into(),
+            ));
+        }
+        report
+    } else {
+        let job = IndexJob { contig_names: Arc::clone(&contig_names) };
+        run(opened.source.as_mut(), &job, sink, &budget, &abort)?
+    };
+    let _ = report;
     let n_records = out
         .lock()
         .expect("invariant: index slot not poisoned")

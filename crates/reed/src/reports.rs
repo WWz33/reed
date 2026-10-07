@@ -285,6 +285,9 @@ impl ReportJob {
 
     /// Renders every requested per-site row for one record (O1: the worker
     /// formats; the reducer only appends the bytes).
+    // The columns come from the record's own fields; a column-group struct
+    // would just restate the parameters.
+    #[allow(clippy::too_many_arguments)]
     fn render_site(
         &self,
         lr: &LineRef<'_>,
@@ -329,7 +332,7 @@ impl ReportJob {
             } else {
                 out.extend_from_slice(b"NA");
             }
-            let _ = write!(out, "\t{an}\n");
+            let _ = write!(out, "\t{}", an); out.push(b'\n');
         }
         if self.plan.hardy {
             let out = &mut partial.hardy;
@@ -634,8 +637,7 @@ pub fn run_reports_opened(
     request: &ReportRequest,
     budget: &ThreadBudget,
 ) -> Result<ReportsOutcome, EngineError> {
-    let crate::input::OpenedInput { mut source, facts } = opened;
-    let n_samples = facts.n_samples();
+    let n_samples = opened.facts.n_samples();
     let plan = ReportPlan::from_request(request);
     let job = ReportJob {
         n_samples,
@@ -666,6 +668,9 @@ pub fn run_reports_opened(
         writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH")
             .map_err(|e| EngineError::Io(e.to_string()))?;
     }
+    let abort = reed_engine::abort::abort();
+    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+    let crate::input::OpenedInput { mut source, facts, .. } = opened;
     let sink = ReportSink {
         request: request.clone(),
         plan,
@@ -682,8 +687,8 @@ pub fn run_reports_opened(
         out: Arc::new(Mutex::new(None)),
     };
     let out = Arc::clone(&sink.out);
-    let abort = reed_engine::abort::abort();
-    run(source.as_mut(), &job, sink, budget, &abort)?;
+    let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+    job.finish(report.n_chunks, true)?;
     Ok(out
         .lock()
         .expect("invariant: reports slot not poisoned")

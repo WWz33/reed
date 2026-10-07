@@ -6,6 +6,7 @@
 pub mod abort;
 pub mod budget;
 pub mod error;
+pub mod frame_chain;
 pub mod metrics;
 pub mod pipeline;
 pub mod reorder;

@@ -26,9 +26,18 @@
 
 | O1+O2 | 报告改为 worker 内计算与渲染：`ReportPartial` 携带每个报告文件的字节缓冲（afreq/hardy/vmiss/ldepth），HWE 与 `%g`（`g6_into`，指数形式才用临时 String）都在 worker 完成，reducer 只按序 append。按请求装配：`SiteRow` 的四次 `to_vec()` 删除；计数改走 `SiteGroupCounts::add_code`（不再构平面），DP 只在 `--depth` 时解码，平面只在 `--het` 时构建 | 见下 | 全量单报告：`--hardy` 13.3 → **2.7 s**（目标 ≤3.5），`--freq` 2.86→2.61、`--missing` 2.82→2.58、`--het` 2.80→2.74、`--depth` 3.71→2.64；组合 `--freq --hardy --het --missing --depth` **3.0 s**（目标 ≤4）；7 个输出文件与改动前 **md5 全部相同**（全量 3,315,604 条） |
 
+### V2–V4 BCF 输入（B0+B1+B3a）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| 解码/渲染 | `reed_io::bcf`：`BcfDict`（header `IDX=`，下标不重排）、`BcfRecordRef`/`Cursor`（typed 描述符、int/float 哨兵、扩展计数）、`render_record`（htslib `vcf_format1` 规则：GT 按各等位定相位、`kputd` 六位有效数字、缺失 `.`、向量结束截断、flag 只出键） | 见下 | **与 bcftools 逐字节一致**：`clean.bcf` 全量 3,315,604 条渲染正文 sha256 = `548de25b…`（与 `bcftools view -H` 相同）；边界 fixture（单倍体、多等位、flag、字符串、半缺失）逐字节对齐（`reed-io/tests/bcf_render.rs`） |
+| 修复 format_g6 | 既有 `%g` 渲染在"指数 ≥ 5 的整数"（如 QUAL=128440）会误删小数点前的尾零；先按 6 位有效数字取整再选风格（C %g 语义） | 见下 | `128440→"128440"`、`999999.5→"1e+06"` 等用例；gold VCF 的 80,228 个渲染浮点循环测试继续通过 |
+| 长度前缀链 | `RecordFraming::{Newline,Raw}` 进引擎；`FrameChain` 沿 chunk 序传递"跨界记录"（字节 + 已有字节数 + 虚拟偏移），worker **先定界发布、后渲染**；`PublishGuard` 在 worker panic/早退时毒化链（abort token 可能被阻塞的 select! 消费，不能只靠 abort）；120 s 看门狗兜底 | 见下 | 全量 stats BCF 输入与 VCF.gz 输入**逐字节一致**（π/dxy/θ/Tajima/Fst 五文件 md5 相同）；1/56 线程一致 |
+| 接入 | `InputJob<J>` 包装器：stats/reports/qc/filter（含 `--mind` pass0）全部走同一文本消费实现；BCF 的 filter 强制 TwoPassReparse；`-r/-R` 区域路径也识别 BCF（探测格式 + 字典 + 跨界截断合法）；`reed index` BCF：链携带跨界记录起点 → worker 算虚拟偏移 → sink 配对相邻记录 | 见下 | fixture e2e（stats/reports/filter 三组，输出 md5 相同）；全量 `reed index clean.bcf` 10.9 s（3.3M 条），bcftools 用该索引查询与流式 `-t` 一致（2 区域 MATCH） |
+
 ### 待办
 
-- V2 B0、V3 B1、V4 B3a、V5 B2、V6 B3b；清理 C1–C4、C7 与 CLI 一致性（04 §2）。V1（O1–O5）完成。
+- V5 B2（`-Ob/-Ou` 输出）、V6 B3b（原生 BCF 手术）与 O6/O7；清理 C1–C4、C7 与 CLI 一致性（04 §2）。
 
 ### 与文档的偏差
 

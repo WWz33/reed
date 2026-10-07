@@ -148,14 +148,26 @@ impl<R: Read> BgzfChunkReader<R> {
                 self.pending_block = Some(block);
                 self.pending_block_offset = block_offset;
                 // The offset is *within this block's* inflated text, not in
-                // the accumulated header text.
-                self.first_in_block_offset = (end - text_len_before) as u64;
+                // the accumulated header text. A BCF stream NUL-terminates
+                // the header, so its records start one byte later.
+                let is_bcf = text.starts_with(b"BCF\x02");
+                let record_start = if is_bcf && text.get(end) == Some(&0) {
+                    end + 1
+                } else {
+                    end
+                };
+                self.first_in_block_offset = (record_start - text_len_before) as u64;
                 self.header_done = true;
                 text.truncate(end);
-                let n_samples = count_samples(&text).ok_or_else(|| {
+                // A BCF stream prefixes the VCF header with the magic and
+                // `l_text`; the header facts start at the VCF text
+                // (doc_v3 02-bcf.md §2.1).
+                let start = if text.starts_with(b"BCF\x02") { 9 } else { 0 };
+                let header_text = text[start..].to_vec();
+                let n_samples = count_samples(&header_text).ok_or_else(|| {
                     IoError::Header("#CHROM line found but has no sample columns".into())
                 })?;
-                return Ok(HeaderScan { text, n_samples });
+                return Ok(HeaderScan { text: header_text, n_samples });
             }
         }
     }

@@ -815,7 +815,8 @@ pub fn run_stats_opened(
         .map_err(|err| EngineError::Job(format!("invalid stats request: {err}")))?;
     let keys: Vec<StatKey> = request.kinds.iter().map(StatKind::key).collect();
 
-    let crate::input::OpenedInput { mut source, facts: header } = opened;
+    let abort = reed_engine::abort::abort();
+    let header = opened.facts.clone();
     if header.n_samples() != request.gt_groups.len() {
         return Err(EngineError::Job(format!(
             "request assigns {} samples but the header declares {}",
@@ -845,6 +846,8 @@ pub fn run_stats_opened(
         seed: accs.clone().into(),
         contig_len: Arc::clone(&contig_len),
     };
+    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+    let crate::input::OpenedInput { mut source, .. } = opened;
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
         size: request.window_size,
@@ -869,8 +872,8 @@ pub fn run_stats_opened(
         n_multiallelic_skipped: 0,
         out: Arc::clone(&out),
     };
-    let abort = reed_engine::abort::abort();
     let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+    job.finish(report.n_chunks, true)?;
     let output = out
         .lock()
         .expect("invariant: stats slot not poisoned")

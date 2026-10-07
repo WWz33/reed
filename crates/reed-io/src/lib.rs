@@ -2,6 +2,7 @@
 //! output and indexing (L1). The single noodles boundary of the workspace;
 //! downstream crates take `noodles_vcf` from here.
 
+pub mod bcf;
 pub mod bgzf;
 pub mod chunk;
 pub mod error;

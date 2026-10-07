@@ -156,11 +156,15 @@ pub fn run_filter(
         .expect("invariant: the input was just opened")
         .facts
         .clone();
+    let is_bcf = first.as_ref().is_some_and(|opened| opened.bcf.is_some());
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
     let mut plan = reed_filter::plan::compile(spec, &header, &opts.command_line)?;
     let strategy = match opts.strategy {
         Some(forced) => forced,
+        // The sketch path's record-count estimate is line-based; BCF input
+        // takes the two-pass path (doc_v3 02-bcf.md B1).
+        None if is_bcf => ExecStrategy::TwoPassReparse,
         None => match &spec.mind {
             Some(_) if replay_path.is_some() => {
                 // §11.4: the sketch path when the upper-bounded sketch fits
@@ -370,7 +374,9 @@ pub fn run_filter(
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
-        run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         sketch_funnel
     } else {
         let job = FilterJob {
@@ -399,7 +405,9 @@ pub fn run_filter(
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
-        run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         slot
             .lock()
             .expect("invariant: funnel slot not poisoned")
@@ -566,9 +574,7 @@ struct OutputSink {
 impl OrderedSink<FilterPartial> for OutputSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut FilterPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
-        let t = std::time::Instant::now();
-        let r = self.out.accept_chunk(&partial.output).map_err(job_err);
-        r
+        self.out.accept_chunk(&partial.output).map_err(job_err)
     }
 
     fn finish(self) -> Result<u64, EngineError> {
