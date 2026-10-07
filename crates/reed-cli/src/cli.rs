@@ -126,6 +126,10 @@ pub struct FilterCli {
     /// Mask genotypes with FMT/GQ below INT
     #[arg(long, value_name = "INT")]
     pub min_gq: Option<u32>,
+    /// Mask from the -i/-e FORMAT expressions: set the genotype to this
+    /// value (only `.`, bcftools filter -S .)
+    #[arg(long, value_name = ".")]
+    pub set_gts: Option<String>,
     /// Drop sites whose missing rate (after masking) exceeds FLOAT
     #[arg(long, value_name = "FLOAT")]
     pub geno: Option<f64>,

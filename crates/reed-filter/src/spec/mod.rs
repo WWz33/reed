@@ -103,6 +103,11 @@ pub struct GenotypeRules {
     /// Any hit masks the sample's GT to `./.` (evaluated in order).
     #[serde(default, rename = "mask_if", skip_serializing_if = "Vec::is_empty")]
     pub mask_if: Vec<GenotypeMaskRule>,
+    /// `--set-gts .` (bcftools `filter -S .`): mask from the `FMT/`
+    /// expressions in `site_after_mask` instead of dropping the site.
+    /// `Some(".")` is the only accepted value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_gts: Option<String>,
 }
 
 /// Post-mask site rules (`[site_after_mask]`).

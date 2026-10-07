@@ -87,6 +87,11 @@ impl FilterSpecV2 {
             flag(&mut args, "-e", text);
         }
 
+        // ---- set-gts mode (the FMT expressions above become masks) ----
+        if let Some(value) = &self.genotype.set_gts {
+            flag(&mut args, "--set-gts", value);
+        }
+
         // ---- genotype masking (the three CLI spellings) ----
         for rule in &self.genotype.mask_if {
             let when = rule.when.trim();

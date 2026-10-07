@@ -139,6 +139,7 @@ fn gold_spec() -> FilterSpecV2 {
                     on_missing: OnMissing::Keep,
                 })
                 .collect(),
+            ..GenotypeRules::default()
         },
         site_after_mask: TailRules {
             max_missing: Some(0.5),
@@ -276,6 +277,7 @@ fn mask_default_on_missing_is_keep() {
                 when: "< 5".into(),
                 on_missing: OnMissing::Keep,
             }],
+            ..GenotypeRules::default()
         },
         ..FilterSpecV2::default()
     };
@@ -729,5 +731,95 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
     };
     let (n_mac, _) = run(&max_mac, "mac");
     assert!(n_mac <= n_max, "MAC <= 4 is a stricter band than MAF <= 0.5");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// R5: `--set-gts .` turns a `FMT/` expression into a per-sample mask
+/// (bcftools `filter -S .`): `-i` masks where the expression is false
+/// (missing values included), `-e` where it is true, and only GT changes.
+#[test]
+fn set_gts_masks_from_format_expressions() {
+    use reed_filter::spec::{GenotypeRules, TailRules};
+    let dir_path = write_fixture("setgts", 200);
+    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    // The fixture masks DP<5 / DP>100 / GQ<20 in the gold spec; here the
+    // FMT expression does the masking.
+    let run = |include: bool, name: &str| {
+        let mut after = TailRules::default();
+        if include {
+            after.include.push("FMT/DP>10".to_string());
+        } else {
+            after.exclude.push("FMT/DP>10".to_string());
+        }
+        let spec = FilterSpecV2 {
+            genotype: GenotypeRules {
+                set_gts: Some(".".to_string()),
+                ..GenotypeRules::default()
+            },
+            site_after_mask: after,
+            ..FilterSpecV2::default()
+        };
+        let out = dir.join(format!("{name}.vcf.gz"));
+        let report = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
+            .expect("invariant: run");
+        let text = {
+            use std::io::Read;
+            let mut reader = noodles::bgzf::io::Reader::new(
+                std::fs::File::open(&out).expect("invariant: output"),
+            );
+            let mut s = String::new();
+            reader.read_to_string(&mut s).expect("invariant: read");
+            s
+        };
+        (report.n_masked_gt, text)
+    };
+
+    let (masked_include, text_include) = run(true, "include");
+    let (masked_exclude, text_exclude) = run(false, "exclude");
+    assert!(masked_include > 0 && masked_exclude > 0);
+    assert_ne!(masked_include, masked_exclude, "-i and -e mask different samples");
+    // `-i 'FMT/DP>10'` keeps samples above the threshold: the fixture's low-DP
+    // samples (masked by the expression) become `./.`.
+    assert!(text_include.contains("./.:3"), "fixture DP=3 must be masked under -i");
+    assert!(text_exclude.contains("./.:30") || text_exclude.contains("./.:150"),
+        "DP=30/150 samples are masked under -e");
+    // No site is dropped: masking never removes a record.
+    assert_eq!(text_include.lines().filter(|l| !l.starts_with('#')).count(), 200);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// R5: `FMT/` expressions without `--set-gts .` are refused at compile time,
+/// and subscripts are still reported as unsupported.
+#[test]
+fn format_expressions_need_set_gts() {
+    use reed_filter::spec::TailRules;
+    let dir_path = write_fixture("setgtsfail", 5);
+    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let out = dir.join("o.vcf.gz");
+    let spec = FilterSpecV2 {
+        site_after_mask: TailRules {
+            include: vec!["FMT/DP>10".to_string()],
+            ..TailRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
+        .expect_err("FMT/ without --set-gts must fail");
+    assert!(err.to_string().contains("--set-gts"), "{err}");
+
+    let spec = FilterSpecV2 {
+        genotype: reed_filter::spec::GenotypeRules {
+            set_gts: Some(".".to_string()),
+            ..reed_filter::spec::GenotypeRules::default()
+        },
+        site_after_mask: reed_filter::spec::TailRules {
+            include: vec!["FMT/DP[0]>10".to_string()],
+            ..reed_filter::spec::TailRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
+        .expect_err("subscripts are not supported yet");
+    assert!(err.to_string().contains("subscripts"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }

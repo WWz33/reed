@@ -13,6 +13,7 @@ use reed_core::Bitset;
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{eval_head, HeadScratch};
 use reed_filter::eval::mask::eval_mask;
+use reed_filter::expr::{self, FmtValue};
 use reed_filter::eval::tail::eval_tail;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
@@ -86,7 +87,14 @@ pub(super) struct RecordPipeline {
     head: HeadScratch,
     masked: Bitset,
     mask_values: Vec<Option<f64>>,
+    /// The field rules (expressions evaluated separately), with their
+    /// position in the plan's rule list for attribution.
+    field_rules: Vec<reed_filter::plan::MaskRule>,
+    field_rule_map: Vec<usize>,
     mask_rule: Vec<u16>,
+    /// Reused per-sample `FORMAT` value table for `--set-gts .` expressions.
+    fmt_values: Vec<FmtValue<'static>>,
+    fmt_storage: Vec<(Vec<u8>, Option<f64>)>,
     counts: SiteCounts,
 }
 
@@ -108,14 +116,32 @@ impl RecordPipeline {
             head: HeadScratch::new(),
             masked: Bitset::new(n_samples),
             mask_values: vec![None; 0],
+            field_rules: Vec::new(),
+            field_rule_map: Vec::new(),
             mask_rule: vec![u16::MAX; n_samples],
+            fmt_values: Vec::new(),
+            fmt_storage: Vec::new(),
             counts: SiteCounts::default(),
         }
     }
 
-    /// Adapts the pipeline to a plan (mask rule count).
+    /// Adapts the pipeline to a plan (mask rule count, `--set-gts .`
+    /// expression columns).
     pub(super) fn resize_for(&mut self, plan: &FilterPlan) {
-        self.mask_values.resize(plan.mask.len(), None);
+        self.field_rules = plan.mask.iter().filter(|r| r.expr.is_none()).cloned().collect();
+        self.field_rule_map = plan
+            .mask
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.expr.is_none())
+            .map(|(i, _)| i)
+            .collect();
+        self.mask_values = vec![None; self.field_rules.len()];
+        self.fmt_storage = plan
+            .fmt_expr_fields
+            .iter()
+            .map(|f| (f.tag.clone(), None))
+            .collect();
     }
 
     /// Runs head → decode → mask → count → tail for one record and calls
@@ -173,15 +199,19 @@ impl RecordPipeline {
         self.mask_rule.fill(u16::MAX);
         self.counts = SiteCounts::default();
         let mask_rules = &plan.mask;
+        // Site context for the `--set-gts .` expressions (no genotype-derived
+        // fields: the plan rejects those, so the counts are not needed).
+        let expr_site = expr::SiteValues::from_line(&lr, pos1, None);
         for (i, &code) in scan.codes.iter().enumerate() {
             let kept = keep.get(i).copied().unwrap_or(true);
             if !kept && !opts.mask_all_samples {
                 continue;
             }
-            // One observation per mask RULE: rule i reads its own scanned
+            // One observation per FIELD rule: rule i reads its own scanned
             // column, so several rules may share one field (DP<5 and
-            // DP>100 both read DP).
-            for (rule, v) in mask_rules.iter().zip(self.mask_values.iter_mut()) {
+            // DP>100 both read DP). Expression rules (`--set-gts .`) read
+            // the per-sample FORMAT table below.
+            for (rule, v) in self.field_rules.iter().zip(self.mask_values.iter_mut()) {
                 *v = match rule.float_column {
                     Some(j) => scan
                         .float_columns
@@ -199,7 +229,54 @@ impl RecordPipeline {
                         .map(f64::from),
                 };
             }
-            let hit = eval_mask(&self.mask_values, mask_rules);
+            // Expression rules read FORMAT values; field rules read their
+            // own column (one observation per rule).
+            let mut hit = None;
+            if !self.fmt_storage.is_empty() {
+                for (slot, field) in self.fmt_storage.iter_mut().zip(&plan.fmt_expr_fields) {
+                    let value = match field.float_column {
+                        Some(j) => scan
+                            .float_columns
+                            .get(j)
+                            .and_then(|column| column.get(i))
+                            .copied()
+                            .filter(|x| !x.is_nan())
+                            .map(f64::from),
+                        None => scan
+                            .int_columns
+                            .get(field.int_column)
+                            .and_then(|column| column.get(i))
+                            .copied()
+                            .filter(|&x| x != INT_MISSING)
+                            .map(f64::from),
+                    };
+                    slot.1 = value;
+                }
+                self.fmt_values.clear();
+            }
+            for (rule_index, rule) in mask_rules.iter().enumerate() {
+                let Some(expr) = &rule.expr else {
+                    continue;
+                };
+                let values: Vec<FmtValue<'_>> = self
+                    .fmt_storage
+                    .iter()
+                    .map(|(tag, num)| FmtValue { tag, num: *num })
+                    .collect();
+                let mut sample_site = expr_site;
+                sample_site.fmt = Some(&values);
+                let truth = expr::eval(expr, &sample_site);
+                let fires = if rule.include { !truth } else { truth };
+                if fires {
+                    hit = Some(rule_index);
+                    break;
+                }
+            }
+            if hit.is_none()
+                && let Some(local) = eval_mask(&self.mask_values, &self.field_rules)
+            {
+                hit = self.field_rule_map.get(local).copied();
+            }
             if let Some(rule_index) = hit {
                 self.masked.set(i, true);
                 if let Ok(slot) = u16::try_from(rule_index) {

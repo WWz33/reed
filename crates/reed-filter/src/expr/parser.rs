@@ -135,6 +135,23 @@ pub enum Expr {
 }
 
 impl Expr {
+    /// Collects the `FORMAT` tags the expression reads, in first-seen order.
+    pub fn fmt_tags(&self, out: &mut Vec<String>) {
+        match self {
+            Self::Fmt(tag) => {
+                if !out.iter().any(|t| t == tag) {
+                    out.push(tag.clone());
+                }
+            }
+            Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
+                a.fmt_tags(out);
+                b.fmt_tags(out);
+            }
+            Self::Not(e) | Self::Subscript(e, _) => e.fmt_tags(out),
+            _ => {}
+        }
+    }
+
     /// Whether the expression reads genotype-derived quantities.
     #[must_use]
     pub fn references_genotypes(&self) -> bool {
@@ -144,6 +161,9 @@ impl Expr {
             Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
                 a.references_genotypes() || b.references_genotypes()
             }
+            // A FORMAT read is per sample: the mask stage must evaluate the
+            // expression (`--set-gts .`, 02-cli.md §3.3).
+            Self::Fmt(_) => true,
             Self::Not(e) | Self::Subscript(e, _) => e.references_genotypes(),
             _ => false,
         }

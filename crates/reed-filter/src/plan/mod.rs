@@ -81,6 +81,34 @@ impl HeadRule {
     }
 }
 
+/// One FORMAT tag a `--set-gts .` expression reads.
+#[derive(Clone, Debug)]
+pub struct FmtExprField {
+    /// FORMAT key.
+    pub tag: Vec<u8>,
+    /// Integer column index when the tag is Integer-typed.
+    pub int_column: usize,
+    /// Float column index when the tag is Float-typed.
+    pub float_column: Option<usize>,
+}
+
+/// Whether an expression reads a genotype-derived site field (forbidden in
+/// `--set-gts .` expressions, whose mask decision must not depend on the
+/// post-mask counts).
+fn expr_reads_gt_fields(expr: &crate::expr::Expr) -> bool {
+    use crate::expr::Expr;
+    match expr {
+        Expr::Field(f) => f.is_genotype_derived(),
+        Expr::Bare(name) => crate::expr::Field::from_name(name)
+            .is_some_and(crate::expr::Field::is_genotype_derived),
+        Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
+            expr_reads_gt_fields(a) || expr_reads_gt_fields(b)
+        }
+        Expr::Not(e) | Expr::Subscript(e, _) => expr_reads_gt_fields(e),
+        _ => false,
+    }
+}
+
 /// A compiled INFO predicate.
 #[derive(Clone, Debug)]
 pub struct InfoRule {
@@ -96,9 +124,16 @@ pub struct InfoRule {
     pub number_a: bool,
 }
 
-/// A compiled genotype mask rule.
+/// A compiled genotype mask rule: either a single-field comparison or (with
+/// `--set-gts .`) an expression evaluated per sample.
 #[derive(Clone, Debug)]
 pub struct MaskRule {
+    /// A `FMT/` expression rule (`--set-gts .`, 02-cli.md §3.3): when set,
+    /// the comparison fields below are unused.
+    pub expr: Option<crate::expr::Expr>,
+    /// Whether the expression is an `-i` (mask when false) or `-e` (mask
+    /// when true); unused for field rules.
+    pub include: bool,
     /// FORMAT field name (the scan key).
     pub field: Vec<u8>,
     /// The parsed comparison.
@@ -184,6 +219,10 @@ pub struct FilterPlan {
     /// Float-typed FORMAT fields the mask needs scanned, in scan order (the
     /// decoder types its columns; Float-typed rules read these).
     pub float_fields: Vec<Vec<u8>>,
+    /// FORMAT tags the `--set-gts .` expressions read, with the column that
+    /// carries each value (the mask stage builds one value table per
+    /// sample).
+    pub fmt_expr_fields: Vec<FmtExprField>,
     /// Decode policies the scanner executes (ploidy from the spec; ALT
     /// indices above 1 always collapse, counted, because the site-level
     /// `multiallelic` policy is the biallelic gate below).
@@ -256,6 +295,7 @@ pub fn compile(
     // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
     // genotype-dependent ones after the mask stage ----
     let info_tags: Vec<String> = info_defs.keys().cloned().collect();
+    let format_tags: Vec<String> = format_defs.keys().cloned().collect();
     for (index, text) in spec.site.include.iter().enumerate() {
         let expr = crate::expr::parse_and_check(text, &info_tags)
             .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
@@ -325,6 +365,7 @@ pub fn compile(
     }
 
     // ---- mask rules ----
+    let mut fmt_expr_fields: Vec<FmtExprField> = Vec::new();
     let mut mask = Vec::new();
     let mut int_fields: Vec<Vec<u8>> = Vec::new();
     let mut float_fields: Vec<Vec<u8>> = Vec::new();
@@ -355,6 +396,8 @@ pub fn compile(
             (column_of(&mut int_fields), None)
         };
         mask.push(MaskRule {
+            expr: None,
+            include: true,
             field: rule.field.as_bytes().to_vec(),
             cmp,
             on_missing,
@@ -401,32 +444,102 @@ pub fn compile(
         tail.push(TailRule::MinHweP(p));
     }
 
-    for (index, text) in spec.site_after_mask.include.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, &info_tags)
-            .map_err(|e| FilterError::Spec(format!("-i {text:?} (after mask): {e}")))?;
+    // `--set-gts .` turns the `FMT/` expressions into per-sample mask rules
+    // (bcftools `filter -S .`); genotype-derived site fields stay tail rules.
+    let set_gts = match spec.genotype.set_gts.as_deref() {
+        None => false,
+        Some(".") => true,
+        Some(other) => {
+            return Err(FilterError::Spec(format!(
+                "--set-gts {other:?}: only `.` (the missing genotype) is supported"
+            )))
+        }
+    };
+    for (index, include, text) in spec
+        .site_after_mask
+        .include
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (i, true, t))
+        .chain(
+            spec.site_after_mask
+                .exclude
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (i, false, t)),
+        )
+    {
+        let flag = if include { "-i" } else { "-e" };
+        let expr = crate::expr::parse_and_check_fmt(text, &info_tags, &format_tags)
+            .map_err(|e| FilterError::Spec(format!("{flag} {text:?} (after mask): {e}")))?;
         if !expr.references_genotypes() {
             return Err(FilterError::Spec(format!(
-                "-i {text:?} does not read genotype-derived values and belongs in [site]"
+                "{flag} {text:?} does not read genotype-derived values and belongs in [site]"
             )));
         }
-        tail.push(TailRule::Expr {
-            id: format!("after_mask.include#{}", index + 1),
-            include: true,
-            expr,
-        });
-    }
-    for (index, text) in spec.site_after_mask.exclude.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, &info_tags)
-            .map_err(|e| FilterError::Spec(format!("-e {text:?} (after mask): {e}")))?;
-        if !expr.references_genotypes() {
+        let mut fmt_tags = Vec::new();
+        expr.fmt_tags(&mut fmt_tags);
+        if fmt_tags.is_empty() {
+            tail.push(TailRule::Expr {
+                id: if include {
+                    format!("after_mask.include#{}", index + 1)
+                } else {
+                    format!("after_mask.exclude#{}", index + 1)
+                },
+                include,
+                expr,
+            });
+            continue;
+        }
+        if !set_gts {
             return Err(FilterError::Spec(format!(
-                "-e {text:?} does not read genotype-derived values and belongs in [site]"
+                "{flag} {text:?} reads FORMAT values: they are masks, not site rules — add --set-gts ."
             )));
         }
-        tail.push(TailRule::Expr {
-            id: format!("after_mask.exclude#{}", index + 1),
-            include: false,
-            expr,
+        if expr_reads_gt_fields(&expr) {
+            return Err(FilterError::Spec(format!(
+                "{flag} {text:?} mixes FORMAT values with genotype-derived fields; \
+                 --set-gts . expressions may read FORMAT and site fields only"
+            )));
+        }
+        for tag in &fmt_tags {
+            let (ty, number) = format_defs
+                .get(tag)
+                .copied()
+                .ok_or_else(|| FilterError::Spec(format!("FORMAT tag {tag} is not declared in the header")))?;
+            if number != format::Number::Count(1) {
+                return Err(FilterError::Spec(format!(
+                    "FORMAT tag {tag} is multi-valued (Number={number:?}): subscripts are not supported yet"
+                )));
+            }
+            validate_numeric(tag, ty)?;
+            let is_float = matches!(ty, format::Type::Float);
+            let column_of = |fields: &mut Vec<Vec<u8>>| match fields.iter().position(|f| f.as_slice() == tag.as_bytes()) {
+                Some(i) => i,
+                None => {
+                    fields.push(tag.as_bytes().to_vec());
+                    fields.len() - 1
+                }
+            };
+            let (int_column, float_column) = if is_float {
+                (0, Some(column_of(&mut float_fields)))
+            } else {
+                (column_of(&mut int_fields), None)
+            };
+            fmt_expr_fields.push(FmtExprField {
+                tag: tag.as_bytes().to_vec(),
+                int_column,
+                float_column,
+            });
+        }
+        mask.push(MaskRule {
+            expr: Some(expr),
+            include,
+            field: Vec::new(),
+            cmp: crate::spec::Cmp::parse(">= 0").expect("invariant: a constant comparison"),
+            on_missing: crate::spec::OnMissing::Keep,
+            int_column: 0,
+            float_column: None,
         });
     }
 
@@ -494,6 +607,7 @@ pub fn compile(
         strategy,
         int_fields,
         float_fields,
+        fmt_expr_fields,
         policies,
         stale_tags,
         recompute,

@@ -10,9 +10,12 @@
 //! (`== = != < <= > >=`), the match operators `~`/`!~` over literal
 //! patterns with optional `^`/`$` anchors, logic (`&& || & |`), `!` and
 //! parentheses.
-//! Not yet supported: `FMT/TAG`, subscripts, general regular expressions
-//! (any pattern metacharacter beyond the anchors is reported, never
-//! reinterpreted), arithmetic.
+//! `FMT/TAG` reads one sample's FORMAT value and is only meaningful through
+//! `--set-gts .` (02-cli.md §3.3), where the caller evaluates the
+//! expression per sample with a [`FmtValue`] table.
+//! Not yet supported: subscripts, general regular expressions (any pattern
+//! metacharacter beyond the anchors is reported, never reinterpreted),
+//! arithmetic.
 
 pub mod lexer;
 pub mod parser;
@@ -32,6 +35,17 @@ pub struct GtCounts {
     pub n_missing: u64,
     /// Samples.
     pub n_samples: u64,
+}
+
+/// One sample's `FORMAT` value for a tag the plan scanned (single-valued,
+/// numeric-typed tags only; multi-valued tags need subscripts and are
+/// rejected at compile time).
+#[derive(Clone, Copy, Debug)]
+pub struct FmtValue<'a> {
+    /// The FORMAT key.
+    pub tag: &'a [u8],
+    /// The parsed number (`None` when missing).
+    pub num: Option<f64>,
 }
 
 /// Everything an expression can read about one site.
@@ -57,6 +71,9 @@ pub struct SiteValues<'a> {
     pub info: &'a [u8],
     /// Genotype-derived counts (`None` before the mask stage).
     pub gt: Option<GtCounts>,
+    /// The current sample's `FORMAT` values, present when the caller
+    /// evaluates per sample (`--set-gts .`, 02-cli.md §3.3).
+    pub fmt: Option<&'a [FmtValue<'a>]>,
 }
 
 impl<'a> SiteValues<'a> {
@@ -101,6 +118,7 @@ impl<'a> SiteValues<'a> {
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
             gt,
+            fmt: None,
         }
     }
 }
@@ -124,6 +142,7 @@ impl SiteValues<'static> {
             n_samples: gt.n_samples,
             info: b".",
             gt: Some(gt),
+            fmt: None,
         }
     }
 }
@@ -174,7 +193,23 @@ pub fn parse(text: &str) -> Result<Expr, String> {
 /// subset does not implement yet).
 pub fn parse_and_check(text: &str, info_tags: &[String]) -> Result<Expr, String> {
     let expr = parser::parse(text)?;
-    check(&expr, info_tags)?;
+    check(&expr, info_tags, &[])?;
+    Ok(expr)
+}
+
+/// Parses and validates `text` against the header's INFO and FORMAT tags.
+///
+/// # Errors
+///
+/// A human-readable message (syntax error, unknown tag, or a construct the
+/// subset does not implement yet).
+pub fn parse_and_check_fmt(
+    text: &str,
+    info_tags: &[String],
+    format_tags: &[String],
+) -> Result<Expr, String> {
+    let expr = parser::parse(text)?;
+    check(&expr, info_tags, format_tags)?;
     Ok(expr)
 }
 
@@ -183,20 +218,26 @@ pub fn parse_and_check(text: &str, info_tags: &[String]) -> Result<Expr, String>
 /// # Errors
 ///
 /// Unknown tags and unimplemented constructs.
-pub fn check(expr: &Expr, info_tags: &[String]) -> Result<(), String> {
+pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Result<(), String> {
     match expr {
-        Expr::Fmt(tag) => Err(format!(
-            "FMT/{tag} expressions are not supported yet (the subset covers site-level fields)"
-        )),
-        Expr::Subscript(_, _) => {
-            Err("subscripts ([0], [*]) are not supported yet".to_string())
+        Expr::Fmt(tag) => {
+            if !format_tags.iter().any(|t| t == tag) {
+                return Err(format!("FORMAT tag {tag:?} is not declared in the header"));
+            }
+            Ok(())
+        }
+        Expr::Subscript(inner, _) => {
+            // A subscript selects an element of a multi-valued value; the
+            // planned columns carry single values only.
+            check(inner, info_tags, format_tags)?;
+            Err("subscripts ([0], [*]) are not supported yet (multi-valued FORMAT tags)".to_string())
         }
         Expr::Cmp(op @ ("~" | "!~"), lhs, rhs) => {
             let Expr::Str(pattern) = &**rhs else {
                 return Err(format!("the right-hand side of {op} must be a string literal"));
             };
             check_pattern(pattern)?;
-            check(lhs, info_tags)
+            check(lhs, info_tags, format_tags)
         }
         Expr::Info(tag) | Expr::Bare(tag) => {
             if Field::from_name(tag).is_none() && !info_tags.iter().any(|t| t == tag) {
@@ -205,10 +246,10 @@ pub fn check(expr: &Expr, info_tags: &[String]) -> Result<(), String> {
             Ok(())
         }
         Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
-            check(a, info_tags)?;
-            check(b, info_tags)
+            check(a, info_tags, format_tags)?;
+            check(b, info_tags, format_tags)
         }
-        Expr::Not(e) => check(e, info_tags),
+        Expr::Not(e) => check(e, info_tags, format_tags),
         _ => Ok(()),
     }
 }
@@ -260,15 +301,19 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
         Expr::Str(s) => Some(Val::Str(s.as_bytes())),
         Expr::Missing => Some(Val::Missing),
         Expr::Field(field) => field_value(*field, site),
+        Expr::Fmt(tag) => site.fmt.and_then(|values| {
+            values
+                .iter()
+                .find(|v| v.tag == tag.as_bytes())
+                .map(|v| v.num.map_or(Val::Missing, Val::Num))
+        }),
         Expr::Info(tag) | Expr::Bare(tag) => {
             if let Some(field) = Field::from_name(tag) {
                 return field_value(field, site);
             }
             info_value(site.info, tag.as_bytes())
         }
-        Expr::Fmt(_) | Expr::Subscript(_, _) | Expr::Cmp(..) | Expr::Logic(..) | Expr::Not(_) => {
-            None
-        }
+        Expr::Subscript(_, _) | Expr::Cmp(..) | Expr::Logic(..) | Expr::Not(_) => None,
     }
 }
 
@@ -422,6 +467,7 @@ mod tests {
             n_samples: 4,
             info,
             gt,
+            fmt: None,
         }
     }
 
@@ -468,7 +514,12 @@ mod tests {
 
     #[test]
     fn unsupported_constructs_are_reported() {
-        assert!(parse_and_check("FMT/DP>10", &[]).unwrap_err().contains("not supported yet"));
+        assert!(parse_and_check_fmt("FMT/DP>10", &[], &["DP".into()]).is_ok());
+        assert!(
+            parse_and_check_fmt("FMT/DP>10", &[], &[])
+                .unwrap_err()
+                .contains("not declared")
+        );
         assert!(parse_and_check("INFO/AC[0]>1", &["AC".into()]).unwrap_err().contains("subscripts"));
         assert!(parse_and_check("ID~\"rs[0-9]\"", &[]).unwrap_err().contains("metacharacter"));
         assert!(parse_and_check("ID~QSOMETHING", &[]).unwrap_err().contains("string literal"));

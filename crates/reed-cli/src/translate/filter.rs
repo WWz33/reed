@@ -151,6 +151,9 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
     if let Some(v) = cli.min_gq {
         mask("GQ", format!("< {v}"));
     }
+    if let Some(value) = &cli.set_gts {
+        spec.genotype.set_gts = Some(value.clone());
+    }
 
     // ---- after-mask site rules ----
     if let Some(g) = cli.geno {
