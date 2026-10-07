@@ -66,7 +66,15 @@ scikit-allel 1.3.13 从仓库上级目录源码安装（`pip install -e pixy sci
 | 删除 TOML/conf（02-cli §0、§7） | `--spec`/`--conf`、`read_spec_toml`、`FilterSpecV2::from_toml_str`、`spec::compat`、`toml` 依赖全部删除；spec 只由 CLI 参数（或测试直接构造）产生 | 全量测试 278 通过；gold 对拍通过 |
 | `gold/scripts/run_reed.sh`（02-cli §8） | 从 `filters.conf` 生成 flag 命令，与另外三个工具共用 `samples.keep.txt` | 全量运行成功，输出与 gold 一致 |
 
-R5 未完成：`-r/-R/-t/-T` 区域（需索引/流式区域，R6）、`-O b/u`（BCF 编码器，R6）、`FMT/` 表达式与下标/正则、`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、`-I/--no-update`、`--max-maf/--max-mac`、`-V`、`--set-gts .`。
+R5 未完成：`-t/-T` 流式区域、`-R` 区域文件、`-O b/u`（BCF 编码器，R6）、`FMT/` 表达式与下标/正则、`FilterSpec::to_args()` 往返、`reed-cli` crate 抽取、`-I/--no-update`、`--max-maf/--max-mac`、`-V`、`--set-gts .`。
+
+### R6（部分：索引区域 `-r`）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| `-r/--regions`（02-cli §2、§6） | 新 `reed_io::chunk::region`：`RegionChunkSource` 用索引把区域映射成压缩字节区间，只读该区间；`FileIndex` 嗅探 BGZF 压缩的 CSI/TBI 魔数并查询。索引的虚拟偏移低 16 位就是首记录在块内的偏移，直接作为 chunk 的 `first_in_block_offset`（无需 inflate 对齐）。记录级区域判定仍由 spec 的 `targets` 谓词完成，索引只省 I/O | 与 `bcftools view -r` 逐字节一致：子集 6 个区域用例（含文件头开始、多区域、空区域）；全量 `Chr05:1.0-1.1 Mb` 用 `reed index` 建的 CSI 查询 245 条、0.08 s（对比读整个 6.6 GB）；`run_reed.sh` 的 REGION 路径跑通 |
+
+R6 未完成：未压缩 VCF / 普通 gzip / BCF 输入、BCF 输出（`-Ob/-Ou`）、`-t/-T` 流式区域、`-R` 区域文件。
 
 ## 偏差记录（06-roadmap.md §4.6）
 

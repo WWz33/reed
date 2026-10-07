@@ -70,6 +70,10 @@ pub struct FilterOptions {
     /// Sample lists naming samples absent from the header only warn
     /// (bcftools `--force-samples`).
     pub force_samples: bool,
+    /// Index-accelerated regions (`-r/-R`): the reader seeks to the range the
+    /// index maps them to; the spec's `targets` predicate drops records
+    /// outside them.
+    pub regions: Vec<reed_io::chunk::region::Region>,
 }
 
 fn io_err(e: reed_io::error::IoError) -> FilterError {
@@ -92,7 +96,7 @@ pub fn run_filter(
 ) -> Result<FilterReport, FilterError> {
     let t0 = Instant::now();
     // One open for the header (the pass loops below open again per pass).
-    let (_source, facts) = crate::input::open(input).map_err(io_err)?;
+    let (_source, facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
     let mut plan = reed_filter::plan::compile(spec, &header, &opts.command_line)?;
@@ -307,7 +311,7 @@ pub fn run_filter(
         };
         // Header first (as BGZF block(s) on the compressed path).
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
-        let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
+        let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
         let abort = reed_engine::abort::abort();
         run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         sketch_funnel
@@ -336,7 +340,7 @@ pub fn run_filter(
             last_block_end: 0,
         };
         sink.write_header_bytes(&header_bytes, compressed, opts.compress_level)?;
-        let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
+        let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
         let abort = reed_engine::abort::abort();
         run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         slot
@@ -595,7 +599,7 @@ fn run_missing_pass(
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
-    let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
+    let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
     let job = MissingJob { n_samples };
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
     let sink = SumSink { total: Arc::clone(&total) };
@@ -1457,7 +1461,7 @@ fn run_sketch_pass(
     opts: &FilterOptions,
 ) -> Result<SketchPassOutput, FilterError> {
     let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
-    let (mut source, _facts) = crate::input::open(input).map_err(io_err)?;
+    let (mut source, _facts) = crate::input::open_regions(input, &opts.regions).map_err(io_err)?;
     let job = SketchJob {
         plan: Arc::new(plan.clone()),
         n_samples,

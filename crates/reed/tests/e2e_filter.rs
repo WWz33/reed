@@ -161,6 +161,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
         quiet: true,
         report_json: None,
         force_samples: false,
+        regions: Vec::new(),
     }
 }
 
@@ -428,6 +429,7 @@ mod write_index {
             quiet: true,
             report_json: None,
             force_samples: false,
+            regions: Vec::new(),
         }
     }
 

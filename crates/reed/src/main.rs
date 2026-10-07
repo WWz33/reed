@@ -41,6 +41,10 @@ enum Command {
     Filter {
         /// Input BGZF VCF (.vcf.gz)
         input: String,
+        /// Regions to keep, comma-separated (`Chr01`, `Chr01:100-200`);
+        /// needs an index next to the input (bcftools `-r`)
+        #[arg(short = 'r', long = "regions", value_name = "LIST")]
+        regions: Option<String>,
         /// Samples to keep: comma-separated names (bcftools `-s`)
         #[arg(short = 's', long = "samples", value_name = "LIST")]
         samples: Option<String>,
@@ -316,6 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     if let Command::Filter {
         input,
+        regions,
         samples,
         samples_file,
         keep,
@@ -348,6 +353,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     {
         return run_filter_cli(FilterCli {
             input,
+            regions,
             samples,
             samples_file,
             keep,
@@ -606,6 +612,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 struct FilterCli {
     input: String,
+    regions: Option<String>,
     samples: Option<String>,
     samples_file: Option<String>,
     keep: Option<String>,
@@ -660,6 +667,15 @@ fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, S
         spec.cohort = Some(CohortRule::KeepList(path.clone()));
     } else if let Some(path) = &cli.remove {
         spec.cohort = Some(CohortRule::RemoveList(path.clone()));
+    }
+
+    // ---- regions (02-cli.md §2): the spec predicate, validated here ----
+    if let Some(list) = &cli.regions {
+        for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            reed_filter::spec::Region::parse(token)
+                .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+            spec.targets.include.push(token.to_string());
+        }
     }
 
     // ---- site: variant class / alleles / FILTER ----
@@ -835,6 +851,18 @@ fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send
             }
         }
     };
+    let mut regions = Vec::new();
+    if let Some(list) = &cli.regions {
+        for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            let parsed = reed_filter::spec::Region::parse(token)
+                .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+            regions.push(reed_io::chunk::region::Region {
+                contig: parsed.contig.clone(),
+                start1: parsed.start,
+                end1: parsed.end,
+            });
+        }
+    }
     let opts = reed::filter::FilterOptions {
         threads,
         output,
@@ -845,6 +873,7 @@ fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send
         quiet: false,
         report_json: report.as_ref().map(PathBuf::from),
         force_samples: *force_samples,
+        regions,
     };
     let report = reed::filter::run_filter(input_path(&input).as_deref(), &spec_v2, &opts)?;
     eprintln!(
