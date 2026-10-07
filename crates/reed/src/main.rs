@@ -114,6 +114,10 @@ enum Command {
         /// Per-sample and per-site missingness (PREFIX.smiss, PREFIX.vmiss)
         #[arg(long)]
         missing: bool,
+        /// Per-sample and per-site mean depth (PREFIX.idepth,
+        /// PREFIX.ldepth.mean, vcftools layouts; reads FMT/DP)
+        #[arg(long)]
+        depth: bool,
         /// QC summary in bcftools-stats format (PREFIX.stats)
         #[arg(long)]
         summary: bool,
@@ -245,6 +249,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         hardy,
         het,
         missing,
+        depth,
         summary,
         variant_only,
         bypass_invariant_check,
@@ -302,17 +307,18 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts.
-    if freq || hardy || het || missing || summary {
+    if freq || hardy || het || missing || depth || summary {
         let Some(prefix) = out.clone() else {
             return Err("report mode writes files: pass -o PREFIX".into());
         };
         let mut files = Vec::new();
-        if freq || hardy || het || missing {
+        if freq || hardy || het || missing || depth {
             let request = reed::reports::ReportRequest {
                 freq,
                 hardy,
                 het,
                 missing,
+                depth,
                 prefix: PathBuf::from(&prefix),
             };
             let outcome = reed::reports::run_reports(

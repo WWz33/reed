@@ -35,6 +35,9 @@ pub struct ReportRequest {
     pub het: bool,
     /// `--missing`: `PREFIX.smiss` and `PREFIX.vmiss`.
     pub missing: bool,
+    /// `--depth`: `PREFIX.idepth` (per sample) and `PREFIX.ldepth.mean`
+    /// (per site) in vcftools' layouts.
+    pub depth: bool,
     /// Output prefix (`-o PREFIX`).
     pub prefix: PathBuf,
 }
@@ -43,7 +46,7 @@ impl ReportRequest {
     /// Whether any report is requested.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        !(self.freq || self.hardy || self.het || self.missing)
+        !(self.freq || self.hardy || self.het || self.missing || self.depth)
     }
 }
 
@@ -67,6 +70,8 @@ struct SiteRow {
     counts: SiteGroupCounts,
     /// Fully missing genotypes at the site.
     n_missing: u32,
+    /// `(Σ DP, Σ DP², samples contributing)` for `--depth`.
+    depth: (f64, f64, u64),
 }
 
 /// Worker → sink partial.
@@ -77,6 +82,8 @@ struct ReportPartial {
     missing: Vec<u64>,
     /// Per sample: plink `--het` moment components.
     individual: Option<IndividualFAcc>,
+    /// Per sample: `(Σ DP, sites with a called genotype and a DP)`.
+    depth_sums: Vec<(f64, u64)>,
     n_records: u64,
 }
 
@@ -95,6 +102,9 @@ struct ReportScratch {
     mask: SampleMask,
 }
 
+/// The DP FORMAT column index in the scanner's int output.
+const DP_COLUMN: usize = 0;
+
 impl ChunkJob for ReportJob {
     type Partial = ReportPartial;
     type Scratch = Option<ReportScratch>;
@@ -106,15 +116,16 @@ impl ChunkJob for ReportJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let scratch = scratch.get_or_insert_with(|| ReportScratch {
-            scanner: SampleScanner::new(&[]),
+            scanner: SampleScanner::new(&[b"DP"]),
             planes: PlaneBlock::new(1, self.n_samples, false),
-            int_out: Vec::new(),
+            int_out: vec![Vec::new()],
             counters: PolicyCounters::default(),
             mask: SampleMask::all(self.n_samples),
         });
         let mut partial = ReportPartial {
             missing: vec![0; self.n_samples],
             individual: Some(IndividualFAcc::new(self.n_samples)),
+            depth_sums: vec![(0.0, 0); self.n_samples],
             ..ReportPartial::default()
         };
         for line in body.split(|&b| b == b'\n') {
@@ -133,15 +144,16 @@ impl ChunkJob for ReportJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let scratch = scratch.get_or_insert_with(|| ReportScratch {
-            scanner: SampleScanner::new(&[]),
+            scanner: SampleScanner::new(&[b"DP"]),
             planes: PlaneBlock::new(1, self.n_samples, false),
-            int_out: Vec::new(),
+            int_out: vec![Vec::new()],
             counters: PolicyCounters::default(),
             mask: SampleMask::all(self.n_samples),
         });
         let mut partial = ReportPartial {
             missing: vec![0; self.n_samples],
             individual: Some(IndividualFAcc::new(self.n_samples)),
+            depth_sums: vec![(0.0, 0); self.n_samples],
             ..ReportPartial::default()
         };
         self.push_line(line, scratch, &mut partial)?;
@@ -161,6 +173,11 @@ impl ReportJob {
         };
         let locus = Locus { contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(), pos1: 0 };
         let pos1 = parse_pos1(lr.pos_text(), &locus).map_err(|e| EngineError::Job(e.to_string()))?;
+        // The scanner appends to `int_out`, so the column buffers reset per
+        // record (the planes are fully overwritten per site).
+        for column in &mut scratch.int_out {
+            column.clear();
+        }
         scratch
             .scanner
             .scan_record(
@@ -196,6 +213,30 @@ impl ReportJob {
             }
         }
 
+        // vcftools depth: a sample contributes when its genotype is called
+        // and the DP value is present.
+        let dp_column = scratch.int_out.get(DP_COLUMN).map(Vec::as_slice).unwrap_or(&[]);
+        let mut site_dp_sum = 0.0_f64;
+        let mut site_dp_sq = 0.0_f64;
+        let mut site_dp_n = 0_u64;
+        for i in 0..self.n_samples {
+            let word = i / 64;
+            let bit = 1_u64 << (i % 64);
+            let both_missing = planes.slot0_miss.get(word).is_some_and(|w| w & bit != 0)
+                && planes.slot1_miss.get(word).is_some_and(|w| w & bit != 0);
+            let dp = dp_column.get(i).copied().unwrap_or(reed_io::vcf::sample_scan::INT_MISSING);
+            if both_missing || dp == reed_io::vcf::sample_scan::INT_MISSING {
+                continue;
+            }
+            let dp = f64::from(dp);
+            partial.depth_sums[i].0 += dp;
+            partial.depth_sums[i].1 += 1;
+            site_dp_sum += dp;
+            site_dp_sq += dp * dp;
+            site_dp_n += 1;
+        }
+        let site_depth = (site_dp_sum, site_dp_sq, site_dp_n);
+
         // plink `--het` moment components at biallelic sites.
         let n_called_alleles = counts.n_called_alleles(
             u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX"),
@@ -215,6 +256,7 @@ impl ReportJob {
             alt: lr.alts().to_vec(),
             counts,
             n_missing,
+            depth: site_depth,
         });
         partial.n_records += 1;
         Ok(())
@@ -229,7 +271,9 @@ struct ReportSink {
     afreq: Option<BufWriter<std::fs::File>>,
     hardy: Option<BufWriter<std::fs::File>>,
     vmiss: Option<BufWriter<std::fs::File>>,
+    ldepth: Option<BufWriter<std::fs::File>>,
     missing: Vec<u64>,
+    depth_sums: Vec<(f64, u64)>,
     individual: IndividualFAcc,
     n_records: u64,
     out: Arc<Mutex<Option<ReportsOutcome>>>,
@@ -293,6 +337,19 @@ impl ReportSink {
                 writeln!(w, "{chrom}\t{id}\t{}\t{obs}\t{f_miss}", row.n_missing)
                     .map_err(|e| EngineError::Io(e.to_string()))?;
             }
+            if let Some(w) = &mut self.ldepth {
+                let (sum, sq, n) = row.depth;
+                let (mean, var) = if n > 0 {
+                    let mean = sum / n as f64;
+                    // Sample variance (n − 1), vcftools' VAR_DEPTH.
+                    let var = if n > 1 { (sq - sum * sum / n as f64) / (n - 1) as f64 } else { 0.0 };
+                    (g6(mean), g6(var.max(0.0)))
+                } else {
+                    ("NA".to_string(), "NA".to_string())
+                };
+                writeln!(w, "{chrom}\t{}\t{mean}\t{var}", row.pos1)
+                    .map_err(|e| EngineError::Io(e.to_string()))?;
+            }
         }
         Ok(())
     }
@@ -301,8 +358,14 @@ impl ReportSink {
 impl OrderedSink<ReportPartial> for ReportSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut ReportPartial) -> Result<(), EngineError> {
         self.n_records += partial.n_records;
-        if self.request.freq || self.request.hardy || self.request.missing {
+        if self.request.freq || self.request.hardy || self.request.missing || self.request.depth {
             self.write_site_rows(&partial.sites)?;
+        }
+        if self.request.depth {
+            for (dst, src) in self.depth_sums.iter_mut().zip(&partial.depth_sums) {
+                dst.0 += src.0;
+                dst.1 += src.1;
+            }
         }
         if self.request.missing {
             for (dst, src) in self.missing.iter_mut().zip(&partial.missing) {
@@ -333,6 +396,21 @@ impl OrderedSink<ReportPartial> for ReportSink {
         if let Some(mut w) = self.vmiss.take() {
             w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
             files.push(path(".vmiss"));
+        }
+        if let Some(mut w) = self.ldepth.take() {
+            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            files.push(path(".ldepth.mean"));
+        }
+        if self.request.depth {
+            let mut w = ReportSink::open(&self.request.prefix, ".idepth")?;
+            writeln!(w, "INDV\tN_SITES\tMEAN_DEPTH").map_err(|e| EngineError::Io(e.to_string()))?;
+            for (i, &(sum, n)) in self.depth_sums.iter().enumerate() {
+                let name = self.sample_names.get(i).map_or("?", String::as_str);
+                let mean = if n > 0 { g6(sum / n as f64) } else { "NA".to_string() };
+                writeln!(w, "{name}\t{n}\t{mean}").map_err(|e| EngineError::Io(e.to_string()))?;
+            }
+            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            files.push(path(".idepth"));
         }
         if self.request.het {
             let f = self.individual.f_values();
@@ -453,6 +531,11 @@ pub fn run_reports(
         writeln!(w, "#CHROM\tID\tMISSING_CT\tOBS_CT\tF_MISS")
             .map_err(|e| EngineError::Io(e.to_string()))?;
     }
+    let mut ldepth = request.depth.then(|| ReportSink::open(&request.prefix, ".ldepth.mean")).transpose()?;
+    if let Some(w) = &mut ldepth {
+        writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH")
+            .map_err(|e| EngineError::Io(e.to_string()))?;
+    }
     let sink = ReportSink {
         request: request.clone(),
         n_samples,
@@ -460,7 +543,9 @@ pub fn run_reports(
         afreq,
         hardy,
         vmiss,
+        ldepth,
         missing: vec![0; n_samples],
+        depth_sums: vec![(0.0, 0); n_samples],
         individual: IndividualFAcc::new(n_samples),
         n_records: 0,
         out: Arc::new(Mutex::new(None)),
