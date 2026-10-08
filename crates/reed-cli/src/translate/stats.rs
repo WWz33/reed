@@ -13,7 +13,7 @@ use crate::units::input_path;
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
 fn site_spec_is_empty(spec: &reed_filter::spec::FilterSpecV2) -> bool {
-    use reed_filter::spec::FilterSpecV2 as _;
+    
     spec.site == reed_filter::spec::SiteRulesV2::default()
         && spec.genotype == reed_filter::spec::GenotypeRules::default()
         && spec.site_after_mask == reed_filter::spec::TailRules::default()
@@ -215,7 +215,7 @@ fn parse_pbs_triples(
 /// # Errors
 ///
 /// Translation (unknown levels/sizes) and driver failures.
-pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let StatsCli {
 
         input,
@@ -292,10 +292,14 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
     let filter = if site_spec_is_empty(&site_spec) {
         None
     } else {
+        // No biallelic gate here: the stats reporters decide per statistic
+        // how to treat multiallelic sites (doc_v3 05-roadmap R7); gating
+        // records would silently change the summary counts.
         Some(std::sync::Arc::new(reed_filter::plan::compile(
             &site_spec,
             &reed_io::header::tag_table(&facts.header),
             "",
+            false,
         )?))
     };
 

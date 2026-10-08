@@ -77,6 +77,7 @@ pub fn eval_head(
                     .unwrap_or(u32::MAX);
                 n <= *max
             }
+            HeadRule::BiallelicGate => !alts.contains(&b','),
             HeadRule::RequireFilter(set) => set.iter().any(|s| s == line.filter_text()),
             HeadRule::MinAfInfo(bound) => non_reference_af_info(line.info_text())
                 .is_none_or(|freq| freq >= *bound),

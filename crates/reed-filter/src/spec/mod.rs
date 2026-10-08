@@ -51,6 +51,18 @@ pub struct FilterSpecV2 {
     pub policy: PolicyRules,
 }
 
+impl FilterSpecV2 {
+    /// Whether multiallelic inputs may survive into the output
+    /// (`docs/architecture-spec.md` §11.6: `multiallelic != "reject"` or
+    /// `max_alt_alleles > 1`). When false, the filter's plan gates records
+    /// with more than one ALT ([`crate::plan::HeadRule::BiallelicGate`]),
+    /// and the recomputed `AC`/`MAF`/`HWE` values stay per-record valid.
+    #[must_use]
+    pub fn multiallelics_allowed(&self) -> bool {
+        self.policy.multiallelic == MultiallelicPolicy::Allow || self.site.max_alt_alleles > 1
+    }
+}
+
 /// Site-level rules (§11.1 `[site]`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SiteRulesV2 {

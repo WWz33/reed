@@ -7,7 +7,6 @@ use std::io::Write;
 use reed::filter::{run_filter, FilterOptions};
 use reed_filter::spec::{FilterSpecV2, OnMissing};
 use reed_filter::FilterError;
-use std::collections::HashMap;
 
 /// Compresses `text` into a BGZF stream cut at `block_data`-byte blocks —
 /// boundaries fall mid-line, forcing seams.
@@ -532,7 +531,7 @@ fn record_wider_than_one_block_round_trips() {
     text.push('\n');
     // Narrow record, then one ~105 KB record (30 digits per sample).
     text.push_str("c0\t10\t.\tA\tG\t.\tPASS\t.\tGT");
-    for s in 0..N {
+    for _s in 0..N {
         text.push_str("\t0/1");
     }
     text.push('\n');
@@ -763,6 +762,12 @@ fn set_gts_masks_from_format_expressions() {
                 ..GenotypeRules::default()
             },
             site_after_mask: after,
+            // The fixture carries multiallelic records; allow them so the
+            // record count below stays about masking, not the default gate.
+            policy: reed_filter::spec::PolicyRules {
+                multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
+                ..reed_filter::spec::PolicyRules::default()
+            },
             ..FilterSpecV2::default()
         };
         let out = dir.join(format!("{name}.vcf.gz"));
@@ -922,5 +927,88 @@ fn static_subset_and_mind_combine() {
         .expect("invariant: run");
     assert_eq!(report.n_samples_in, 4);
     assert_eq!(report.n_samples_out, 1, "s3 dropped by --mind after the static subset");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// §11.6 / doc_v2 STATUS: the filter's default is plink2-style biallelic
+/// input — a record with several ALTs fails the biallelic gate unless the
+/// spec allows multiallelics (`multiallelic = "allow"` or
+/// `max_alt_alleles > 1`).
+#[test]
+fn default_biallelic_gate_drops_multiallelic_records() {
+    let mut text = String::from(HEADER);
+    text.push_str(concat!(
+        "Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t",
+        "0/1:30:99\t0/1:30:99\t0/1:30:99\t0/1:30:99\n"
+    ));
+    text.push_str(concat!(
+        "Chr01\t2\t.\tA\tG,T\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t",
+        "1/2:30:99\t0/1:30:99\t0/1:30:99\t0/1:30:99\n"
+    ));
+    let dir = std::env::temp_dir().join(format!("reed-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&text, 128)).expect("invariant: write");
+
+    let out = dir.join("gated.vcf.gz");
+    let gated = run_filter(Some(path.as_path()), &FilterSpecV2::default(), &options(None, &out))
+        .expect("invariant: run");
+    assert_eq!(gated.n_output_records, 1, "the multiallelic record is gated out");
+    assert!(
+        gated
+            .funnel
+            .iter()
+            .any(|s| s.rule == "site.biallelic_gate" && s.n_passed == 1),
+        "the gate is attributed in the funnel: {:?}",
+        gated.funnel
+    );
+
+    let allowed = FilterSpecV2 {
+        policy: reed_filter::spec::PolicyRules {
+            multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let out = dir.join("allowed.vcf.gz");
+    let report = run_filter(Some(path.as_path()), &allowed, &options(None, &out))
+        .expect("invariant: run");
+    assert_eq!(report.n_output_records, 2, "allow lets both records through");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A7 / R7: with multiallelics allowed, the AC/MAF/HWE update needs per-ALT
+/// counts; until R7 lands the driver refuses the combination instead of
+/// writing one value where the header declares `Number=A`.
+#[test]
+fn ac_update_with_allowed_multiallelics_is_rejected() {
+    use reed_filter::spec::{MultiallelicPolicy, PolicyRules, SampleList, SampleSelect};
+    let dir_path = write_fixture("ac-multiallelic", 200);
+    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    // Dropping a sample turns on the AC/AN update (bcftools view semantics).
+    let spec = FilterSpecV2 {
+        sample_select: Some(SampleSelect {
+            keep: Some(SampleList::Names(vec!["s0".into(), "s1".into(), "s2".into()])),
+            remove: None,
+        }),
+        policy: PolicyRules {
+            multiallelic: MultiallelicPolicy::Allow,
+            ..PolicyRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let out = dir.join("err.vcf.gz");
+    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
+        .expect_err("multiallelic input + AC update must fail until R7");
+    assert!(err.to_string().contains("R7"), "an actionable message: {err}");
+
+    // With the default gate the multiallelic records are dropped first, so
+    // the same subset update runs and the recomputed AC stays valid.
+    let gated = FilterSpecV2 { policy: PolicyRules::default(), ..spec };
+    let out = dir.join("ok.vcf.gz");
+    let report = run_filter(Some(dir_path.as_path()), &gated, &options(None, &out))
+        .expect("invariant: gated run");
+    assert!(report.n_output_records > 0);
+    assert_eq!(report.n_samples_out, 3);
     let _ = std::fs::remove_dir_all(&dir);
 }

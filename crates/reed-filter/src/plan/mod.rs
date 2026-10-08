@@ -16,7 +16,7 @@ pub use strategy::ExecStrategy;
 
 use crate::spec::region::RegionTriple;
 use crate::spec::{
-    FilterSpecV2, OnMissing, Quantifier, RecomputeSpec, RegionRule,
+    FilterSpecV2, OnMissing, Quantifier, RegionRule,
 };
 use crate::FilterError;
 
@@ -40,6 +40,11 @@ pub enum HeadRule {
     MinAltAlleles(u32),
     /// The record's ALT count must not exceed this.
     MaxAltAlleles(u32),
+    /// The default biallelic gate: records with more than one ALT are
+    /// dropped unless the spec allows multiallelic input (§11.6,
+    /// [`FilterSpecV2::multiallelics_allowed`]). Pushed by `compile` when
+    /// `biallelic_gate` is set and no explicit `max_alt_alleles` covers it.
+    BiallelicGate,
     /// The FILTER column must be one of these (`.` never passes).
     RequireFilter(Vec<Vec<u8>>),
     /// QUAL lower bound (missing QUAL fails, bcftools semantics).
@@ -74,6 +79,7 @@ impl HeadRule {
             Self::ExcludeVariantClass(_) => "site.exclude_variant_class".to_string(),
             Self::MinAltAlleles(_) => "site.min_alt_alleles".to_string(),
             Self::MaxAltAlleles(_) => "site.max_alt_alleles".to_string(),
+            Self::BiallelicGate => "site.biallelic_gate".to_string(),
             Self::RequireFilter(_) => "site.filter".to_string(),
             Self::MinQual(_) => "site.qual".to_string(),
             Self::MinAfInfo(_) => "site.min_af".to_string(),
@@ -283,8 +289,10 @@ pub struct FilterPlan {
     /// sample).
     pub fmt_expr_fields: Vec<FmtExprField>,
     /// Decode policies the scanner executes (ploidy from the spec; ALT
-    /// indices above 1 always collapse, counted, because the site-level
-    /// `multiallelic` policy is the biallelic gate below).
+    /// indices above 1 always collapse and are counted — the decoder never
+    /// rejects an allele index. Records with several ALTs are handled
+    /// upstream: the default [`HeadRule::BiallelicGate`] drops them unless
+    /// the spec allows multiallelic input).
     pub policies: reed_core::genotype::GenotypePolicies,
     /// Stale INFO tags (bytes for the editor).
     pub stale_tags: Vec<Vec<u8>>,
@@ -298,6 +306,11 @@ pub struct FilterPlan {
 
 /// Compiles the v2 spec against the input header.
 ///
+/// `biallelic_gate` is the filter driver's default (§11.6, plink2-style):
+/// push [`HeadRule::BiallelicGate`] unless the spec allows multiallelic
+/// input. The stats driver passes `false` — its multiallelic handling is
+/// per reporter, not a record gate.
+///
 /// # Errors
 ///
 /// [`FilterError::Spec`] on validation failures: unknown tags, non-numeric
@@ -307,6 +320,7 @@ pub fn compile(
     spec: &FilterSpecV2,
     tags: &TagTable,
     command_line: &str,
+    biallelic_gate: bool,
 ) -> Result<FilterPlan, FilterError> {
 
     // ---- head rules (§11.2 order: targets → class/alt → FILTER → QUAL →
@@ -327,6 +341,12 @@ pub fn compile(
     }
     if spec.site.max_alt_alleles > 0 {
         head.push(HeadRule::MaxAltAlleles(spec.site.max_alt_alleles));
+    } else if biallelic_gate && !spec.multiallelics_allowed() {
+        // The default gate (§11.6, plink2-style): without `multiallelic =
+        // "allow"` or an explicit `max_alt_alleles > 1`, multiallelic
+        // records do not reach the decoder — the collapsed per-record
+        // counts (and the recomputed AC/MAF/HWE) are biallelic-valid only.
+        head.push(HeadRule::BiallelicGate);
     }
     if !spec.site.require_filter.is_empty() {
         head.push(HeadRule::RequireFilter(
@@ -384,9 +404,6 @@ pub fn compile(
         }
         head.push(HeadRule::Expr { id: format!("site.exclude#{}", index + 1), include: false, expr });
     }
-    let multiallelics_possible = spec.policy.multiallelic
-        == crate::spec::MultiallelicPolicy::Allow
-        || spec.site.max_alt_alleles > 1;
     for rule in &spec.site.info {
         let def = tags
             .info(&rule.tag)
@@ -684,31 +701,6 @@ pub fn compile(
     })
 }
 
-#[cfg(test)]
-mod stale_info_tests {
-    use super::*;
-    use crate::expr;
-
-    /// 04 §2.3: the warning lists exactly the INFO-declared genotype-derived
-    /// fields an expression reads.
-    #[test]
-    fn stale_info_warning_targets_only_declared_tags() {
-        let mut tags = TagTable::new();
-        tags.add_info("AC", TagType::Integer, TagNumber::A);
-        tags.add_info("DP", TagType::Integer, TagNumber::Count(1));
-
-        for (text, expected) in [
-            ("AC<5", vec!["AC"]),
-            ("AC<5 || MAF>0.01", vec!["AC"]),
-            ("Maf > 0.01", vec![]),
-            ("DP>10", vec![]),
-        ] {
-            let expr = expr::parse(text).expect("invariant: parses");
-            assert_eq!(stale_info_hits(&expr, &tags), expected, "{text}");
-        }
-    }
-}
-
 /// bcftools parses `-q/-Q` with `sscanf("%f")` into a **float**, so its
 /// threshold is the f32 nearest the written value; at an exact boundary
 /// (e.g. AC=34, AN=680 against 0.05) that rounds up and drops the site.
@@ -736,4 +728,29 @@ fn compile_regions(rule: &RegionRule) -> Result<Option<RegionLists>, FilterError
     }
     use crate::spec::region::parse_regions;
     Ok(Some((parse_regions(&rule.include)?, parse_regions(&rule.exclude)?)))
+}
+
+#[cfg(test)]
+mod stale_info_tests {
+    use super::*;
+    use crate::expr;
+
+    /// 04 §2.3: the warning lists exactly the INFO-declared genotype-derived
+    /// fields an expression reads.
+    #[test]
+    fn stale_info_warning_targets_only_declared_tags() {
+        let mut tags = TagTable::new();
+        tags.add_info("AC", TagType::Integer, TagNumber::A);
+        tags.add_info("DP", TagType::Integer, TagNumber::Count(1));
+
+        for (text, expected) in [
+            ("AC<5", vec!["AC"]),
+            ("AC<5 || MAF>0.01", vec!["AC"]),
+            ("Maf > 0.01", vec![]),
+            ("DP>10", vec![]),
+        ] {
+            let expr = expr::parse(text).expect("invariant: parses");
+            assert_eq!(stale_info_hits(&expr, &tags), expected, "{text}");
+        }
+    }
 }

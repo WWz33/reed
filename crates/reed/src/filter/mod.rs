@@ -25,7 +25,7 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, OrderedSink};
 use reed_filter::funnel::{FilterReport, FunnelPartial};
-use reed_filter::plan::{ExecStrategy, FilterPlan, HeadRule};
+use reed_filter::plan::{ExecStrategy, HeadRule};
 use reed_filter::spec::{FilterSpecV2, SampleList};
 use reed_filter::FilterError;
 use reed_core::ChunkId;
@@ -134,9 +134,11 @@ pub fn run_filter(
 ) -> Result<FilterReport, FilterError> {
     let t0 = Instant::now();
     // `--timing` phases (03 O10): open, pass0, pass1 + the engine metrics.
+    // The engine metrics come from whichever strategy's `run` call fired, so
+    // they are assigned (not initialized) before the report below reads them.
     let mut timing_phases: Vec<(&'static str, f64)> = Vec::new();
-    let mut timing_engine: Option<reed_engine::metrics::StageMetrics> = None;
-    let mut timing_chunks: u64 = 0;
+    let timing_engine: Option<reed_engine::metrics::StageMetrics>;
+    let timing_chunks: u64;
     if input.is_none() && !opts.regions.is_empty() {
         return Err(FilterError::Spec(
             "regions need a seekable file, not stdin".into(),
@@ -176,8 +178,12 @@ pub fn run_filter(
     let is_bcf = first.as_ref().is_some_and(|opened| opened.bcf.is_some());
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
-    let mut plan =
-        reed_filter::plan::compile(spec, &reed_io::header::tag_table(&header), &opts.command_line)?;
+    let mut plan = reed_filter::plan::compile(
+        spec,
+        &reed_io::header::tag_table(&header),
+        &opts.command_line,
+        true,
+    )?;
     let strategy = match opts.strategy {
         Some(forced) => forced,
         // The sketch path's record-count estimate is line-based; BCF input
@@ -279,6 +285,20 @@ pub fn run_filter(
                 plan.stale_tags.push(tag.as_bytes().to_vec());
             }
         }
+    }
+    // The recomputed AC/MAF/HWE values come from the collapsed per-record
+    // counts, which are biallelic-valid only (doc_v3 R7 defers the per-ALT
+    // counting). Fail here rather than write a single value where the header
+    // declares Number=A (§11.6, review item A7).
+    if (plan.recompute.ac || plan.recompute.maf || plan.recompute.hwe)
+        && spec.multiallelics_allowed()
+    {
+        return Err(FilterError::Spec(
+            "multiallelic input with an INFO/AC, INFO/MAF or INFO/HWE update is not \
+             implemented yet (doc_v3 R7): drop multiallelic records \
+             (`-M 2`/`max_alt_alleles = 1`) or suppress the update (`-I`/`--no-update`)"
+                .into(),
+        ));
     }
 
     // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions ----

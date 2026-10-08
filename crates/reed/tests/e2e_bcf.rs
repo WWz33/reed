@@ -72,7 +72,7 @@ fn budget() -> ThreadBudget {
 fn request() -> StatsRequest {
     StatsRequest {
         kinds: reed::stats::pixy_kinds(2, true, true, true, false, None, None),
-        gt_groups: vec![Some(0), Some(0), Some(1)].into(),
+        gt_groups: vec![Some(0), Some(0), Some(1)],
         window_size: 1000,
         step: 1000,
         levels: Levels { window: true, contig: false, genome: false },
@@ -263,10 +263,13 @@ fn af_bounds_match_bcftools_on_the_fixture() {
                 max_af,
                 ..reed_filter::spec::TailRules::default()
             },
-            // The fixture carries a haploid call; bcftools accepts it.
+            // The fixture carries a haploid call; bcftools accepts it. It
+            // also carries one multiallelic record (chr1:30), which the
+            // filter's default biallelic gate drops; allow it so the
+            // assertions below stay bcftools-comparable.
             policy: reed_filter::spec::PolicyRules {
                 ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
-                ..reed_filter::spec::PolicyRules::default()
+                multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
             },
             ..FilterSpecV2::default()
         };
