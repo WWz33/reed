@@ -7,6 +7,9 @@
 //! ST, DP, IDD, PSC. Sample-level sections (PSC, genotype DP) require
 //! reading GT/DP, exactly like `bcftools stats -s -`.
 
+// Casts in this file are bounded by construction: Quantiles and AF fractions are bounded to [0, 1] upstream.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 

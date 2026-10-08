@@ -8,6 +8,9 @@
 //! cheap). A record's chunk runs from its start to the next record's start —
 //! the convention the sequential scan and the filter writer share.
 
+// Casts in this file are bounded by construction: Carried record prefixes are bounded by the 1 GiB record ceiling.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

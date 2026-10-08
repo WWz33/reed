@@ -2,6 +2,9 @@
 //! vectors over genotype planes (plink `--het` moment estimator) and the
 //! pairwise joint spectrum with hypergeometric projection support.
 
+// Casts in this file are bounded by construction: Sample counts and indices fit the accumulator dimensions.
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::count::SiteGroupCounts;
 use reed_core::genotype::PlaneBlock;
 use reed_core::math::sum::NeumaierSum;

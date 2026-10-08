@@ -4,6 +4,9 @@
 //! Decoding is lazy: the field walkers below hand out borrowed slices, so
 //! rendering and consumption read each byte once and allocate nothing.
 
+// Casts in this file are bounded by construction: Record fields are bounded by the 1 GiB record ceiling.
+#![allow(clippy::cast_possible_truncation)]
+
 use crate::error::{IoError, Locus};
 
 /// BCF value types (the low nibble of a typed descriptor).

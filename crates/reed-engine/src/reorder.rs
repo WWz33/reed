@@ -4,6 +4,9 @@
 //! capacity)`, so a fixed ring indexed by `id % capacity` suffices — the
 //! unbounded `BTreeMap` of the legacy engine is gone (issue A14).
 
+// Casts in this file are bounded by construction: Ring slots are indexed by chunk ids, which fit `usize` on every supported target.
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::ChunkId;
 
 /// Fixed-capacity ring delivering results in chunk order.

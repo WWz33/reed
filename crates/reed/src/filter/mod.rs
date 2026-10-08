@@ -11,6 +11,9 @@
 //! [`record_pipeline`](record_pipeline::RecordPipeline); the strategy files
 //! only decide what to do with a record.
 
+// Casts in this file are bounded by construction: Sample counts fit u32 (validated against the header).
+#![allow(clippy::cast_possible_truncation)]
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -67,6 +70,9 @@ pub struct FilterOptions {
     pub command_line: String,
     /// Suppress the human stderr table.
     pub quiet: bool,
+    /// Write the `--timing` report here (doc_v3 03 O10): per-phase wall time
+    /// plus the engine's chunk/worker-busy/in-flight metrics.
+    pub timing: Option<PathBuf>,
     /// Write the JSON report here.
     pub report_json: Option<PathBuf>,
     /// Sample lists naming samples absent from the header only warn
@@ -127,6 +133,10 @@ pub fn run_filter(
     opts: &FilterOptions,
 ) -> Result<FilterReport, FilterError> {
     let t0 = Instant::now();
+    // `--timing` phases (03 O10): open, pass0, pass1 + the engine metrics.
+    let mut timing_phases: Vec<(&'static str, f64)> = Vec::new();
+    let mut timing_engine: Option<reed_engine::metrics::StageMetrics> = None;
+    let mut timing_chunks: u64 = 0;
     if input.is_none() && !opts.regions.is_empty() {
         return Err(FilterError::Spec(
             "regions need a seekable file, not stdin".into(),
@@ -157,6 +167,7 @@ pub fn run_filter(
             _spill = None;
         }
     }
+    timing_phases.push(("open", t0.elapsed().as_secs_f64()));
     let facts = first
         .as_ref()
         .expect("invariant: the input was just opened")
@@ -194,12 +205,16 @@ pub fn run_filter(
 
     // ---- pass0 (the sketch path also captures the per-chunk sketches the
     // mid stage turns into emit decisions) ----
+    let pass0_start = Instant::now();
     let sketch_pass = if strategy == ExecStrategy::SketchThenEmit {
         let opened = first.take().expect("invariant: pass0 consumes the first open");
         Some(run_sketch_pass(opened, n_samples_in, &plan, opts)?)
     } else {
         None
     };
+    if sketch_pass.is_some() {
+        timing_phases.push(("pass0", pass0_start.elapsed().as_secs_f64()));
+    }
 
     // ---- static subset (`-s/-S/--keep/--remove`), then `--mind` (04 §C0b:
     // plink2's order; `--mind` counts missing calls after masking, over the
@@ -267,12 +282,16 @@ pub fn run_filter(
     }
 
     // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions ----
+    let mid_start = Instant::now();
     let sketch_out: Option<(FunnelPartial, std::collections::HashMap<u64, Arc<ChunkDecision>>)> =
         sketch_pass.map(|sketch| {
             let mut funnel = sketch.funnel;
             let map = mid_stage(&sketch.sketches, &keep, &plan, n_samples_out, &mut funnel);
             (funnel, map)
         });
+    if sketch_out.is_some() {
+        timing_phases.push(("mid", mid_start.elapsed().as_secs_f64()));
+    }
 
     // ---- output header: prune samples, add recompute defs, provenance ----
     let out_header = if subset {
@@ -419,7 +438,11 @@ pub fn run_filter(
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
         let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        let pass1_start = Instant::now();
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
+        timing_engine = Some(report.metrics);
+        timing_chunks = report.n_chunks;
         job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         sketch_funnel
     } else {
@@ -452,7 +475,11 @@ pub fn run_filter(
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
         let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        let pass1_start = Instant::now();
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+        timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
+        timing_engine = Some(report.metrics);
+        timing_chunks = report.n_chunks;
         job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         slot
             .lock()
@@ -478,6 +505,32 @@ pub fn run_filter(
     };
     if !opts.quiet {
         report::eprint_report(&report);
+    }
+    if let Some(path) = &opts.timing {
+        use std::fmt::Write as _;
+        let mut text = String::from("# reed filter timing (03-performance.md O10)\n");
+        let _ = writeln!(text, "strategy\t{}", strategy.id());
+        let _ = writeln!(text, "threads\t{}", opts.threads.max(1));
+        let _ = writeln!(text, "n_records_in\t{}", funnel.n_input);
+        let _ = writeln!(text, "n_records_out\t{}", funnel.n_output);
+        for (phase, secs) in &timing_phases {
+            let _ = writeln!(text, "phase.{phase}_ms\t{:.3}", secs * 1e3);
+        }
+        let _ = writeln!(text, "total_ms\t{:.3}", t0.elapsed().as_secs_f64() * 1e3);
+        let _ = writeln!(text, "chunks\t{timing_chunks}");
+        if let Some(metrics) = timing_engine {
+            let _ = writeln!(
+                text,
+                "worker_busy_ms\t{:.3}",
+                metrics.worker_busy.as_secs_f64() * 1e3
+            );
+            let _ = writeln!(
+                text,
+                "in_flight_peak_bytes\t{}",
+                metrics.in_flight_peak_bytes
+            );
+        }
+        std::fs::write(path, text).map_err(FilterError::from)?;
     }
     if let Some(path) = &opts.report_json {
         let json = serde_json::to_string_pretty(&report)

@@ -7,6 +7,9 @@
 //! signal (§7.5), and in-flight compressed bytes are accounted against the
 //! memory budget (§7.7).
 
+// Casts in this file are bounded by construction: Elapsed nanoseconds are clamped to u64 in practice (584 years).
+#![allow(clippy::cast_possible_truncation)]
+
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

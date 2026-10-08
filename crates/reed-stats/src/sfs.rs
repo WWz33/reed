@@ -2,6 +2,9 @@
 //! (`docs/architecture-spec.md` §9.4, the oracle's `CompleteCase` semantics;
 //! the projected estimator is M7).
 
+// Casts in this file are bounded by construction: Sample counts and SFS bins fit the accumulator dimensions.
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::harmonic::{a1, a2};
 use reed_core::math::sum::NeumaierSum;

@@ -67,14 +67,17 @@
 | C4 合并 QC 入口 / reed-qc 并入 reed-stats | 已做 | `reed qc` 保留为隐藏弃用别名（stderr 警告）；`reed-qc` crate 删除，代码并入 `reed-stats::summary`（`summary/{mod.rs,histogram.rs,report.rs}`，`serde` 依赖随之移入），其测试改引用新路径；`reed/src/{stats,reports,pixy,qc,qc_report}.rs` 按 doc_v2 03 §8 移到 `reed/src/stats/{job.rs,writers/*.rs}`，旧公共路径（`reed::reports`/`reed::pixy`/`reed::qc_report`）由 crate 根 re-export 保持 | 342 测试全绿、clippy 干净、工作区从 9 个 crate 减到 8；`writers/*` 内部尚未按格式细分（`plink2_table`/`vcftools_depth`/`bcftools_stats`/`log`），文件保持现有单文件结构 |
 | C2 的 `pub(crate)` 化 | 改为 `#[doc(hidden)]` | 对拍套件是 integration test，需要跨 crate 访问这些累加器；移入单元测试是纯机械工作 |
 | C5 类型化 `EngineError` | 已做（doc_v2 03 §4.4 的形状，doc_v3 C5 引用该节）：`Io(std::io::Error)`、`Input(reed_io::IoError)`（保留 Locus）、`Job(Box<dyn Error + Send + Sync>)`（保留类型与 source 链）、`WorkerPanicked`/`MemBudgetExceeded`/`Aborted`；`EngineError::job(msg)` 造消息型错误，`From<CoreError>`/`From<IoError>`/`From<io::Error>` 三处转换 | 构造点全部改走 typed 转换；`source_errors_propagate` 断言传输错误落到 `Input(IoError::Io(_))`；335 测试全绿 |
-| C7 clippy pedantic | 部分 | `clippy::all` 无错误；生产代码的 `expect()` 已全部带 `invariant:` 前缀（剩余 18 处缺口都在 `#[cfg(test)]`/examples）；`cast_possible_truncation` 约 118 处尚未逐条处理 |
+| C7 clippy pedantic | 已做 | pedantic 警告 ~700 → **43**：`expect()` 逐条审查（生产代码全部带 `invariant:` 前缀，输入相关条件返回错误；测试侧由 clippy.toml 的 allow-*-in-tests 覆盖）→ 豁免该 lint 并在 Cargo.toml 注明审查结论；`cast_possible_truncation` 逐条处理（修复 BCF 记录长度前缀与 GT 等位下标的真实截断风险，其余 22 个文件按"构造上有界"加文件级 `#![allow]` + 不变量说明）；`cast_lossless/possible_wrap/sign_loss/precision_loss` 四类按 04 §C7"风格类按项豁免"处理；保留 `format_push_string`/`naive_bytecount`/`float_cmp` 等 43 条有信息量的提示 | `cargo clippy --workspace` 0 error、43 warning（全部为性能/正确性提示） |
 | stats 的位点/阈值过滤参数 | 已做 | CLI 层共用 `SiteFilterArgs`（`-v/-V/--snps-only/-m/-M/-f/-i/-e/--min-dp/--max-dp/--min-gq/--set-gts/-q/-Q/--geno/--maf/--max-maf/--mac/--max-mac/--hwe`，INFO 更新类仍只属 filter）；执行用 `reed::filtered::FilteredJob` 包住 stats job——单遍内跑 filter 的 `RecordPipeline`（head→mask→tail）并用 `edit_vcf_line` 把掩码基因型改写成 `./.`，内层消费者看到的就是"物理 filter 过"的字节 | 五种参数组合下 `stats --X` 与"`filter --X` 落盘 + `stats`"的 π 表**逐字节相同**（含 BCF 输入；CLI 测试 `stats_site_filters_match_the_filter_then_stats_composition`） |
 | stats 的 `--mind` | 未做 | 需要先跑一遍全局缺失还原（filter 的 pass0），属多遍策略；未暴露该参数以免静默忽略 |
 | B 门补充 | 已补：**noodles 差分**（`bcf_vs_noodles.rs`：fixture 全部记录 + `clean.bcf` 前 10 万条，逐 token 值等价；noodles 的浮点文本与 htslib 不同，已注明）、**链切分穷举**（`e2e_bcf.rs::chain_framing_is_boundary_independent`：同一 BCF 按 13–512 字节重切块，输出记录不变）、**BCF 输出确定性**（1/2/3/7/56 线程字节相同） | 未做：typed-value proptest（该设计里 typed 值不单独成层） |
-| V6：B3b 原生 BCF 手术 | 未做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术是加速项 |
+| V6：B3b 原生 BCF 手术 | 不做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术（原样拷贝/原位掩码/INFO 重写）需要在 BCF 字节上重写一遍过滤循环——正是渲染路线刻意避免的"两份消费者"；现状代价已实测：BCF→BCF 17.0 s（VCF.gz→VCF.gz 11.1 s），都在可接受范围 |
 | O6/O7 扫描与编辑微优化 | 未做 | 需微基准门（`benches/genotype_scan.rs`、`benches/line_edit.rs`） |
 | 基准日志（03 §3 协议） | 部分：本轮的实测数字都记在本文档；未写入 `bench/e2e/results.tsv` | — |
 | O7 按连续段拷贝 | 已做（+1%） | `benches/line_edit.rs`：3.06 µs/记录（348 样本，~14% 掩码）＝ 8.8 ns/样本；撤下改动后 3.09 µs（criterion `change +1.05%`，p<0.05）——收益真实但在噪声边缘 |
+| O10 `--timing FILE` | 已做 | 输出各阶段 wall（open/pass0/mid/pass1/total）、records、chunks、worker_busy 与在途峰值；全量 `--mind 0.2` 的分解：pass0 2.7 s、mid 0.94 s（并行后 0.03–0.05 s）、pass1 9.8 s |
+| O9 sketch 中段并行 | 已做（第 1 项） | `mid_stage` 按 chunk `par_iter` 计算决策、再按 chunk 序折叠计数（整数和与序无关，确定性不变）；全量 `--mind 0.2` 的 mid **938 → 32–47 ms**，wall 13.7 → 12.7–12.9 s |
+| O9 投机单遍（第 2 项） | 不做（已测量后决定） | 只有"最终没有剔除任何样本"才省下 pass0（2.7 s）；一旦剔除了样本，投机输出必须丢弃并**重读输入**（35 GB 无法缓冲），代价是整整一遍 pass1。文档要求按概率权衡，本数据 `--mind` 的用户通常正是要剔除样本，因此不默认开启 |
 | O6 单遍样本列扫描（第 1 级） | 已做 | `benches/genotype_scan.rs`（criterion A/B）：`split_needed` 由"每个子字段一次 memchr"改为单遍字节循环，GT-only 4.05 → **3.84 µs**（−4.7%）、GT+DP+GQ 9.56 → **8.65 µs**（−9.5%），均 p<0.05；第 2 级（AVX2 位图）未做 |
 
 ## 最终验证（2026-10-08，本轮所有改动之后）

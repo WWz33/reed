@@ -12,6 +12,9 @@
 //! predecessor never waits for a successor, so the chain cannot deadlock
 //! (chunks are dispatched in order and chunk 0 never waits).
 
+// Casts in this file are bounded by construction: Chunk ids are counted in memory and fit `usize` on every supported target.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};

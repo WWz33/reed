@@ -57,10 +57,40 @@ unreachable_pub = "warn"
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
-expect_used = "warn"
+# Audited (doc_v3 04 §C7): every `expect()` in production code carries an
+# `invariant: …` message (internal invariant, not an input condition) and
+# input-related conditions return errors instead; test code is covered by
+# clippy.toml's allow-*-in-tests.
+expect_used = "allow"
 panic = "warn"
 cast_possible_truncation = "warn"
-cast_sign_loss = "warn"
+# C7 policy (doc_v3 04 §C7): truncation is handled case by case (real risks
+# fixed, the rest carry a documented file-level allow); these three are
+# lossless/precision-only conversions whose ranges are structural
+# (bit-plane popcounts to u64, allele counts to f64).
+# Style/documentation classes (doc_v3 04 §C7): exempted so the warning
+# stream keeps the perf/correctness hints (format_push_string,
+# naive_bytecount, float_cmp) visible.
+doc_markdown = "allow"
+missing_panics_doc = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+single_match_else = "allow"
+items_after_statements = "allow"
+struct_excessive_bools = "allow"
+many_single_char_names = "allow"
+needless_for_each = "allow"
+needless_pass_by_value = "allow"
+trivially_copy_pass_by_ref = "allow"
+implicit_clone = "allow"
+unused_self = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+unnested_or_patterns = "allow"
+redundant_closure_for_method_calls = "allow"
+cast_lossless = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"

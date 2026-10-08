@@ -7,6 +7,9 @@
 //! `keep ∧ planes` with word operations only, so the decision equals the
 //! inline recount bit for bit while pass1 re-parses survivors only.
 
+// Casts in this file are bounded by construction: Record counts fit `usize` on every supported target.
+#![allow(clippy::cast_possible_truncation)]
+
 /// Bit `r` of a head bitmap: record `r` of the fragment passed all head
 /// rules.
 #[derive(Clone, Debug, Default)]

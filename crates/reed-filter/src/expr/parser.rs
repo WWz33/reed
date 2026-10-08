@@ -4,6 +4,9 @@
 //! (`== = != < <= > >= ~ !~`) → primaries (identifiers, literals, `.`,
 //! parentheses, subscripts).
 
+// Casts in this file are bounded by construction: Subscript indices are bounded by the expression text length.
+#![allow(clippy::cast_possible_truncation)]
+
 use super::lexer::{tokenize, Token};
 
 /// A built-in site field.

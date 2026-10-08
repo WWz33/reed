@@ -10,6 +10,9 @@
 //! dictionary indices come from the output header (see
 //! [`super::encode::bcf_header_text`]).
 
+// Casts in this file are bounded by construction: Integer widths are chosen from the parsed value ranges.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::collections::HashMap;
 
 use crate::error::{IoError, Locus};
@@ -134,8 +137,12 @@ impl NativeEncoder {
         self.indiv.clear();
         self.encode_shared(&lr, &site)?;
         self.encode_indiv(&lr)?;
-        out.extend_from_slice(&(self.shared.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(self.indiv.len() as u32).to_le_bytes());
+        let l_shared = u32::try_from(self.shared.len())
+            .map_err(|_| bad("BCF shared block exceeds u32::MAX bytes"))?;
+        let l_indiv = u32::try_from(self.indiv.len())
+            .map_err(|_| bad("BCF individual block exceeds u32::MAX bytes"))?;
+        out.extend_from_slice(&l_shared.to_le_bytes());
+        out.extend_from_slice(&l_indiv.to_le_bytes());
         out.extend_from_slice(&self.shared);
         out.extend_from_slice(&self.indiv);
         Ok(())
@@ -632,10 +639,14 @@ fn gt_codes(sub: &[u8]) -> Vec<i32> {
             phased_seps[i - 1]
         };
         let code = match parse_i64(allele) {
-            Some(a) => (((a + 1) << 1) as i32) | i32::from(phased),
+            // An allele index beyond i32 cannot be represented in any BCF GT
+            // encoding; treat it as missing rather than truncating.
+            Some(a) if (0..=i64::from(i32::MAX >> 1)).contains(&a) => {
+                (((a + 1) << 1) as i32) | i32::from(phased)
+            }
             // htslib stores a missing allele as the bare `bcf_gt_missing`
             // sentinel 0 (it cannot carry a phasing bit).
-            None => 0,
+            _ => 0,
         };
         codes.push(code);
     }

@@ -8,6 +8,9 @@
 //! job unchanged. Every consumer therefore keeps its single implementation:
 //! the only format-specific code is the renderer in `reed_io::bcf`.
 
+// Casts in this file are bounded by construction: Carried record prefixes are bounded by the 1 GiB record ceiling.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::sync::Arc;
 
 use reed_engine::abort::Abort;

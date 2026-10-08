@@ -3,6 +3,9 @@
 //! floats, and per-sample vectors. All satisfy the accumulator laws of
 //! §8.4, so QC shares the chunk-parallel driver with the stats layer.
 
+// Casts in this file are bounded by construction: Histogram bins are bounded by the sample count.
+#![allow(clippy::cast_possible_truncation)]
+
 use serde::Serialize;
 
 /// Dense exact integer histogram over `0..=max` plus one overflow bucket

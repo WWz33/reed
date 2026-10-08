@@ -343,6 +343,7 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         strategy,
         command_line,
         quiet: *verbosity == 0,
+        timing: cli.timing.as_ref().map(PathBuf::from),
         report_json: report.as_ref().map(PathBuf::from),
         force_samples: *force_samples,
         regions,

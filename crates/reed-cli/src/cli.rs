@@ -104,6 +104,9 @@ pub struct FilterCli {
     /// JSON report path
     #[arg(long)]
     pub report: Option<String>,
+    /// Write the per-phase timing report here (03-performance.md O10)
+    #[arg(long, value_name = "FILE")]
+    pub timing: Option<String>,
     /// Test-only strategy override (single_pass|two_pass_reparse)
     #[arg(long, hide = true)]
     pub strategy: Option<String>,

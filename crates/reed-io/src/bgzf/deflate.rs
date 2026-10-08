@@ -1,6 +1,9 @@
 //! libdeflate-based BGZF block compression (`docs/architecture-spec.md`
 //! §6.6): one call produces one complete BGZF member.
 
+// Casts in this file are bounded by construction: BGZF blocks are at most 65,536 bytes by construction.
+#![allow(clippy::cast_possible_truncation)]
+
 use crate::bgzf::block::{BGZF_MAX_BLOCK_DATA, EOF_BLOCK};
 use crate::error::IoError;
 

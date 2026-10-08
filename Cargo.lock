@@ -912,6 +912,7 @@ dependencies = [
  "bstr",
  "memchr",
  "noodles",
+ "rayon",
  "reed-core",
  "reed-engine",
  "reed-filter",

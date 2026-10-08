@@ -3,6 +3,9 @@
 //! (worker) owns the scratch buffers and constructs the borrowed
 //! [`EditPlan`] inline — no leaked allocations, no unsafe.
 
+// Casts in this file are bounded by construction: INFO Float values are f32 by the VCF header type.
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::count::SiteCounts;
 use reed_io::vcf::line_edit::InfoValueOut;
 

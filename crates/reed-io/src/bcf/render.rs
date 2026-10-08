@@ -8,6 +8,9 @@
 //! `.`, vector-end → truncation, `;` between INFO fields, `:` between
 //! FORMAT fields and `\t` between samples.
 
+// Casts in this file are bounded by construction: Element widths and counts come from the record descriptor.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::io::Write as _;
 
 use super::dict::BcfDict;

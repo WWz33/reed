@@ -3,6 +3,9 @@
 //! the same way. Both produce `ChunkBytes { plain: true }` that
 //! `inflate_chunk` passes through without deflation.
 
+// Casts in this file are bounded by construction: The chunk target is a build-time constant far below usize::MAX.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::io::{BufRead, Read};
 use std::sync::Arc;
 

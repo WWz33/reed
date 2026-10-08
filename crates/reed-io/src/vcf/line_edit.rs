@@ -9,6 +9,9 @@
 //! [`edit_vcf_line`] at all: the caller copies the line verbatim (zero
 //! re-serialization).
 
+// Casts in this file are bounded by construction: Sample counts are validated against the header and fit u32.
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::sample::SampleMask;
 use reed_core::Bitset;
 

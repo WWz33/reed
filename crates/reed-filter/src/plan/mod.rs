@@ -3,6 +3,9 @@
 //! types, Number ∈ {1, A}), rule expansion, strategy choice (§11.4),
 //! ascertainment derivation (§11.7) and provenance (§11.8) all happen here.
 
+// Casts in this file are bounded by construction: The `-q/-Q` threshold is deliberately the f32 bcftools parses.
+#![allow(clippy::cast_possible_truncation)]
+
 pub mod provenance;
 pub mod strategy;
 

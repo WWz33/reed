@@ -10,6 +10,9 @@
 //! rendered for the reports that print them. Genotypes are decoded by the
 //! shared scanner and counted by the shared kernel.
 
+// Casts in this file are bounded by construction: The %g exponent is bounded by the f64 range.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

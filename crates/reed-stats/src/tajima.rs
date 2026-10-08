@@ -7,6 +7,9 @@
 //! numerator, `S = Σ(k_i − 1)` and the denominator is evaluated once at
 //! `n = round(Σn_i / sites)`.
 
+// Casts in this file are bounded by construction: The mean sample size is bounded by the sample count.
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::harmonic::{a1, a2};
 use reed_core::math::sum::NeumaierSum;
