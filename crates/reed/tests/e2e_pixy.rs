@@ -53,6 +53,7 @@ fn request(invariant: InvariantMode) -> StatsRequest {
         skip_empty: false,
         contig_lengths: HashMap::new(),
         pixy: Some(PixyOptions { invariant }),
+        ..StatsRequest::default()
     }
 }
 

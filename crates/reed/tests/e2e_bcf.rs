@@ -79,6 +79,7 @@ fn request() -> StatsRequest {
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         pixy: Some(PixyOptions { invariant: reed::stats::InvariantMode::VariantOnly }),
+        ..StatsRequest::default()
     }
 }
 

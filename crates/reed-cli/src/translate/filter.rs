@@ -38,7 +38,7 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
     };
     let mut inline_keep: Option<Vec<String>> = None;
     let mut inline_remove: Option<Vec<String>> = None;
-    for list in &cli.samples {
+    for list in &cli.sample_args.samples {
         let (exclude, names) = parse_list(list)?;
         let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
         if slot.is_some() {
@@ -48,11 +48,11 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
         }
         *slot = Some(names);
     }
-    let file_keep = cli.samples_file.as_ref().or(cli.keep.as_ref());
+    let file_keep = cli.sample_args.samples_file.as_ref().or(cli.sample_args.keep.as_ref());
     if inline_keep.is_some() && file_keep.is_some() {
         return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
     }
-    if inline_remove.is_some() && cli.remove.is_some() {
+    if inline_remove.is_some() && cli.sample_args.remove.is_some() {
         return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
     }
     let keep = inline_keep
@@ -60,7 +60,7 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
         .or_else(|| file_keep.map(|p| SampleList::File(p.clone())));
     let remove = inline_remove
         .map(SampleList::Names)
-        .or_else(|| cli.remove.clone().map(SampleList::File));
+        .or_else(|| cli.sample_args.remove.clone().map(SampleList::File));
     if keep.is_some() || remove.is_some() {
         spec.sample_select = Some(SampleSelect { keep, remove });
     }
@@ -84,17 +84,17 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
         }
         Ok(())
     };
-    if let Some(list) = &cli.regions {
+    if let Some(list) = &cli.regions_args.regions {
         add_regions(list, true)?;
     }
-    if let Some(path) = &cli.regions_file {
+    if let Some(path) = &cli.regions_args.regions_file {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
         add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
     }
-    if let Some(list) = &cli.targets {
+    if let Some(list) = &cli.regions_args.targets {
         add_regions(list, true)?;
     }
-    if let Some(path) = &cli.targets_file {
+    if let Some(path) = &cli.regions_args.targets_file {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
         add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
     }
@@ -297,7 +297,7 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         }
     };
     let mut regions = Vec::new();
-    let indexed_list = match (&cli.regions, &cli.regions_file) {
+    let indexed_list = match (&cli.regions_args.regions, &cli.regions_args.regions_file) {
         (Some(list), _) => Some(list.clone()),
         (None, Some(path)) => Some(
             std::fs::read_to_string(path)

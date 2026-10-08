@@ -202,7 +202,7 @@ pub struct WindowRow {
 }
 
 /// One `run_stats` request: statistics, group assignment, window grid.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct StatsRequest {
     /// Statistics to compute, in output-column order.
     pub kinds: Vec<StatKind>,
@@ -225,6 +225,16 @@ pub struct StatsRequest {
     /// `Some` = pixy-layout output mode (structured rows, invariant-site
     /// policy); `None` = the wide debug TSV.
     pub pixy: Option<PixyOptions>,
+    /// Indexed regions (`-r/-R`): the reader seeks to the mapped range and
+    /// records outside the regions are dropped.
+    pub regions: Vec<reed_io::chunk::region::Region>,
+    /// Streamed target regions (`-t/-T`, parsed): kept when inside any
+    /// include and no exclude region.
+    pub targets: Vec<reed_filter::spec::region::RegionTriple>,
+    /// Excluded target regions (`^` entries of `-t/-T`).
+    pub targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
+    /// Per-sample keep mask (`-s/-S/--keep/--remove`); `None` = all kept.
+    pub keep_samples: Option<Vec<bool>>,
 }
 
 /// The run's output and counters.
@@ -319,6 +329,10 @@ pub struct StatsJob {
     gt_groups: Arc<[Option<u32>]>,
     n_samples: usize,
     seed: Arc<[StatAcc]>,
+    /// Streamed target regions (`-t/-T`): kept when inside any include and
+    /// no exclude; empty lists keep everything.
+    targets: Arc<[reed_filter::spec::region::RegionTriple]>,
+    targets_exclude: Arc<[reed_filter::spec::region::RegionTriple]>,
     /// Declared contig lengths (header + `--contig-lengths`); positions
     /// beyond the declared length are rejected (01-review D8).
     contig_len: Arc<HashMap<Vec<u8>, u64>>,
@@ -403,6 +417,18 @@ impl StatsJob {
             return Err(EngineError::job("record line has fewer than 9 columns"));
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
+        // Streamed targets (`-t/-T`): the region predicate gates every record
+        // before it reaches an accumulator.
+        if (!self.targets.is_empty() || !self.targets_exclude.is_empty())
+            && !reed_filter::spec::region::region_allows(
+                &self.targets,
+                &self.targets_exclude,
+                site.contig_name,
+                site.pos1,
+            )
+        {
+            return Ok(());
+        }
         let chrom = site.contig_name;
         match current {
             Some(segment) if segment.contig == chrom => {}
@@ -805,8 +831,25 @@ pub fn run_stats_opened(
         .copied()
         .max()
         .map_or(0, |g| g as usize + 1);
+    // `-s/-S/--keep/--remove`: excluded samples lose their group before the
+    // group sizes are derived, so the denominators shrink with them.
+    let mut gt_groups = request.gt_groups.clone();
+    if let Some(keep) = &request.keep_samples {
+        if keep.len() != gt_groups.len() {
+            return Err(EngineError::job(format!(
+                "sample keep mask has {} entries but the header declares {}",
+                keep.len(),
+                gt_groups.len()
+            )));
+        }
+        for (slot, kept) in gt_groups.iter_mut().zip(keep) {
+            if !kept {
+                *slot = None;
+            }
+        }
+    }
     let mut group_sizes = vec![0_u32; n_groups];
-    for group in request.gt_groups.iter().flatten() {
+    for group in gt_groups.iter().flatten() {
         group_sizes[*group as usize] += 1;
     }
     let accs = build_accs(&request.kinds, &group_sizes)
@@ -839,10 +882,12 @@ pub fn run_stats_opened(
     let job = StatsJob {
         width: binning.width(),
         n_groups,
-        gt_groups: request.gt_groups.clone().into(),
+        gt_groups: gt_groups.into(),
         n_samples: request.gt_groups.len(),
         seed: accs.clone().into(),
         contig_len: Arc::clone(&contig_len),
+        targets: request.targets.clone().into(),
+        targets_exclude: request.targets_exclude.clone().into(),
     };
     let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
     let crate::input::OpenedInput { mut source, .. } = opened;

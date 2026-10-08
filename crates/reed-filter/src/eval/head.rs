@@ -49,18 +49,7 @@ pub fn eval_head(
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
             HeadRule::Regions { include, exclude } => {
-                let included = include.is_empty()
-                    || include.iter().any(|(c, s, e)| {
-                        c.as_bytes() == chrom
-                            && s.is_none_or(|s| pos1 >= s)
-                            && e.is_none_or(|e| pos1 <= e)
-                    });
-                included
-                    && !exclude.iter().any(|(c, s, e)| {
-                        c.as_bytes() == chrom
-                            && s.is_none_or(|s| pos1 >= s)
-                            && e.is_none_or(|e| pos1 <= e)
-                    })
+                crate::spec::region::region_allows(include, exclude, chrom, pos1)
             }
             HeadRule::VariantClass(classes) => {
                 let primary = match memchr::memchr(b',', alts) {

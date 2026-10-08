@@ -5,6 +5,8 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::units::parse_size;
 
+pub mod filter_flags;
+
 /// The `reed` command line.
 #[derive(Parser)]
 #[command(
@@ -60,33 +62,10 @@ pub struct QcCli {
 pub struct FilterCli {
     /// Input BGZF VCF (.vcf.gz)
     pub input: String,
-    /// Regions to keep, comma-separated (`Chr01`, `Chr01:100-200`);
-    /// needs an index next to the input (bcftools `-r`)
-    #[arg(short = 'r', long = "regions", value_name = "LIST")]
-    pub regions: Option<String>,
-    /// Regions to keep, one per line; needs an index (bcftools `-R`)
-    #[arg(short = 'R', long = "regions-file", value_name = "FILE")]
-    pub regions_file: Option<String>,
-    /// Regions to keep, streamed without an index (bcftools `-t`)
-    #[arg(short = 't', long = "targets", value_name = "LIST")]
-    pub targets: Option<String>,
-    /// Regions to keep, one per line (bcftools `-T`); `^` prefix
-    /// excludes
-    #[arg(short = 'T', long = "targets-file", value_name = "FILE")]
-    pub targets_file: Option<String>,
-    /// Samples to keep: comma-separated names; `^` prefix excludes
-    /// (`^A,B` = keep all but A and B; bcftools `-s`)
-    #[arg(short = 's', long = "samples", value_name = "[^]LIST")]
-    pub samples: Vec<String>,
-    /// Samples to keep: one name per line (bcftools `-S`)
-    #[arg(short = 'S', long = "samples-file", value_name = "FILE")]
-    pub samples_file: Option<String>,
-    /// Samples to keep, one name per line (plink2/vcftools spelling)
-    #[arg(long, value_name = "FILE")]
-    pub keep: Option<String>,
-    /// Samples to drop, one name per line
-    #[arg(long, value_name = "FILE")]
-    pub remove: Option<String>,
+    #[command(flatten)]
+    pub regions_args: filter_flags::RegionArgs,
+    #[command(flatten)]
+    pub sample_args: filter_flags::SampleArgs,
     /// Drop samples whose missing rate exceeds this (plink2 semantics:
     /// computed after the genotype mask, over the sites that pass the
     /// pre-mask rules; applied before --geno/--maf/--hwe)
@@ -238,6 +217,10 @@ pub struct IndexCli {
 pub struct StatsCli {
     /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
+    #[command(flatten)]
+    pub regions_args: filter_flags::RegionArgs,
+    #[command(flatten)]
+    pub sample_args: filter_flags::SampleArgs,
     /// Groups file: `sample<TAB>population` rows, no header (pixy
     /// populations-file format); required by the windowed/pixy modes
     #[arg(long = "pop", visible_alias = "populations", short = 'g',

@@ -72,6 +72,7 @@ fn request_with(
         skip_empty,
         contig_lengths,
         pixy: None,
+        ..StatsRequest::default()
     }
 }
 

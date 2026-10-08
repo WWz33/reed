@@ -225,3 +225,68 @@ fn output_type_and_path_compose() {
     assert_eq!(&std::fs::read(&inferred).expect("invariant: read")[..2], &[0x1f, 0x8b]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 04-cleanup §2.1: `stats` accepts the filter's region and sample flags.
+/// `-r` (indexed) and `-t` (streamed) must agree, and `-s` must shrink the
+/// group denominators.
+#[test]
+fn stats_accepts_filter_region_and_sample_flags() {
+    let dir = std::env::temp_dir().join(format!("reed-stats-flags-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+    // A two-population groups file over the fixture's three samples.
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tpopA\ns1\tpopA\ns2\tpopB\n").expect("invariant: groups");
+
+    // `-r` needs an index next to the input.
+    let indexed = run(&["index", input.to_str().unwrap(), "-c"], None);
+    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+
+    let prefix = |name: &str| dir.join(name).display().to_string();
+    let run_stats = |extra: &[&str], out: &str| {
+        let mut argv = vec![
+            "stats",
+            input.to_str().unwrap(),
+            "--pop",
+            pops.to_str().unwrap(),
+            "--pi",
+            "--variant-only",
+            "-o",
+            out,
+        ];
+        argv.extend_from_slice(extra);
+        let output = run(&argv, None);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let text = std::fs::read_to_string(format!("{out}_pi.txt")).expect("invariant: pi file");
+        text
+    };
+    let all = run_stats(&[], &prefix("all"));
+    let region_indexed = run_stats(&["-r", "Chr01:1-5"], &prefix("ri"));
+    let region_streamed = run_stats(&["-t", "Chr01:1-5"], &prefix("rs"));
+    assert_eq!(region_indexed, region_streamed, "-r and -t must agree");
+    assert_ne!(region_indexed, all, "the region must restrict the windows");
+
+    // popA holds s0 and s1; keeping only s0 must halve its comparison counts.
+    let subset = run_stats(&["-s", "s0"], &prefix("sub"));
+    let comparisons = |text: &str, pop: &str| -> u64 {
+        text.lines()
+            .skip(1)
+            .filter(|l| l.starts_with(pop))
+            .map(|l| l.split('\t').nth(7).expect("comparisons").parse::<u64>().expect("number"))
+            .sum()
+    };
+    assert!(
+        comparisons(&subset, "popA") < comparisons(&all, "popA"),
+        "-s must shrink the popA denominators"
+    );
+    // An unknown sample is an error, not a silent skip.
+    let bad = run(
+        &["stats", input.to_str().unwrap(), "--pop", pops.to_str().unwrap(), "--pi", "-s", "nope",
+          "-o", &prefix("bad")],
+        None,
+    );
+    assert!(!bad.status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+}

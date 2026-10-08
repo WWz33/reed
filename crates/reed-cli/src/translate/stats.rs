@@ -10,6 +10,163 @@ use reed_engine::budget::{MemBudget, ThreadBudget};
 use crate::cli::StatsCli;
 use crate::units::input_path;
 
+/// The parsed region flags: indexed regions, target includes, target
+/// excludes.
+type ParsedRegions = (
+    Vec<reed_io::chunk::region::Region>,
+    Vec<reed_filter::spec::region::RegionTriple>,
+    Vec<reed_filter::spec::region::RegionTriple>,
+);
+
+/// Parses the shared region flags: indexed regions (`-r/-R`, needing a
+/// seekable input) and streamed targets (`-t/-T`, `^` = exclude).
+///
+/// # Errors
+///
+/// Malformed region spellings and unreadable region files.
+fn parse_regions(
+    args: &crate::cli::filter_flags::RegionArgs,
+) -> Result<ParsedRegions, String> {
+    let mut regions = Vec::new();
+    for (list, from_file) in [
+        (&args.regions, false),
+        (&args.regions_file, true),
+    ] {
+        if let Some(value) = list {
+            let text = if from_file {
+                std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
+            } else {
+                value.clone()
+            };
+            for token in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+                let parsed = reed_filter::spec::Region::parse(token)
+                    .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+                regions.push(reed_io::chunk::region::Region {
+                    contig: parsed.contig.clone(),
+                    start1: parsed.start,
+                    end1: parsed.end,
+                });
+            }
+        }
+    }
+    let mut include = Vec::new();
+    let mut exclude = Vec::new();
+    for (list, from_file) in [
+        (&args.targets, false),
+        (&args.targets_file, true),
+    ] {
+        if let Some(value) = list {
+            let text = if from_file {
+                std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
+            } else {
+                value.clone()
+            };
+            for raw in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+                let (token, include_it) = match raw.strip_prefix('^') {
+                    Some(rest) => (rest, false),
+                    None => (raw, true),
+                };
+                let parsed = reed_filter::spec::Region::parse(token)
+                    .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+                let triple = (parsed.contig, parsed.start, parsed.end);
+                if include_it {
+                    include.push(triple);
+                } else {
+                    exclude.push(triple);
+                }
+            }
+        }
+    }
+    Ok((regions, include, exclude))
+}
+
+/// Parses the shared sample flags into a keep mask, with the filter's
+/// conflict rules (`-s` vs `-S/--keep`, `-s ^` vs `--remove`).
+///
+/// # Errors
+///
+/// Conflicting or unknown sample sources.
+fn parse_sample_keep(
+    args: &crate::cli::filter_flags::SampleArgs,
+    header_samples: &[String],
+) -> Result<Option<Vec<bool>>, String> {
+    let index: std::collections::HashMap<&str, usize> = header_samples
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+    let names_of = |text: &str| -> Result<Vec<String>, String> {
+        Ok(text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect())
+    };
+    let mut inline_keep: Option<Vec<String>> = None;
+    let mut inline_remove: Option<Vec<String>> = None;
+    for list in &args.samples {
+        let exclude = list.trim_start().starts_with('^');
+        let names: Vec<String> = list
+            .trim_start_matches('^')
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect();
+        if names.is_empty() {
+            return Err(format!("empty sample list {list:?}"));
+        }
+        let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
+        if slot.is_some() {
+            return Err(format!("repeated -s list of the same polarity ({list:?})"));
+        }
+        *slot = Some(names);
+    }
+    let file_keep = args.samples_file.as_ref().or(args.keep.as_ref());
+    if inline_keep.is_some() && file_keep.is_some() {
+        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
+    }
+    if inline_remove.is_some() && args.remove.is_some() {
+        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
+    }
+    let mut keep = vec![true; header_samples.len()];
+    let mut touched = false;
+    if let Some(names) = inline_keep.or_else(|| {
+        file_keep.and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| names_of(&t).ok())
+    }) {
+        keep.iter_mut().for_each(|k| *k = false);
+        for name in &names {
+            match index.get(name.as_str()) {
+                Some(&i) => keep[i] = true,
+                None => return Err(format!("sample {name:?} is not in the header")),
+            }
+        }
+        touched = true;
+    }
+    let mut drop = vec![false; header_samples.len()];
+    if let Some(names) = inline_remove.or_else(|| {
+        args.remove
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| names_of(&t).ok())
+    }) {
+        for name in &names {
+            match index.get(name.as_str()) {
+                Some(&i) => drop[i] = true,
+                None => return Err(format!("sample {name:?} is not in the header")),
+            }
+        }
+        touched = true;
+    }
+    for (k, d) in keep.iter_mut().zip(&drop) {
+        if *d {
+            *k = false;
+        }
+    }
+    Ok(touched.then_some(keep))
+}
+
 /// `--pbs A,B,C`: resolves each requested triple to group indices (the
 /// branch of interest first, Yi et al. 2010).
 ///
@@ -80,7 +237,18 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         tmp_dir,
         memory,
         verbosity,
+        regions_args,
+        sample_args,
     } = args;
+
+    // `-r/-R` (indexed) and `-t/-T` (streamed) share the filter's spellings
+    // (04-cleanup §2.1).
+    let (regions, mut targets, targets_exclude) = parse_regions(&regions_args)?;
+    // Indexed ranges are coarse (whole blocks), so the same regions also act
+    // as the record predicate — exactly how the filter's `-r` works.
+    for region in &regions {
+        targets.push((region.contig.clone(), region.start1, region.end1));
+    }
 
     // Open once: stdin streams into the driver (03-performance.md O5). The
     // only mode that reads twice is a report run asking for both families
@@ -101,11 +269,13 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         .clone()
         .or_else(|| spill.as_ref().map(|s| s.path().to_path_buf()));
     let mut opened = Some(
-        reed::input::open(open_path.as_deref())
+        reed::input::open_regions(open_path.as_deref(), &regions)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
     );
     let facts = &opened.as_ref().expect("invariant: just opened").facts;
     let sample_names: Vec<String> = facts.sample_names.clone();
+    // `-s/-S/--keep/--remove`: the same conflict rules as the filter.
+    let keep_samples = parse_sample_keep(&sample_args, &sample_names)?;
 
     let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
         .header
@@ -147,6 +317,11 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts.
     if freq || hardy || het || missing || depth || summary {
+        if !targets.is_empty() || !targets_exclude.is_empty() {
+            return Err(
+                "stats report mode: -t/-T targets are not supported yet; use -r with an index".into(),
+            );
+        }
         let Some(prefix) = out.clone() else {
             return Err("report mode writes files: pass -o PREFIX".into());
         };
@@ -249,6 +424,10 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         }
         let request = StatsRequest {
             kinds: kinds.clone(),
+            regions: regions.clone(),
+            targets: targets.clone(),
+            targets_exclude: targets_exclude.clone(),
+            keep_samples: keep_samples.clone(),
             gt_groups,
             window_size: size,
             step,
@@ -288,6 +467,10 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
 
     let request = StatsRequest {
         kinds: default_kinds(group_names.len()),
+        regions,
+        targets,
+        targets_exclude,
+        keep_samples,
         gt_groups,
         window_size: size,
         step: if step == 0 { size } else { step },

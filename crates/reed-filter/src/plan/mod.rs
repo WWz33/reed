@@ -11,6 +11,7 @@ use reed_core::tag_table::{TagNumber, TagTable, TagType};
 
 pub use strategy::ExecStrategy;
 
+use crate::spec::region::RegionTriple;
 use crate::spec::{
     FilterSpecV2, OnMissing, Quantifier, RecomputeSpec, RegionRule,
 };
@@ -723,8 +724,6 @@ fn validate_numeric(tag: &str, ty: TagType) -> Result<(), FilterError> {
     }
 }
 
-type RegionTriple = (String, Option<u64>, Option<u64>);
-
 /// Parsed include/exclude region lists.
 type RegionLists = (Vec<RegionTriple>, Vec<RegionTriple>);
 
@@ -732,13 +731,6 @@ fn compile_regions(rule: &RegionRule) -> Result<Option<RegionLists>, FilterError
     if rule.is_empty() {
         return Ok(None);
     }
-    let parse = |list: &[String]| -> Result<Vec<RegionTriple>, FilterError> {
-        list.iter()
-            .map(|s| {
-                let r = crate::spec::region::Region::parse(s)?;
-                Ok((r.contig, r.start, r.end))
-            })
-            .collect()
-    };
-    Ok(Some((parse(&rule.include)?, parse(&rule.exclude)?)))
+    use crate::spec::region::parse_regions;
+    Ok(Some((parse_regions(&rule.include)?, parse_regions(&rule.exclude)?)))
 }

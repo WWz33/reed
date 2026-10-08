@@ -36,6 +36,41 @@ pub struct Region {
     pub end: Option<u64>,
 }
 
+/// A parsed region triple: `(contig, start1, end1)` with open ends as
+/// `None` (the shape the filter's head rule stores).
+pub type RegionTriple = (String, Option<u64>, Option<u64>);
+
+/// Parses a list of region spellings into triples.
+///
+/// # Errors
+///
+/// [`FilterError::Spec`] for a malformed region.
+pub fn parse_regions(list: &[String]) -> Result<Vec<RegionTriple>, FilterError> {
+    list.iter()
+        .map(|s| {
+            let r = Region::parse(s)?;
+            Ok((r.contig, r.start, r.end))
+        })
+        .collect()
+}
+
+/// bcftools `-t/-T` semantics: kept when inside any include region (or the
+/// include list is empty) and in no exclude region.
+#[must_use]
+pub fn region_allows(
+    include: &[RegionTriple],
+    exclude: &[RegionTriple],
+    chrom: &[u8],
+    pos1: u64,
+) -> bool {
+    let inside = |list: &[RegionTriple]| {
+        list.iter().any(|(c, s, e)| {
+            c.as_bytes() == chrom && s.is_none_or(|s| pos1 >= s) && e.is_none_or(|e| pos1 <= e)
+        })
+    };
+    (include.is_empty() || inside(include)) && !inside(exclude)
+}
+
 impl Region {
     /// Parses `Chr01` / `Chr01:100-200` / `Chr01:100-` / `Chr01:-200`.
     pub fn parse(s: &str) -> Result<Self, FilterError> {
