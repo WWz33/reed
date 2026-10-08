@@ -64,8 +64,8 @@
 | C3 `TagTable`（reed-filter 去 noodles） | 未做 | 架构纯净性改造，不影响功能；plan::compile 仍直接接收 noodles 头 |
 | C4 合并 QC 入口 / reed-qc 并入 reed-stats | 未做 | 结构重构（crate 合并 + 文件迁移），与功能无关 |
 | C2 的 `pub(crate)` 化 | 改为 `#[doc(hidden)]` | 对拍套件是 integration test，需要跨 crate 访问这些累加器；移入单元测试是纯机械工作 |
-| C5 类型化 `EngineError` | 未做 | BCF 工作已用 `EngineError::Job(String)` 落地；类型化是独立改造 |
-| C7 clippy pedantic | 未做 | ~700 条 warning；`clippy::all` 无错误（CI 门） |
+| C5 类型化 `EngineError` | 已做（doc_v2 03 §4.4 的形状，doc_v3 C5 引用该节）：`Io(std::io::Error)`、`Input(reed_io::IoError)`（保留 Locus）、`Job(Box<dyn Error + Send + Sync>)`（保留类型与 source 链）、`WorkerPanicked`/`MemBudgetExceeded`/`Aborted`；`EngineError::job(msg)` 造消息型错误，`From<CoreError>`/`From<IoError>`/`From<io::Error>` 三处转换 | 构造点全部改走 typed 转换；`source_errors_propagate` 断言传输错误落到 `Input(IoError::Io(_))`；335 测试全绿 |
+| C7 clippy pedantic | 部分 | `clippy::all` 无错误；生产代码的 `expect()` 已全部带 `invariant:` 前缀（剩余 18 处缺口都在 `#[cfg(test)]`/examples）；`cast_possible_truncation` 约 118 处尚未逐条处理 |
 | CLI §2 的 stats 过滤参数复用、`-q/-Q` | 未做 | 需在 stats 驱动接入过滤计划（head/mask/tail）与新的 AF 尾规则（bcftools 的 any/all 语义需要单独对拍） |
 | C5 之外的 B 门：noodles 差分、链切分穷举、typed-value proptest | 未做 | 现有门是"与 bcftools 全量逐字节一致 + 往返 + 跨格式"；noodles 差分与穷举切分是补充门 |
 | V6：B3b 原生 BCF 手术 | 未做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术是加速项 |

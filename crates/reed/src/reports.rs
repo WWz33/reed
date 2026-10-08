@@ -203,16 +203,16 @@ impl ReportJob {
         partial: &mut ReportPartial,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::Job("record line has fewer than 9 columns".into()));
+            return Err(EngineError::job("record line has fewer than 9 columns"));
         };
-        let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+        let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let pos1 = site.pos1;
         // The scanner adds its policy triggers; reset the per-record slot.
         scratch.counters = PolicyCounters::default();
         let out = scratch
             .scanner
             .scan(&lr, &site, &mut scratch.counters)
-            .map_err(|e| EngineError::Job(e.to_string()))?;
+            .map_err(EngineError::from)?;
 
         // Counts straight from the codes — the planes are built only when
         // `--het` needs the per-sample moments (O2).
@@ -432,7 +432,7 @@ impl ReportSink {
         let mut path = prefix.as_os_str().to_os_string();
         path.push(suffix);
         let file = std::fs::File::create(PathBuf::from(&path))
-            .map_err(|e| EngineError::Io(e.to_string()))?;
+            .map_err(EngineError::Io)?;
         Ok(BufWriter::new(file))
     }
 }
@@ -442,7 +442,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
         self.n_records += partial.n_records;
         let mut append = |writer: &mut Option<BufWriter<std::fs::File>>, bytes: &[u8]| {
             if let Some(w) = writer {
-                w.write_all(bytes).map_err(|e| EngineError::Io(e.to_string()))?;
+                w.write_all(bytes).map_err(EngineError::Io)?;
             }
             Ok::<(), EngineError>(())
         };
@@ -475,36 +475,36 @@ impl OrderedSink<ReportPartial> for ReportSink {
             PathBuf::from(p)
         };
         if let Some(mut w) = self.afreq.take() {
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".afreq"));
         }
         if let Some(mut w) = self.hardy.take() {
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".hardy"));
         }
         if let Some(mut w) = self.vmiss.take() {
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".vmiss"));
         }
         if let Some(mut w) = self.ldepth.take() {
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".ldepth.mean"));
         }
         if self.request.depth {
             let mut w = ReportSink::open(&self.request.prefix, ".idepth")?;
-            writeln!(w, "INDV\tN_SITES\tMEAN_DEPTH").map_err(|e| EngineError::Io(e.to_string()))?;
+            writeln!(w, "INDV\tN_SITES\tMEAN_DEPTH").map_err(EngineError::Io)?;
             for (i, &(sum, n)) in self.depth_sums.iter().enumerate() {
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
                 let mean = if n > 0 { g6(sum / n as f64) } else { "NA".to_string() };
-                writeln!(w, "{name}\t{n}\t{mean}").map_err(|e| EngineError::Io(e.to_string()))?;
+                writeln!(w, "{name}\t{n}\t{mean}").map_err(EngineError::Io)?;
             }
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".idepth"));
         }
         if self.request.het {
             let f = self.individual.f_values();
             let mut w = ReportSink::open(&self.request.prefix, ".het")?;
-            writeln!(w, "#IID\tO(HOM)\tE(HOM)\tOBS_CT\tF").map_err(|e| EngineError::Io(e.to_string()))?;
+            writeln!(w, "#IID\tO(HOM)\tE(HOM)\tOBS_CT\tF").map_err(EngineError::Io)?;
             for i in 0..self.n_samples {
                 let obs = self.individual.n_called[i];
                 let o_hom = self.individual.o_hom[i];
@@ -515,9 +515,9 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 };
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
                 writeln!(w, "{name}\t{o_hom}\t{}\t{obs}\t{f_cell}", g6(e_hom))
-                    .map_err(|e| EngineError::Io(e.to_string()))?;
+                    .map_err(EngineError::Io)?;
             }
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".het"));
         }
         if self.request.missing {
@@ -525,14 +525,14 @@ impl OrderedSink<ReportPartial> for ReportSink {
             // opportunity count), not the sample count.
             let obs = self.n_records;
             let mut w = ReportSink::open(&self.request.prefix, ".smiss")?;
-            writeln!(w, "#IID\tMISSING_CT\tOBS_CT\tF_MISS").map_err(|e| EngineError::Io(e.to_string()))?;
+            writeln!(w, "#IID\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
             for (i, &missing) in self.missing.iter().enumerate() {
                 let f_miss = if obs > 0 { g6(missing as f64 / obs as f64) } else { "NA".into() };
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
                 writeln!(w, "{name}\t{missing}\t{obs}\t{f_miss}")
-                    .map_err(|e| EngineError::Io(e.to_string()))?;
+                    .map_err(EngineError::Io)?;
             }
-            w.flush().map_err(|e| EngineError::Io(e.to_string()))?;
+            w.flush().map_err(EngineError::Io)?;
             files.push(path(".smiss"));
         }
         let n_records = self.n_records;
@@ -651,22 +651,22 @@ pub fn run_reports_opened(
     let mut afreq = request.freq.then(|| ReportSink::open(&request.prefix, ".afreq")).transpose()?;
     if let Some(w) = &mut afreq {
         writeln!(w, "#CHROM\tID\tREF\tALT\tALT_FREQS\tOBS_CT")
-            .map_err(|e| EngineError::Io(e.to_string()))?;
+            .map_err(EngineError::Io)?;
     }
     let mut hardy = request.hardy.then(|| ReportSink::open(&request.prefix, ".hardy")).transpose()?;
     if let Some(w) = &mut hardy {
         writeln!(w, "#CHROM\tID\tA1\tAX\tHOM_A1_CT\tHET_A1_CT\tTWO_AX_CT\tO(HET_A1)\tE(HET_A1)\tP")
-            .map_err(|e| EngineError::Io(e.to_string()))?;
+            .map_err(EngineError::Io)?;
     }
     let mut vmiss = request.missing.then(|| ReportSink::open(&request.prefix, ".vmiss")).transpose()?;
     if let Some(w) = &mut vmiss {
         writeln!(w, "#CHROM\tID\tMISSING_CT\tOBS_CT\tF_MISS")
-            .map_err(|e| EngineError::Io(e.to_string()))?;
+            .map_err(EngineError::Io)?;
     }
     let mut ldepth = request.depth.then(|| ReportSink::open(&request.prefix, ".ldepth.mean")).transpose()?;
     if let Some(w) = &mut ldepth {
         writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH")
-            .map_err(|e| EngineError::Io(e.to_string()))?;
+            .map_err(EngineError::Io)?;
     }
     let abort = reed_engine::abort::abort();
     let job = crate::bcf_input::InputJob::new(job, &opened, &abort);

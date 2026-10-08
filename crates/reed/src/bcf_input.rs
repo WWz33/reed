@@ -129,7 +129,7 @@ impl<J> InputJob<J> {
                 return Ok(());
             };
             if total > MAX_RECORD_BYTES {
-                return Err(EngineError::Job(format!(
+                return Err(EngineError::job(format!(
                     "BCF record of {total} bytes exceeds the {MAX_RECORD_BYTES}-byte ceiling"
                 )));
             }

@@ -29,7 +29,7 @@ pub use reed_io::write::index::WriteIndex;
 
 /// A transport-layer failure inside the index driver.
 fn job(err: reed_io::IoError) -> EngineError {
-    EngineError::Job(err.to_string())
+    EngineError::from(err)
 }
 
 /// Result of `reed index`.
@@ -114,10 +114,10 @@ impl IndexJob {
         contigs: &mut ContigTable,
     ) -> Result<RecordStart, EngineError> {
         let Some(lr) = LineRef::parse(record) else {
-            return Err(EngineError::Job("record line has fewer than 9 columns".into()));
+            return Err(EngineError::job("record line has fewer than 9 columns"));
         };
         let Some(tid) = contigs.id_of(lr.chrom()) else {
-            return Err(EngineError::Job(format!(
+            return Err(EngineError::job(format!(
                 "{}: contig is not declared in the header",
                 String::from_utf8_lossy(lr.chrom())
             )));
@@ -126,7 +126,7 @@ impl IndexJob {
             contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(),
             pos1: 0,
         };
-        let pos1 = parse_pos1(lr.pos_text(), &locus).map_err(|e| EngineError::Job(e.to_string()))?;
+        let pos1 = parse_pos1(lr.pos_text(), &locus).map_err(EngineError::from)?;
         let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
         Ok(RecordStart { tid, pos1, ref_len, voff: map.voff(text_off) })
     }
@@ -241,7 +241,7 @@ impl ChunkJob for BcfIndexJob {
             body_end = walk_bcf_records(text, skip);
         } else {
             let total = declared_total(&carried.head, text).ok_or_else(|| {
-                EngineError::Job("BCF record length prefix is truncated".into())
+                EngineError::job("BCF record length prefix is truncated")
             })?;
             let need = total.saturating_sub(carried.prefix_len as usize);
             if need > text.len() {
@@ -278,7 +278,7 @@ impl ChunkJob for BcfIndexJob {
                 record_site(&text[q + 8..]).map_err(EngineError::from)?;
             partial.body.push(RecordStart {
                 tid: u32::try_from(tid)
-                    .map_err(|_| EngineError::Job("negative BCF contig index".into()))?,
+                    .map_err(|_| EngineError::job("negative BCF contig index"))?,
                 pos1: u64::try_from(pos0).unwrap_or(0) + 1,
                 ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
                 voff: map.voff(q),
@@ -294,7 +294,7 @@ impl ChunkJob for BcfIndexJob {
         _line: &[u8],
         _scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        Err(EngineError::Job("internal: the BCF index never receives seam lines".into()))
+        Err(EngineError::job("internal: the BCF index never receives seam lines"))
     }
 }
 
@@ -339,14 +339,14 @@ fn entry_at(
         // missing bytes are the *first* ones of this chunk.
         let missing = 20 - held;
         if text.len() < missing {
-            return Err(EngineError::Job("BCF record header spans multiple chunks".into()));
+            return Err(EngineError::job("BCF record header spans multiple chunks"));
         }
         buf[held..].copy_from_slice(&text[..missing]);
     }
     let _ = body_start;
     let (tid, pos0, rlen) = record_site(&buf[8..]).map_err(EngineError::from)?;
     Ok(RecordStart {
-        tid: u32::try_from(tid).map_err(|_| EngineError::Job("negative BCF contig index".into()))?,
+        tid: u32::try_from(tid).map_err(|_| EngineError::job("negative BCF contig index"))?,
         pos1: u64::try_from(pos0).unwrap_or(0) + 1,
         ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
         voff,
@@ -374,7 +374,7 @@ impl IndexSink {
             && entry.pos1 < pos1
         {
             let name = String::from_utf8_lossy(&self.contig_names[entry.tid as usize]).into_owned();
-            return Err(EngineError::Job(format!(
+            return Err(EngineError::job(format!(
                 "{name}:{}: positions are not ascending (indexing needs sorted input)",
                 entry.pos1
             )));
@@ -442,7 +442,7 @@ pub fn run_index(
     threads: usize,
 ) -> Result<IndexOutcome, EngineError> {
     if !flavor.is_some() {
-        return Err(EngineError::Job("no index flavor selected".into()));
+        return Err(EngineError::job("no index flavor selected"));
     }
     let path = match output {
         Some(p) => p.to_path_buf(),
@@ -454,7 +454,7 @@ pub fn run_index(
     };
     // The compressed file size bounds the last record's chunk.
     let eof_voff = std::fs::metadata(input)
-        .map_err(|e| EngineError::Io(e.to_string()))?
+        .map_err(EngineError::Io)?
         .len()
         << 16;
     let mut opened = crate::input::open(Some(input)).map_err(job)?;

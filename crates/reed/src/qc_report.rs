@@ -126,10 +126,10 @@ impl QcJob {
         acc: &mut QcReportAcc,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::Job("record line has fewer than 9 columns".into()));
+            return Err(EngineError::job("record line has fewer than 9 columns"));
         };
         let pos1 = parse_pos1(lr.pos_text(), &Locus { contig_name: String::new(), pos1: 0 })
-            .map_err(|e| EngineError::Job(e.to_string()))?;
+            .map_err(EngineError::from)?;
         let locus = || reed_io::Locus {
             contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(),
             pos1,
@@ -227,11 +227,11 @@ impl QcJob {
         let mut n_nonref_samples = 0;
         let mut i_nonref = 0_usize;
         scratch.counters = PolicyCounters::default();
-        let site = SiteView::parse(&lr).map_err(|e| EngineError::Job(e.to_string()))?;
+        let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let out = scratch
             .scanner
             .scan(&lr, &site, &mut scratch.counters)
-            .map_err(|e| EngineError::Job(e.to_string()))?;
+            .map_err(EngineError::from)?;
         let raw_alleles = out.alleles.expect("invariant: QcScratch tracks alleles");
         let dp_column = out.int_columns.first().map(Vec::as_slice).unwrap_or(&[]);
         for (i, [a, b]) in raw_alleles.as_chunks::<2>().0.iter().enumerate() {
@@ -538,7 +538,7 @@ pub struct QcOutcome {
 ///
 /// Transport and job failures.
 pub fn run_qc_report(input: Option<&Path>, opts: &QcOptions) -> Result<QcOutcome, EngineError> {
-    let opened = crate::input::open(input).map_err(|e| EngineError::Io(e.to_string()))?;
+    let opened = crate::input::open(input).map_err(EngineError::from)?;
     run_qc_report_opened(opened, opts)
 }
 
@@ -570,8 +570,8 @@ pub fn run_qc_report_opened(
     let bcftools_text = render_bcftools_stats(&report);
     if let Some(path) = &opts.json {
         let json = serde_json::to_string_pretty(&report)
-            .map_err(|e| EngineError::Io(e.to_string()))?;
-        std::fs::write(path, json).map_err(|e| EngineError::Io(e.to_string()))?;
+            .map_err(|e| EngineError::job(e.to_string()))?;
+        std::fs::write(path, json).map_err(EngineError::Io)?;
     }
     Ok(QcOutcome { report, bcftools_text })
 }

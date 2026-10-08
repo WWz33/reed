@@ -165,7 +165,7 @@ impl RecordPipeline {
     {
         funnel.n_input += 1;
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::Job("record line has fewer than 9 columns".into()));
+            return Err(EngineError::job("record line has fewer than 9 columns"));
         };
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)

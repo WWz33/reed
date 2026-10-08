@@ -342,7 +342,15 @@ fn source_errors_propagate() {
     let mut source = FailingSource;
     let abort = abort();
     let err = run(&mut source, &CountJob, VecSink::default(), &budget(3), &abort).unwrap_err();
-    assert!(matches!(err, EngineError::Io(ref m) if m.contains("disk exploded")));
+    // C5: the transport error keeps its type (doc_v2 03 §4.4), so the locus
+    // and source chain survive to the caller.
+    assert!(
+        matches!(
+            err,
+            EngineError::Input(reed_io::IoError::Io(ref m)) if m.contains("disk exploded")
+        ),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]

@@ -151,7 +151,7 @@ impl Levels {
                 "contig" => levels.contig = true,
                 "genome" => levels.genome = true,
                 other => {
-                    return Err(EngineError::Job(format!(
+                    return Err(EngineError::job(format!(
                         "unknown level {other:?} (expected window, contig or genome)"
                     )))
                 }
@@ -266,19 +266,19 @@ pub fn assign_groups(
     force_samples: bool,
 ) -> Result<(Vec<Option<u32>>, Vec<String>), EngineError> {
     let samples = reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
-        .map_err(|err| EngineError::Job(err.to_string()))?;
+        .map_err(EngineError::from)?;
     let table = reed_core::group::GroupTable::from_tsv(
         groups_path,
         &samples,
         reed_core::group::GroupFileOptions { ignore_missing_samples: force_samples },
     )
-    .map_err(|err| EngineError::Job(err.to_string()))?;
+    .map_err(EngineError::from)?;
     let mut gt_groups: Vec<Option<u32>> = vec![None; sample_names.len()];
     let mut names: Vec<String> = Vec::with_capacity(table.n_groups());
     for (group_idx, group) in table.iter().enumerate() {
         names.push(group.name.clone());
         let group_idx = u32::try_from(group_idx)
-            .map_err(|_| EngineError::Job("more than u32::MAX groups".into()))?;
+            .map_err(|_| EngineError::job("more than u32::MAX groups"))?;
         for (word_idx, &word) in group.mask.words().iter().enumerate() {
             let mut word = word;
             while word != 0 {
@@ -400,9 +400,9 @@ impl StatsJob {
         scratch: &mut StatsScratch,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::Job("record line has fewer than 9 columns".into()));
+            return Err(EngineError::job("record line has fewer than 9 columns"));
         };
-        let site = SiteView::parse(&lr).map_err(|err| EngineError::Job(err.to_string()))?;
+        let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let chrom = site.contig_name;
         match current {
             Some(segment) if segment.contig == chrom => {}
@@ -420,20 +420,19 @@ impl StatsJob {
         }
         let pos1 = site.pos1;
         let Some(pos0) = pos1.checked_sub(1) else {
-            return Err(EngineError::Job(format!("{}: POS is zero", site.locus())));
+            return Err(EngineError::job(format!("{}: POS is zero", site.locus())));
         };
         // Input contract (04-algorithms.md §6): positions ascending within a
         // contig, never beyond the declared length.
         if let Some(&len) = self.contig_len.get(chrom)
             && pos1 > len
         {
-            return Err(EngineError::Job(
+            return Err(EngineError::from(
                 reed_core::CoreError::PositionBeyondContigLength {
                     contig_name: String::from_utf8_lossy(chrom).into_owned(),
                     pos1,
                     len_bp: len,
                 }
-                .to_string(),
             ));
         }
         if site.is_invariant() {
@@ -453,7 +452,7 @@ impl StatsJob {
             .get_or_insert_with(|| GenotypeScanner::new(n_samples, &[], &[], stats_policies()));
         let out = scanner
             .scan(&lr, &site, counters)
-            .map_err(|err| EngineError::Job(err.to_string()))?;
+            .map_err(EngineError::from)?;
         let mut any_alt = false;
         for (sample_idx, &code) in out.codes.iter().enumerate() {
             any_alt |= code_has_alt(code);
@@ -465,12 +464,11 @@ impl StatsJob {
             .as_mut()
             .expect("invariant: segment opened for this contig above");
         if pos0 < segment.last_pos0 {
-            return Err(EngineError::Job(
+            return Err(EngineError::from(
                 reed_core::CoreError::PositionNotAscending {
                     prev_pos0: segment.last_pos0,
                     pos0,
                 }
-                .to_string(),
             ));
         }
         segment.bins.push_site(pos0, row, any_alt);
@@ -557,12 +555,11 @@ impl OrderedSink<StatsPartial> for StatsSink {
                     // may not rewind into positions this sink already
                     // emitted windows for.
                     if segment.first_pos0 < cur.last_pos0 {
-                        return Err(EngineError::Job(
+                        return Err(EngineError::from(
                             reed_core::CoreError::PositionNotAscending {
                                 prev_pos0: cur.last_pos0,
                                 pos0: segment.first_pos0,
-                            }
-                            .to_string(),
+                            },
                         ));
                     }
                     segment.bins.fold(&mut cur.totals);
@@ -598,7 +595,7 @@ impl OrderedSink<StatsPartial> for StatsSink {
         if matches!(self.pixy, Some(PixyOptions { invariant: InvariantMode::Require }))
             && self.n_no_alt_records == 0
         {
-            return Err(EngineError::Job(format!(
+            return Err(EngineError::job(format!(
                 "input has no invariant sites ({} records, none with ALT = \".\"): declare \
                  --variant-only for an all-variant file, or --bypass-invariant-check to compute \
                  over present sites only (both overestimate π/dxy denominators)",
@@ -684,14 +681,14 @@ impl StatsSink {
     /// contig-level row (§8.7), then folds into the genome total.
     fn close_contig(&mut self, mut cur: CurrentContig) -> Result<(), EngineError> {
         if self.closed.iter().any(|closed| closed == &cur.name) {
-            return Err(EngineError::Job(format!(
+            return Err(EngineError::job(format!(
                 "contig {} revisited after a later contig: input is not contig-sorted",
                 String::from_utf8_lossy(&cur.name)
             )));
         }
         self.closed.push(cur.name.clone());
         let len = self.contig_len.get(&cur.name).copied().ok_or_else(|| {
-            EngineError::Job(format!(
+            EngineError::job(format!(
                 "contig {} has no ##contig length; window clipping needs it (pass --contig-lengths)",
                 String::from_utf8_lossy(&cur.name)
             ))
@@ -797,9 +794,9 @@ pub fn run_stats_opened(
     budget: &ThreadBudget,
 ) -> Result<StatsReport, EngineError> {
     let grid = WindowGrid::Bp { size: request.window_size, step: request.step };
-    grid.validate().map_err(|err| EngineError::Job(err.to_string()))?;
+    grid.validate().map_err(EngineError::from)?;
     let binning = BpBinning::from_grid(&grid)
-        .ok_or_else(|| EngineError::Job("stats driver requires a Bp grid".into()))?;
+        .ok_or_else(|| EngineError::job("stats driver requires a Bp grid"))?;
 
     let n_groups = request
         .gt_groups
@@ -813,13 +810,13 @@ pub fn run_stats_opened(
         group_sizes[*group as usize] += 1;
     }
     let accs = build_accs(&request.kinds, &group_sizes)
-        .map_err(|err| EngineError::Job(format!("invalid stats request: {err}")))?;
+        .map_err(|err| EngineError::job(format!("invalid stats request: {err}")))?;
     let keys: Vec<StatKey> = request.kinds.iter().map(StatKind::key).collect();
 
     let abort = reed_engine::abort::abort();
     let header = opened.facts.clone();
     if header.n_samples() != request.gt_groups.len() {
-        return Err(EngineError::Job(format!(
+        return Err(EngineError::job(format!(
             "request assigns {} samples but the header declares {}",
             request.gt_groups.len(),
             header.n_samples()

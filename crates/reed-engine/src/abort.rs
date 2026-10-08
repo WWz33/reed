@@ -146,7 +146,7 @@ mod tests {
         assert!(!first.failed());
         assert!(!signal.is_aborted());
         first.record(EngineError::Aborted);
-        first.record(EngineError::Job("later".into()));
+        first.record(EngineError::job("later"));
         assert!(first.failed());
         assert!(signal.is_aborted());
         assert!(matches!(first.take(), Some(EngineError::Aborted)));

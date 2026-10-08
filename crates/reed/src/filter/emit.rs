@@ -50,7 +50,7 @@ impl ChunkJob for EmitJob {
         let dec = self
             .decisions
             .get(&chunk.id.0)
-            .ok_or_else(|| EngineError::Job(format!("no emit decision for chunk {}", chunk.id.0)))?;
+            .ok_or_else(|| EngineError::job(format!("no emit decision for chunk {}", chunk.id.0)))?;
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         let mut record = 0_usize;
         let mut site = 0_usize;
@@ -125,10 +125,10 @@ impl EmitJob {
         scratch: &mut EmitScratch,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::Job("survivor line has fewer than 9 columns".into()));
+            return Err(EngineError::job("survivor line has fewer than 9 columns"));
         };
         let site = SiteView::parse_declared(&lr, &mut scratch.contigs)
-            .map_err(|e| EngineError::Job(e.to_string()))?;
+            .map_err(EngineError::from)?;
         let pos1 = site.pos1;
         let stale: Vec<&[u8]> = self.plan.stale_tags.iter().map(Vec::as_slice).collect();
         // Refresh the reusable mask bitset from the emit's words.
@@ -144,7 +144,7 @@ impl EmitJob {
         };
         scratch.edit_buf.clear();
         edit_vcf_line(&lr, &edit_plan, gt_subfield_index(lr.format_text()), &mut scratch.edit_buf)
-            .map_err(|e| EngineError::Job(e.to_string()))?;
+            .map_err(EngineError::from)?;
         // Byte-boundary cutting, records may span blocks (as in
         // FilterJob::push_line).
         let key = IndexKey {

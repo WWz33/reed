@@ -109,7 +109,7 @@ fn io_err(e: reed_io::error::IoError) -> FilterError {
 
 /// Maps a transport error inside a chunk job.
 fn job_err(e: reed_io::error::IoError) -> EngineError {
-    EngineError::Job(e.to_string())
+    EngineError::from(e)
 }
 
 fn ferr(err: EngineError) -> FilterError {
