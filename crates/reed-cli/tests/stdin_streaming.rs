@@ -290,3 +290,55 @@ fn stats_accepts_filter_region_and_sample_flags() {
     assert!(!bad.status.success());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 04-cleanup §2.1: the site/threshold flags on `stats` produce exactly what
+/// the composition (`filter` to a file, then `stats`) would, in one pass.
+#[test]
+fn stats_site_filters_match_the_filter_then_stats_composition() {
+    let dir = std::env::temp_dir().join(format!("reed-stats-sites-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tpopA\ns1\tpopA\ns2\tpopB\n").expect("invariant: groups");
+    let filtered = dir.join("filtered.vcf.gz");
+    let prefix = |name: &str| dir.join(name).display().to_string();
+    for args in [
+        vec!["--maf", "0.05"],
+        vec!["--min-dp", "20"],
+        vec!["--geno", "0.1"],
+        vec!["-Q", "0.9"],
+    ] {
+        let mut filter_argv = vec!["filter", input.to_str().unwrap()];
+        filter_argv.extend(args.iter().copied());
+        filter_argv.extend(["-Oz", "-o", filtered.to_str().unwrap()]);
+        let filtered_run = run(&filter_argv, None);
+        assert!(
+            filtered_run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&filtered_run.stderr)
+        );
+
+        let stats = |source: &str, extra: &[&str], out: &str| -> String {
+            let mut argv = vec![
+                "stats",
+                source,
+                "--pop",
+                pops.to_str().unwrap(),
+                "--pi",
+                "--variant-only",
+                "-o",
+                out,
+            ];
+            argv.extend_from_slice(extra);
+            let output = run(&argv, None);
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            std::fs::read_to_string(format!("{out}_pi.txt")).expect("invariant: pi file")
+        };
+        let composed = stats(filtered.to_str().unwrap(), &[], &prefix("composed"));
+        let single_pass = stats(input.to_str().unwrap(), &args, &prefix("single"));
+        assert_eq!(composed, single_pass, "args {args:?} must agree");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

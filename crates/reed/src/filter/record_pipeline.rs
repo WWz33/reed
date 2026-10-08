@@ -26,61 +26,61 @@ use super::job_err;
 /// What each strategy asks of the shared stages. Every field is a strategy
 /// difference; the stages themselves have no branches on the strategy.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct PipelineOptions {
+pub(crate) struct PipelineOptions {
     /// Scan records whose head rules failed (the sketch pass needs their
     /// missing calls for the cohort; the single pass skips the region).
-    pub(super) scan_head_failures: bool,
+    pub(crate) scan_head_failures: bool,
     /// Evaluate the mask for samples outside the keep list (the sketch pass
     /// records all samples, the single pass masks kept samples only).
-    pub(super) mask_all_samples: bool,
+    pub(crate) mask_all_samples: bool,
     /// Resolve CHROM to a header contig id; the index-writing path requires
     /// it (a record on an undeclared contig has no addressable tid).
-    pub(super) require_contig: bool,
+    pub(crate) require_contig: bool,
     /// Evaluate the tail rules inline with this kept-sample count as the
     /// denominator; `None` defers them to the mid stage (sketch path).
-    pub(super) tail_n_samples: Option<u64>,
+    pub(crate) tail_n_samples: Option<u64>,
     /// Compute [`SiteCounts`] (and the mask attribution/masked-GT counters
     /// that come with it): the single pass needs them for the edit and the
     /// tail; the sketch pass counts from the sketches instead.
-    pub(super) counts: bool,
+    pub(crate) counts: bool,
 }
 
 /// One processed record handed to the strategy body.
-pub(super) struct RecordView<'r, 'l> {
+pub(crate) struct RecordView<'r, 'l> {
     /// The record's line.
-    pub(super) line: &'r LineRef<'l>,
+    pub(crate) line: &'r LineRef<'l>,
     /// The record's site-level columns.
-    pub(super) site: &'r SiteView<'l>,
+    pub(crate) site: &'r SiteView<'l>,
     /// The decoded genotypes and FORMAT columns.
-    pub(super) scan: &'r ScanOutput<'r>,
+    pub(crate) scan: &'r ScanOutput<'r>,
     /// Per-sample counts, present when `PipelineOptions::counts` is set.
-    pub(super) counts: Option<&'r SiteCounts>,
+    pub(crate) counts: Option<&'r SiteCounts>,
     /// Samples whose mask fired.
-    pub(super) masked: &'r Bitset,
+    pub(crate) masked: &'r Bitset,
     /// Firing mask rule per sample (`u16::MAX` = no rule fired).
-    pub(super) mask_rule: &'r [u16],
+    pub(crate) mask_rule: &'r [u16],
     /// 1-based record position.
-    pub(super) pos1: u64,
+    pub(crate) pos1: u64,
     /// Whether the head rules passed (false only when
     /// `scan_head_failures` hands the record over anyway).
-    pub(super) head_passed: bool,
+    pub(crate) head_passed: bool,
     /// Funnel counters: the body adds its own attribution here.
-    pub(super) funnel: &'r mut FunnelPartial,
+    pub(crate) funnel: &'r mut FunnelPartial,
 }
 
 /// Where one record ended up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Processed {
+pub(crate) struct Processed {
     /// Whether the head rules passed.
-    pub(super) head_passed: bool,
+    pub(crate) head_passed: bool,
     /// Whether the record reached the body (head passed and, when the tail
     /// runs inline, the tail passed).
-    pub(super) emitted: bool,
+    pub(crate) emitted: bool,
 }
 
 /// Per-worker record pipeline: decoder, contig table, head scratch and the
 /// reusable mask/count state.
-pub(super) struct RecordPipeline {
+pub(crate) struct RecordPipeline {
     scanner: GenotypeScanner,
     contigs: ContigTable,
     counters: PolicyCounters,
@@ -102,7 +102,7 @@ impl RecordPipeline {
     /// Creates the pipeline for `n_samples` sample columns and the plan's
     /// FORMAT columns.
     #[must_use]
-    pub(super) fn new(
+    pub(crate) fn new(
         n_samples: usize,
         int_keys: &[&[u8]],
         float_keys: &[&[u8]],
@@ -127,7 +127,7 @@ impl RecordPipeline {
 
     /// Adapts the pipeline to a plan (mask rule count, `--set-gts .`
     /// expression columns).
-    pub(super) fn resize_for(&mut self, plan: &FilterPlan) {
+    pub(crate) fn resize_for(&mut self, plan: &FilterPlan) {
         self.field_rules = plan.mask.iter().filter(|r| r.expr.is_none()).cloned().collect();
         self.field_rule_map = plan
             .mask
@@ -151,7 +151,7 @@ impl RecordPipeline {
     ///
     /// [`EngineError::Job`] for malformed records, policy rejections and
     /// output failures reported by `body`.
-    pub(super) fn process<F>(
+    pub(crate) fn process<F>(
         &mut self,
         line: &[u8],
         plan: &FilterPlan,

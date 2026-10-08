@@ -4,6 +4,7 @@
 
 pub mod bcf_input;
 pub mod filter;
+pub mod filtered;
 pub mod index;
 pub mod input;
 pub mod pixy;

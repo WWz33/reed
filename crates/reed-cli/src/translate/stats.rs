@@ -10,6 +10,15 @@ use reed_engine::budget::{MemBudget, ThreadBudget};
 use crate::cli::StatsCli;
 use crate::units::input_path;
 
+/// Whether the shared site flags left the spec at its defaults (no
+/// filtering requested, so the wrapper is skipped entirely).
+fn site_spec_is_empty(spec: &reed_filter::spec::FilterSpecV2) -> bool {
+    use reed_filter::spec::FilterSpecV2 as _;
+    spec.site == reed_filter::spec::SiteRulesV2::default()
+        && spec.genotype == reed_filter::spec::GenotypeRules::default()
+        && spec.site_after_mask == reed_filter::spec::TailRules::default()
+}
+
 /// The parsed region flags: indexed regions, target includes, target
 /// excludes.
 type ParsedRegions = (
@@ -239,6 +248,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         verbosity,
         regions_args,
         sample_args,
+        site_args,
     } = args;
 
     // `-r/-R` (indexed) and `-t/-T` (streamed) share the filter's spellings
@@ -276,6 +286,18 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
     let sample_names: Vec<String> = facts.sample_names.clone();
     // `-s/-S/--keep/--remove`: the same conflict rules as the filter.
     let keep_samples = parse_sample_keep(&sample_args, &sample_names)?;
+    // The site/threshold flags go through the filter's own compiler, so the
+    // two commands cannot drift (04-cleanup §2.1).
+    let site_spec = super::filter::site_spec(&site_args)?;
+    let filter = if site_spec_is_empty(&site_spec) {
+        None
+    } else {
+        Some(std::sync::Arc::new(reed_filter::plan::compile(
+            &site_spec,
+            &reed_io::header::tag_table(&facts.header),
+            "",
+        )?))
+    };
 
     let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
         .header
@@ -428,6 +450,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
             targets: targets.clone(),
             targets_exclude: targets_exclude.clone(),
             keep_samples: keep_samples.clone(),
+            filter: filter.clone(),
             gt_groups,
             window_size: size,
             step,
@@ -471,6 +494,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         targets,
         targets_exclude,
         keep_samples,
+        filter,
         gt_groups,
         window_size: size,
         step: if step == 0 { size } else { step },

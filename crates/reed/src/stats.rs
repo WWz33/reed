@@ -235,6 +235,10 @@ pub struct StatsRequest {
     pub targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
     /// Per-sample keep mask (`-s/-S/--keep/--remove`); `None` = all kept.
     pub keep_samples: Option<Vec<bool>>,
+    /// The compiled filter plan (`-v/-m/-f/-i/-e/--min-dp/--geno/--maf/...`,
+    /// 04-cleanup §2.1): applied to every record in the same pass by
+    /// [`crate::filtered::FilteredJob`]. `None` = no site-level filtering.
+    pub filter: Option<Arc<reed_filter::plan::FilterPlan>>,
 }
 
 /// The run's output and counters.
@@ -879,6 +883,14 @@ pub fn run_stats_opened(
         map
     });
 
+    // The wrapper's mask decision follows the same static subset as the
+    // group assignment.
+    let keep_for_filter: Arc<[bool]> = Arc::from(
+        request
+            .keep_samples
+            .clone()
+            .unwrap_or_else(|| vec![true; request.gt_groups.len()]),
+    );
     let job = StatsJob {
         width: binning.width(),
         n_groups,
@@ -889,7 +901,18 @@ pub fn run_stats_opened(
         targets: request.targets.clone().into(),
         targets_exclude: request.targets_exclude.clone().into(),
     };
-    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+    // The site/threshold flags run in the same pass through the filter's own
+    // record pipeline; the inner (statistics) job then sees exactly what a
+    // physical `reed filter` + `reed stats` would have produced.
+    let job = crate::bcf_input::InputJob::new(
+        crate::filtered::FilteredJob::new(
+            request.filter.clone(),
+            Arc::clone(&keep_for_filter),
+            job,
+        ),
+        &opened,
+        &abort,
+    );
     let crate::input::OpenedInput { mut source, .. } = opened;
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {

@@ -4,101 +4,22 @@
 
 use std::path::PathBuf;
 
-
 use crate::cli::FilterCli;
 use crate::units::input_path;
 
-/// Translates the CLI flags into a typed [`FilterSpecV2`] (02-cli.md §3, §6).
+/// Translates the shared site/threshold flags (`SiteFilterArgs`) into the
+/// typed spec — the same flags serve `reed filter` and `reed stats`
+/// (04-cleanup §2.1).
 ///
 /// # Errors
 ///
-/// Unknown tokens (variant types, output type) and malformed expressions.
-pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
-    use reed_filter::spec::{
-        FilterSpecV2, GenotypeMaskRule, OnMissing, SampleList, SampleSelect,
-    };
+/// Unknown variant types or malformed expressions.
+pub fn site_spec(
+    args: &crate::cli::filter_flags::SiteFilterArgs,
+) -> Result<reed_filter::spec::FilterSpecV2, String> {
+    use reed_filter::spec::{FilterSpecV2, GenotypeMaskRule, OnMissing};
+    let cli = args;
     let mut spec = FilterSpecV2::default();
-
-    // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
-    // once with names to keep, once with a `^`-prefixed removal list — but
-    // two sources of the same polarity are a conflict, not a silent pick.
-    let parse_list = |list: &str| -> Result<(bool, Vec<String>), String> {
-        let exclude = list.trim_start().starts_with('^');
-        let names: Vec<String> = list
-            .trim_start_matches('^')
-            .split(',')
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .map(str::to_string)
-            .collect();
-        if names.is_empty() {
-            return Err(format!("empty sample list {list:?}"));
-        }
-        Ok((exclude, names))
-    };
-    let mut inline_keep: Option<Vec<String>> = None;
-    let mut inline_remove: Option<Vec<String>> = None;
-    for list in &cli.sample_args.samples {
-        let (exclude, names) = parse_list(list)?;
-        let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
-        if slot.is_some() {
-            return Err(format!(
-                "repeated -s list of the same polarity ({list:?}); combine the names into one list"
-            ));
-        }
-        *slot = Some(names);
-    }
-    let file_keep = cli.sample_args.samples_file.as_ref().or(cli.sample_args.keep.as_ref());
-    if inline_keep.is_some() && file_keep.is_some() {
-        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
-    }
-    if inline_remove.is_some() && cli.sample_args.remove.is_some() {
-        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
-    }
-    let keep = inline_keep
-        .map(SampleList::Names)
-        .or_else(|| file_keep.map(|p| SampleList::File(p.clone())));
-    let remove = inline_remove
-        .map(SampleList::Names)
-        .or_else(|| cli.sample_args.remove.clone().map(SampleList::File));
-    if keep.is_some() || remove.is_some() {
-        spec.sample_select = Some(SampleSelect { keep, remove });
-    }
-    spec.mind = cli.mind;
-
-    // ---- regions (02-cli.md §2): the spec predicate, validated here.
-    // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----
-    let mut add_regions = |list: &str, include: bool| -> Result<(), String> {
-        for raw in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-            let (token, include) = match raw.strip_prefix('^') {
-                Some(rest) => (rest, false),
-                None => (raw, include),
-            };
-            reed_filter::spec::Region::parse(token)
-                .map_err(|e| format!("invalid region {token:?}: {e}"))?;
-            if include {
-                spec.targets.include.push(token.to_string());
-            } else {
-                spec.targets.exclude.push(token.to_string());
-            }
-        }
-        Ok(())
-    };
-    if let Some(list) = &cli.regions_args.regions {
-        add_regions(list, true)?;
-    }
-    if let Some(path) = &cli.regions_args.regions_file {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
-    }
-    if let Some(list) = &cli.regions_args.targets {
-        add_regions(list, true)?;
-    }
-    if let Some(path) = &cli.regions_args.targets_file {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
-    }
-
     // ---- site: variant class / alleles / FILTER ----
     let variant_class = |token: &str| -> Result<&'static str, String> {
         Ok(match token.trim() {
@@ -207,7 +128,6 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
     if let Some(m) = cli.max_mac {
         spec.site_after_mask.max_mac = m;
     }
-    spec.recompute.no_update = cli.no_update;
     if !cli.hwe.is_empty() {
         let p: f64 = cli.hwe[0]
             .parse()
@@ -218,7 +138,102 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
         }
     }
 
-    // ---- INFO ----
+    Ok(spec)
+}
+
+/// Translates the CLI flags into a typed [`reed_filter::spec::FilterSpecV2`]
+/// (02-cli.md §3, §6): the shared site/threshold flags (04-cleanup §2.1)
+/// plus the sample, region and INFO-update parts that stay filter-only.
+///
+/// # Errors
+///
+/// Unknown tokens (variant types, output type) and malformed expressions.
+pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
+    use reed_filter::spec::{FilterSpecV2, SampleList, SampleSelect};
+    let mut spec = site_spec(&cli.site_args)?;
+
+    // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
+    // once with names to keep, once with a `^`-prefixed removal list — but
+    // two sources of the same polarity are a conflict, not a silent pick.
+    let parse_list = |list: &str| -> Result<(bool, Vec<String>), String> {
+        let exclude = list.trim_start().starts_with('^');
+        let names: Vec<String> = list
+            .trim_start_matches('^')
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect();
+        if names.is_empty() {
+            return Err(format!("empty sample list {list:?}"));
+        }
+        Ok((exclude, names))
+    };
+    let mut inline_keep: Option<Vec<String>> = None;
+    let mut inline_remove: Option<Vec<String>> = None;
+    for list in &cli.sample_args.samples {
+        let (exclude, names) = parse_list(list)?;
+        let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
+        if slot.is_some() {
+            return Err(format!(
+                "repeated -s list of the same polarity ({list:?}); combine the names into one list"
+            ));
+        }
+        *slot = Some(names);
+    }
+    let file_keep = cli.sample_args.samples_file.as_ref().or(cli.sample_args.keep.as_ref());
+    if inline_keep.is_some() && file_keep.is_some() {
+        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
+    }
+    if inline_remove.is_some() && cli.sample_args.remove.is_some() {
+        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
+    }
+    let keep = inline_keep
+        .map(SampleList::Names)
+        .or_else(|| file_keep.map(|p| SampleList::File(p.clone())));
+    let remove = inline_remove
+        .map(SampleList::Names)
+        .or_else(|| cli.sample_args.remove.clone().map(SampleList::File));
+    if keep.is_some() || remove.is_some() {
+        spec.sample_select = Some(SampleSelect { keep, remove });
+    }
+    spec.mind = cli.mind;
+
+    // ---- regions (02-cli.md §2): the spec predicate, validated here.
+    // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----
+    let mut add_regions = |list: &str, include: bool| -> Result<(), String> {
+        for raw in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            let (token, include) = match raw.strip_prefix('^') {
+                Some(rest) => (rest, false),
+                None => (raw, include),
+            };
+            reed_filter::spec::Region::parse(token)
+                .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+            if include {
+                spec.targets.include.push(token.to_string());
+            } else {
+                spec.targets.exclude.push(token.to_string());
+            }
+        }
+        Ok(())
+    };
+    if let Some(list) = &cli.regions_args.regions {
+        add_regions(list, true)?;
+    }
+    if let Some(path) = &cli.regions_args.regions_file {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
+    }
+    if let Some(list) = &cli.regions_args.targets {
+        add_regions(list, true)?;
+    }
+    if let Some(path) = &cli.regions_args.targets_file {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
+    }
+
+    // ---- INFO (filter-only: `-x`, `--fill-tags`, `-I`) ----
+    spec.recompute.no_update = cli.no_update;
     if let Some(list) = &cli.remove_info {
         spec.recompute.drop_stale = list
             .split(',')
@@ -237,6 +252,7 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
     }
     Ok(spec)
 }
+
 
 pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let FilterCli {

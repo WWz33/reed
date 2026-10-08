@@ -32,7 +32,7 @@ use reed_io::write::ordered_output::OrderedOutput;
 
 mod emit;
 mod mid_stage;
-mod record_pipeline;
+pub(crate) mod record_pipeline;
 mod reduce;
 mod report;
 mod single_pass;
