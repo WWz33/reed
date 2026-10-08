@@ -206,19 +206,22 @@ impl GenotypeScanner {
 /// rest of the field is skipped (trailing subfields are never scanned).
 fn split_needed(ranges: &mut Vec<Range<usize>>, field: &[u8], needed: usize) {
     ranges.clear();
+    if needed == 0 {
+        return;
+    }
+    // One pass over the (short) field instead of one `memchr` per subfield
+    // (doc_v3 03 O6, level 1: the scan is call-bound on ~30-byte fields).
     let mut from = 0;
-    while ranges.len() < needed {
-        match memchr::memchr(b':', &field[from..]) {
-            Some(rel) => {
-                ranges.push(from..from + rel);
-                from += rel + 1;
-            }
-            None => {
-                ranges.push(from..field.len());
-                break;
+    for (i, &b) in field.iter().enumerate() {
+        if b == b':' {
+            ranges.push(from..i);
+            from = i + 1;
+            if ranges.len() == needed {
+                return;
             }
         }
     }
+    ranges.push(from..field.len());
 }
 
 /// Decodes one sample's GT subfield, applying the policies and filling

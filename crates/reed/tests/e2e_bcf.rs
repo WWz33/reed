@@ -24,6 +24,33 @@ fn dir(name: &str) -> PathBuf {
     dir
 }
 
+/// Inflates a whole BGZF buffer into bytes.
+fn inflate_bgzf_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut out = Vec::new();
+    let mut rest = bytes;
+    while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
+        inflater
+            .inflate_block(&rest[..total], &mut out)
+            .expect("invariant: inflates");
+        rest = &rest[total..];
+    }
+    out
+}
+
+/// Re-blocks a byte stream as BGZF with `block`-byte payloads.
+fn reblock(bytes: &[u8], block: usize) -> Vec<u8> {
+    let mut deflater = reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut out = Vec::new();
+    for piece in bytes.chunks(block) {
+        deflater
+            .deflate_block(piece, &mut out)
+            .expect("invariant: block fits");
+    }
+    out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+    out
+}
+
 /// Inflates a whole BGZF buffer (the filter writes BGZF text).
 fn inflate_bgzf(bytes: &[u8]) -> String {
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
@@ -207,14 +234,66 @@ fn bcf_output_is_thread_count_independent() {
         };
         run_filter(Some(&fixture("fix.bcf")), &spec, &opts)
     };
-    let one = dir.join("one.bcf");
-    let four = dir.join("four.bcf");
-    run(1, &one).expect("invariant: one thread");
-    run(4, &four).expect("invariant: four threads");
-    assert_eq!(
-        std::fs::read(&one).expect("invariant: one"),
-        std::fs::read(&four).expect("invariant: four")
-    );
+    let mut reference: Option<Vec<u8>> = None;
+    for threads in [1_usize, 2, 3, 7, 56] {
+        let out = dir.join(format!("t{threads}.bcf"));
+        run(threads, &out).expect("invariant: run");
+        let bytes = std::fs::read(&out).expect("invariant: output");
+        match &reference {
+            None => reference = Some(bytes),
+            Some(expected) => assert_eq!(&bytes, expected, "threads={threads}"),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The length-prefix chain must frame records correctly wherever the BGZF
+/// block boundaries fall (doc_v3 02-bcf.md §2.2): re-blocking the same BCF
+/// at many small payload sizes must not change a single output record.
+#[test]
+fn chain_framing_is_boundary_independent() {
+    let dir = dir("bcf-splits");
+    let bytes = inflate_bgzf_bytes(&std::fs::read(fixture("fix.bcf")).expect("invariant: fixture"));
+    let spec = FilterSpecV2 {
+        policy: reed_filter::spec::PolicyRules {
+            ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let run = |input: &Path, out: &Path| {
+        let opts = FilterOptions {
+            threads: 2,
+            output: Some(out.to_path_buf()),
+            write_index: reed::filter::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            quiet: true,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: Some(true),
+            output_bcf: None,
+            mem_bytes: None,
+            no_version: false,
+        };
+        run_filter(Some(input), &spec, &opts).expect("invariant: run");
+        let text = inflate_bgzf(&std::fs::read(out).expect("invariant: output"));
+        text.lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let reference = run(&fixture("fix.bcf"), &dir.join("ref.vcf.gz"));
+    assert!(!reference.is_empty(), "the reference must have records");
+    for block in [13_usize, 17, 24, 32, 41, 64, 97, 128, 200, 512] {
+        let path = dir.join(format!("in{block}.bcf"));
+        std::fs::write(&path, reblock(&bytes, block)).expect("invariant: write");
+        let got = run(&path, &dir.join(format!("out{block}.vcf.gz")));
+        assert_eq!(got, reference, "block size {block}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

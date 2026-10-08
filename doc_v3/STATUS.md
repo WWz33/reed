@@ -67,12 +67,12 @@
 | C5 类型化 `EngineError` | 已做（doc_v2 03 §4.4 的形状，doc_v3 C5 引用该节）：`Io(std::io::Error)`、`Input(reed_io::IoError)`（保留 Locus）、`Job(Box<dyn Error + Send + Sync>)`（保留类型与 source 链）、`WorkerPanicked`/`MemBudgetExceeded`/`Aborted`；`EngineError::job(msg)` 造消息型错误，`From<CoreError>`/`From<IoError>`/`From<io::Error>` 三处转换 | 构造点全部改走 typed 转换；`source_errors_propagate` 断言传输错误落到 `Input(IoError::Io(_))`；335 测试全绿 |
 | C7 clippy pedantic | 部分 | `clippy::all` 无错误；生产代码的 `expect()` 已全部带 `invariant:` 前缀（剩余 18 处缺口都在 `#[cfg(test)]`/examples）；`cast_possible_truncation` 约 118 处尚未逐条处理 |
 | CLI §2 的 stats 过滤参数复用、`-q/-Q` | 未做 | 需在 stats 驱动接入过滤计划（head/mask/tail）与新的 AF 尾规则（bcftools 的 any/all 语义需要单独对拍） |
-| C5 之外的 B 门：noodles 差分、链切分穷举、typed-value proptest | 未做 | 现有门是"与 bcftools 全量逐字节一致 + 往返 + 跨格式"；noodles 差分与穷举切分是补充门 |
+| B 门补充 | 已补：**noodles 差分**（`bcf_vs_noodles.rs`：fixture 全部记录 + `clean.bcf` 前 10 万条，逐 token 值等价；noodles 的浮点文本与 htslib 不同，已注明）、**链切分穷举**（`e2e_bcf.rs::chain_framing_is_boundary_independent`：同一 BCF 按 13–512 字节重切块，输出记录不变）、**BCF 输出确定性**（1/2/3/7/56 线程字节相同） | 未做：typed-value proptest（该设计里 typed 值不单独成层） |
 | V6：B3b 原生 BCF 手术 | 未做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术是加速项 |
 | O6/O7 扫描与编辑微优化 | 未做 | 需微基准门（`benches/genotype_scan.rs`、`benches/line_edit.rs`） |
 | 基准日志（03 §3 协议） | 部分：本轮的实测数字都记在本文档；未写入 `bench/e2e/results.tsv` | — |
 | O7 按连续段拷贝 | 已做（+1%） | `benches/line_edit.rs`：3.06 µs/记录（348 样本，~14% 掩码）＝ 8.8 ns/样本；撤下改动后 3.09 µs（criterion `change +1.05%`，p<0.05）——收益真实但在噪声边缘 |
-| O6 单遍样本列扫描 | 未做 | `benches/genotype_scan.rs` 基线：GT-only 4.05 µs/记录（11.6 ns/样本）、GT+DP+GQ 9.56 µs（27.5 ns/样本）；扫描不是瓶颈（deflate 占 filter CPU 的 56%），按 03 §2 的分级办法需要逐级微基准，本预算内未继续 |
+| O6 单遍样本列扫描（第 1 级） | 已做 | `benches/genotype_scan.rs`（criterion A/B）：`split_needed` 由"每个子字段一次 memchr"改为单遍字节循环，GT-only 4.05 → **3.84 µs**（−4.7%）、GT+DP+GQ 9.56 → **8.65 µs**（−9.5%），均 p<0.05；第 2 级（AVX2 位图）未做 |
 
 ## 基准（2026-10-08，本机 56 线程，热缓存，全量 clean.vcf.gz 3,315,604 条）
 
