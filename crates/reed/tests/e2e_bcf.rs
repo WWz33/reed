@@ -175,6 +175,49 @@ fn render_via_reed(path: &Path) -> String {
     String::from_utf8(out).expect("invariant: VCF text")
 }
 
+/// BCF output bytes do not depend on the thread count (doc_v3 02-bcf.md §4).
+#[test]
+fn bcf_output_is_thread_count_independent() {
+    let dir = dir("bcf-threads");
+    // The fixture carries a haploid call (chr2:500).
+    let spec = FilterSpecV2 {
+        policy: reed_filter::spec::PolicyRules {
+            ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let run = |threads: usize, out: &Path| {
+        let opts = FilterOptions {
+            threads,
+            output: Some(out.to_path_buf()),
+            write_index: reed::filter::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            quiet: true,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: None,
+            output_bcf: Some(1),
+            mem_bytes: None,
+            no_version: false,
+        };
+        run_filter(Some(&fixture("fix.bcf")), &spec, &opts)
+    };
+    let one = dir.join("one.bcf");
+    let four = dir.join("four.bcf");
+    run(1, &one).expect("invariant: one thread");
+    run(4, &four).expect("invariant: four threads");
+    assert_eq!(
+        std::fs::read(&one).expect("invariant: one"),
+        std::fs::read(&four).expect("invariant: four")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Filtering BCF input writes the same VCF text as filtering VCF.gz input.
 #[test]
 fn filter_output_is_identical_across_formats() {

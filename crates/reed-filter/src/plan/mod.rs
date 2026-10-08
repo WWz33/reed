@@ -86,6 +86,53 @@ pub struct FmtExprField {
     pub float_column: Option<usize>,
 }
 
+/// Collects the built-in fields an expression reads (04-cleanup §2.3: the
+/// stale-INFO warning needs the names).
+fn expr_fields(expr: &crate::expr::Expr, out: &mut Vec<crate::expr::Field>) {
+    use crate::expr::Expr;
+    match expr {
+        Expr::Field(f) => out.push(*f),
+        Expr::Bare(name) => {
+            if let Some(f) = crate::expr::Field::from_name(name) {
+                out.push(f);
+            }
+        }
+        Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
+            expr_fields(a, out);
+            expr_fields(b, out);
+        }
+        Expr::Not(e) | Expr::Subscript(e, _) => expr_fields(e, out),
+        _ => {}
+    }
+}
+
+/// Warns when an expression reads a built-in that the header also declares as
+/// an INFO tag: the INFO value may be stale (this dataset's trap), while the
+/// recomputed `--maf/--mac` path always uses the genotypes.
+fn stale_info_hits(expr: &crate::expr::Expr, tags: &TagTable) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    expr_fields(expr, &mut fields);
+    fields
+        .into_iter()
+        .filter(|field| {
+            field.is_genotype_derived()
+                && !matches!(field, crate::expr::Field::NMissing | crate::expr::Field::FMissing)
+                && tags.info(field.name()).is_some()
+        })
+        .map(crate::expr::Field::name)
+        .collect()
+}
+
+fn warn_stale_info(expr: &crate::expr::Expr, text: &str, tags: &TagTable) {
+    for name in stale_info_hits(expr, tags) {
+        eprintln!(
+            "reed filter: warning: {text:?} reads {name}, which the header declares as \
+             INFO/{name}; the INFO value may be stale — use --maf/--mac (recomputed from \
+             genotypes) or remove the tag with -x INFO/{name}"
+        );
+    }
+}
+
 /// Whether an expression reads a genotype-derived site field (forbidden in
 /// `--set-gts .` expressions, whose mask decision must not depend on the
 /// post-mask counts).
@@ -281,6 +328,7 @@ pub fn compile(
     for (index, text) in spec.site.include.iter().enumerate() {
         let expr = crate::expr::parse_and_check(text, &info_tags)
             .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
+        warn_stale_info(&expr, text, tags);
         if expr.references_genotypes() {
             return Err(FilterError::Spec(format!(
                 "-i {text:?} reads genotype-derived values and belongs in [site_after_mask]"
@@ -291,6 +339,7 @@ pub fn compile(
     for (index, text) in spec.site.exclude.iter().enumerate() {
         let expr = crate::expr::parse_and_check(text, &info_tags)
             .map_err(|e| FilterError::Spec(format!("-e {text:?}: {e}")))?;
+        warn_stale_info(&expr, text, tags);
         if expr.references_genotypes() {
             return Err(FilterError::Spec(format!(
                 "-e {text:?} reads genotype-derived values and belongs in [site_after_mask]"
@@ -452,6 +501,7 @@ pub fn compile(
         let flag = if include { "-i" } else { "-e" };
         let expr = crate::expr::parse_and_check_fmt(text, &info_tags, &format_tags)
             .map_err(|e| FilterError::Spec(format!("{flag} {text:?} (after mask): {e}")))?;
+        warn_stale_info(&expr, text, tags);
         if !expr.references_genotypes() {
             return Err(FilterError::Spec(format!(
                 "{flag} {text:?} does not read genotype-derived values and belongs in [site]"
@@ -581,6 +631,31 @@ pub fn compile(
         no_update,
         provenance,
     })
+}
+
+#[cfg(test)]
+mod stale_info_tests {
+    use super::*;
+    use crate::expr;
+
+    /// 04 §2.3: the warning lists exactly the INFO-declared genotype-derived
+    /// fields an expression reads.
+    #[test]
+    fn stale_info_warning_targets_only_declared_tags() {
+        let mut tags = TagTable::new();
+        tags.add_info("AC", TagType::Integer, TagNumber::A);
+        tags.add_info("DP", TagType::Integer, TagNumber::Count(1));
+
+        for (text, expected) in [
+            ("AC<5", vec!["AC"]),
+            ("AC<5 || MAF>0.01", vec!["AC"]),
+            ("Maf > 0.01", vec![]),
+            ("DP>10", vec![]),
+        ] {
+            let expr = expr::parse(text).expect("invariant: parses");
+            assert_eq!(stale_info_hits(&expr, &tags), expected, "{text}");
+        }
+    }
 }
 
 fn validate_numeric(tag: &str, ty: TagType) -> Result<(), FilterError> {
