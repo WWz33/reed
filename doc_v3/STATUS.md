@@ -76,6 +76,18 @@
 | O7 按连续段拷贝 | 已做（+1%） | `benches/line_edit.rs`：3.06 µs/记录（348 样本，~14% 掩码）＝ 8.8 ns/样本；撤下改动后 3.09 µs（criterion `change +1.05%`，p<0.05）——收益真实但在噪声边缘 |
 | O6 单遍样本列扫描（第 1 级） | 已做 | `benches/genotype_scan.rs`（criterion A/B）：`split_needed` 由"每个子字段一次 memchr"改为单遍字节循环，GT-only 4.05 → **3.84 µs**（−4.7%）、GT+DP+GQ 9.56 → **8.65 µs**（−9.5%），均 p<0.05；第 2 级（AVX2 位图）未做 |
 
+## 最终验证（2026-10-08，本轮所有改动之后）
+
+| 检查 | 结果 |
+|---|---|
+| `cargo test --release --workspace` | **341 通过 / 0 失败**（含 5 个 v02-oracle 回归、BCF 输入/输出、三条链门） |
+| `cargo clippy --release --workspace` | 无 `clippy::all` 错误（pedantic 仍为 warning） |
+| gold 对拍 | `check_parity.py` 对 `bcftools.full`：**PASS**（位点 jaccard 1.0，基因型不一致 0）；gold 等价命令 9.0 s，正文 md5 `7aedc59a…` 与改动前相同 |
+| 跨格式一致 | 全量 `clean.bcf` ≡ `clean.vcf.gz`：stats 五个输出文件 md5 两两相同（π/dxy/θ/Tajima/Fst，9501 窗） |
+| 渲染一致 | `clean.bcf` 全量 3,315,604 条渲染 sha256 == `bcftools view -H`（`548de25b…`） |
+| BCF 输出一致 | 全量 `-Ob` 输出经 bcftools 读回的正文 sha256 == `-Oz` 输出（`b0b22079…`） |
+| 微基准 | `benches/line_edit.rs`、`benches/genotype_scan.rs`（O6/O7 的 criterion 门） |
+
 ## 基准（2026-10-08，本机 56 线程，热缓存，全量 clean.vcf.gz 3,315,604 条）
 
 | 命令 | 改前 | 改后 | 依据 |
