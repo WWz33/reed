@@ -292,7 +292,10 @@ fn fmt_array1(out: &mut Vec<u8>, ty: u8, data: &[u8]) {
 /// `bcf_format_gt_v2`: `(allele+1)<<1 | phased`; the separator before an
 /// allele uses that allele's phased bit; a zero allele prints `.`; an empty
 /// genotype prints `.`.
-fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8]) {
+///
+/// The BCF GT fast path ([`super::gt`]) builds its byte-pair table with this
+/// function, so a decoded code is exactly what the text pipeline would see.
+pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8]) {
     let width = type_width(ty);
     let (_, vector_end) = int_sentinels(ty);
     let mut printed = false;

@@ -33,10 +33,24 @@ struct BcfState {
     dict: Arc<BcfDict>,
 }
 
+/// The native BCF record hook (doc_v3 02-bcf.md §2.3–§2.5): a job entry
+/// point that takes the chunk's framed record bytes instead of rendered
+/// text, so a consumer that only needs a few fields never pays for the text
+/// round-trip.
+pub type BcfRecordFn<J> = fn(
+    &J,
+    &ChunkBytes,
+    &[&[u8]],
+    &mut <J as ChunkJob>::Scratch,
+) -> Result<<J as ChunkJob>::Partial, EngineError>;
+
 /// Wraps a text job so it also runs on BCF input.
-pub struct InputJob<J> {
+pub struct InputJob<J: ChunkJob> {
     inner: J,
     bcf: Option<BcfState>,
+    /// When set and the input is BCF, framed records go here instead of
+    /// being rendered to text.
+    native: Option<BcfRecordFn<J>>,
 }
 
 /// Scratch: the wrapped job's scratch plus the render buffer.
@@ -51,7 +65,7 @@ impl<S: Default> Default for InputScratch<S> {
     }
 }
 
-impl<J> InputJob<J> {
+impl<J: ChunkJob> InputJob<J> {
     /// Wraps `inner` for the input `opened` opened; BCF inputs get a chain
     /// cell 0 (chunk 0 never waits) bound to the run's abort signal.
     #[must_use]
@@ -61,7 +75,22 @@ impl<J> InputJob<J> {
             chain.publish(0, Carried::default());
             BcfState { chain, dict: Arc::clone(dict) }
         });
-        Self { inner, bcf }
+        Self { inner, bcf, native: None }
+    }
+
+    /// Wraps `inner` with a native BCF record entry point: on BCF input the
+    /// job receives the chunk's framed record bytes ([`BcfRecordFn`])
+    /// instead of rendered text; text input is unaffected.
+    #[must_use]
+    pub fn with_bcf_records(
+        inner: J,
+        opened: &OpenedInput,
+        abort: &Abort,
+        records: BcfRecordFn<J>,
+    ) -> Self {
+        let mut job = Self::new(inner, opened, abort);
+        job.native = Some(records);
+        job
     }
 
     /// Whether the input is BCF (the drivers branch on it when the framing
@@ -88,21 +117,22 @@ impl<J> InputJob<J> {
         Ok(())
     }
 
-    /// Frames one chunk and renders its records into `buf`.
+    /// Frames one chunk (02-bcf.md §2.2): walks the length prefixes, updates
+    /// `carried` in place, and publishes the successor's carried bytes
+    /// *before* any decoding, so a successor never waits for a predecessor's
+    /// render or decode.
     ///
-    /// The frame walk only reads length prefixes, so it runs and publishes
-    /// the next chunk's carried record *before* the (expensive) rendering:
-    /// a successor never waits for a predecessor's render.
-    fn frame_and_render(
+    /// Returns `Some((body_start, body_end))` when the previous chunk's
+    /// record completes here (`carried.head` then holds its bytes) plus the
+    /// complete in-chunk records at `text[body_start..body_end]`; `None`
+    /// means this chunk holds no complete record and the carried bytes grew.
+    fn frame_chunk(
         &self,
         chunk: &ChunkBytes,
         text: &[u8],
-        carried: Carried,
-        buf: &mut Vec<u8>,
-        dict: &BcfDict,
+        carried: &mut Carried,
         chain: &FrameChain,
-    ) -> Result<(), EngineError> {
-        buf.clear();
+    ) -> Result<Option<(usize, usize)>, EngineError> {
         let chunk_id = chunk.id.get();
         let mut guard = chain.publish_guard(chunk_id + 1);
         let skip = if chunk_id == 0 {
@@ -111,11 +141,10 @@ impl<J> InputJob<J> {
             0
         };
         let map = VirtualMap { chunk_start: chunk.compressed_start, blocks: &chunk.blocks };
-        let mut carried = carried;
         if skip >= text.len() {
             // Defensive: the header always ends inside chunk 0.
             guard.publish(Carried::default());
-            return Ok(());
+            return Ok(None);
         }
         let crossing_len = carried.prefix_len as usize;
         let body_start;
@@ -128,8 +157,8 @@ impl<J> InputJob<J> {
                 // Even the length prefix is still incomplete.
                 carried.head.extend_from_slice(text);
                 carried.prefix_len += text.len() as u64;
-                guard.publish(carried);
-                return Ok(());
+                guard.publish(carried.clone());
+                return Ok(None);
             };
             if total > MAX_RECORD_BYTES {
                 return Err(EngineError::job(format!(
@@ -141,32 +170,20 @@ impl<J> InputJob<J> {
                 // The record spans this whole chunk.
                 carried.head.extend_from_slice(text);
                 carried.prefix_len += text.len() as u64;
-                guard.publish(carried);
-                return Ok(());
+                guard.publish(carried.clone());
+                return Ok(None);
             }
             body_start = need;
             body_end = walk_records(text, need);
             carried.head.extend_from_slice(&text[..body_start]);
         }
-        // Publish the crossing record of the *next* chunk before rendering.
+        // Publish the crossing record of the *next* chunk before decoding.
         guard.publish(Carried {
             head: text[body_end..].to_vec(),
             prefix_len: (text.len() - body_end) as u64,
             voff: map.voff(body_end),
         });
-        // The record that started earlier completes at `body_start`.
-        if !carried.head.is_empty() {
-            let rec = record_ref(&carried.head).map_err(EngineError::from)?;
-            render_record(&rec, dict, buf).map_err(EngineError::from)?;
-        }
-        let mut q = body_start;
-        while q < body_end {
-            let len = record_len(&text[q..]).expect("invariant: walked records are complete");
-            let rec = record_ref(&text[q..q + len]).map_err(EngineError::from)?;
-            render_record(&rec, dict, buf).map_err(EngineError::from)?;
-            q += len;
-        }
-        Ok(())
+        Ok(Some((body_start, body_end)))
     }
 }
 
@@ -202,18 +219,53 @@ impl<J: ChunkJob + Sync> ChunkJob for InputJob<J> {
             return self.inner.run_chunk(chunk, body, &mut scratch.inner);
         };
         let InputScratch { inner, rendered } = scratch;
-        let carried = match bcf.chain.wait(chunk.id.get()) {
+        let mut carried = match bcf.chain.wait(chunk.id.get()) {
             Ok(carried) => carried,
             Err(err) => {
                 bcf.chain.poison();
                 return Err(err);
             }
         };
-        if let Err(err) =
-            self.frame_and_render(chunk, body, carried, rendered, &bcf.dict, &bcf.chain)
-        {
-            bcf.chain.poison();
-            return Err(err);
+        let framed = match self.frame_chunk(chunk, body, &mut carried, &bcf.chain) {
+            Ok(framed) => framed,
+            Err(err) => {
+                bcf.chain.poison();
+                return Err(err);
+            }
+        };
+        let Some((body_start, body_end)) = framed else {
+            // No complete record in this chunk; the inner job gets an empty
+            // batch (exactly what the text path would hand it).
+            return match self.native {
+                Some(records) => (records)(&self.inner, chunk, &[], inner),
+                None => self.inner.run_chunk(chunk, &[], inner),
+            };
+        };
+        if let Some(records_fn) = self.native {
+            let mut records: Vec<&[u8]> = Vec::new();
+            if !carried.head.is_empty() {
+                records.push(&carried.head);
+            }
+            let mut q = body_start;
+            while q < body_end {
+                let len = record_len(&body[q..]).expect("invariant: walked records are complete");
+                records.push(&body[q..q + len]);
+                q += len;
+            }
+            return (records_fn)(&self.inner, chunk, &records, inner);
+        }
+        rendered.clear();
+        // The record that started earlier completes at `body_start`.
+        if !carried.head.is_empty() {
+            let rec = record_ref(&carried.head).map_err(EngineError::from)?;
+            render_record(&rec, &bcf.dict, rendered).map_err(EngineError::from)?;
+        }
+        let mut q = body_start;
+        while q < body_end {
+            let len = record_len(&body[q..]).expect("invariant: walked records are complete");
+            let rec = record_ref(&body[q..q + len]).map_err(EngineError::from)?;
+            render_record(&rec, &bcf.dict, rendered).map_err(EngineError::from)?;
+            q += len;
         }
         self.inner.run_chunk(chunk, rendered, inner)
     }

@@ -51,8 +51,33 @@ type Cell = Option<Carried>;
 struct State {
     /// Cells by chunk id; `None` = not yet published.
     cells: Vec<Cell>,
+    /// Bit per chunk id: a waiter is parked on that cell. Publishes notify
+    /// only when the cell's own waiter is present — a blanket `notify_all`
+    /// with a full ticket window costs a thundering herd per chunk.
+    waiting: Vec<u64>,
     /// A worker failed before publishing: every waiter errors out.
     poisoned: bool,
+}
+
+/// Sets bit `id` in a word-per-64 bitmap, growing it as needed.
+fn set_waiter(bits: &mut Vec<u64>, id: u64) {
+    let word = (id >> 6) as usize;
+    if bits.len() <= word {
+        bits.resize(word + 1, 0);
+    }
+    bits[word] |= 1 << (id & 63);
+}
+
+/// Clears bit `id`, when set.
+fn clear_waiter(bits: &mut [u64], id: u64) {
+    if let Some(word) = bits.get_mut((id >> 6) as usize) {
+        *word &= !(1 << (id & 63));
+    }
+}
+
+/// Whether bit `id` is set.
+fn has_waiter(bits: &[u64], id: u64) -> bool {
+    bits.get((id >> 6) as usize).is_some_and(|word| word >> (id & 63) & 1 == 1)
 }
 
 /// The shared chain.
@@ -69,7 +94,11 @@ impl FrameChain {
     #[must_use]
     pub fn new(abort: AbortSignal) -> Self {
         Self {
-            state: Mutex::new(State { cells: vec![Some(Carried::default())], poisoned: false }),
+            state: Mutex::new(State {
+                cells: vec![Some(Carried::default())],
+                waiting: Vec::new(),
+                poisoned: false,
+            }),
             cv: Condvar::new(),
             abort,
             finished: AtomicBool::new(false),
@@ -105,11 +134,13 @@ impl FrameChain {
             if state.poisoned || self.finished.load(Ordering::Acquire) || self.abort.is_aborted() {
                 return Err(EngineError::Aborted);
             }
+            set_waiter(&mut state.waiting, id);
             let (guard, _timeout) = self
                 .cv
                 .wait_timeout(state, Duration::from_millis(10))
                 .expect("invariant: chain not poisoned");
             state = guard;
+            clear_waiter(&mut state.waiting, id);
         }
     }
 
@@ -121,8 +152,13 @@ impl FrameChain {
             state.cells.resize_with(idx + 1, || None);
         }
         state.cells[idx] = Some(carried);
+        // Only the cell's own waiter needs waking; the set/check pair is
+        // under one lock, so no wakeup can be lost.
+        let notify = has_waiter(&state.waiting, id);
         drop(state);
-        self.cv.notify_all();
+        if notify {
+            self.cv.notify_all();
+        }
     }
 
     /// Marks the chain failed: every current and future waiter errors out

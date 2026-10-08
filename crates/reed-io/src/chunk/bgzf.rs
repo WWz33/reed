@@ -34,6 +34,17 @@ pub struct BgzfChunkReader<R: Read> {
     warned_missing_eof: bool,
 }
 
+/// One block appended to a chunk buffer by
+/// [`BgzfChunkReader::append_block`].
+struct Appended {
+    /// Compressed offset of the block's first byte.
+    offset: u64,
+    /// Block length in compressed bytes (header included).
+    len: usize,
+    /// Uncompressed payload length.
+    inflated: u32,
+}
+
 /// Result of the header scan: the accumulated header text plus where
 /// records begin.
 #[derive(Debug)]
@@ -70,13 +81,80 @@ impl<R: Read> BgzfChunkReader<R> {
         }
     }
 
+    /// Appends the next non-empty block (header + payload) to `out`, reading
+    /// the payload straight into it — no intermediate block buffer. `None`
+    /// at end of stream.
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedBgzf`] for a truncated header, trailing garbage or
+    /// a short payload; transport errors pass through.
+    fn append_block(&mut self, out: &mut Vec<u8>) -> Result<Option<Appended>, IoError> {
+        loop {
+            let offset = self.compressed_offset;
+            let start = out.len();
+            let mut header = [0_u8; BGZF_HEADER_LEN];
+            let mut filled = 0;
+            while filled < BGZF_HEADER_LEN {
+                match self.inner.read(&mut header[filled..]) {
+                    Ok(0) => {
+                        if filled == 0 {
+                            self.warn_if_missing_eof_marker();
+                            return Ok(None);
+                        }
+                        return Err(IoError::MalformedBgzf {
+                            locus: None,
+                            reason: "stream ends inside a block header",
+                        });
+                    }
+                    Ok(n) => filled += n,
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            let Some(total) = parse_block_size(&header) else {
+                return Err(IoError::MalformedBgzf {
+                    locus: None,
+                    reason: "not a BGZF block header (trailing garbage after the last block?)",
+                });
+            };
+            out.extend_from_slice(&header);
+            out.resize(start + total, 0);
+            match self.inner.read_exact(&mut out[start + BGZF_HEADER_LEN..]) {
+                Ok(()) => {}
+                Err(err) => {
+                    out.truncate(start);
+                    return Err(err.into());
+                }
+            }
+            self.compressed_offset += total as u64;
+            if is_empty_member(&out[start..start + total]) {
+                self.last_was_eof_marker = is_eof_block(&out[start..start + total]);
+                out.truncate(start);
+                continue;
+            }
+            self.last_was_eof_marker = false;
+            let inflated = crate::bgzf::block::block_inflated_size(&out[start..start + total]);
+            return Ok(Some(Appended { offset, len: total, inflated }));
+        }
+    }
+
     /// Reads one BGZF block (header + payload) and its compressed offset;
     /// `None` at the end of the underlying stream.
+    ///
+    /// Reads *exactly* one block: the header scan uses this before any chunk
+    /// exists, so buffered read-ahead would drop bytes that the chunk walk
+    /// still needs.
     ///
     /// Empty members (ISIZE = 0, including the canonical EOF marker) are
     /// skipped — concatenated BGZF files carry one at every join, and the
     /// stream ends only at the underlying EOF (01-review D2). A clean end
     /// without a trailing EOF marker warns once (htslib behavior).
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedBgzf`] for a truncated header, trailing garbage or
+    /// a short payload; transport errors pass through.
     fn read_block(&mut self) -> Result<Option<(Vec<u8>, u64)>, IoError> {
         loop {
             let block_offset = self.compressed_offset;
@@ -178,21 +256,28 @@ impl<R: Read> BgzfChunkReader<R> {
         if !self.header_done {
             return Err(IoError::Header("scan_header must run before chunks".into()));
         }
-        let (first, compressed_start) = match self.pending_block.take() {
-            Some(block) => (block, self.pending_block_offset),
-            None => match self.read_block()? {
-                Some(pair) => pair,
+        // Reserve the target up front: the per-block growth reallocs would
+        // copy the whole chunk several times over.
+        let mut compressed = Vec::with_capacity(self.chunk_target as usize + (1 << 17));
+        let mut blocks = Vec::with_capacity(24);
+        let compressed_start;
+        match self.pending_block.take() {
+            Some(first) => {
+                compressed_start = self.pending_block_offset;
+                blocks.push(block_pair(&first));
+                compressed.extend_from_slice(&first);
+            }
+            None => match self.append_block(&mut compressed)? {
+                Some(block) => {
+                    compressed_start = block.offset;
+                    blocks.push((block.len as u32, block.inflated));
+                }
                 None => return Ok(None),
             },
-        };
-        let mut blocks = vec![block_pair(&first)];
-        let mut compressed = first;
+        }
         while (compressed.len() as u64) < self.chunk_target {
-            match self.read_block()? {
-                Some((block, _offset)) => {
-                    blocks.push(block_pair(&block));
-                    compressed.extend_from_slice(&block);
-                }
+            match self.append_block(&mut compressed)? {
+                Some(block) => blocks.push((block.len as u32, block.inflated)),
                 None => break,
             }
         }

@@ -87,9 +87,9 @@
 
 | 检查 | 结果 |
 |---|---|
-| `cargo test --release --workspace` | **343 通过 / 0 失败**（含 5 个 v02-oracle 回归、BCF 输入/输出、三条链门、双等位门与 R7 守卫用例） |
+| `cargo test --release --workspace` | **344 通过 / 0 失败**（含 5 个 v02-oracle 回归、BCF 输入/输出、三条链门、双等位门与 R7 守卫用例） |
 | `cargo build --release --workspace --all-targets` | **0 warning**（此前 25 条 `unreachable_pub` + 未用 import/死代码等已清零） |
-| `cargo clippy --release --workspace` | 0 error、44 warning（全部为性能/正确性提示）；`--all-targets` 0 error、164 warning |
+| `cargo clippy --release --workspace` | 0 error、47 warning（全部为性能/正确性提示）；`--all-targets` 0 error、170 warning |
 | 双等位门 | 全量 `clean.bcf` 0 条多等位（`bcftools view -m3`）；`-r Chr01:1-2000000` 隐式门 ≡ 显式 `-M 2`（正文 md5 `18676382…` 相同），条数 8364 == bcftools |
 | gold 对拍（双等位门之后重跑） | `gold/scripts/run_reed.sh` 全量 9 s（56 线程），正文 md5 `7aedc59ac798…` 与 V0/V1 记录相同；`check_parity.py` 对 `bcftools.full`：**PASS**（1,768,759 位点，gold-only 0 / cand-only 0，jaccard 1.0，基因型不一致 0）——数据本身 0 条多等位且 gold 命令显式 `-M 2`，故输出不动 |
 | 跨格式一致 | 全量 `clean.bcf` ≡ `clean.vcf.gz`：stats 五个输出文件 md5 两两相同（π/dxy/θ/Tajima/Fst，9501 窗） |
@@ -110,8 +110,36 @@
 | `stats --freq --hardy --het --missing --depth` | ~15 s | **3.0 s** | O1+O2 |
 | `reed index`（7.0 GB VCF.gz） | 48.7 s | **2.7 s** | O4 |
 | `reed index`（8.1 GB BCF） | — | 10.9 s | B1 |
-| `reed stats` on BCF（π/dxy/θ/D/Fst） | — | **5.1 s**（VCF.gz 3.0 s；逐字节一致） | B1（渲染路径，未达"不慢于"门） |
+| `reed stats` on BCF（π/dxy/θ/D/Fst） | 5.1 s（渲染路径） | **2.30–2.48 s**（同数据 VCF.gz 2.17 s；输出与渲染路径逐字节相同） | V3/B1 原生记录路径；**门仍未达**（BCF 慢 ~6%），根因见下节 |
 | stdin 单遍 | 整体落盘 | 直接流式，与文件一致；无临时文件残留 | O5 |
+
+### V3 性能门复盘：`stats --pi` 在 BCF 上仍慢 ~6%（2026-10-08 第二轮）
+
+02-bcf.md §4 的门是 `clean.bcf` 上 `reed stats --pi` **≤** VCF.gz 上的同一命令（预期更快："只解 GT 字节"）。
+现状：`--pi` BCF **2.30–2.48 s** vs VCF.gz **2.17 s**（56 线程，热缓存，各 3 次）；五统计（π/dxy/θ/D/Fst）BCF **2.45 s** vs VCF **2.44 s**（持平）。输出 md5 `825cd749…` 两格式相同、且等于渲染路径旧输出。门未达，但差距从 +70% 收到 ~+6%（五统计已持平）。
+
+本轮已做（全部保留）：
+
+| 改动 | 内容 | 效果 |
+|---|---|---|
+| BCF 原生记录路径（02-bcf.md §2.3–§2.5） | 新增 `bcf::gt`：`site_header`（只读记录头，shared 块其余部分与未计划的 FORMAT 字段按描述符跳过）+ `GtTable`（64 KiB 字节对查表，条目由渲染器的 `fmt_gt` + 文本扫描器的 `decode_gt` 生成，与文本路径逐位一致，65,536 项单测锁定）+ `decode_record_gt`；`InputJob` 增加 `BcfRecordFn` 原生入口，stats 在**无过滤计划**时直接消费定界后的记录字节（不再渲染整行文本）；`FilteredJob` 在 plan=None 时不再包一层 | BCF stats 的 worker CPU 72.5 s → **57.6 s**（user）；wall 3.08 → 2.3 s |
+| `FrameChain` 定向唤醒 | `publish` 原为每次 `notify_all`；在 112 个在途 chunk 的窗口下每个 chunk 唤醒全部等待者（惊群+单锁竞争）。改为按 cell 的等待位图，仅当该 cell 有等待者时通知 | BCF wall **−0.3 s**（2.8 → 2.5 s 档） |
+| reader 直读 | `next_chunk` 预 reserve 整个 chunk 缓冲；块头解析后把 payload **直接读进 chunk 缓冲**（此前每块先读进临时 `Vec` 再 `extend_from_slice`：每字节两次拷贝 + 每块一次分配） | reader cut（探针）：BCF **3.0 → 2.34 s**、VCF **2.55 → 2.15 s** |
+
+实测的瓶颈定位（根因）：
+
+1. **墙是单线程 reader（BAPP 切块），不是 worker**。`--timing` 探针显示 reader 的 `next_chunk` 累计 2.2–2.3 s（BCF）/2.1 s（VCF），与总 wall 2.3/2.17 s 基本相等；worker busy 56.3 s（BCF）/72.6 s（VCF）÷56 线程 = 1.0/1.3 s，低于 reader。
+2. **单位字节的 reader 成本相同**（~3.4–3.7 GB/s），而 BCF 文件大 15%（8.06 vs 7.0 GB），所以 BCF 必然慢 ~0.15–0.2 s；worker 侧 BCF 省下的 CPU（−21%）在 56 线程下不构成墙。
+3. reader 并非设备上限：`dd bs=1M` 11.2 GB/s、8 路并行合计 43 GB/s；64 KiB 粒度顺序读的实测上限约 5.2 GB/s（python 对照），即每字节的 syscall+拷贝开销是主项。
+
+试过并回退（留档，避免下次重复）：
+
+| 尝试 | 结果 | 处置 |
+|---|---|---|
+| 池化 chunk 缓冲（`ChunkBuf` + 全局池，reader 直读进池化页、尾部带走） | 逻辑正确（346 测试全绿、输出逐字节相同），但 BCF 10.2 s / VCF 9.6 s，**比基线慢 4 倍**；原因未及定位（候选：每 chunk 新缓冲 `resize` 清零、尾部搬移、读粒度），停止实验 | 回退 |
+| `TICKETS_PER_WORKER` 2 → 8 | 两种格式都略慢（BCF 3.29 / VCF 2.91），在途内存压力 | 回退（保持 2） |
+
+要达门还需要（下一轮的方向）：把 reader 的每字节成本压到 worker 之下——把 64 KiB 块读合并成 MB 级读且不引入第二次拷贝（池化缓冲做对版：缓冲以 `len == capacity` 停放、避免清零；或 reader 拆成两线程；或用 `posix_fadvise` 预取）。只要 reader 降到 ~1.2 s，BCF（worker 1.0 s + 文件更小优势）就会快于 VCF。
 
 ### 与文档的偏差
 

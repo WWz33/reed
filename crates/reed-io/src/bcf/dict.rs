@@ -85,6 +85,16 @@ impl BcfDict {
     pub fn n_contigs(&self) -> usize {
         self.contigs.len()
     }
+
+    /// The dictionary index of `tag`, when present. The fast path resolves
+    /// `GT` once per run and then compares integers (doc_v3 02-bcf.md §2.1).
+    #[must_use]
+    pub fn key_of(&self, tag: &[u8]) -> Option<u32> {
+        self.strings
+            .iter()
+            .position(|entry| entry.as_deref() == Some(tag))
+            .and_then(|i| u32::try_from(i).ok())
+    }
 }
 
 /// The `KEY=value` inside a `##TAG=<...>` payload (value up to `,` or `>`).

@@ -27,7 +27,10 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
 use reed_core::count::code_has_alt;
-use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PloidyPolicy, PolicyCounters};
+use reed_core::genotype::{
+    GenotypePolicies, GtCode, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
+};
+use reed_io::bcf::BcfDict;
 use reed_io::vcf::genotype_scan::GenotypeScanner;
 use reed_io::vcf::site::SiteView;
 use reed_io::vcf::line::LineRef;
@@ -339,6 +342,17 @@ pub struct StatsJob {
     /// Declared contig lengths (header + `--contig-lengths`); positions
     /// beyond the declared length are rejected (01-review D8).
     contig_len: Arc<HashMap<Vec<u8>, u64>>,
+    /// The BCF-native fast path (doc_v3 02-bcf.md §2.4/§2.5): present only
+    /// when the input is BCF.
+    bcf: Option<BcfNative>,
+}
+
+/// The BCF fast path's shared state: the dictionaries, the FORMAT index of
+/// `GT` (resolved once) and the byte-pair GT table.
+struct BcfNative {
+    dict: Arc<BcfDict>,
+    gt_key: Option<u32>,
+    table: reed_io::bcf::GtTable,
 }
 
 /// Worker scratch: the group count row, the shared record decoder and its
@@ -348,6 +362,8 @@ pub struct StatsScratch {
     row: Vec<SiteGroupCounts>,
     scanner: Option<GenotypeScanner>,
     counters: PolicyCounters,
+    /// The native BCF path's decoded GT codes (one per sample, per record).
+    codes: Vec<GtCode>,
 }
 
 /// The statistics decode policies: haploid calls are half calls and ALT
@@ -409,81 +425,90 @@ impl StatsJob {
         scratch.row.resize(self.n_groups, SiteGroupCounts::default());
     }
 
-    fn push_line(
+    /// The site stage both record sources share (text and native BCF): the
+    /// streamed-target predicate, the contig segment bookkeeping, the POS
+    /// contract and the invariant/multiallelic accounting. Returns the
+    /// 0-based position when the record continues to the genotype stage.
+    fn site_prefix(
         &self,
-        line: &[u8],
+        contig: &[u8],
+        pos1: u64,
+        n_alt: u32,
+        is_invariant: bool,
         current: &mut Option<SegmentPartial>,
         partial: &mut StatsPartial,
-        scratch: &mut StatsScratch,
-    ) -> Result<(), EngineError> {
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
-        };
-        let site = SiteView::parse(&lr).map_err(EngineError::from)?;
+    ) -> Result<Option<u64>, EngineError> {
         // Streamed targets (`-t/-T`): the region predicate gates every record
         // before it reaches an accumulator.
         if (!self.targets.is_empty() || !self.targets_exclude.is_empty())
             && !reed_filter::spec::region::region_allows(
                 &self.targets,
                 &self.targets_exclude,
-                site.contig_name,
-                site.pos1,
+                contig,
+                pos1,
             )
         {
-            return Ok(());
+            return Ok(None);
         }
-        let chrom = site.contig_name;
         match current {
-            Some(segment) if segment.contig == chrom => {}
+            Some(segment) if segment.contig == contig => {}
             _ => {
                 if let Some(segment) = current.take() {
                     partial.segments.push(segment);
                 }
                 *current = Some(SegmentPartial {
-                    contig: chrom.to_vec(),
+                    contig: contig.to_vec(),
                     bins: ContigBins::new(BpBinning::new(self.width), &self.seed),
                     first_pos0: u64::MAX,
                     last_pos0: 0,
                 });
             }
         }
-        let pos1 = site.pos1;
         let Some(pos0) = pos1.checked_sub(1) else {
-            return Err(EngineError::job(format!("{}: POS is zero", site.locus())));
+            return Err(EngineError::job(format!(
+                "{}:{}: POS is zero",
+                String::from_utf8_lossy(contig),
+                pos1
+            )));
         };
         // Input contract (04-algorithms.md §6): positions ascending within a
         // contig, never beyond the declared length.
-        if let Some(&len) = self.contig_len.get(chrom)
+        if let Some(&len) = self.contig_len.get(contig)
             && pos1 > len
         {
             return Err(EngineError::from(
                 reed_core::CoreError::PositionBeyondContigLength {
-                    contig_name: String::from_utf8_lossy(chrom).into_owned(),
+                    contig_name: String::from_utf8_lossy(contig).into_owned(),
                     pos1,
                     len_bp: len,
                 }
             ));
         }
-        if site.is_invariant() {
+        if is_invariant {
             partial.n_no_alt_records += 1;
         }
-        if site.n_alt() > 1 {
+        if n_alt > 1 {
             partial.n_multiallelic_skipped += 1;
-            return Ok(());
+            return Ok(None);
         }
-        let StatsScratch { row, scanner, counters } = scratch;
+        Ok(Some(pos0))
+    }
+
+    /// The genotype stage both record sources share: the per-group counts,
+    /// the ascending-position check and the bin accumulation.
+    fn push_row(
+        &self,
+        pos0: u64,
+        codes: &[GtCode],
+        row: &mut [SiteGroupCounts],
+        current: &mut Option<SegmentPartial>,
+        partial: &mut StatsPartial,
+    ) -> Result<(), EngineError> {
         for counts in row.iter_mut() {
             *counts = SiteGroupCounts::default();
         }
-        *counters = PolicyCounters::default();
-        let n_samples = self.n_samples;
-        let scanner = scanner
-            .get_or_insert_with(|| GenotypeScanner::new(n_samples, &[], &[], stats_policies()));
-        let out = scanner
-            .scan(&lr, &site, counters)
-            .map_err(EngineError::from)?;
         let mut any_alt = false;
-        for (sample_idx, &code) in out.codes.iter().enumerate() {
+        for (sample_idx, &code) in codes.iter().enumerate() {
             any_alt |= code_has_alt(code);
             if let Some(group) = self.gt_groups.get(sample_idx).copied().flatten() {
                 row[group as usize].add_code(code);
@@ -508,6 +533,111 @@ impl StatsJob {
         }
         partial.n_records += 1;
         Ok(())
+    }
+
+    fn push_line(
+        &self,
+        line: &[u8],
+        current: &mut Option<SegmentPartial>,
+        partial: &mut StatsPartial,
+        scratch: &mut StatsScratch,
+    ) -> Result<(), EngineError> {
+        let Some(lr) = LineRef::parse(line) else {
+            return Err(EngineError::job("record line has fewer than 9 columns"));
+        };
+        let site = SiteView::parse(&lr).map_err(EngineError::from)?;
+        let Some(pos0) = self.site_prefix(
+            site.contig_name,
+            site.pos1,
+            site.n_alt(),
+            site.is_invariant(),
+            current,
+            partial,
+        )?
+        else {
+            return Ok(());
+        };
+        let StatsScratch { row, scanner, counters, .. } = scratch;
+        *counters = PolicyCounters::default();
+        let n_samples = self.n_samples;
+        let scanner = scanner
+            .get_or_insert_with(|| GenotypeScanner::new(n_samples, &[], &[], stats_policies()));
+        let out = scanner
+            .scan(&lr, &site, counters)
+            .map_err(EngineError::from)?;
+        self.push_row(pos0, out.codes, row, current, partial)
+    }
+
+    /// The native BCF record sink (doc_v3 02-bcf.md §2.4/§2.5): each framed
+    /// record is decoded straight into the shared site/row stages — the
+    /// shared block past its header and every unplanned FORMAT field are
+    /// skipped by descriptor length, so no text is ever produced.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Job`] for malformed records and policy rejections.
+    pub fn run_bcf_records(
+        &self,
+        _chunk: &reed_io::chunk::ChunkBytes,
+        records: &[&[u8]],
+        scratch: &mut StatsScratch,
+    ) -> Result<StatsPartial, EngineError> {
+        let Some(bcf) = &self.bcf else {
+            return Err(EngineError::job("internal: BCF records without a BCF input"));
+        };
+        let mut partial = StatsPartial::default();
+        let mut current: Option<SegmentPartial> = None;
+        self.reset_row(scratch);
+        for bytes in records {
+            let rec = reed_io::bcf::record_ref(bytes).map_err(EngineError::from)?;
+            self.push_bcf_record(&rec, bcf, &mut current, &mut partial, scratch)?;
+        }
+        if let Some(segment) = current.take() {
+            partial.segments.push(segment);
+        }
+        Ok(partial)
+    }
+
+    fn push_bcf_record(
+        &self,
+        rec: &reed_io::bcf::BcfRecordRef<'_>,
+        bcf: &BcfNative,
+        current: &mut Option<SegmentPartial>,
+        partial: &mut StatsPartial,
+        scratch: &mut StatsScratch,
+    ) -> Result<(), EngineError> {
+        let header = reed_io::bcf::site_header(rec).map_err(EngineError::from)?;
+        let contig = bcf.dict.contig(header.chrom).ok_or_else(|| {
+            EngineError::job(format!(
+                "BCF contig index {} is not in the header dictionary",
+                header.chrom
+            ))
+        })?;
+        let Some(pos1) = u64::try_from(header.pos0).ok().and_then(|p| p.checked_add(1)) else {
+            return Err(EngineError::job("BCF POS is negative"));
+        };
+        let n_alt = u32::try_from(header.n_allele.saturating_sub(1)).unwrap_or(u32::MAX);
+        let Some(pos0) = self.site_prefix(contig, pos1, n_alt, n_alt == 0, current, partial)?
+        else {
+            return Ok(());
+        };
+        scratch.counters = PolicyCounters::default();
+        let query = reed_io::bcf::GtQuery {
+            gt_key: bcf.gt_key,
+            n_samples: self.n_samples,
+            contig_name: contig,
+            pos1,
+        };
+        reed_io::bcf::decode_record_gt(
+            rec,
+            &header,
+            &query,
+            &bcf.table,
+            &mut scratch.codes,
+            &mut scratch.counters,
+        )
+        .map_err(EngineError::from)?;
+        self.push_row(pos0, &scratch.codes, &mut scratch.row, current, partial)
     }
 }
 
@@ -899,20 +1029,14 @@ pub fn run_stats_opened(
         contig_len: Arc::clone(&contig_len),
         targets: request.targets.clone().into(),
         targets_exclude: request.targets_exclude.clone().into(),
+        // The native BCF path exists only for BCF input (02-bcf.md §2.4);
+        // the table is built once per run.
+        bcf: opened.bcf.as_ref().map(|dict| BcfNative {
+            dict: Arc::clone(dict),
+            gt_key: reed_io::bcf::format_key(dict, b"GT"),
+            table: reed_io::bcf::GtTable::new(stats_policies()),
+        }),
     };
-    // The site/threshold flags run in the same pass through the filter's own
-    // record pipeline; the inner (statistics) job then sees exactly what a
-    // physical `reed filter` + `reed stats` would have produced.
-    let job = crate::bcf_input::InputJob::new(
-        crate::filtered::FilteredJob::new(
-            request.filter.clone(),
-            Arc::clone(&keep_for_filter),
-            job,
-        ),
-        &opened,
-        &abort,
-    );
-    let crate::input::OpenedInput { mut source, .. } = opened;
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
         size: request.window_size,
@@ -937,8 +1061,40 @@ pub fn run_stats_opened(
         n_multiallelic_skipped: 0,
         out: Arc::clone(&out),
     };
-    let report = run(source.as_mut(), &job, sink, budget, &abort)?;
-    job.finish(report.n_chunks, true)?;
+    // The site/threshold flags run in the same pass through the filter's own
+    // record pipeline; the inner (statistics) job then sees exactly what a
+    // physical `reed filter` + `reed stats` would have produced. Without a
+    // plan, BCF input takes the native record path (02-bcf.md §2.3–§2.5):
+    // the job decodes GT bytes instead of rendering every column.
+    let report = match &request.filter {
+        Some(plan) => {
+            let job = crate::bcf_input::InputJob::new(
+                crate::filtered::FilteredJob::new(
+                    Some(Arc::clone(plan)),
+                    Arc::clone(&keep_for_filter),
+                    job,
+                ),
+                &opened,
+                &abort,
+            );
+            let mut source = opened.source;
+            let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+            job.finish(report.n_chunks, true)?;
+            report
+        }
+        None => {
+            let job = crate::bcf_input::InputJob::with_bcf_records(
+                job,
+                &opened,
+                &abort,
+                StatsJob::run_bcf_records,
+            );
+            let mut source = opened.source;
+            let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+            job.finish(report.n_chunks, true)?;
+            report
+        }
+    };
     let output = out
         .lock()
         .expect("invariant: stats slot not poisoned")

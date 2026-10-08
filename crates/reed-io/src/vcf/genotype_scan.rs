@@ -12,7 +12,7 @@ use std::ops::Range;
 
 use reed_core::genotype::{GtCode, GenotypePolicies, Ploidy, PolicyCounters};
 
-use crate::error::IoError;
+use crate::error::{IoError, Locus};
 use crate::vcf::format_layout::FormatLayoutCache;
 use crate::vcf::line::LineRef;
 use crate::vcf::site::SiteView;
@@ -224,11 +224,57 @@ fn split_needed(ranges: &mut Vec<Range<usize>>, field: &[u8], needed: usize) {
     ranges.push(from..field.len());
 }
 
+/// A cheap source of a record's error locus: the text scanner passes the
+/// [`SiteView`] (no allocation on the happy path), the BCF fast path passes
+/// the pieces of a locus it already has.
+pub(crate) trait LocusSource {
+    fn error_locus(&self) -> Locus;
+}
+
+impl LocusSource for SiteView<'_> {
+    fn error_locus(&self) -> Locus {
+        self.locus()
+    }
+}
+
+impl LocusSource for Locus {
+    fn error_locus(&self) -> Locus {
+        self.clone()
+    }
+}
+
+impl LocusSource for (&[u8], u64) {
+    fn error_locus(&self) -> Locus {
+        Locus {
+            contig_name: String::from_utf8_lossy(self.0).into_owned(),
+            pos1: self.1,
+        }
+    }
+}
+
+/// Decodes one GT *text* subfield exactly as the scanner does, against a
+/// pre-built locus (doc_v3 02-bcf.md §2.4: the BCF GT table is built by
+/// rendering each byte pair and running this decoder, so the fast path is
+/// the text path by construction).
+///
+/// # Errors
+///
+/// As [`GenotypeScanner::scan`] for the GT column.
+pub(crate) fn decode_gt_text(
+    gt: &[u8],
+    locus: &Locus,
+    policies: &GenotypePolicies,
+    counters: &mut PolicyCounters,
+    token: &mut [Option<u16>; 2],
+) -> Result<GtCode, IoError> {
+    decode_gt(gt, locus, policies, counters, token)
+}
+
 /// Decodes one sample's GT subfield, applying the policies and filling
 /// `token` with the raw allele indices (2 per sample).
-fn decode_gt(
+fn decode_gt<S: LocusSource>(
     gt: &[u8],
-    site: &SiteView<'_>,
+    site: &S,
     policies: &GenotypePolicies,
     counters: &mut PolicyCounters,
     token: &mut [Option<u16>; 2],
@@ -260,7 +306,7 @@ fn decode_gt(
         let end = memchr::memchr2(b'/', b'|', &gt[from..]).map_or(gt.len(), |rel| from + rel);
         if n_alleles >= 2 {
             return Err(IoError::PolicyRejected {
-                locus: site.locus(),
+                locus: site.error_locus(),
                 reason: "polyploid genotype (more than two alleles)",
             });
         }
@@ -280,10 +326,10 @@ fn decode_gt(
     };
     GtCode::from_alleles(slots, ploidy, phased, policies, counters).map_err(|err| match err {
         reed_core::CoreError::PolicyRejected(reason) => {
-            IoError::PolicyRejected { locus: site.locus(), reason }
+            IoError::PolicyRejected { locus: site.error_locus(), reason }
         }
         reed_core::CoreError::Unimplemented(reason) => IoError::UnsupportedInput(reason),
-        other => IoError::MalformedRecord { locus: site.locus(), reason: reason_str(&other) },
+        other => IoError::MalformedRecord { locus: site.error_locus(), reason: reason_str(&other) },
     })
 }
 
@@ -309,13 +355,13 @@ fn fast_gt(gt: &[u8]) -> Option<(u8, u8, bool)> {
 
 /// One allele token: `None` for `.`, else the index (multi-digit capable,
 /// checked arithmetic — 01-review D14).
-fn parse_allele(token: &[u8], site: &SiteView<'_>) -> Result<Option<u16>, IoError> {
+fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, IoError> {
     if token == b"." {
         return Ok(None);
     }
     if token.is_empty() || token.len() > 5 {
         return Err(IoError::MalformedRecord {
-            locus: site.locus(),
+            locus: site.error_locus(),
             reason: "GT allele index is empty or too long",
         });
     }
@@ -323,7 +369,7 @@ fn parse_allele(token: &[u8], site: &SiteView<'_>) -> Result<Option<u16>, IoErro
     for &b in token {
         if !b.is_ascii_digit() {
             return Err(IoError::MalformedRecord {
-                locus: site.locus(),
+                locus: site.error_locus(),
                 reason: "GT allele contains a non-digit",
             });
         }
@@ -332,7 +378,7 @@ fn parse_allele(token: &[u8], site: &SiteView<'_>) -> Result<Option<u16>, IoErro
             .checked_mul(10)
             .and_then(|v| v.checked_add(u16::from(b - b'0')))
             .ok_or(IoError::MalformedRecord {
-                locus: site.locus(),
+                locus: site.error_locus(),
                 reason: "GT allele index exceeds u16",
             })?;
     }
