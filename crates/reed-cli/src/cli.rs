@@ -135,6 +135,13 @@ pub struct FilterCli {
     /// value (only `.`, bcftools filter -S .)
     #[arg(long, value_name = ".")]
     pub set_gts: Option<String>,
+    /// Minimum non-reference allele frequency (bcftools -q): the INFO AC/AN
+    /// values are used when both are present, else the genotype counts
+    #[arg(short = 'q', long = "min-af", value_name = "FLOAT")]
+    pub min_af: Option<f64>,
+    /// Maximum non-reference allele frequency (bcftools -Q)
+    #[arg(short = 'Q', long = "max-af", value_name = "FLOAT")]
+    pub max_af: Option<f64>,
     /// Drop sites whose missing rate (after masking) exceeds FLOAT
     #[arg(long, value_name = "FLOAT")]
     pub geno: Option<f64>,

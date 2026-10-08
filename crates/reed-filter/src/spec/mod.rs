@@ -140,6 +140,13 @@ pub struct TailRules {
     /// Minor-allele-count upper bound (`0` = off).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub max_mac: u32,
+    /// Non-reference allele frequency lower bound (bcftools `-q/--min-af`);
+    /// the INFO AC/AN values are used when both are present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_af: Option<f64>,
+    /// Non-reference allele frequency upper bound (bcftools `-Q/--max-af`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_af: Option<f64>,
     /// HWE exact-test p lower bound (`0`/absent = off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_hwe_p: Option<f64>,

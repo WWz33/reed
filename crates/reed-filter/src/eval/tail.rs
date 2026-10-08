@@ -26,6 +26,10 @@ pub fn eval_tail(
                     !truth
                 }
             }
+            TailRule::MinAf(bound) => non_reference_af(values, counts)
+                .is_some_and(|freq| freq >= *bound),
+            TailRule::MaxAf(bound) => non_reference_af(values, counts)
+                .is_some_and(|freq| freq <= *bound),
             TailRule::MaxMissing(m) => {
                 n_samples_out > 0
                     && f64::from_u64(counts.n_missing) / f64::from_u64(n_samples_out as u64) <= *m
@@ -48,6 +52,17 @@ pub fn eval_tail(
         *hit += 1;
     }
     true
+}
+
+/// The non-reference allele frequency (`-q/-Q`, bcftools default `nref`
+/// type): the INFO AC/AN values when both are present (bcftools semantics —
+/// they may be stale), else the genotype-derived counts. `None` when the
+/// site has no called alleles at all (such sites fail both bounds).
+fn non_reference_af(values: &crate::expr::SiteValues<'_>, counts: &SiteCounts) -> Option<f64> {
+    if let Some(freq) = crate::eval::head::non_reference_af_info(values.info) {
+        return Some(freq);
+    }
+    (counts.an > 0).then(|| counts.ac as f64 / counts.an as f64)
 }
 
 trait FromU64 {

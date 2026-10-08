@@ -247,6 +247,63 @@ fn bcf_output_is_thread_count_independent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `-q/-Q` (bcftools `--min-af/--max-af`) on the fixture: the expected
+/// positions come from `bcftools view` on the same file (recorded in the
+/// comment), with the INFO AC/AN values deciding (bcftools semantics).
+#[test]
+fn af_bounds_match_bcftools_on_the_fixture() {
+    let dir = dir("bcf-af");
+    let run = |min_af: Option<f64>, max_af: Option<f64>| -> Vec<String> {
+        let spec = FilterSpecV2 {
+            site_after_mask: reed_filter::spec::TailRules {
+                min_af,
+                max_af,
+                ..reed_filter::spec::TailRules::default()
+            },
+            // The fixture carries a haploid call; bcftools accepts it.
+            policy: reed_filter::spec::PolicyRules {
+                ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+                ..reed_filter::spec::PolicyRules::default()
+            },
+            ..FilterSpecV2::default()
+        };
+        let out = dir.join("o.vcf.gz");
+        let opts = FilterOptions {
+            threads: 2,
+            output: Some(out.clone()),
+            write_index: reed::filter::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            quiet: true,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: Some(true),
+            output_bcf: None,
+            mem_bytes: None,
+            no_version: false,
+        };
+        run_filter(Some(&fixture("fix.vcf.gz")), &spec, &opts).expect("invariant: run");
+        inflate_bgzf(&std::fs::read(&out).expect("invariant: output"))
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| {
+                let mut cols = l.split('\t');
+                format!("{}:{}", cols.next().expect("chrom"), cols.next().expect("pos"))
+            })
+            .collect()
+    };
+    // bcftools view -q 0.2 fix.vcf.gz -> chr1:10 chr1:20 chr1:30
+    assert_eq!(run(Some(0.2), None), ["chr1:10", "chr1:20", "chr1:30"]);
+    // bcftools view -Q 0.2 fix.vcf.gz -> chr2:500 (AC=1/AN=6 = 0.167)
+    assert_eq!(run(None, Some(0.2)), ["chr2:500"]);
+    // bcftools view -q 0.3 -Q 0.4 fix.vcf.gz -> chr1:10 (nref 0.333)
+    assert_eq!(run(Some(0.3), Some(0.4)), ["chr1:10"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The length-prefix chain must frame records correctly wherever the BGZF
 /// block boundaries fall (doc_v3 02-bcf.md §2.2): re-blocking the same BCF
 /// at many small payload sizes must not change a single output record.

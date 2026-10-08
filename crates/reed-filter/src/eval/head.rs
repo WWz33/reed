@@ -89,6 +89,10 @@ pub fn eval_head(
                 n <= *max
             }
             HeadRule::RequireFilter(set) => set.iter().any(|s| s == line.filter_text()),
+            HeadRule::MinAfInfo(bound) => non_reference_af_info(line.info_text())
+                .is_none_or(|freq| freq >= *bound),
+            HeadRule::MaxAfInfo(bound) => non_reference_af_info(line.info_text())
+                .is_none_or(|freq| freq <= *bound),
             HeadRule::MinQual(q) => {
                 // A missing QUAL fails (bcftools semantics).
                 parse_qual(line.qual_text(), &locus(line, pos1))
@@ -113,6 +117,39 @@ pub fn eval_head(
         *hit += 1;
     }
     true
+}
+
+/// `AC` (summed over ALTs) / `AN` from the INFO text; `None` when either is
+/// missing or malformed (the record then defers to the tail rule, matching
+/// bcftools' per-record fallback to genotype counts).
+#[must_use]
+pub fn non_reference_af_info(info: &[u8]) -> Option<f64> {
+    let mut ac = None;
+    let mut an = None;
+    for (tag, value) in info_fragments(info) {
+        let Some(value) = value else { continue };
+        match tag {
+            b"AC" => {
+                let text = std::str::from_utf8(value).ok()?;
+                let mut sum = 0.0_f64;
+                for part in text.split(',') {
+                    if part == "." {
+                        continue;
+                    }
+                    sum += part.parse::<f64>().ok()?;
+                }
+                ac = Some(sum);
+            }
+            b"AN" => {
+                an = std::str::from_utf8(value).ok()?.parse::<f64>().ok();
+            }
+            _ => {}
+        }
+    }
+    match (ac, an) {
+        (Some(ac), Some(an)) if an > 0.0 => Some(ac / an),
+        _ => None,
+    }
 }
 
 fn class_matches(class: VariantClass, wanted: &str) -> bool {

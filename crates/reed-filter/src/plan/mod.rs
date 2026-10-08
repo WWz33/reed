@@ -40,6 +40,12 @@ pub enum HeadRule {
     RequireFilter(Vec<Vec<u8>>),
     /// QUAL lower bound (missing QUAL fails, bcftools semantics).
     MinQual(f32),
+    /// Non-reference allele frequency lower bound on the INFO AC/AN values
+    /// (bcftools `-q` when the header declares both tags); records without
+    /// usable INFO pass and are re-checked by the tail rule.
+    MinAfInfo(f64),
+    /// See [`HeadRule::MinAfInfo`].
+    MaxAfInfo(f64),
     /// One numeric INFO predicate.
     Info(InfoRule),
     /// A bcftools expression (02-cli.md §4): `include` must hold, `exclude`
@@ -66,6 +72,8 @@ impl HeadRule {
             Self::MaxAltAlleles(_) => "site.max_alt_alleles".to_string(),
             Self::RequireFilter(_) => "site.filter".to_string(),
             Self::MinQual(_) => "site.qual".to_string(),
+            Self::MinAfInfo(_) => "site.min_af".to_string(),
+            Self::MaxAfInfo(_) => "site.max_af".to_string(),
             Self::Info(rule) => {
                 let tag = String::from_utf8_lossy(&rule.tag);
                 format!("site.info.{tag}")
@@ -199,6 +207,10 @@ pub enum TailRule {
         /// The compiled predicate.
         expr: crate::expr::Expr,
     },
+    /// Non-reference allele frequency lower bound (bcftools `-q`).
+    MinAf(f64),
+    /// Non-reference allele frequency upper bound (bcftools `-Q`).
+    MaxAf(f64),
     /// Site missing-rate cap (denominator: kept samples).
     MaxMissing(f64),
     /// MAF lower bound.
@@ -219,6 +231,8 @@ impl TailRule {
     pub fn id(&self) -> String {
         match self {
             Self::Expr { id, .. } => id.clone(),
+            Self::MinAf(_) => "after_mask.min_af".to_string(),
+            Self::MaxAf(_) => "after_mask.max_af".to_string(),
             Self::MaxMissing(_) => "after_mask.missing".to_string(),
             Self::MinMaf(_) => "after_mask.maf".to_string(),
             Self::MaxMaf(_) => "after_mask.max_maf".to_string(),
@@ -320,6 +334,25 @@ pub fn compile(
             return Err(FilterError::Spec(format!("min_qual out of range [0,inf): {q}")));
         }
         head.push(HeadRule::MinQual(q));
+    }
+    // `-q/-Q` (bcftools): the INFO AC/AN values decide at the site stage when
+    // the header declares both; the tail rule covers records without them.
+    let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
+    for bound in spec.site_after_mask.min_af.iter().copied() {
+        if !(0.0..=1.0).contains(&bound) {
+            return Err(FilterError::Spec(format!("min_af out of range [0,1]: {bound}")));
+        }
+        if info_af {
+            head.push(HeadRule::MinAfInfo(af_threshold(bound)));
+        }
+    }
+    for bound in spec.site_after_mask.max_af.iter().copied() {
+        if !(0.0..=1.0).contains(&bound) {
+            return Err(FilterError::Spec(format!("max_af out of range [0,1]: {bound}")));
+        }
+        if info_af {
+            head.push(HeadRule::MaxAfInfo(af_threshold(bound)));
+        }
     }
     // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
     // genotype-dependent ones after the mask stage ----
@@ -437,6 +470,20 @@ pub fn compile(
 
     // ---- tail rules (fixed order §11.2) ----
     let mut tail = Vec::new();
+    // bcftools applies -q/-Q (site-level AF bounds) before the plink2-style
+    // missing/MAF blocks.
+    if let Some(f) = spec.site_after_mask.min_af {
+        if !(0.0..=1.0).contains(&f) {
+            return Err(FilterError::Spec(format!("min_af out of range [0,1]: {f}")));
+        }
+        tail.push(TailRule::MinAf(af_threshold(f)));
+    }
+    if let Some(f) = spec.site_after_mask.max_af {
+        if !(0.0..=1.0).contains(&f) {
+            return Err(FilterError::Spec(format!("max_af out of range [0,1]: {f}")));
+        }
+        tail.push(TailRule::MaxAf(af_threshold(f)));
+    }
     if let Some(m) = spec.site_after_mask.max_missing {
         if !(0.0..=1.0).contains(&m) {
             return Err(FilterError::Spec(format!("max_missing out of range [0,1]: {m}")));
@@ -656,6 +703,14 @@ mod stale_info_tests {
             assert_eq!(stale_info_hits(&expr, &tags), expected, "{text}");
         }
     }
+}
+
+/// bcftools parses `-q/-Q` with `sscanf("%f")` into a **float**, so its
+/// threshold is the f32 nearest the written value; at an exact boundary
+/// (e.g. AC=34, AN=680 against 0.05) that rounds up and drops the site.
+/// Quantising here reproduces the comparison bit for bit.
+fn af_threshold(value: f64) -> f64 {
+    f64::from(value as f32)
 }
 
 fn validate_numeric(tag: &str, ty: TagType) -> Result<(), FilterError> {

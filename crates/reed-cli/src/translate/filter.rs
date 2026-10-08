@@ -186,6 +186,12 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
     }
 
     // ---- after-mask site rules ----
+    if let Some(f) = cli.min_af {
+        spec.site_after_mask.min_af = Some(f);
+    }
+    if let Some(f) = cli.max_af {
+        spec.site_after_mask.max_af = Some(f);
+    }
     if let Some(g) = cli.geno {
         spec.site_after_mask.max_missing = Some(g);
     }

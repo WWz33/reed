@@ -53,6 +53,7 @@
 | C6 | 进程结束无临时文件：O5 的 3 条 CLI 测试覆盖（单遍不产生、多遍删除、错误路径删除） | `cargo test -p reed-cli` |
 | §2.3 | 表达式读 `AC/AN/AF/MAC/MAF` 且 header 声明了同名 INFO 时打印"陈旧 INFO"警告（提示 `--maf/--mac` 或 `-x INFO/...`）；`stale_info_hits` 纯函数 + 单元测试 | `cargo test -p reed-filter`；`reed filter x.vcf.gz -e 'AC<5'` 打印警告 |
 | C4（可见部分） | `reed qc` 变为 `stats --summary` 的**隐藏**弃用别名（stderr 打印弃用警告，主 help 不再列出）；crate 合并且未做 | `reed qc x.vcf.gz` 打印警告；`reed --help` 无 qc |
+| CLI `-q/-Q`（min-af/max-af） | `-q/--min-af`、`-Q/--max-af` 落地：header 声明了 INFO/AC+AN 时在位点阶段用 INFO 值判定（不要求解码基因型，与 bcftools 的 `view` 阶段一致），缺 INFO 的记录回退到尾部按基因型计数；阈值按 bcftools 的 `sscanf("%f")` 量化为 f32（否则 AC=34/AN=680 对 0.05 这类恰好相等的情形会与 bcftools 反向） | 与 `bcftools view -q/-Q` 在 50,000 条上逐记录集合一致（7 组阈值，含 0.05、0.1234567 等边界）；fixture 三组断言入 `e2e_bcf.rs` |
 | CLI `--pbs A,B,C` | `--pbs` 改为接受群体名三元组（A 为焦点，可重复）；列名按请求的三元组命名（此前行数据用 0/1/2 索引、列名硬编码 pop1/pop2/pop3，是错的）；`parse_pbs_triples` + 单元测试 | `--pbs pop3,pop2,pop1` 的 `pbs` 值 = `--pbs pop1,pop2,pop3` 的相反数、fst 列随 A/B/C 重排；错误用例（两个名字、未知群体）报错 |
 | BCF 确定性 | BCF 输出与线程数无关（1 vs 4 线程字节相同） | `e2e_bcf.rs::bcf_output_is_thread_count_independent` |
 | CLI §2 | `-o/--output`（filter/stats/qc/index）；stats 主名 `--pop`（`--populations` 可见别名，`-g/--groups` 隐藏）；`--contig-lengths`（旧名别名）；filter 的 plink2 别名 `--vcf-min-dp/--vcf-max-dp/--vcf-min-gq`；`--compress-level` 隐藏；`--memory`、`--verbosity`、`--no-version` 实现；输入/`--threads` 帮助文本更新 | 手动验证：`--no-version` 后无 `##reed_*` 行；`--pop`/`-g` 两种拼写输出一致；`--help` 文本 |
