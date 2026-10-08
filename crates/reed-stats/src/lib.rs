@@ -31,15 +31,29 @@ pub mod theta;
 pub mod window;
 
 pub use dxy::DxyAcc;
-pub use fst::{FstAcc, FstKind, FstMatrixAcc, FstMatrixEntry, HudsonFiniteAcc, NeiMultiAcc, WcMultiAcc};
+pub use fst::{FstAcc, FstKind, FstMatrixEntry};
 pub use pi::PiAcc;
-pub use individual::{IndividualFAcc, JointSfsAcc};
-pub use jackknife::{BlockJackknife, BlockPartial};
-pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
-pub use patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
+pub use individual::IndividualFAcc;
 pub use pbs::PbsAcc;
 pub use request::{StatAcc, StatKey, StatKind, build_accs};
-pub use sfs::{ProjectionCache, ProjectedSfsAcc, SfsAcc, projection_weights};
+pub use sfs::SfsAcc;
 pub use tajima::TajimaAcc;
 pub use theta::ThetaAcc;
 pub use window::{BpBinning, ContigBins};
+
+// Statistics whose CLI is not wired yet (doc_v3 04 §C2): they stay available
+// for the parity suites but are excluded from the documented API until they
+// have a CLI exit and a reference comparison (`--fst-pops`, `--sfs --proj`,
+// the R8 LD/f-statistics work).
+#[doc(hidden)]
+pub use fst::{FstMatrixAcc, WcMultiAcc};
+#[doc(hidden)]
+pub use individual::JointSfsAcc;
+#[doc(hidden)]
+pub use jackknife::{BlockJackknife, BlockPartial};
+#[doc(hidden)]
+pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
+#[doc(hidden)]
+pub use patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
+#[doc(hidden)]
+pub use sfs::{ProjectionCache, ProjectedSfsAcc, projection_weights};

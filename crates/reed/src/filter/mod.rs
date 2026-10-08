@@ -84,6 +84,10 @@ pub struct FilterOptions {
     pub output_compressed: Option<bool>,
     /// BCF output (`-Ob` = level 6, `-Ou` = level 0).
     pub output_bcf: Option<u8>,
+    /// In-flight memory budget in bytes (`--memory`); `None` = half of RAM.
+    pub mem_bytes: Option<u64>,
+    /// Suppress the `##reed_*` provenance lines (`--no-version`).
+    pub no_version: bool,
 }
 
 /// Pass1's source: the still-unconsumed first open (single-pass runs), else
@@ -245,7 +249,7 @@ pub fn run_filter(
             }
         }
     }
-    let (keep, keep_mask) = build_keep(keep_vec, &header, &mut plan)?;
+    let (keep, keep_mask) = build_keep(keep_vec, &header)?;
     let n_samples_out = keep.iter().filter(|&&k| k).count();
     let subset = n_samples_out < n_samples_in;
     // bcftools `view` updates INFO/AC,INFO/AN when samples are dropped; only
@@ -276,9 +280,9 @@ pub fn run_filter(
         header.clone()
     };
     let mut out_header = ensure_info_defs(out_header, &plan.recompute);
-    let ascertainment = serde_json::to_string(&plan.ascertainment)
-        .map_err(|e| FilterError::Spec(format!("ascertainment serialization: {e}")))?;
-    for (key, value) in plan.provenance.header_lines(&ascertainment) {
+    for (key, value) in plan.provenance.header_lines().into_iter().filter(|(k, _)| {
+        !opts.no_version || !k.starts_with("reed_")
+    }) {
         out_header
             .insert(key.as_str().parse().expect("invariant: valid key"), value.into())
             .map_err(|e| FilterError::Spec(format!("header insert {key}: {e}")))?;
@@ -377,7 +381,12 @@ pub fn run_filter(
         .as_ref()
         .filter(|_| gz_out && opts.write_index.is_some())
         .map(|p| opts.write_index.path_for(p));
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
+    let budget = ThreadBudget {
+        threads: opts.threads.max(1),
+        mem: opts
+            .mem_bytes
+            .map_or_else(reed_engine::budget::MemBudget::default_half_memory, reed_engine::budget::MemBudget::from_bytes),
+    };
 
     // The report funnel: the FilterJob paths collect it in the sink slot;
     // the sketch path assembled it during the mid stage.
@@ -482,7 +491,6 @@ pub fn run_filter(
 fn build_keep(
     keep: Vec<bool>,
     header: &vcf::Header,
-    plan: &mut FilterPlan,
 ) -> Result<(Arc<[bool]>, Option<SampleMask>), FilterError> {
     let n = header.sample_names().len();
     let ids: Vec<u32> = keep
@@ -499,22 +507,6 @@ fn build_keep(
             ids.iter().copied().map(reed_core::SampleId),
         ).map_err(|e| FilterError::Spec(e.to_string()))?)
     };
-    if ids.len() < n {
-        use sha2::Digest as _;
-        let mut hasher = sha2::Sha256::new();
-        for (name, &k) in header.sample_names().iter().zip(&keep) {
-            if k {
-                hasher.update(name.as_bytes());
-                hasher.update(b"\n");
-            }
-        }
-        let keep_hash = format!("{:x}", hasher.finalize());
-        plan.ascertainment = reed_filter::plan::ascertainment::with_cohort_subset(
-            plan.ascertainment.clone(),
-            &keep_hash,
-            u32::try_from(ids.len()).expect("invariant: sample count < u32::MAX"),
-        );
-    }
     Ok((Arc::from(keep), mask))
 }
 

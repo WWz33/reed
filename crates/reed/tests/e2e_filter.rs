@@ -166,6 +166,8 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
         tmp_dir: None,
         output_compressed: None,
         output_bcf: None,
+        mem_bytes: None,
+        no_version: false,
     }
 }
 
@@ -324,15 +326,9 @@ fn provenance_and_ascertainment_are_written() {
     assert!(text.contains("##reed_command="));
     assert!(text.contains("##reed_filter_spec="));
     assert!(text.contains("##reed_filter_sha256="));
-    // Site rules + masks + a cohort subset → all four dimensions derived.
-    assert!(text.contains("##reed_ascertainment="));
-    let line = text
-        .lines()
-        .find(|l| l.starts_with("##reed_ascertainment="))
-        .expect("invariant: ascertainment line");
-    assert!(line.contains("Filtered"), "{line}");
-    assert!(line.contains("Masked"), "{line}");
-    assert!(line.contains("Absent"), "{line}");
+    // The manifest-v2 ascertainment line was withdrawn (doc_v2 04 §1,
+    // doc_v3 C1): provenance carries the spec hash and command instead.
+    assert!(!text.contains("##reed_ascertainment"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -438,6 +434,8 @@ mod write_index {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: None,
+            mem_bytes: None,
+            no_version: false,
         }
     }
 

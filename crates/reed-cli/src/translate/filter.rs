@@ -243,6 +243,9 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         threads,
         output_type,
         force_samples,
+        memory,
+        verbosity,
+        no_version,
         ..
     } = &cli;
     let spec_v2 = spec_from_flags(&cli)?;
@@ -317,19 +320,23 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         compress_level,
         strategy,
         command_line,
-        quiet: false,
+        quiet: *verbosity == 0,
         report_json: report.as_ref().map(PathBuf::from),
         force_samples: *force_samples,
         regions,
         tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
         output_compressed,
         output_bcf,
+        mem_bytes: memory.map(|m| m.saturating_mul(1 << 20)),
+        no_version: *no_version,
     };
     let report = reed::filter::run_filter(input_path(input).as_deref(), &spec_v2, &opts)?;
-    eprintln!(
-        "reed filter: {} -> {} records in {:.1}s",
-        report.n_input_records, report.n_output_records, report.elapsed_secs
-    );
+    if *verbosity > 0 {
+        eprintln!(
+            "reed filter: {} -> {} records in {:.1}s",
+            report.n_input_records, report.n_output_records, report.elapsed_secs
+        );
+    }
     Ok(())
 }
 

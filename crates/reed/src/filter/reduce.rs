@@ -150,7 +150,13 @@ pub(super) fn run_missing_pass(
     plan: &FilterPlan,
     opts: &FilterOptions,
 ) -> Result<MissingPartial, FilterError> {
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
+    let budget = ThreadBudget {
+        threads: opts.threads.max(1),
+        mem: opts.mem_bytes.map_or_else(
+            reed_engine::budget::MemBudget::default_half_memory,
+            reed_engine::budget::MemBudget::from_bytes,
+        ),
+    };
     let n_samples = opened.facts.header.sample_names().len();
     let abort = reed_engine::abort::abort();
     let job = crate::bcf_input::InputJob::new(

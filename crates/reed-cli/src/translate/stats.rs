@@ -19,7 +19,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
     let StatsCli {
 
         input,
-        groups,
+        pop,
         pi,
         dxy,
         theta,
@@ -36,7 +36,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         variant_only,
         bypass_invariant_check,
         force_samples,
-        contig_lengths_path,
+        contig_lengths: contig_lengths_file,
         size,
         step,
         levels,
@@ -44,6 +44,8 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         out,
         threads,
         tmp_dir,
+        memory,
+        verbosity,
     } = args;
 
     // Open once: stdin streams into the driver (03-performance.md O5). The
@@ -82,7 +84,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
                 .map(|len| (name.as_bytes().to_vec(), len))
         })
         .collect();
-    if let Some(path) = &contig_lengths_path {
+    if let Some(path) = &contig_lengths_file {
         for line in std::fs::read_to_string(Path::new(path))?.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -102,7 +104,11 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
     let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism().expect("invariant: parallelism").get()
     });
-    let budget = ThreadBudget { threads, mem: MemBudget::default_half_memory() };
+    let budget = ThreadBudget {
+        threads,
+        mem: memory.map_or_else(MemBudget::default_half_memory, |m| MemBudget::from_bytes(m.saturating_mul(1 << 20))),
+    };
+    let _ = verbosity;
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts.
@@ -152,7 +158,7 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
     }
 
     // Windowed modes need the populations file.
-    let Some(groups) = groups else {
+    let Some(groups) = pop else {
         return Err("a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into());
     };
     let (gt_groups, group_names) =

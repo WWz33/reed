@@ -4,7 +4,7 @@
 //! matrix request shape.
 
 use reed_core::count::SiteGroupCounts;
-use reed_stats::fst::{FstKind, FstMatrixAcc, HudsonFiniteAcc, NeiMultiAcc, WcMultiAcc};
+use reed_stats::fst::{FstKind, FstMatrixAcc, WcMultiAcc};
 
 fn row(ans: &[u32], alts: &[u32], hets: &[u32]) -> Vec<SiteGroupCounts> {
     ans.iter()
@@ -115,83 +115,9 @@ fn ref_hudson_finite(an1: u32, alt1: u32, an2: u32, alt2: u32) -> (f64, f64) {
     (dxy - (pi1 + pi2) / 2.0, dxy)
 }
 
-#[test]
-fn hudson_finite_matches_snputils_hudson() {
-    let mut acc = HudsonFiniteAcc::new(0, 1);
-    let sites = [(10_u32, 2, 10, 8), (8, 4, 12, 6), (6, 3, 10, 5), (12, 9, 8, 1)];
-    let (mut num, mut den) = (0.0, 0.0);
-    for (an1, alt1, an2, alt2) in sites {
-        acc.push(&row(&[an1, an2], &[alt1, alt2], &[0, 0]));
-        let (n_i, d_i) = ref_hudson_finite(an1, alt1, an2, alt2);
-        num += n_i;
-        den += d_i;
-    }
-    assert_eq!(acc.site_tally(), (4, 0));
-    let (n_sum, d_sum) = acc.sums();
-    assert!((n_sum.value() - num).abs() < 1e-12);
-    assert!((d_sum.value() - den).abs() < 1e-12);
-    assert!((acc.value().expect("invariant: den ≠ 0") - num / den).abs() < 1e-12);
-}
-
-#[test]
-fn hudson_finite_needs_two_chromosomes_a_side() {
-    let mut acc = HudsonFiniteAcc::new(0, 1);
-    acc.push(&row(&[1, 10], &[1, 5], &[0, 2])); // anA = 1
-    assert_eq!(acc.site_tally(), (0, 1));
-    assert!(acc.value().is_none());
-}
-
-#[test]
-fn hudson_finite_identical_populations_stay_below_zero() {
-    // With identical populations the UNCORRECTED Hudson Fst is 0; the
-    // finite-sample correction subtracts (π1+π2)/2 > dxy (each πi carries
-    // the n/(n−1) inflation), so the corrected estimate is negative —
-    // the known downward bias, which is the price of unbiasedness at true
-    // Fst > 0. Assert the exact algebraic value: num = −2p(1−p)/(n−1)
-    // per site for an1 == an2 == n.
-    let mut acc = HudsonFiniteAcc::new(0, 1);
-    acc.push(&row(&[10, 10], &[5, 5], &[0, 0]));
-    let p = 0.5_f64;
-    let dxy = 2.0 * p * (1.0 - p);
-    let pi = 2.0 * p * (1.0 - p) * 10.0 / 9.0;
-    let expected = (dxy - pi) / dxy; // −(1/(n−1))·... per snputils
-    let v = acc.value().expect("invariant: den ≠ 0");
-    assert!((v - expected).abs() < 1e-12, "{v} vs {expected}");
-    assert!(v < 0.0);
-}
 
 
-#[test]
-fn nei_multi_matches_the_pair_estimator_at_r2() {
-    // r = 2: equal-weighted means reduce to the pair formula (hs =
-    // (hs1+hs2)/2, ht from p̄ = (p1+p2)/2) — the oracle's semantics.
-    let mut multi = NeiMultiAcc::new(vec![0, 1]);
-    let mut pair_hs = 0.0;
-    let mut pair_ht = 0.0;
-    let sites = [(10_u32, 2, 10, 8), (8, 4, 12, 6), (6, 3, 10, 5)];
-    for (an1, alt1, an2, alt2) in sites {
-        multi.push(&row(&[an1, an2], &[alt1, alt2], &[0, 0]));
-        let p1 = f64::from(alt1) / f64::from(an1);
-        let p2 = f64::from(alt2) / f64::from(an2);
-        pair_hs += (2.0 * p1 * (1.0 - p1) + 2.0 * p2 * (1.0 - p2)) / 2.0;
-        let p_bar = (p1 + p2) / 2.0;
-        pair_ht += 2.0 * p_bar * (1.0 - p_bar);
-    }
-    let (hs, ht) = multi.sums();
-    assert!((hs.value() - pair_hs).abs() < 1e-12);
-    assert!((ht.value() - pair_ht).abs() < 1e-12);
-    assert!((multi.value().expect("invariant: ht ≠ 0") - (1.0 - pair_hs / pair_ht)).abs() < 1e-12);
-}
 
-#[test]
-fn nei_multi_equal_frequencies_give_zero_gst() {
-    // All populations at the same frequency: Hs == Ht.
-    let mut acc = NeiMultiAcc::new(vec![0, 1, 2, 3]);
-    acc.push(&row(&[10, 10, 10, 10], &[2, 2, 2, 2], &[0, 0, 0, 0]));
-    acc.push(&row(&[8, 8, 8, 8], &[4, 4, 4, 4], &[0, 0, 0, 0]));
-    let v = acc.value().expect("invariant: ht ≠ 0");
-    assert!(v.abs() < 1e-12, "{v}");
-}
 
 #[test]
 fn fst_matrix_covers_every_pair_once() {

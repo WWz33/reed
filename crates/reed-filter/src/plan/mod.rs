@@ -3,7 +3,6 @@
 //! types, Number ∈ {1, A}), rule expansion, strategy choice (§11.4),
 //! ascertainment derivation (§11.7) and provenance (§11.8) all happen here.
 
-pub mod ascertainment;
 pub mod provenance;
 pub mod strategy;
 
@@ -12,9 +11,7 @@ use std::collections::HashMap;
 use noodles::vcf;
 use noodles::vcf::header::record::value::map::format;
 use noodles::vcf::header::record::value::map::info::{Number, Type};
-use reed_core::manifest::v2::Ascertainment;
 
-pub use ascertainment::derive_ascertainment;
 pub use strategy::ExecStrategy;
 
 use crate::spec::{
@@ -233,8 +230,6 @@ pub struct FilterPlan {
     pub recompute: RecomputeFlags,
     /// `-I/--no-update`: never add the automatic `AC/AN` update.
     pub no_update: bool,
-    /// The derived ascertainment (cohort filled at runtime, §11.7).
-    pub ascertainment: Ascertainment,
     /// Provenance: canonical spec JSON + sha256 + command line.
     pub provenance: provenance::Provenance,
 }
@@ -574,19 +569,6 @@ pub fn compile(
 
     // ---- ascertainment (§11.7) + provenance (§11.8) ----
     let provenance = provenance::Provenance::new(spec, command_line)?;
-    let plan_hash = provenance.sha256.clone();
-    let has_site_rules = !head.is_empty() || !tail.is_empty();
-    let ascertainment = derive_ascertainment(
-        has_site_rules,
-        &spec.site.variant_class,
-        &spec.site.exclude_variant_class,
-        spec.site_after_mask.min_maf,
-        spec.site_after_mask.max_maf,
-        spec.site_after_mask.min_mac,
-        spec.site_after_mask.max_mac,
-        &mask,
-        &plan_hash,
-    );
 
     let policies = reed_core::genotype::GenotypePolicies {
         ploidy: match spec.policy.ploidy {
@@ -613,7 +595,6 @@ pub fn compile(
         stale_tags,
         recompute,
         no_update,
-        ascertainment,
         provenance,
     })
 }

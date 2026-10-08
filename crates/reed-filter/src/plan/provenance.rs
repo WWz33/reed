@@ -52,14 +52,13 @@ impl Provenance {
 
     /// The `##reed_*` header lines in output order.
     #[must_use]
-    pub fn header_lines(&self, ascertainment: &str) -> Vec<(String, String)> {
+    pub fn header_lines(&self) -> Vec<(String, String)> {
         vec![
             (String::from("reed_version"), self.version.clone()),
             (String::from("reed_command"), self.command.clone()),
             (String::from("reed_filterCommand"), self.filter_command.clone()),
             (String::from("reed_filter_spec"), self.canonical_json.clone()),
             (String::from("reed_filter_sha256"), self.sha256.clone()),
-            (String::from("reed_ascertainment"), ascertainment.to_string()),
         ]
     }
 }

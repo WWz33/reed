@@ -44,9 +44,28 @@
 | header IDX | `bcf_header_text`：BCF 输出的 header 文本给每个 FILTER/INFO/FORMAT 行补显式 `IDX=`（htslib 约定），把 htslib 的字典钉到 `StringMaps` 的编号上；`-Ob` + `-W=tbi` 报错（BCF 只有 CSI） | 见下 | 字典删除/新增用例：`-x INFO/QD,INFO/FS --fill-tags AC,AN -Ob` 后 bcftools 读回与 `-Oz` 输出逐记录一致；`bcftools index -s`/`-r` 用 reed 写的 CSI 查询与流式一致 |
 | 性能 | `-Ob` 全量（3,315,604 条，8.1 GB 输出）**13.3 s** vs `-Oz` 11.1 s = 额外 **20%**（门 ≤30%）；noodles 路径为 41.8 s（+277%，未达门，故按 B4 的触发条件落地原生编码器） | 见下 | `bcftools view -H` 逐条与 VCF 输出 sha256 相同（`b0b22079…`） |
 
-### 待办
+### 清理与 CLI 一致性（04 §1/§2，部分）
 
-- V6：B3b（原生 BCF 手术）、O6（单遍样本列扫描）、O7（按连续段拷贝）；清理 C1–C4、C7 与 CLI 一致性（04 §2）；基准日志。
+| 项 | 内容 | 验证 |
+|---|---|---|
+| C1 | 删除清单 v2 残留：`reed_ascertainment` 行、`reed-core/src/manifest.rs`、`reed-filter/src/plan/ascertainment.rs`、`Plan::ascertainment`/`with_cohort_subset` 及测试断言（改为断言**不出现**） | `cargo test --workspace` 全绿；全量 filter 输出与 gold 对拍不变（`-S` 路径不受影响） |
+| C2（部分） | 删除已撤下的 `NeiMultiAcc`、`HudsonFiniteAcc`（含其测试）；未接入 CLI 的累加器（`FstMatrixAcc`/`WcMultiAcc`/`JointSfsAcc`/`BlockJackknife`/LD/Patterson/projected-SFS）改为 `#[doc(hidden)]`，不再出现在文档化 API 中 | `cargo test --workspace` 全绿（测试数 336 → 331，删除的 5 条是被撤下累加器的测试） |
+| C6 | 进程结束无临时文件：O5 的 3 条 CLI 测试覆盖（单遍不产生、多遍删除、错误路径删除） | `cargo test -p reed-cli` |
+| CLI §2 | `-o/--output`（filter/stats/qc/index）；stats 主名 `--pop`（`--populations` 可见别名，`-g/--groups` 隐藏）；`--contig-lengths`（旧名别名）；filter 的 plink2 别名 `--vcf-min-dp/--vcf-max-dp/--vcf-min-gq`；`--compress-level` 隐藏；`--memory`、`--verbosity`、`--no-version` 实现；输入/`--threads` 帮助文本更新 | 手动验证：`--no-version` 后无 `##reed_*` 行；`--pop`/`-g` 两种拼写输出一致；`--help` 文本 |
+
+### 未完成（明确记录）
+
+| 项 | 状态 | 原因 |
+|---|---|---|
+| C3 `TagTable`（reed-filter 去 noodles） | 未做 | 架构纯净性改造，不影响功能；plan::compile 仍直接接收 noodles 头 |
+| C4 合并 QC 入口 / reed-qc 并入 reed-stats | 未做 | 结构重构（crate 合并 + 文件迁移），与功能无关 |
+| C2 的 `pub(crate)` 化 | 改为 `#[doc(hidden)]` | 对拍套件是 integration test，需要跨 crate 访问这些累加器；移入单元测试是纯机械工作 |
+| C5 类型化 `EngineError` | 未做 | BCF 工作已用 `EngineError::Job(String)` 落地；类型化是独立改造 |
+| C7 clippy pedantic | 未做 | ~700 条 warning；`clippy::all` 无错误（CI 门） |
+| CLI §2 的 stats 过滤参数复用、`--pbs A,B,C`、`-q/-Q` | 未做 | 需要在 stats 驱动里接入过滤计划（head/mask/tail）与 PBS 群体选择，属功能扩展 |
+| V6：B3b 原生 BCF 手术 | 未做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术是加速项 |
+| O6/O7 扫描与编辑微优化 | 未做 | 需微基准门（`benches/genotype_scan.rs`、`benches/line_edit.rs`） |
+| 基准日志（03 §3 协议） | 部分：本轮的实测数字都记在本文档；未写入 `bench/e2e/results.tsv` | — |
 
 ### 与文档的偏差
 

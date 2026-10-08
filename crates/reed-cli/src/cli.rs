@@ -38,13 +38,13 @@ pub enum Command {
 /// the structured JSON report.
 #[derive(Args)]
 pub struct QcCli {
-    /// Input BGZF VCF (.vcf.gz)
+    /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
     /// Write the structured JSON report here
     #[arg(long)]
     pub json: Option<String>,
     /// Output path for the bcftools-stats text (omit for stdout)
-    #[arg(short, long)]
+    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
@@ -119,14 +119,15 @@ pub struct FilterCli {
     /// bcftools expression: drop records that satisfy it (repeatable)
     #[arg(short = 'e', long = "exclude", value_name = "EXPR")]
     pub exclude: Vec<String>,
-    /// Mask genotypes with FMT/DP below INT (missing DP never masks)
-    #[arg(long, value_name = "INT")]
+    /// Mask genotypes with FMT/DP below INT (missing DP never masks);
+    /// plink2 spells this --vcf-min-dp
+    #[arg(long, visible_alias = "vcf-min-dp", value_name = "INT")]
     pub min_dp: Option<u32>,
-    /// Mask genotypes with FMT/DP above INT
-    #[arg(long, value_name = "INT")]
+    /// Mask genotypes with FMT/DP above INT (plink2 --vcf-max-dp)
+    #[arg(long, visible_alias = "vcf-max-dp", value_name = "INT")]
     pub max_dp: Option<u32>,
-    /// Mask genotypes with FMT/GQ below INT
-    #[arg(long, value_name = "INT")]
+    /// Mask genotypes with FMT/GQ below INT (plink2 --vcf-min-gq)
+    #[arg(long, visible_alias = "vcf-min-gq", value_name = "INT")]
     pub min_gq: Option<u32>,
     /// Mask from the -i/-e FORMAT expressions: set the genotype to this
     /// value (only `.`, bcftools filter -S .)
@@ -164,15 +165,16 @@ pub struct FilterCli {
     /// (uncompressed BCF); optional compression level (`-Oz6`, `-Ob1`)
     #[arg(short = 'O', long = "output-type", value_name = "v|z|b|u[0-9]")]
     pub output_type: Option<String>,
-    /// Output VCF (.vcf.gz) — omit for plain VCF on the path/stdout
-    #[arg(short, long)]
+    /// Output file (default: stdout); the format comes from -O or the
+    /// extension
+    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
     pub out: Option<String>,
     /// Write an index next to the output: csi (default) or tbi
     #[arg(short = 'W', long = "write-index",
           value_name = "csi|tbi", num_args = 0..=1, default_missing_value = "csi")]
     pub write_index: Option<String>,
-    /// BGZF compression level (default 6)
-    #[arg(long, default_value_t = 6)]
+    /// BGZF compression level (default 6); prefer `-Oz<level>`/`-Ob<level>`
+    #[arg(long, default_value_t = 6, hide = true)]
     pub compress_level: u8,
     /// JSON report path
     #[arg(long)]
@@ -183,16 +185,25 @@ pub struct FilterCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
+    /// In-flight memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
     /// Directory for temporary files (the stdin spill of multi-pass runs)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
+    /// 0 silent, 1 summary (default), 2 per-stage, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = 1)]
+    pub verbosity: u8,
+    /// Do not write the ##reed_* provenance header lines
+    #[arg(long)]
+    pub no_version: bool,
 }
 
 
 /// Build a CSI (default) or TBI index for an existing BGZF VCF.
 #[derive(Args)]
 pub struct IndexCli {
-    /// Input VCF/VCF.gz
+    /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
     /// Write a CSI index (default; bcftools `-c`)
     #[arg(short = 'c', long = "csi", conflicts_with = "tbi")]
@@ -216,12 +227,13 @@ pub struct IndexCli {
 /// never after a tool.
 #[derive(Args)]
 pub struct StatsCli {
-    /// Input BGZF VCF (.vcf.gz); `-` for stdin
+    /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
     /// Groups file: `sample<TAB>population` rows, no header (pixy
     /// populations-file format); required by the windowed/pixy modes
-    #[arg(short, long, alias = "pop", alias = "populations")]
-    pub groups: Option<String>,
+    #[arg(long = "pop", visible_alias = "populations", short = 'g',
+          hide_short_help = true, alias = "groups", value_name = "FILE")]
+    pub pop: Option<String>,
     /// π per population (Nei & Li 1979; missing data: Korunes & Samuk
     /// 2021 = pixy)
     #[arg(long)]
@@ -282,8 +294,8 @@ pub struct StatsCli {
     pub force_samples: bool,
     /// Contig lengths as a .fai-style file (name, length), for inputs
     /// whose header lacks ##contig lines
-    #[arg(long)]
-    pub contig_lengths_path: Option<String>,
+    #[arg(long = "contig-lengths", alias = "contig-lengths-path", value_name = "FILE")]
+    pub contig_lengths: Option<String>,
     /// Window size in bp (accepts 100k, 1M, 100kb)
     #[arg(long = "window", alias = "size", default_value = "100000", value_parser = parse_size)]
     pub size: u64,
@@ -296,8 +308,8 @@ pub struct StatsCli {
     /// Skip windows that no site fell into
     #[arg(long)]
     pub skip_empty: bool,
-    /// Write the TSV here instead of stdout
-    #[arg(short, long)]
+    /// Output prefix: PREFIX_pi.txt, PREFIX.afreq, ... (or the TSV on stdout)
+    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "PREFIX")]
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
@@ -306,5 +318,11 @@ pub struct StatsCli {
     /// read twice)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
+    /// In-flight memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
+    /// 0 silent, 1 summary (default), 2 per-stage, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = 1)]
+    pub verbosity: u8,
 }
 

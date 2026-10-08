@@ -307,7 +307,13 @@ pub(super) fn run_sketch_pass(
     plan: &FilterPlan,
     opts: &FilterOptions,
 ) -> Result<SketchPassOutput, FilterError> {
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
+    let budget = ThreadBudget {
+        threads: opts.threads.max(1),
+        mem: opts.mem_bytes.map_or_else(
+            reed_engine::budget::MemBudget::default_half_memory,
+            reed_engine::budget::MemBudget::from_bytes,
+        ),
+    };
     let crate::input::OpenedInput { mut source, facts, .. } = opened;
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
         facts

@@ -15,7 +15,6 @@ pub mod genotype;
 pub mod grid;
 pub mod group;
 pub mod id;
-pub mod manifest;
 pub mod math;
 pub mod sample;
 pub mod site;
@@ -32,6 +31,5 @@ pub use genotype::{
 pub use grid::{BinId, BpWindow, RegionSet, SitesWindow, WindowGrid};
 pub use group::{Group, GroupFileOptions, GroupTable};
 pub use id::{ChunkId, GroupId, RecordOrdinal, SampleId, TagId};
-pub use manifest::{Ascertainment, Availability, SiteCompleteness};
 pub use sample::{SampleMask, SampleTable};
 pub use site::{SiteFlags, SiteKey, VariantClass};

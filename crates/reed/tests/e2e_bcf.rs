@@ -127,6 +127,8 @@ fn bcf_output_round_trips_to_the_same_records() {
             tmp_dir: None,
             output_compressed: if bcf.is_none() { Some(true) } else { None },
             output_bcf: bcf,
+            mem_bytes: None,
+            no_version: false,
         };
         run_filter(Some(input), &spec, &opts)
     };
@@ -212,6 +214,8 @@ fn filter_output_is_identical_across_formats() {
             tmp_dir: None,
             output_compressed: Some(true),
             output_bcf: None,
+            mem_bytes: None,
+            no_version: false,
         };
         run_filter(Some(input), &spec, &opts)
     };
