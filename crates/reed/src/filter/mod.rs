@@ -165,7 +165,8 @@ pub fn run_filter(
     let is_bcf = first.as_ref().is_some_and(|opened| opened.bcf.is_some());
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
-    let mut plan = reed_filter::plan::compile(spec, &header, &opts.command_line)?;
+    let mut plan =
+        reed_filter::plan::compile(spec, &reed_io::header::tag_table(&header), &opts.command_line)?;
     let strategy = match opts.strategy {
         Some(forced) => forced,
         // The sketch path's record-count estimate is line-based; BCF input

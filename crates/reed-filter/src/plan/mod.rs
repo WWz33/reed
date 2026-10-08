@@ -6,11 +6,8 @@
 pub mod provenance;
 pub mod strategy;
 
-use std::collections::HashMap;
 
-use noodles::vcf;
-use noodles::vcf::header::record::value::map::format;
-use noodles::vcf::header::record::value::map::info::{Number, Type};
+use reed_core::tag_table::{TagNumber, TagTable, TagType};
 
 pub use strategy::ExecStrategy;
 
@@ -243,19 +240,9 @@ pub struct FilterPlan {
 /// required, thresholds out of range, or the M7 `midp` HWE mode.
 pub fn compile(
     spec: &FilterSpecV2,
-    header: &vcf::Header,
+    tags: &TagTable,
     command_line: &str,
 ) -> Result<FilterPlan, FilterError> {
-    let info_defs: HashMap<String, (Type, Number)> = header
-        .infos()
-        .iter()
-        .map(|(k, m)| (k.to_string(), (m.ty(), m.number())))
-        .collect();
-    let format_defs: HashMap<String, (format::Type, format::Number)> = header
-        .formats()
-        .iter()
-        .map(|(k, m)| (k.to_string(), (m.ty(), m.number())))
-        .collect();
 
     // ---- head rules (§11.2 order: targets → class/alt → FILTER → QUAL →
     // INFO in declaration order) ----
@@ -289,8 +276,8 @@ pub fn compile(
     }
     // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
     // genotype-dependent ones after the mask stage ----
-    let info_tags: Vec<String> = info_defs.keys().cloned().collect();
-    let format_tags: Vec<String> = format_defs.keys().cloned().collect();
+    let info_tags: Vec<String> = tags.info_names();
+    let format_tags: Vec<String> = tags.format_names();
     for (index, text) in spec.site.include.iter().enumerate() {
         let expr = crate::expr::parse_and_check(text, &info_tags)
             .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
@@ -315,13 +302,12 @@ pub fn compile(
         == crate::spec::MultiallelicPolicy::Allow
         || spec.site.max_alt_alleles > 1;
     for rule in &spec.site.info {
-        let (ty, number) = info_defs
-            .get(&rule.tag)
-            .copied()
+        let def = tags
+            .info(&rule.tag)
             .ok_or_else(|| FilterError::Spec(format!("INFO tag {} is not declared in the header", rule.tag)))?;
-        validate_numeric(&rule.tag, ty)?;
-        let number_a = matches!(number, Number::A);
-        if number != Number::Count(1) && !number_a {
+        validate_numeric(&rule.tag, def.ty)?;
+        let number_a = def.number == TagNumber::A;
+        if def.number != TagNumber::Count(1) && !number_a {
             return Err(FilterError::Spec(format!(
                 "INFO tag {} has an unsupported Number (want 1 or A)",
                 rule.tag
@@ -365,12 +351,11 @@ pub fn compile(
     let mut int_fields: Vec<Vec<u8>> = Vec::new();
     let mut float_fields: Vec<Vec<u8>> = Vec::new();
     for rule in &spec.genotype.mask_if {
-        let (ty, _number) = format_defs
-            .get(&rule.field)
-            .copied()
+        let def = tags
+            .format(&rule.field)
             .ok_or_else(|| FilterError::Spec(format!("FORMAT field {} is not declared in the header", rule.field)))?;
-        validate_numeric(&rule.field, ty)?;
-        let is_float = matches!(ty, format::Type::Float);
+        validate_numeric(&rule.field, def.ty)?;
+        let is_float = def.ty == TagType::Float;
         let cmp = crate::spec::predicate::Cmp::parse(&rule.when)?;
         // The mask default is keep (§11.1): an omitted on_missing
         // deserializes to the enum default (Pass) and normalizes to Keep.
@@ -498,17 +483,16 @@ pub fn compile(
             )));
         }
         for tag in &fmt_tags {
-            let (ty, number) = format_defs
-                .get(tag)
-                .copied()
+            let def = tags
+                .format(tag)
                 .ok_or_else(|| FilterError::Spec(format!("FORMAT tag {tag} is not declared in the header")))?;
-            if number != format::Number::Count(1) {
+            if def.number != TagNumber::Count(1) {
                 return Err(FilterError::Spec(format!(
-                    "FORMAT tag {tag} is multi-valued (Number={number:?}): subscripts are not supported yet"
+                    "FORMAT tag {tag} is multi-valued (Number={:?}): subscripts are not supported yet", def.number
                 )));
             }
-            validate_numeric(tag, ty)?;
-            let is_float = matches!(ty, format::Type::Float);
+            validate_numeric(tag, def.ty)?;
+            let is_float = def.ty == TagType::Float;
             let column_of = |fields: &mut Vec<Vec<u8>>| match fields.iter().position(|f| f.as_slice() == tag.as_bytes()) {
                 Some(i) => i,
                 None => {
@@ -599,13 +583,12 @@ pub fn compile(
     })
 }
 
-fn validate_numeric(tag: &str, ty: impl std::fmt::Debug) -> Result<(), FilterError> {
-    let name = format!("{ty:?}");
-    if name == "Integer" || name == "Float" {
+fn validate_numeric(tag: &str, ty: TagType) -> Result<(), FilterError> {
+    if ty.is_numeric() {
         Ok(())
     } else {
         Err(FilterError::Spec(format!(
-            "tag {tag} is {name}-typed: numeric rules need Integer or Float"
+            "tag {tag} is {ty:?}-typed: numeric rules need Integer or Float"
         )))
     }
 }

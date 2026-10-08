@@ -17,6 +17,7 @@ pub mod group;
 pub mod id;
 pub mod math;
 pub mod sample;
+pub mod tag_table;
 pub mod site;
 
 pub use bitset::Bitset;

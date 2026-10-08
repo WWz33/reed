@@ -19,6 +19,15 @@ thiserror.workspace = true
 [dev-dependencies]
 crossbeam-channel.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "line_edit"
+harness = false
+
+[[bench]]
+name = "genotype_scan"
+harness = false
 
 [lints]
 workspace = true

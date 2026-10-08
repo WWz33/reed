@@ -167,24 +167,46 @@ fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_subfield_index: Option<u
     let mut field_start = 0;
     let mut sample_idx = 0_usize;
     let mut wrote_column = false;
+    // Byte offset where the current run of verbatim samples begins
+    // (doc_v3 03 O7: one copy per run instead of one per sample).
+    let mut run_start: Option<usize> = None;
     while field_start < samples.len() {
         let field_end = memchr::memchr(b'\t', &samples[field_start..])
             .map_or(samples.len(), |rel| field_start + rel);
-        let field = &samples[field_start..field_end];
         let kept = keep.is_none_or(|k| k.contains(reed_core::SampleId(sample_idx as u32)));
-        if kept {
-            if wrote_column {
-                out.push(b'\t');
+        let masked = kept && mask.is_some_and(|m| m.get(sample_idx));
+        if kept && !masked {
+            run_start.get_or_insert(field_start);
+        } else {
+            if let Some(start) = run_start.take() {
+                if wrote_column {
+                    out.push(b'\t');
+                }
+                // The run ends before the tab that separates it from the
+                // current field.
+                out.extend_from_slice(&samples[start..field_start - 1]);
+                wrote_column = true;
             }
-            if mask.is_some_and(|m| m.get(sample_idx)) {
-                replace_gt_subfield(field, gt_subfield_index, out);
-            } else {
-                out.extend_from_slice(field);
+            if kept {
+                if wrote_column {
+                    out.push(b'\t');
+                }
+                replace_gt_subfield(
+                    &samples[field_start..field_end],
+                    gt_subfield_index,
+                    out,
+                );
+                wrote_column = true;
             }
-            wrote_column = true;
         }
         sample_idx += 1;
         field_start = field_end + 1;
+    }
+    if let Some(start) = run_start {
+        if wrote_column {
+            out.push(b'\t');
+        }
+        out.extend_from_slice(&samples[start..]);
     }
     // A sample-count mismatch against the header is a caller invariant (the
     // scan stage validates it).

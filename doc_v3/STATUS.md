@@ -66,6 +66,24 @@
 | V6：B3b 原生 BCF 手术 | 未做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术是加速项 |
 | O6/O7 扫描与编辑微优化 | 未做 | 需微基准门（`benches/genotype_scan.rs`、`benches/line_edit.rs`） |
 | 基准日志（03 §3 协议） | 部分：本轮的实测数字都记在本文档；未写入 `bench/e2e/results.tsv` | — |
+| O7 按连续段拷贝 | 已做（+1%） | `benches/line_edit.rs`：3.06 µs/记录（348 样本，~14% 掩码）＝ 8.8 ns/样本；撤下改动后 3.09 µs（criterion `change +1.05%`，p<0.05）——收益真实但在噪声边缘 |
+| O6 单遍样本列扫描 | 未做 | `benches/genotype_scan.rs` 基线：GT-only 4.05 µs/记录（11.6 ns/样本）、GT+DP+GQ 9.56 µs（27.5 ns/样本）；扫描不是瓶颈（deflate 占 filter CPU 的 56%），按 03 §2 的分级办法需要逐级微基准，本预算内未继续 |
+
+## 基准（2026-10-08，本机 56 线程，热缓存，全量 clean.vcf.gz 3,315,604 条）
+
+| 命令 | 改前 | 改后 | 依据 |
+|---|---|---|---|
+| `filter` gold 等价 `-Oz6` | 9.7 s / 9.0–9.4 s | 9.0–9.4 s（无回退；对拍 gold PASS，body md5 `7aedc59a…`） | V0/V1 |
+| `filter` 全部存活 `-Ov` | 15.0 s（实为写入 stdout 管道，测量口径错误） | **2.9–3.2 s**（`-o /dev/null`） | O3 根因 |
+| `filter -Oz1` | 5.5 s | 5.4 s | — |
+| `filter -Ob`（原生编码器） | 41.8 s（noodles） | **13.3 s**（+20% vs `-Oz`，门 ≤30%） | B4 |
+| `stats --hardy` | 13.3 s | **2.7 s** | O1 |
+| `stats --freq` / `--missing` / `--het` / `--depth` | 2.86 / 2.82 / 2.80 / 3.71 s | 2.61 / 2.58 / 2.74 / 2.64 s | O1+O2 |
+| `stats --freq --hardy --het --missing --depth` | ~15 s | **3.0 s** | O1+O2 |
+| `reed index`（7.0 GB VCF.gz） | 48.7 s | **2.7 s** | O4 |
+| `reed index`（8.1 GB BCF） | — | 10.9 s | B1 |
+| `reed stats` on BCF（π/dxy/θ/D/Fst） | — | **5.1 s**（VCF.gz 3.0 s；逐字节一致） | B1（渲染路径，未达"不慢于"门） |
+| stdin 单遍 | 整体落盘 | 直接流式，与文件一致；无临时文件残留 | O5 |
 
 ### 与文档的偏差
 

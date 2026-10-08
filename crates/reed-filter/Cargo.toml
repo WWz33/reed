@@ -10,7 +10,6 @@ license.workspace = true
 reed-core.workspace = true
 reed-io.workspace = true
 memchr.workspace = true
-noodles.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

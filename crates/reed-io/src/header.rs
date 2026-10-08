@@ -25,6 +25,47 @@ pub struct HeaderFacts {
     pub header: noodles::vcf::Header,
 }
 
+/// Builds the plan compiler's tag table from a parsed header (doc_v3 04 §C3):
+/// `reed-filter` only ever sees this view.
+#[must_use]
+pub fn tag_table(header: &noodles::vcf::Header) -> reed_core::tag_table::TagTable {
+    use noodles::vcf::header::record::value::map::{format, info};
+    use reed_core::tag_table::{TagNumber, TagType};
+    let number = |number: info::Number| match number {
+        info::Number::Count(n) => TagNumber::Count(u32::try_from(n).unwrap_or(u32::MAX)),
+        info::Number::A => TagNumber::A,
+        info::Number::R => TagNumber::R,
+        info::Number::G => TagNumber::G,
+        info::Number::Unknown => TagNumber::Unknown,
+    };
+    let info_type = |ty: info::Type| match ty {
+        info::Type::Integer => TagType::Integer,
+        info::Type::Float => TagType::Float,
+        info::Type::Flag => TagType::Flag,
+        info::Type::String | info::Type::Character => TagType::Character,
+    };
+    let format_type = |ty: format::Type| match ty {
+        format::Type::Integer => TagType::Integer,
+        format::Type::Float => TagType::Float,
+        _ => TagType::Character,
+    };
+    let mut table = reed_core::tag_table::TagTable::new();
+    for (key, map) in header.infos() {
+        table.add_info(key.as_str(), info_type(map.ty()), number(map.number()));
+    }
+    for (key, map) in header.formats() {
+        let format_number = match map.number() {
+            format::Number::Count(n) => TagNumber::Count(u32::try_from(n).unwrap_or(u32::MAX)),
+            format::Number::AlternateBases => TagNumber::A,
+            format::Number::ReferenceAlternateBases => TagNumber::R,
+            format::Number::Samples => TagNumber::G,
+            _ => TagNumber::Unknown,
+        };
+        table.add_format(key.as_str(), format_type(map.ty()), format_number);
+    }
+    table
+}
+
 impl HeaderFacts {
     /// Parses header text (accumulated by the chunk reader's header scan).
     ///
