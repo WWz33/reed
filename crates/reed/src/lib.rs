@@ -7,8 +7,7 @@ pub mod filter;
 pub mod filtered;
 pub mod index;
 pub mod input;
-pub mod pixy;
-pub mod qc;
-pub mod reports;
-pub mod qc_report;
 pub mod stats;
+
+// Historical public paths (doc_v2 §8): the writers moved under `stats::writers`.
+pub use stats::writers::{pixy, qc, qc_report, reports};

@@ -916,7 +916,6 @@ dependencies = [
  "reed-engine",
  "reed-filter",
  "reed-io",
- "reed-qc",
  "reed-stats",
  "serde_json",
  "sha2",
@@ -993,21 +992,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "reed-qc"
-version = "0.3.0"
-dependencies = [
- "proptest",
- "reed-core",
- "serde",
-]
-
-[[package]]
 name = "reed-stats"
 version = "0.3.0"
 dependencies = [
  "proptest",
  "reed-core",
  "reed-core-v02-oracle",
+ "serde",
  "thiserror",
 ]
 

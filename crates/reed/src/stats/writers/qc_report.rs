@@ -24,7 +24,7 @@ use reed_core::genotype::{
 use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
 use reed_io::vcf::site::SiteView;
 use reed_io::Locus;
-use reed_qc::report::{acgt, alt_class, is_transition, subst_index, PscAcc, QcReportAcc};
+use reed_stats::summary::report::{acgt, alt_class, is_transition, subst_index, PscAcc, QcReportAcc};
 
 /// Run options.
 #[derive(Clone, Debug, Default)]
@@ -655,9 +655,9 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
         if n_ts + n_tv + n_in == 0 {
             continue;
         }
-        let qval = |dist: &reed_qc::histogram::QualDist| -> Option<f64> {
+        let qval = |dist: &reed_stats::summary::histogram::QualDist| -> Option<f64> {
             (i < dist.nbins()).then(|| {
-                let (beg, _) = reed_qc::histogram::QualDist::bin_range(i);
+                let (beg, _) = reed_stats::summary::histogram::QualDist::bin_range(i);
                 if beg == 0 {
                     -1.0
                 } else {

@@ -14,7 +14,6 @@ reed-core = { path = "crates/reed-core", version = "0.3.0" }
 reed-io = { path = "crates/reed-io", version = "0.3.0" }
 reed-engine = { path = "crates/reed-engine", version = "0.3.0" }
 reed-stats = { path = "crates/reed-stats", version = "0.3.0" }
-reed-qc = { path = "crates/reed-qc", version = "0.3.0" }
 reed-filter = { path = "crates/reed-filter", version = "0.3.0" }
 reed = { path = "crates/reed", version = "0.3.0" }
 

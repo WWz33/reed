@@ -26,6 +26,7 @@ pub mod patterson;
 pub mod pbs;
 pub mod request;
 pub mod sfs;
+pub mod summary;
 pub mod tajima;
 pub mod theta;
 pub mod window;

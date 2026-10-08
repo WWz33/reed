@@ -11,7 +11,6 @@ memchr.workspace = true
 reed-core.workspace = true
 reed-io.workspace = true
 reed-engine.workspace = true
-reed-qc.workspace = true
 reed-stats.workspace = true
 reed-filter.workspace = true
 sha2.workspace = true

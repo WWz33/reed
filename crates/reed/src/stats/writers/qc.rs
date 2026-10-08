@@ -7,7 +7,7 @@ use reed_core::site::classify_variant;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
 use reed_io::chunk::BgzfChunkSource;
-use reed_qc::summary::SummaryAcc;
+use reed_stats::summary::SummaryAcc;
 
 /// Result of one `run_qc` call.
 #[derive(Clone, Debug)]

@@ -4,7 +4,7 @@
 use proptest::prelude::*;
 
 use reed_core::site::VariantClass;
-use reed_qc::summary::SummaryAcc;
+use reed_stats::summary::SummaryAcc;
 
 fn arb_class() -> impl Strategy<Value = VariantClass> {
     prop_oneof![

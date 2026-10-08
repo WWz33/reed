@@ -19,7 +19,7 @@
 use reed_core::site::VariantClass;
 use serde::Serialize;
 
-use crate::histogram::{IntHistogram, QualDist};
+use crate::summary::histogram::{IntHistogram, QualDist};
 
 /// The whole-report accumulator (§10.1). All fields are additive.
 #[derive(Clone, Debug, Serialize)]
