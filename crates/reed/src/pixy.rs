@@ -48,9 +48,22 @@ pub fn write(
         }),
         _ => None,
     });
-    let mut pbs_rows = String::from(
-        "pop1\tpop2\tpop3\tchromosome\twindow_pos_1\twindow_pos_2\tpbs\tno_snps\tfst_12\tfst_13\tfst_23\n",
-    );
+    // The PBS header names the triple the request asked for (`--pbs A,B,C`).
+    let pbs_header = |names: &[String]| {
+        let name = |i: usize| names.get(i).map_or("?", String::as_str);
+        for kind in kinds {
+            if let StatKind::Pbs { a, b, c, .. } = kind {
+                return format!(
+                    "{}\t{}\t{}\tchromosome\twindow_pos_1\twindow_pos_2\tpbs\tno_snps\tfst_12\tfst_13\tfst_23\n",
+                    name(*a),
+                    name(*b),
+                    name(*c)
+                );
+            }
+        }
+        String::new()
+    };
+    let mut pbs_rows = pbs_header(group_names);
     let mut fst_rows = match fst_method {
         Some(method) => format!(
             "pop1\tpop2\tchromosome\twindow_pos_1\twindow_pos_2\tavg_{method}_fst\tno_snps\n"
@@ -153,7 +166,7 @@ pub fn write(
                         row.contig, row.start1, row.end0
                     );
                 }
-                StatKind::Pbs { .. } => {
+                StatKind::Pbs { a, b, c, .. } => {
                     let Some((value, no_snps, (f_ab, f_ac, f_bc))) = acc.pbs_columns(kind) else {
                         continue;
                     };
@@ -165,9 +178,9 @@ pub fn write(
                     let _ = writeln!(
                         pbs_rows,
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{no_snps}\t{}\t{}\t{}",
-                        name(0),
-                        name(1),
-                        name(2),
+                        name(*a),
+                        name(*b),
+                        name(*c),
                         row.contig,
                         row.start1,
                         row.end0,

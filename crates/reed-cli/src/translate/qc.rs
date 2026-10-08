@@ -13,6 +13,10 @@ use crate::units::input_path;
 ///
 /// Driver and output failures.
 pub fn run_qc(args: QcCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    eprintln!(
+        "reed qc: warning: `reed qc` is deprecated and will be removed; use \
+         `reed stats --summary` instead"
+    );
     let QcCli { input, json, out, threads } = args;
     let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism().expect("invariant: parallelism").get()

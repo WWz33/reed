@@ -52,6 +52,8 @@
 | C2（部分） | 删除已撤下的 `NeiMultiAcc`、`HudsonFiniteAcc`（含其测试）；未接入 CLI 的累加器（`FstMatrixAcc`/`WcMultiAcc`/`JointSfsAcc`/`BlockJackknife`/LD/Patterson/projected-SFS）改为 `#[doc(hidden)]`，不再出现在文档化 API 中 | `cargo test --workspace` 全绿（测试数 336 → 331，删除的 5 条是被撤下累加器的测试） |
 | C6 | 进程结束无临时文件：O5 的 3 条 CLI 测试覆盖（单遍不产生、多遍删除、错误路径删除） | `cargo test -p reed-cli` |
 | §2.3 | 表达式读 `AC/AN/AF/MAC/MAF` 且 header 声明了同名 INFO 时打印"陈旧 INFO"警告（提示 `--maf/--mac` 或 `-x INFO/...`）；`stale_info_hits` 纯函数 + 单元测试 | `cargo test -p reed-filter`；`reed filter x.vcf.gz -e 'AC<5'` 打印警告 |
+| C4（可见部分） | `reed qc` 变为 `stats --summary` 的**隐藏**弃用别名（stderr 打印弃用警告，主 help 不再列出）；crate 合并且未做 | `reed qc x.vcf.gz` 打印警告；`reed --help` 无 qc |
+| CLI `--pbs A,B,C` | `--pbs` 改为接受群体名三元组（A 为焦点，可重复）；列名按请求的三元组命名（此前行数据用 0/1/2 索引、列名硬编码 pop1/pop2/pop3，是错的）；`parse_pbs_triples` + 单元测试 | `--pbs pop3,pop2,pop1` 的 `pbs` 值 = `--pbs pop1,pop2,pop3` 的相反数、fst 列随 A/B/C 重排；错误用例（两个名字、未知群体）报错 |
 | BCF 确定性 | BCF 输出与线程数无关（1 vs 4 线程字节相同） | `e2e_bcf.rs::bcf_output_is_thread_count_independent` |
 | CLI §2 | `-o/--output`（filter/stats/qc/index）；stats 主名 `--pop`（`--populations` 可见别名，`-g/--groups` 隐藏）；`--contig-lengths`（旧名别名）；filter 的 plink2 别名 `--vcf-min-dp/--vcf-max-dp/--vcf-min-gq`；`--compress-level` 隐藏；`--memory`、`--verbosity`、`--no-version` 实现；输入/`--threads` 帮助文本更新 | 手动验证：`--no-version` 后无 `##reed_*` 行；`--pop`/`-g` 两种拼写输出一致；`--help` 文本 |
 
@@ -64,7 +66,7 @@
 | C2 的 `pub(crate)` 化 | 改为 `#[doc(hidden)]` | 对拍套件是 integration test，需要跨 crate 访问这些累加器；移入单元测试是纯机械工作 |
 | C5 类型化 `EngineError` | 未做 | BCF 工作已用 `EngineError::Job(String)` 落地；类型化是独立改造 |
 | C7 clippy pedantic | 未做 | ~700 条 warning；`clippy::all` 无错误（CI 门） |
-| CLI §2 的 stats 过滤参数复用、`--pbs A,B,C`、`-q/-Q` | 未做 | 需要在 stats 驱动里接入过滤计划（head/mask/tail）与 PBS 群体选择，属功能扩展 |
+| CLI §2 的 stats 过滤参数复用、`-q/-Q` | 未做 | 需在 stats 驱动接入过滤计划（head/mask/tail）与新的 AF 尾规则（bcftools 的 any/all 语义需要单独对拍） |
 | C5 之外的 B 门：noodles 差分、链切分穷举、typed-value proptest | 未做 | 现有门是"与 bcftools 全量逐字节一致 + 往返 + 跨格式"；noodles 差分与穷举切分是补充门 |
 | V6：B3b 原生 BCF 手术 | 未做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术是加速项 |
 | O6/O7 扫描与编辑微优化 | 未做 | 需微基准门（`benches/genotype_scan.rs`、`benches/line_edit.rs`） |

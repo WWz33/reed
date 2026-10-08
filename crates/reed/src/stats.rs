@@ -34,7 +34,8 @@ use reed_io::vcf::site::SiteView;
 use reed_io::vcf::line::LineRef;
 pub use reed_stats::fst::FstKind;
 pub use reed_stats::pbs::PbsKind;
-use reed_stats::request::{build_accs, StatAcc, StatKey, StatKind};
+use reed_stats::request::{build_accs, StatAcc, StatKey};
+pub use reed_stats::request::StatKind;
 use reed_stats::window::{BpBinning, ContigBins};
 
 /// The full per-group/per-pair statistic set over `n_groups` groups: π and

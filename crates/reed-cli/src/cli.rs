@@ -24,7 +24,9 @@ pub struct Cli {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Command {
-    /// Quality-control report
+    /// Deprecated alias of `stats --summary` (hidden; removed after one
+    /// version per 04-cleanup §C4)
+    #[command(hide = true)]
     Qc(QcCli),
     /// Hard filtering
     Filter(FilterCli),
@@ -34,8 +36,8 @@ pub enum Command {
     Index(IndexCli),
 }
 
-/// Quality-control report (§10): bcftools-stats-compatible output plus
-/// the structured JSON report.
+/// Deprecated `reed qc` (§10): the bcftools-stats-compatible report now
+/// lives behind `reed stats --summary` (04-cleanup §C4).
 #[derive(Args)]
 pub struct QcCli {
     /// Input VCF/VCF.gz/BCF, or `-` for stdin
@@ -254,10 +256,10 @@ pub struct StatsCli {
     #[arg(long, value_name = "wc84|hudson", num_args = 0..=1,
           default_missing_value = "wc84")]
     pub fst: Option<String>,
-    /// PBS for the first three populations (Yi et al. 2010); needs
-    /// three groups
-    #[arg(long)]
-    pub pbs: bool,
+    /// PBS for the named triple `A,B,C` (A is the branch of interest,
+    /// Yi et al. 2010); repeatable
+    #[arg(long, value_name = "A,B,C")]
+    pub pbs: Vec<String>,
     /// Per-site allele frequencies (PREFIX.afreq, plink2 layout)
     #[arg(long)]
     pub freq: bool,

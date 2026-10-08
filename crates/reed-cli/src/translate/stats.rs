@@ -10,6 +10,40 @@ use reed_engine::budget::{MemBudget, ThreadBudget};
 use crate::cli::StatsCli;
 use crate::units::input_path;
 
+/// `--pbs A,B,C`: resolves each requested triple to group indices (the
+/// branch of interest first, Yi et al. 2010).
+///
+/// # Errors
+///
+/// A triple without exactly three names, or a name the group file lacks.
+fn parse_pbs_triples(
+    pbs: &[String],
+    group_names: &[String],
+) -> Result<Vec<(usize, usize, usize)>, String> {
+    let mut triples = Vec::with_capacity(pbs.len());
+    for triple in pbs {
+        let names: Vec<&str> = triple
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .collect();
+        if names.len() != 3 {
+            return Err(format!(
+                "--pbs wants exactly three population names (A,B,C), got {triple:?}"
+            ));
+        }
+        let mut ids = [0_usize; 3];
+        for (slot, name) in ids.iter_mut().zip(&names) {
+            *slot = group_names
+                .iter()
+                .position(|g| g == name)
+                .ok_or_else(|| format!("--pbs: unknown population {name:?}"))?;
+        }
+        triples.push((ids[0], ids[1], ids[2]));
+    }
+    Ok(triples)
+}
+
 /// Runs the statistics driver for the parsed flags.
 ///
 /// # Errors
@@ -170,9 +204,11 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         group_names.join(", ")
     );
 
+    let pbs_triples = parse_pbs_triples(&pbs, &group_names)?;
+
     // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with pixy's columns (02-cli.md §5).
-    if pi || dxy || theta || tajima_d || fst.is_some() || pbs {
+    if pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() {
         let step = if step == 0 { size } else { step };
         let invariant = if variant_only {
             reed::stats::InvariantMode::VariantOnly
@@ -194,20 +230,23 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
                 return Err(format!("unknown --fst method {other:?} (expected wc84 or hudson)").into());
             }
         };
-        let pbs_kind = pbs.then_some(if pbs_normed {
+        let pbs_kind = if pbs_normed {
             reed::stats::PbsKind::PbsN1
         } else {
             reed::stats::PbsKind::Yi2010
-        });
-        let kinds = reed::stats::pixy_kinds(
+        };
+        let mut kinds = reed::stats::pixy_kinds(
             group_names.len(),
             pi,
             dxy,
             theta,
             tajima_d,
             fst_kind,
-            pbs_kind,
+            None,
         );
+        for &(a, b, c) in &pbs_triples {
+            kinds.push(reed::stats::StatKind::Pbs { a, b, c, kind: pbs_kind });
+        }
         let request = StatsRequest {
             kinds: kinds.clone(),
             gt_groups,
@@ -272,4 +311,21 @@ pub fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + S
         None => print!("{}", report.tsv),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_pbs_triples;
+
+    /// `--pbs A,B,C` resolves names in order and rejects malformed triples.
+    #[test]
+    fn pbs_triples_resolve_names() {
+        let groups = ["pop1".to_string(), "pop2".to_string(), "pop3".to_string()];
+        assert_eq!(
+            parse_pbs_triples(&["pop3,pop2,pop1".to_string()], &groups).expect("valid"),
+            vec![(2, 1, 0)]
+        );
+        assert!(parse_pbs_triples(&["pop1,pop2".to_string()], &groups).is_err());
+        assert!(parse_pbs_triples(&["pop1,pop2,nope".to_string()], &groups).is_err());
+    }
 }
