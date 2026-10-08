@@ -165,6 +165,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
         regions: Vec::new(),
         tmp_dir: None,
         output_compressed: None,
+        output_bcf: None,
     }
 }
 
@@ -436,6 +437,7 @@ mod write_index {
             regions: Vec::new(),
             tmp_dir: None,
             output_compressed: None,
+            output_bcf: None,
         }
     }
 

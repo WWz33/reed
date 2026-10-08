@@ -259,9 +259,9 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
     let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism().expect("invariant: parallelism").get()
     });
-    // -O v|z[level]: explicit output type, `-o` names the file (the
-    // extension is only inferred when -O is absent). b/u are refused until
-    // the BCF encoder lands.
+    // -O v|z|b|u[level]: explicit output type, `-o` names the file (the
+    // extension is only inferred when -O is absent).
+    let mut output_bcf = None;
     let (output, compress_level, output_compressed) = match output_type.as_deref() {
         None => (out.clone().map(PathBuf::from), *compress_level, None),
         Some(spec) => {
@@ -274,12 +274,16 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
             match kind {
                 "v" => (out.clone().map(PathBuf::from), level, Some(false)),
                 "z" => (out.clone().map(PathBuf::from), level, Some(true)),
-                other => {
-                    return Err(format!(
-                        "output type {other:?} is not supported yet (use v or z; BCF is R6)"
-                    )
-                    .into())
+                "b" => {
+                    output_bcf = Some(level);
+                    (out.clone().map(PathBuf::from), level, None)
                 }
+                // `-Ou`: BGZF level-0 blocks (htslib's uncompressed BCF).
+                "u" => {
+                    output_bcf = Some(0);
+                    (out.clone().map(PathBuf::from), 0, None)
+                }
+                other => return Err(format!("unknown output type {other:?}").into()),
             }
         }
     };
@@ -319,6 +323,7 @@ pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + 
         regions,
         tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
         output_compressed,
+        output_bcf,
     };
     let report = reed::filter::run_filter(input_path(input).as_deref(), &spec_v2, &opts)?;
     eprintln!(

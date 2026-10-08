@@ -160,10 +160,9 @@ pub struct FilterCli {
     /// Recompute and write these INFO tags (bcftools `+fill-tags`)
     #[arg(long, value_name = "LIST")]
     pub fill_tags: Option<String>,
-    /// Output type: v (plain VCF) or z (BGZF VCF), with an optional
-    /// compression level (`-Oz6`); b/u are refused until the BCF encoder
-    /// lands
-    #[arg(short = 'O', long = "output-type", value_name = "v|z[0-9]")]
+    /// Output type: v (plain VCF), z (BGZF VCF), b (BCF) or u
+    /// (uncompressed BCF); optional compression level (`-Oz6`, `-Ob1`)
+    #[arg(short = 'O', long = "output-type", value_name = "v|z|b|u[0-9]")]
     pub output_type: Option<String>,
     /// Output VCF (.vcf.gz) — omit for plain VCF on the path/stdout
     #[arg(short, long)]

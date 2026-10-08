@@ -35,9 +35,18 @@
 | 长度前缀链 | `RecordFraming::{Newline,Raw}` 进引擎；`FrameChain` 沿 chunk 序传递"跨界记录"（字节 + 已有字节数 + 虚拟偏移），worker **先定界发布、后渲染**；`PublishGuard` 在 worker panic/早退时毒化链（abort token 可能被阻塞的 select! 消费，不能只靠 abort）；120 s 看门狗兜底 | 见下 | 全量 stats BCF 输入与 VCF.gz 输入**逐字节一致**（π/dxy/θ/Tajima/Fst 五文件 md5 相同）；1/56 线程一致 |
 | 接入 | `InputJob<J>` 包装器：stats/reports/qc/filter（含 `--mind` pass0）全部走同一文本消费实现；BCF 的 filter 强制 TwoPassReparse；`-r/-R` 区域路径也识别 BCF（探测格式 + 字典 + 跨界截断合法）；`reed index` BCF：链携带跨界记录起点 → worker 算虚拟偏移 → sink 配对相邻记录 | 见下 | fixture e2e（stats/reports/filter 三组，输出 md5 相同）；全量 `reed index clean.bcf` 10.9 s（3.3M 条），bcftools 用该索引查询与流式 `-t` 一致（2 区域 MATCH） |
 
+### V5 BCF 输出（B2 + B4）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| B2（noodles） | `BcfEncoder`（noodles `write_variant_record`，lazy parse + 全缺失字符串的 RecordBuf 回退）：每条记录 → BCF 字节 → 现有 `BlockWriter`（切块规则不变） | 见下 | fixture 与 50k 条：bcftools 读回与 VCF 输出逐字节一致 |
+| B4（原生） | `NativeEncoder`：一次文本遍历直接写 BCF（镜像 `render.rs`），整数宽度按 `bcf_enc_vint`（−120…127 / −32760…32767），GT 按 htslib 前缀定相规则（首等位在后继全定相时置位；缺失等位写 0），字典下标来自输出的 `StringMaps`；`REED_BCF_ENCODER=noodles` 可切回 B2 做 A/B | 见下 | 与 noodles 编码器**逐字节一致**（`bcf_encode.rs`，fixture 全部记录）；往返渲染 == 原始记录文本 |
+| header IDX | `bcf_header_text`：BCF 输出的 header 文本给每个 FILTER/INFO/FORMAT 行补显式 `IDX=`（htslib 约定），把 htslib 的字典钉到 `StringMaps` 的编号上；`-Ob` + `-W=tbi` 报错（BCF 只有 CSI） | 见下 | 字典删除/新增用例：`-x INFO/QD,INFO/FS --fill-tags AC,AN -Ob` 后 bcftools 读回与 `-Oz` 输出逐记录一致；`bcftools index -s`/`-r` 用 reed 写的 CSI 查询与流式一致 |
+| 性能 | `-Ob` 全量（3,315,604 条，8.1 GB 输出）**13.3 s** vs `-Oz` 11.1 s = 额外 **20%**（门 ≤30%）；noodles 路径为 41.8 s（+277%，未达门，故按 B4 的触发条件落地原生编码器） | 见下 | `bcftools view -H` 逐条与 VCF 输出 sha256 相同（`b0b22079…`） |
+
 ### 待办
 
-- V5 B2（`-Ob/-Ou` 输出）、V6 B3b（原生 BCF 手术）与 O6/O7；清理 C1–C4、C7 与 CLI 一致性（04 §2）。
+- V6：B3b（原生 BCF 手术）、O6（单遍样本列扫描）、O7（按连续段拷贝）；清理 C1–C4、C7 与 CLI 一致性（04 §2）；基准日志。
 
 ### 与文档的偏差
 

@@ -43,6 +43,20 @@ pub const fn int_sentinels(ty: u8) -> (i64, i64) {
     }
 }
 
+/// htslib's legal value ranges (`BCF_MIN_BT_INT*`/`BCF_MAX_BT_INT*`); the
+/// reserved sentinel values sit below `INT*_MIN_VALUE`.
+pub const INT8_MIN_VALUE: i64 = -120;
+/// See [`INT8_MIN_VALUE`].
+pub const INT8_MAX_VALUE: i64 = 127;
+/// See [`INT8_MIN_VALUE`].
+pub const INT16_MIN_VALUE: i64 = -32760;
+/// See [`INT8_MIN_VALUE`].
+pub const INT16_MAX_VALUE: i64 = 32767;
+/// See [`INT8_MIN_VALUE`].
+pub const INT32_MIN_VALUE: i64 = -2_147_483_640;
+/// See [`INT8_MIN_VALUE`].
+pub const INT32_MAX_VALUE: i64 = 2_147_483_647;
+
 /// The float bit patterns for missing and vector-end.
 pub const FLOAT_MISSING: u32 = 0x7F80_0001;
 /// See [`FLOAT_MISSING`].

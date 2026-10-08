@@ -7,9 +7,13 @@
 //! no intermediate objects.
 
 pub mod dict;
+pub mod encode;
+pub mod native_encode;
 pub mod record;
 pub mod render;
 
 pub use dict::BcfDict;
 pub use record::{declared_len, record_len, record_ref, record_site, BcfRecordRef, VirtualMap};
+pub use encode::{bcf_header_text, BcfEncoder};
+pub use native_encode::NativeEncoder;
 pub use render::render_record;

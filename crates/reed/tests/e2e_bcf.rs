@@ -94,6 +94,85 @@ fn reports_are_identical_across_formats() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `-Ob` output is BCF that reed's own decoder renders back to the exact
+/// records the `-Oz` path wrote (the round trip exercises encode + decode
+/// together, since tests cannot shell out to bcftools).
+#[test]
+fn bcf_output_round_trips_to_the_same_records() {
+    let dir = dir("bcf-out");
+    let spec = FilterSpecV2 {
+        site: reed_filter::spec::SiteRulesV2 {
+            min_qual: Some(50.0),
+            ..reed_filter::spec::SiteRulesV2::default()
+        },
+        // The fixture carries a haploid call (chr2:500).
+        policy: reed_filter::spec::PolicyRules {
+            ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpecV2::default()
+    };
+    let run = |input: &Path, out: &Path, bcf: Option<u8>| {
+        let opts = FilterOptions {
+            threads: 2,
+            output: Some(out.to_path_buf()),
+            write_index: reed::filter::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            quiet: true,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: if bcf.is_none() { Some(true) } else { None },
+            output_bcf: bcf,
+        };
+        run_filter(Some(input), &spec, &opts)
+    };
+    let text_out = dir.join("text.vcf.gz");
+    let bcf_out = dir.join("data.bcf");
+    run(&fixture("fix.vcf.gz"), &text_out, None).expect("invariant: text output");
+    run(&fixture("fix.vcf.gz"), &bcf_out, Some(6)).expect("invariant: bcf output");
+
+    // Render the BCF back through the input path and compare the records.
+    let rendered = render_via_reed(&bcf_out);
+    let expected = inflate_bgzf(&std::fs::read(&text_out).expect("invariant: text output"));
+    let records = |text: &str| {
+        text.lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(records(&rendered), records(&expected));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Reads a BCF file back with reed's own decoder, rendering every record.
+fn render_via_reed(path: &Path) -> String {
+    let bytes = std::fs::read(path).expect("invariant: BCF output");
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut data = Vec::new();
+    let mut rest = &bytes[..];
+    while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
+        inflater
+            .inflate_block(&rest[..total], &mut data)
+            .expect("invariant: BCF output inflates");
+        rest = &rest[total..];
+    }
+    assert_eq!(&data[..3], b"BCF", "output is BCF");
+    let l_text = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
+    let dict = reed_io::bcf::BcfDict::from_header(&data[9..9 + l_text]).expect("invariant: header");
+    let mut off = 9 + l_text;
+    let mut out = Vec::new();
+    while let Some(len) = reed_io::bcf::record_len(&data[off..]) {
+        let rec = reed_io::bcf::record_ref(&data[off..off + len]).expect("invariant: record");
+        reed_io::bcf::render_record(&rec, &dict, &mut out).expect("invariant: renders");
+        off += len;
+    }
+    String::from_utf8(out).expect("invariant: VCF text")
+}
+
 /// Filtering BCF input writes the same VCF text as filtering VCF.gz input.
 #[test]
 fn filter_output_is_identical_across_formats() {
@@ -132,6 +211,7 @@ fn filter_output_is_identical_across_formats() {
             regions: Vec::new(),
             tmp_dir: None,
             output_compressed: Some(true),
+            output_bcf: None,
         };
         run_filter(Some(input), &spec, &opts)
     };

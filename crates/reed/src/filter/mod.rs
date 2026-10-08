@@ -82,6 +82,8 @@ pub struct FilterOptions {
     /// Explicit output compression (`-O v|z`); `None` infers it from the
     /// output path's extension.
     pub output_compressed: Option<bool>,
+    /// BCF output (`-Ob` = level 6, `-Ou` = level 0).
+    pub output_bcf: Option<u8>,
 }
 
 /// Pass1's source: the still-unconsumed first open (single-pass runs), else
@@ -282,29 +284,61 @@ pub fn run_filter(
             .map_err(|e| FilterError::Spec(format!("header insert {key}: {e}")))?;
     }
     let mut header_bytes = Vec::new();
-    vcf::io::Writer::new(&mut header_bytes)
-        .write_header(&out_header)
-        .map_err(FilterError::from)?;
+    // `-Ob/-Ou` selects BCF; extension inference stays for the text path.
+    let bcf_level = match opts.output_bcf {
+        Some(level) => Some(level),
+        None => match &opts.output {
+            Some(p) if p.extension().and_then(|e| e.to_str()) == Some("bcf")
+                && opts.output_compressed.is_none() =>
+            {
+                Some(6)
+            }
+            _ => None,
+        },
+    };
+    match bcf_level {
+        Some(_) => {
+            // BCF file header: magic + l_text + NUL-terminated text
+            // (02-bcf.md §3.2); the records then ride BGZF blocks like any
+            // other payload.
+            let text = reed_io::bcf::bcf_header_text(&out_header).map_err(io_err)?;
+            header_bytes.extend_from_slice(b"BCF\x02\x02");
+            header_bytes.extend_from_slice(
+                &u32::try_from(text.len())
+                    .map_err(|_| FilterError::Spec("BCF header exceeds 4 GiB".into()))?
+                    .to_le_bytes(),
+            );
+            header_bytes.extend_from_slice(&text);
+        }
+        None => {
+            vcf::io::Writer::new(&mut header_bytes)
+                .write_header(&out_header)
+                .map_err(FilterError::from)?;
+        }
+    }
 
     // ---- output target ----
-    // Extension inference (01-review D12): .vcf.gz/.vcf.bgz (or any .gz/
-    // .bgz) compress; BCF output is refused until the BCF encoder exists —
-    // a silent text-VCF-in-.bcf is worse than a loud error.
-    let gz_out = match opts.output_compressed {
-        Some(compressed) => compressed,
-        None => match &opts.output {
-            None => false,
-            Some(p) => match p.extension().and_then(|e| e.to_str()) {
-                Some("gz") | Some("bgz") => true,
-                Some("bcf") => {
-                    return Err(FilterError::Spec(
-                        "BCF output is not supported yet; use a .vcf.gz output".into(),
-                    ))
-                }
-                _ => false,
+    if bcf_level.is_some() && opts.write_index == WriteIndex::Tbi {
+        // Tabix has no BCF flavour; htslib refuses the combination too.
+        return Err(FilterError::Spec(
+            "BCF output supports only a CSI index (-W, not -W=tbi)".into(),
+        ));
+    }
+    let gz_out = match bcf_level {
+        Some(_) => true,
+        None => match opts.output_compressed {
+            Some(compressed) => compressed,
+            None => match &opts.output {
+                None => false,
+                Some(p) => matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("gz") | Some("bgz")
+                ),
             },
         },
     };
+    let header_level = if bcf_level == Some(0) { 0 } else { opts.compress_level };
+    let _ = header_level;
     let writer: Box<dyn Write + Send> = match &opts.output {
         None => Box::new(std::io::BufWriter::with_capacity(1 << 20, std::io::stdout())),
         Some(p) => Box::new(std::io::BufWriter::with_capacity(
@@ -379,6 +413,7 @@ pub fn run_filter(
         job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         sketch_funnel
     } else {
+        let bcf = bcf_level.map(|_| Arc::new(out_header.clone()));
         let job = FilterJob {
             plan: Arc::new(plan),
             keep,
@@ -387,7 +422,8 @@ pub fn run_filter(
             n_samples_out,
             compressed,
             contig_names: Arc::clone(&contig_names),
-            level: opts.compress_level,
+            level: bcf_level.unwrap_or(opts.compress_level),
+            bcf,
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
         let mut sink = OutputSink {

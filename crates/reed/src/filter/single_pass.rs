@@ -12,10 +12,41 @@ use reed_filter::eval::edit_plan::fill_info_set;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan, InfoValueOut};
+use reed_io::bcf::{BcfEncoder, NativeEncoder};
 use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
 use super::record_pipeline::{gt_subfield_index, PipelineOptions, RecordPipeline};
 use super::job_err;
+
+/// The BCF encoders a worker may use: the native B4 encoder by default,
+/// noodles' B2 encoder behind `REED_BCF_ENCODER=noodles` (the two must
+/// produce equivalent records; the comparison is part of the B4 gate).
+pub(super) struct BcfEncoders {
+    header: Arc<noodles::vcf::Header>,
+    native: NativeEncoder,
+    noodles: Option<BcfEncoder>,
+}
+
+impl BcfEncoders {
+    fn new(header: Arc<noodles::vcf::Header>) -> Result<Self, reed_io::IoError> {
+        let native = NativeEncoder::new(&header)?;
+        let noodles = if std::env::var("REED_BCF_ENCODER").is_ok_and(|v| v == "noodles") {
+            let mut encoder = BcfEncoder::new()?;
+            encoder.write_header(&header)?;
+            Some(encoder)
+        } else {
+            None
+        };
+        Ok(Self { header, native, noodles })
+    }
+
+    fn encode(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<(), reed_io::IoError> {
+        match &mut self.noodles {
+            Some(encoder) => encoder.encode_record(&self.header, line, out),
+            None => self.native.encode(line, out),
+        }
+    }
+}
 
 /// The chunk partial: output bytes plus the funnel contribution.
 #[derive(Default)]
@@ -36,6 +67,10 @@ pub(super) struct FilterJob {
     pub(super) compressed: bool,
     pub(super) contig_names: Arc<[Vec<u8>]>,
     pub(super) level: u8,
+    /// BCF output (`-Ob/-Ou`): the header the dictionary keys come from.
+    /// Each worker builds its own encoder from it (and the environment
+    /// selects the native encoder over noodles' B2 fallback for A/B tests).
+    pub(super) bcf: Option<Arc<noodles::vcf::Header>>,
 }
 
 /// Worker scratch (reused across chunks).
@@ -44,6 +79,11 @@ pub(super) struct WorkerScratch {
     pipeline: RecordPipeline,
     info_set: Vec<(&'static [u8], InfoValueOut)>,
     edit_buf: Vec<u8>,
+    /// Encoded BCF bytes before they enter the block writer.
+    bcf_buf: Vec<u8>,
+    /// This worker's BCF encoder (native by default, noodles on
+    /// `REED_BCF_ENCODER=noodles` for the B2/B4 byte comparison).
+    bcf: Option<BcfEncoders>,
     writer: BlockWriter,
     funnel: FunnelPartial,
 }
@@ -110,8 +150,17 @@ impl FilterJob {
             pipeline,
             info_set: Vec::new(),
             edit_buf: Vec::new(),
-            writer: BlockWriter::new(self.level, self.compressed)
-                .expect("invariant: the level comes from the CLI clamp"),
+            bcf_buf: Vec::new(),
+            bcf: self.bcf.as_ref().map(|header| {
+                BcfEncoders::new(Arc::clone(header))
+                    .expect("invariant: the output header encodes")
+            }),
+            writer: if self.compressed {
+                BlockWriter::new(self.level, true)
+            } else {
+                BlockWriter::new(self.level, false)
+            }
+            .expect("invariant: the level comes from the CLI clamp"),
             funnel: FunnelPartial {
                 head_hits: vec![0; self.plan.head.len()],
                 tail_hits: vec![0; self.plan.tail.len()],
@@ -135,7 +184,7 @@ impl FilterJob {
             tail_n_samples: Some(self.n_samples_out as u64),
             counts: true,
         };
-        let WorkerScratch { pipeline, info_set, edit_buf, writer, funnel } = scratch;
+        let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel } = scratch;
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let site = view.site;
             let counts = view.counts.expect("invariant: counts requested");
@@ -164,7 +213,16 @@ impl FilterJob {
                 start1: view.pos1,
                 ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
             };
-            writer.push_record(edit_buf, key).map_err(job_err)
+            match bcf {
+                None => writer.push_record(edit_buf, key).map_err(job_err),
+                // The edited text is encoded to BCF; the record's bytes then
+                // flow through the block writer like any other payload.
+                Some(encoders) => {
+                    bcf_buf.clear();
+                    encoders.encode(edit_buf, bcf_buf).map_err(job_err)?;
+                    writer.push_record(bcf_buf, key).map_err(job_err)
+                }
+            }
         })?;
         Ok(())
     }
