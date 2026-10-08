@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use crate::error::EngineError;
 
 /// In-flight chunks per worker (§7.4): the ticket window capacity is
 /// `TICKETS_PER_WORKER × workers`.

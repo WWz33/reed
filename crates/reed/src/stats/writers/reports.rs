@@ -310,7 +310,7 @@ impl ReportJob {
         // plink2's layout needs an identifiable row: when the input ID is
         // missing it synthesizes `chrom_pos` (same rule here).
         let id_missing = lr.id() == b"." || lr.id().is_empty();
-        let mut write_prefix = |out: &mut Vec<u8>| {
+        let write_prefix = |out: &mut Vec<u8>| {
             out.extend_from_slice(chrom);
             out.push(b'\t');
             if id_missing {
@@ -443,7 +443,7 @@ impl ReportSink {
 impl OrderedSink<ReportPartial> for ReportSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut ReportPartial) -> Result<(), EngineError> {
         self.n_records += partial.n_records;
-        let mut append = |writer: &mut Option<BufWriter<std::fs::File>>, bytes: &[u8]| {
+        let append = |writer: &mut Option<BufWriter<std::fs::File>>, bytes: &[u8]| {
             if let Some(w) = writer {
                 w.write_all(bytes).map_err(EngineError::Io)?;
             }
@@ -472,7 +472,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
 
     fn finish(mut self) -> Result<u64, EngineError> {
         let mut files = Vec::new();
-        let mut path = |suffix: &str| {
+        let path = |suffix: &str| {
             let mut p = self.request.prefix.as_os_str().to_os_string();
             p.push(suffix);
             PathBuf::from(p)

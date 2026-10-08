@@ -257,7 +257,7 @@ impl NativeEncoder {
                             s.extend_from_slice(&f.to_le_bytes());
                         }
                     }
-                    (InfoType::String, Some(v)) | (_, Some(v)) => {
+                    (_, Some(v)) => {
                         encode_typed_string(s, if v == b"." { &[] } else { v });
                     }
                     (InfoType::Integer, None) => {

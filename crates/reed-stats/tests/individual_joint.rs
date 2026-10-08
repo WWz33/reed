@@ -4,7 +4,7 @@
 
 use reed_core::count::SiteGroupCounts;
 use reed_core::genotype::{write_genotype, GenotypePolicies, PlaneBlock, PolicyCounters};
-use reed_core::sample::{SampleMask, SampleTable};
+use reed_core::sample::SampleTable;
 use reed_stats::individual::{IndividualFAcc, JointSfsAcc};
 
 /// Builds a PlaneBlock from explicit diploid genotypes

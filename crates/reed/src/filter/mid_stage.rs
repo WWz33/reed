@@ -25,8 +25,6 @@ pub(super) struct SiteEmit {
 /// A chunk's pass1 decisions, produced by the mid stage.
 #[derive(Clone, Debug, Default)]
 pub(super) struct ChunkDecision {
-    /// Records in the chunk (body + trailing seam).
-    pub n_records: u64,
     /// Bit per record: passed the head rules.
     pub head_bits: Vec<u64>,
     /// Bit per site (head-passing ordinal): survived the tail rules.
@@ -176,7 +174,6 @@ fn decide_chunk_inner(
         .and_then(|s| survivors.get(s).cloned())
         .flatten();
     ChunkDecision {
-        n_records: frag.n_records,
         head_bits: frag.head_bits.clone(),
         survivor_bits,
         survivors,

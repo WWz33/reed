@@ -13,7 +13,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use reed_io::chunk::plain::PlainChunkSource;
-use reed_io::chunk::region::{FileIndex, IndexQuery as _, Region, RegionChunkSource};
+use reed_io::chunk::region::{FileIndex, Region, RegionChunkSource};
 use reed_io::chunk::{BgzfChunkSource, ChunkSource};
 use reed_io::format::Format;
 use reed_io::header::HeaderFacts;

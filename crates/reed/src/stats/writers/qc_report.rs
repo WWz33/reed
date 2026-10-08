@@ -17,7 +17,6 @@ use reed_core::ChunkId;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
-use reed_io::chunk::{BgzfChunkSource, ChunkSource};
 use reed_io::vcf::fixed::{parse_pos1, parse_qual};
 use reed_io::vcf::info::info_fragments;
 use reed_io::vcf::line::LineRef;
@@ -27,7 +26,7 @@ use reed_core::genotype::{
 use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
 use reed_io::vcf::site::SiteView;
 use reed_io::Locus;
-use reed_stats::summary::report::{acgt, alt_class, is_transition, subst_index, PscAcc, QcReportAcc};
+use reed_stats::summary::report::{acgt, alt_class, is_transition, subst_index, QcReportAcc};
 
 /// Run options.
 #[derive(Clone, Debug, Default)]
@@ -52,7 +51,6 @@ struct QcPartial {
 /// Worker scratch: scanner + INFO fragment ranges + per-record allele state.
 struct QcScratch {
     scanner: GenotypeScanner,
-    n_samples: usize,
     /// Per-sample allele index pairs of the current record.
     gt_pairs: Vec<[Option<u16>; 2]>,
     /// Per-record per-ALT allele counts and AN (all samples).
@@ -69,7 +67,7 @@ impl ChunkJob for QcJob {
 
     fn run_chunk(
         &self,
-        chunk: &reed_io::chunk::ChunkBytes,
+        _chunk: &reed_io::chunk::ChunkBytes,
         body: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
@@ -114,7 +112,6 @@ impl QcJob {
                 },
             )
             .tracking_alleles(),
-            n_samples: self.n_samples,
             gt_pairs: vec![[None, None]; self.n_samples],
             ac: Vec::new(),
             an: 0,
@@ -278,7 +275,7 @@ impl QcJob {
                     if allele == 0 {
                         continue;
                     }
-                    if let (Some(r), Some(idx)) =
+                    if let (Some(_r), Some(idx)) =
                         (acgt(reference[0]), usize::from(allele).checked_sub(1))
                     {
                         if idx >= classes.len() {
@@ -384,7 +381,7 @@ impl QcJob {
             }
             let is_snp = class == reed_core::site::VariantClass::Snv;
             let ts = is_snp && is_transition(reference[0], alt[0]);
-            let tv = is_snp && !ts;
+            let _tv = is_snp && !ts;
             // TSTV: every SNV ALT.
             if is_snp {
                 if ts {
@@ -485,21 +482,6 @@ impl Positions for [u8] {
     fn positions_of(&self, needle: u8) -> PositionsIter<'_> {
         PositionsIter { data: self, needle, from: 0 }
     }
-}
-
-/// Parses a GT subfield into an allele pair (`None` = missing).
-fn parse_gt_pair(gt: &[u8]) -> [Option<u16>; 2] {
-    let mut out = [None, None];
-    for (seen, token) in gt.split(|&b| b == b'/' || b == b'|').take(2).enumerate() {
-        if token != b"." && !token.is_empty() && token.iter().all(|b| b.is_ascii_digit()) {
-            let mut v = 0_u16;
-            for &b in token {
-                v = v.saturating_mul(10).saturating_add(u16::from(b - b'0'));
-            }
-            out[seen] = Some(v);
-        }
-    }
-    out
 }
 
 /// The ordered sink: merges partials and hands the report back.

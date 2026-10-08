@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn overlapping_and_unassigned_samples_allowed() {
-        let samples = SampleTable::from_names(["s1", "s2"]).unwrap();
+        let _samples = SampleTable::from_names(["s1", "s2"]).unwrap();
         let groups = GroupTable::from_members(
             2,
             [
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicates_and_empties() {
-        let samples = SampleTable::from_names(["s1", "s2"]).unwrap();
+        let _samples = SampleTable::from_names(["s1", "s2"]).unwrap();
         assert!(GroupTable::from_members(
             2,
             [

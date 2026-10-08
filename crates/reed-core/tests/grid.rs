@@ -4,7 +4,7 @@
 use proptest::prelude::*;
 
 use reed_core::grid::{BinId, WindowGrid};
-use reed_core::coord::{Interval0, Pos0};
+use reed_core::coord::Pos0;
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]

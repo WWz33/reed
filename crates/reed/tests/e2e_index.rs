@@ -100,7 +100,6 @@ fn tbi_is_written_and_refuses_wide_coordinates() {
     let outcome = run_index(&vcf, WriteIndex::Tbi, None, 4).expect("invariant: tbi builds");
     assert!(outcome.path.to_string_lossy().ends_with(".tbi"));
     // The TBI has its own magic: read it with the tabix reader.
-    use noodles::csi::BinningIndex as _;
     let index = noodles::tabix::fs::read(&outcome.path).expect("invariant: tbi reads");
     assert_eq!(index.reference_sequences().len(), 2);
     let _ = std::fs::remove_dir_all(&dir);

@@ -12,7 +12,7 @@ use crate::units::input_path;
 /// # Errors
 ///
 /// Driver and output failures.
-pub fn run_qc(args: QcCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_qc(args: QcCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     eprintln!(
         "reed qc: warning: `reed qc` is deprecated and will be removed; use \
          `reed stats --summary` instead"

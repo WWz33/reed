@@ -163,7 +163,6 @@ where
 
 /// Shared state handed to the pipeline threads.
 struct Shared {
-    first: Arc<FirstError>,
     in_flight: AtomicU64,
     in_flight_peak: AtomicU64,
 }
@@ -212,7 +211,6 @@ where
         let _ = ticket_tx.send(());
     }
     let shared = Arc::new(Shared {
-        first: Arc::clone(first),
         in_flight: AtomicU64::new(0),
         in_flight_peak: AtomicU64::new(0),
     });

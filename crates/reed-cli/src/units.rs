@@ -8,7 +8,7 @@ use std::path::PathBuf;
 /// # Errors
 ///
 /// A non-numeric length or one whose scaled value overflows `u64`.
-pub fn parse_size(text: &str) -> Result<u64, String> {
+pub(crate) fn parse_size(text: &str) -> Result<u64, String> {
     let lower = text.trim().to_ascii_lowercase();
     let (digits, scale) = if let Some(rest) = lower.strip_suffix("kb") {
         (rest, 1_000_u64)
@@ -34,6 +34,6 @@ pub fn parse_size(text: &str) -> Result<u64, String> {
 
 /// `-` means stdin; everything else is a file path.
 #[must_use]
-pub fn input_path(arg: &str) -> Option<PathBuf> {
+pub(crate) fn input_path(arg: &str) -> Option<PathBuf> {
     (arg != "-").then(|| PathBuf::from(arg))
 }

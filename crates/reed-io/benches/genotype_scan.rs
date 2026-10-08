@@ -1,5 +1,8 @@
 //! O6 gate (doc_v3 03-performance.md): time the genotype scanner over one
 //! realistic 348-sample record, for the GT-only and the GT+DP+GQ plans.
+// The criterion macro expands to a `pub fn main()` with nothing to document.
+#![allow(missing_docs)]
+
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use reed_core::genotype::{GenotypePolicies, PolicyCounters};

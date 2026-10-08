@@ -13,6 +13,7 @@ use reed_core::math::sum::NeumaierSum;
 /// order. Small (two f64 per site) and trivially additive at the sink.
 #[derive(Clone, Debug, Default)]
 pub struct BlockPartial {
+    /// `(numerator, denominator)` per site, in site order.
     pub values: Vec<(f64, f64)>,
 }
 
@@ -110,7 +111,7 @@ impl BlockJackknife {
             return None;
         }
         let mut vj = Vec::with_capacity(n_blocks);
-        let mut iter_blocks = || -> Vec<(NeumaierSum, NeumaierSum, u64)> {
+        let iter_blocks = || -> Vec<(NeumaierSum, NeumaierSum, u64)> {
             let mut out: Vec<(NeumaierSum, NeumaierSum, u64)> =
                 self.blocks.values().cloned().collect();
             if let Some((_, n, d, c)) = &self.open {

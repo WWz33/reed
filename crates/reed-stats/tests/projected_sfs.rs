@@ -110,9 +110,9 @@ fn hand_computed_projection() {
 #[test]
 fn accumulator_projects_and_merges() {
     let mut cache = ProjectionCache::new(4);
-    let mut a = ProjectedSfsAcc::new(0, 4, false).expect("invariant: n ≥ 2");
-    let mut b = ProjectedSfsAcc::new(0, 4, false).expect("invariant: n ≥ 2");
-    let mut whole = ProjectedSfsAcc::new(0, 4, false).expect("invariant: n ≥ 2");
+    let mut a = ProjectedSfsAcc::new(4, false).expect("invariant: n ≥ 2");
+    let mut b = ProjectedSfsAcc::new(4, false).expect("invariant: n ≥ 2");
+    let mut whole = ProjectedSfsAcc::new(4, false).expect("invariant: n ≥ 2");
 
     // Site A: m=4, alt=1 (k=1 → weight 1). Site B: m=4, alt=2.
     let wa = cache.weights(4, 1);
@@ -122,7 +122,7 @@ fn accumulator_projects_and_merges() {
     b.push_weighted(Some(&wb));
     whole.push_weighted(Some(&wb));
     // Site C: m=2 < n → skipped.
-    let wc = cache.weights(2, 1);
+    let _wc = cache.weights(2, 1);
     a.push_weighted(None);
     whole.push_weighted(None);
 
@@ -152,14 +152,14 @@ fn cache_returns_identical_weights() {
 #[test]
 fn projected_tajima_on_known_spectrum() {
     // The neutral spectrum ξ_k = 1/k has π = S/a₁ exactly → D = 0.
-    let mut acc = ProjectedSfsAcc::new(0, 10, false).expect("invariant: n ≥ 2");
+    let mut acc = ProjectedSfsAcc::new(10, false).expect("invariant: n ≥ 2");
     for k in 1..10 {
         acc.push_weighted(Some(&[(k, 1.0 / f64::from(k))]));
     }
     let d = acc.tajima_d(0).expect("invariant: variance > 0");
     assert!(d.abs() < 1e-9, "neutral spectrum: D={d}");
     // Pure het excess (all mass at high k) → negative D.
-    let mut excess = ProjectedSfsAcc::new(0, 10, false).expect("invariant: n ≥ 2");
+    let mut excess = ProjectedSfsAcc::new(10, false).expect("invariant: n ≥ 2");
     excess.push_weighted(Some(&[(9, 10.0)]));
     let d_excess = excess.tajima_d(0).expect("invariant: variance > 0");
     assert!(d_excess < 0.0, "het excess: D={d_excess}");

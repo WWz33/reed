@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use std::path::PathBuf;
 
 use reed::index::{run_index, WriteIndex};
 
@@ -13,7 +12,7 @@ use crate::cli::IndexCli;
 /// # Errors
 ///
 /// Unknown index types, transport failures and unsorted input.
-pub fn run_index_cli(args: IndexCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let IndexCli { input, csi: _, tbi, output, force, threads } = args;
     let flavor = if tbi { WriteIndex::Tbi } else { WriteIndex::Csi };
     let out = output.as_deref().map(Path::new);

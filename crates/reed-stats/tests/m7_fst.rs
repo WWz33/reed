@@ -103,17 +103,6 @@ fn wc84_skips_degenerate_sites() {
     assert!(acc.value().is_none());
 }
 
-/// snputils's "hudson" branch: num = dxy − (π1+π2)/2 with
-/// πi = 2·pi(1−pi)·n/(n−1), den = dxy — the finite-sample-corrected
-/// Hudson estimator (§9.2).
-fn ref_hudson_finite(an1: u32, alt1: u32, an2: u32, alt2: u32) -> (f64, f64) {
-    let p1 = f64::from(alt1) / f64::from(an1);
-    let p2 = f64::from(alt2) / f64::from(an2);
-    let dxy = p1 * (1.0 - p2) + p2 * (1.0 - p1);
-    let pi1 = 2.0 * p1 * (1.0 - p1) * f64::from(an1) / f64::from(an1 - 1);
-    let pi2 = 2.0 * p2 * (1.0 - p2) * f64::from(an2) / f64::from(an2 - 1);
-    (dxy - (pi1 + pi2) / 2.0, dxy)
-}
 
 
 

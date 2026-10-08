@@ -26,7 +26,6 @@ use reed_core::ChunkId;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
-use reed_io::chunk::{BgzfChunkSource, ChunkSource};
 use reed_core::count::code_has_alt;
 use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PloidyPolicy, PolicyCounters};
 use reed_io::vcf::genotype_scan::GenotypeScanner;

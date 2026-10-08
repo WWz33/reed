@@ -4,9 +4,6 @@
 //! invariance.
 
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use reed_core::ChunkId;
@@ -356,19 +353,6 @@ fn source_errors_propagate() {
 #[test]
 fn partials_arrive_in_chunk_order_at_the_sink() {
     // A job that records its own chunk id; the sink asserts ids increase.
-    struct IdJob {
-        seen: Arc<AtomicU64>,
-    }
-    impl ChunkJob for IdJob {
-        type Partial = u64;
-        type Scratch = ();
-        fn run_chunk(&self, chunk: &ChunkBytes, _body: &[u8], _: &mut ()) -> Result<u64, EngineError> {
-            Ok(chunk.id.get())
-        }
-        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<u64, EngineError> {
-            Ok(u64::MAX) // seam marker; excluded from the order assertion below
-        }
-    }
     struct IdSink {
         last_id: u64,
         n_seams: u64,

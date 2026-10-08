@@ -135,7 +135,7 @@ impl QualDist {
         let lv = (value as f64).log10().floor() as u32;
         let level = lv - 4;
         let step = 10_u64.pow(level);
-        (NEXACT + NLEVEL * (level as usize - 1) + ((value - 10_u64.pow(lv)) / step) as usize)
+        NEXACT + NLEVEL * (level as usize - 1) + ((value - 10_u64.pow(lv)) / step) as usize
     }
 
     /// bcftools's `dist_get` range for a bin index: `[beg, end)` in iqual

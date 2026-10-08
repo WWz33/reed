@@ -12,6 +12,8 @@
 | C0 | `--mind` 改为 plink2 语义：统计**通过头部规则**的记录上、**掩码之后**的样本缺失；分母 = 头部存活的记录数。`MissingJob`（SinglePass/TwoPass 的 pass0）改走与单遍相同的 `RecordPipeline`（含掩码字段扫描），sketch pass0 同步改为 head 存活 + post-mask | 见下 | 与 plink2 对拍：fixture 上 `--vcf-min-gq 20 --mind 0.1` 两边都保留 {A,C}（B 掩码 2/10、D 缺失 3/10 被剔除，C 恰为 0.1 保留）；另有头部规则收缩分母的回归用例（s0 旧口径 91/100→剔除、新口径 1/10→保留），三策略输出一致 |
 | C0b | `cohort: Option<CohortRule>` 拆为 `sample_select: Option<SampleSelect>`（`-s/-S/--keep/--remove`，keep ∩ ¬remove）与 `mind: Option<f64>`；先静态子集、后 `--mind`（plink2 同序）。`-s ^A,B` 排除语法；同极性参数（`-s`+`-S`、`-s`+`--keep`、`-s ^`+`--remove`、重复 `-s`）报错而非静默择一 | 见下 | 组合用例：`-S keep.txt --mind 0.2` 保留集合正确；`to_args()` 往返测试覆盖组合与冲突报错 |
 | 防御 | `eval_head`/`eval_tail` 的计数器长度与规则数不一致时断言失败（此前 zip 静默跳过规则，导致 pass0 漏评估头部规则） | 见下 | 该断言在开发中直接定位了 pass0 funnel 未初始化的缺陷 |
+| C0c（补，非文档列出） | 默认双等位门与 R7 之前的 AC 一致性：`plan::compile` 增加 `biallelic_gate` 参数（filter=true、stats=false，stats 的多等位处理按各报告器定义）；spec 不允许多等位输入（`multiallelic != "allow"` 且 `max_alt_alleles <= 1`）时压入 `HeadRule::BiallelicGate`（funnel id `site.biallelic_gate`），语义与 §11.6"允许多等位输入（`multiallelic != reject` 或 `max_alt_alleles > 1`）"及 doc_v2 STATUS"位点级双等位门"一致；spec 允许多等位而 AC/MAF/HWE 需要重算时（`-s/--mind` 会自动打开 AC/AN 更新）在写输出前报错——A7 的"在 plan 期拒绝"分支（逐 ALT 计数见 R7） | 缺陷复现：`A>G,T`（GT `1/2`）+ `-s s1`，改前写 `AC=2` 而 bcftools 写 `AC=1,1`（AC 头声明 Number=A，单值非法）；改后默认门先剔除该记录，显式允许时给出带 `-M 2`/`-I` 指引的错误 | 新增 e2e `default_biallelic_gate_drops_multiallelic_records`、`ac_update_with_allowed_multiallelics_is_rejected`；全量 `clean.bcf` 扫描 0 条多等位（`bcftools view -m3`，8.1 GB 全文件）；区域 A/B：隐式门 ≡ 显式 `-M 2`（正文 md5 相同），条数 == bcftools（8364 条） |
+| rustc 警告清零 | `unreachable_pub`（bin crate 的 `pub` → `pub(crate)`，cargo fix 机械修改）、未用 import/`mut`/变量、死代码（`Shared.first`、`QcScratch.n_samples`、`IndexScratch.starts`、`ChunkDecision.n_records`、`ProjectedSfsAcc.group`、`FromI64`、`parse_gt_pair`、测试 helper）、重复 `#[test]`、`items after a test module`、bench 的 `missing_docs` | `cargo build --workspace --all-targets` **0 warning** |
 
 开发中发现并修复的缺陷（非文档列出）：pass0 的 `FunnelPartial` 未按规则数初始化，`eval_head` 的 `zip` 空转使头部规则被跳过（SinglePass/TwoPass 的 `--mind` 因此按旧口径统计）；pass0 的扫描器未带计划 FORMAT 列，掩码未参与缺失计数。
 
@@ -67,10 +69,11 @@
 | C4 合并 QC 入口 / reed-qc 并入 reed-stats | 已做 | `reed qc` 保留为隐藏弃用别名（stderr 警告）；`reed-qc` crate 删除，代码并入 `reed-stats::summary`（`summary/{mod.rs,histogram.rs,report.rs}`，`serde` 依赖随之移入），其测试改引用新路径；`reed/src/{stats,reports,pixy,qc,qc_report}.rs` 按 doc_v2 03 §8 移到 `reed/src/stats/{job.rs,writers/*.rs}`，旧公共路径（`reed::reports`/`reed::pixy`/`reed::qc_report`）由 crate 根 re-export 保持 | 342 测试全绿、clippy 干净、工作区从 9 个 crate 减到 8；`writers/*` 内部尚未按格式细分（`plink2_table`/`vcftools_depth`/`bcftools_stats`/`log`），文件保持现有单文件结构 |
 | C2 的 `pub(crate)` 化 | 改为 `#[doc(hidden)]` | 对拍套件是 integration test，需要跨 crate 访问这些累加器；移入单元测试是纯机械工作 |
 | C5 类型化 `EngineError` | 已做（doc_v2 03 §4.4 的形状，doc_v3 C5 引用该节）：`Io(std::io::Error)`、`Input(reed_io::IoError)`（保留 Locus）、`Job(Box<dyn Error + Send + Sync>)`（保留类型与 source 链）、`WorkerPanicked`/`MemBudgetExceeded`/`Aborted`；`EngineError::job(msg)` 造消息型错误，`From<CoreError>`/`From<IoError>`/`From<io::Error>` 三处转换 | 构造点全部改走 typed 转换；`source_errors_propagate` 断言传输错误落到 `Input(IoError::Io(_))`；335 测试全绿 |
-| C7 clippy pedantic | 已做 | pedantic 警告 ~700 → **43**：`expect()` 逐条审查（生产代码全部带 `invariant:` 前缀，输入相关条件返回错误；测试侧由 clippy.toml 的 allow-*-in-tests 覆盖）→ 豁免该 lint 并在 Cargo.toml 注明审查结论；`cast_possible_truncation` 逐条处理（修复 BCF 记录长度前缀与 GT 等位下标的真实截断风险，其余 22 个文件按"构造上有界"加文件级 `#![allow]` + 不变量说明）；`cast_lossless/possible_wrap/sign_loss/precision_loss` 四类按 04 §C7"风格类按项豁免"处理；保留 `format_push_string`/`naive_bytecount`/`float_cmp` 等 43 条有信息量的提示 | `cargo clippy --workspace` 0 error、43 warning（全部为性能/正确性提示） |
+| C7 clippy pedantic | 已做 | pedantic 警告 ~700 → **44**：`expect()` 逐条审查（生产代码全部带 `invariant:` 前缀，输入相关条件返回错误；测试侧由 clippy.toml 的 allow-*-in-tests 覆盖）→ 豁免该 lint 并在 Cargo.toml 注明审查结论；`cast_possible_truncation` 逐条处理（修复 BCF 记录长度前缀与 GT 等位下标的真实截断风险，其余 22 个文件按"构造上有界"加文件级 `#![allow]` + 不变量说明）；`cast_lossless/possible_wrap/sign_loss/precision_loss` 四类按 04 §C7"风格类按项豁免"处理；保留 `format_push_string`/`naive_bytecount`/`float_cmp` 等 44 条有信息量的提示；测试/基准目标另修 3 处 deny 级（`items after a test module`、多余 `.into()`、无效果的 struct update） | `cargo clippy --workspace` 0 error、44 warning（全部为性能/正确性提示）；`--all-targets` 0 error、164 warning（含测试/基准） |
 | stats 的位点/阈值过滤参数 | 已做 | CLI 层共用 `SiteFilterArgs`（`-v/-V/--snps-only/-m/-M/-f/-i/-e/--min-dp/--max-dp/--min-gq/--set-gts/-q/-Q/--geno/--maf/--max-maf/--mac/--max-mac/--hwe`，INFO 更新类仍只属 filter）；执行用 `reed::filtered::FilteredJob` 包住 stats job——单遍内跑 filter 的 `RecordPipeline`（head→mask→tail）并用 `edit_vcf_line` 把掩码基因型改写成 `./.`，内层消费者看到的就是"物理 filter 过"的字节 | 五种参数组合下 `stats --X` 与"`filter --X` 落盘 + `stats`"的 π 表**逐字节相同**（含 BCF 输入；CLI 测试 `stats_site_filters_match_the_filter_then_stats_composition`） |
 | stats 的 `--mind` | 未做 | 需要先跑一遍全局缺失还原（filter 的 pass0），属多遍策略；未暴露该参数以免静默忽略 |
 | B 门补充 | 已补：**noodles 差分**（`bcf_vs_noodles.rs`：fixture 全部记录 + `clean.bcf` 前 10 万条，逐 token 值等价；noodles 的浮点文本与 htslib 不同，已注明）、**链切分穷举**（`e2e_bcf.rs::chain_framing_is_boundary_independent`：同一 BCF 按 13–512 字节重切块，输出记录不变）、**BCF 输出确定性**（1/2/3/7/56 线程字节相同） | 未做：typed-value proptest（该设计里 typed 值不单独成层） |
+| 多等位逐等位重算（R7 的一部分） | 未做（有守卫，不再静默写错） | doc_v3 05-roadmap R7："V1 之后任意时间"；现状：默认门剔除多等位记录；显式允许（`-M 3+` 或 `multiallelic = "allow"`）且需 AC/MAF/HWE 重算时在写输出前报错，不会写出 Number=A 单值 |
 | V6：B3b 原生 BCF 手术 | 不做（文档标注"可选/性能阶段"） | 渲染+编码路径已正确；原生手术（原样拷贝/原位掩码/INFO 重写）需要在 BCF 字节上重写一遍过滤循环——正是渲染路线刻意避免的"两份消费者"；现状代价已实测：BCF→BCF 17.0 s（VCF.gz→VCF.gz 11.1 s），都在可接受范围 |
 | O6/O7 扫描与编辑微优化 | 未做 | 需微基准门（`benches/genotype_scan.rs`、`benches/line_edit.rs`） |
 | 基准日志（03 §3 协议） | 部分：本轮的实测数字都记在本文档；未写入 `bench/e2e/results.tsv` | — |
@@ -84,8 +87,10 @@
 
 | 检查 | 结果 |
 |---|---|
-| `cargo test --release --workspace` | **341 通过 / 0 失败**（含 5 个 v02-oracle 回归、BCF 输入/输出、三条链门） |
-| `cargo clippy --release --workspace` | 无 `clippy::all` 错误（pedantic 仍为 warning） |
+| `cargo test --release --workspace` | **343 通过 / 0 失败**（含 5 个 v02-oracle 回归、BCF 输入/输出、三条链门、双等位门与 R7 守卫用例） |
+| `cargo build --release --workspace --all-targets` | **0 warning**（此前 25 条 `unreachable_pub` + 未用 import/死代码等已清零） |
+| `cargo clippy --release --workspace` | 0 error、44 warning（全部为性能/正确性提示）；`--all-targets` 0 error、164 warning |
+| 双等位门 | 全量 `clean.bcf` 0 条多等位（`bcftools view -m3`）；`-r Chr01:1-2000000` 隐式门 ≡ 显式 `-M 2`（正文 md5 `18676382…` 相同），条数 8364 == bcftools |
 | gold 对拍 | `check_parity.py` 对 `bcftools.full`：**PASS**（位点 jaccard 1.0，基因型不一致 0）；gold 等价命令 9.0 s，正文 md5 `7aedc59a…` 与改动前相同 |
 | 跨格式一致 | 全量 `clean.bcf` ≡ `clean.vcf.gz`：stats 五个输出文件 md5 两两相同（π/dxy/θ/Tajima/Fst，9501 窗） |
 | 渲染一致 | `clean.bcf` 全量 3,315,604 条渲染 sha256 == `bcftools view -H`（`548de25b…`） |

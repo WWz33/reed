@@ -176,7 +176,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn renders_a_combined_sample_selection() {
         let spec = FilterSpecV2 {
             sample_select: Some(super::super::SampleSelect {

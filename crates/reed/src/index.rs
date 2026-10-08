@@ -76,7 +76,6 @@ struct IndexScratch {
     inflater: reed_io::bgzf::inflate::Inflater,
     text: Vec<u8>,
     contigs: ContigTable,
-    starts: Vec<RecordStart>,
 }
 
 /// Maps inflated-text offsets back to virtual offsets through the chunk's
@@ -149,7 +148,6 @@ impl ChunkJob for IndexJob {
             inflater: reed_io::bgzf::inflate::Inflater::new(),
             text: Vec::new(),
             contigs: ContigTable::new(self.contig_names.iter().cloned()),
-            starts: Vec::new(),
         });
         let view = {
             let IndexScratch { inflater, text, .. } = scratch;

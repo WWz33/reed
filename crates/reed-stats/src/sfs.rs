@@ -153,6 +153,8 @@ pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
 /// allocation).
 pub type WeightsArc = std::sync::Arc<Vec<(u32, f64)>>;
 
+/// Per-`n` projection-weight memo (§9.4): cleared wholesale whenever it
+/// reaches [`PROJECTION_CACHE_CAPACITY`] entries.
 #[derive(Debug, Default)]
 pub struct ProjectionCache {
     n: u32,
@@ -197,7 +199,6 @@ impl ProjectionCache {
 /// §8.4 tolerance.
 #[derive(Clone, Debug)]
 pub struct ProjectedSfsAcc {
-    group: usize,
     n: u32,
     folded: bool,
     /// `bins[k]` = ξ_k for `k` in `1..n` (index 0 unused).
@@ -207,12 +208,10 @@ pub struct ProjectedSfsAcc {
 }
 
 impl ProjectedSfsAcc {
-    /// Accumulator for `group` projected to `n` chromosomes; `None` when
-    /// `n < 2`.
+    /// Accumulator projected to `n` chromosomes; `None` when `n < 2`.
     #[must_use]
-    pub fn new(group: usize, n: u32, folded: bool) -> Option<Self> {
+    pub fn new(n: u32, folded: bool) -> Option<Self> {
         (n >= 2).then(|| Self {
-            group,
             n,
             folded,
             bins: vec![NeumaierSum::new(); n as usize],

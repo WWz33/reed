@@ -32,7 +32,7 @@ pub struct PairSums {
 #[must_use]
 pub fn pair_sums(x: [&[u64]; 4], y: [&[u64]; 4], n_samples: usize) -> PairSums {
     let mut s = PairSums::default();
-    for (w, xw) in x[0].iter().enumerate().take(n_samples.div_ceil(64)) {
+    for w in 0..x[0].len().min(n_samples.div_ceil(64)) {
         let (x0a, x0m, x1a, x1m) = (x[0][w], x[1][w], x[2][w], x[3][w]);
         let (y0a, y0m, y1a, y1m) = (y[0][w], y[1][w], y[2][w], y[3][w]);
         // Real-sample mask for this word (padding bits excluded).
@@ -104,17 +104,6 @@ impl PairSums {
         let n = i128::from(self.n);
         let cov = i128::from(self.sum_xy) * n - i128::from(self.sum_x) * i128::from(self.sum_y);
         Some(cov as f64 / (n * n) as f64)
-    }
-}
-
-/// f64::from(i64) is not in std for all targets; a tiny helper keeps the
-/// math readable above.
-trait FromI64 {
-    fn from_i64(v: i64) -> f64;
-}
-impl FromI64 for f64 {
-    fn from_i64(v: i64) -> f64 {
-        v as f64
     }
 }
 

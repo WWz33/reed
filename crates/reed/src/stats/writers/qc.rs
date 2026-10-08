@@ -98,7 +98,7 @@ impl OrderedSink<SummaryAcc> for SummarySink {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<u64, reed_engine::error::EngineError> {
+    fn finish(self) -> Result<u64, reed_engine::error::EngineError> {
         *self
             .out
             .lock()

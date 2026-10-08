@@ -26,6 +26,8 @@ pub struct SketchFragment {
     pub n_sites: usize,
     /// Number of mask rules (`R` in the stride).
     pub n_rules: usize,
+    /// The packed bitmaps: `n_sites × (4 + R) × w` words, stride
+    /// `[p0_alt, p0_miss, p1_alt, p1_miss, rule_0, …, rule_{R-1}]`.
     pub data: Vec<u64>,
 }
 
@@ -164,7 +166,6 @@ pub fn count_site_sketch(fragment: &SketchFragment, s: usize, keep: &[u64]) -> S
     let p1m = fragment.plane_of(s, 3);
     let mut c = SketchCounts::default();
 
-    let mut kept_raw_total = 0_u64;
     for i in 0..w {
         let keep_word = keep.get(i).copied().unwrap_or(0);
         let mask_word = mask.get(i).copied().unwrap_or(0);
@@ -174,7 +175,6 @@ pub fn count_site_sketch(fragment: &SketchFragment, s: usize, keep: &[u64]) -> S
         let p1m = p1m.get(i).copied().unwrap_or(0);
 
         let kept_raw = keep_word & !mask_word;
-        kept_raw_total += kept_raw.count_ones() as u64;
 
         // ALT alleles over called slots of kept, unmasked samples.
         c.ac += (kept_raw & p0a).count_ones() as u64;

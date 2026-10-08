@@ -259,8 +259,7 @@ fn stats_accepts_filter_region_and_sample_flags() {
         argv.extend_from_slice(extra);
         let output = run(&argv, None);
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let text = std::fs::read_to_string(format!("{out}_pi.txt")).expect("invariant: pi file");
-        text
+        std::fs::read_to_string(format!("{out}_pi.txt")).expect("invariant: pi file")
     };
     let all = run_stats(&[], &prefix("all"));
     let region_indexed = run_stats(&["-r", "Chr01:1-5"], &prefix("ri"));

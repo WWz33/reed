@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::units::parse_size;
 
-pub mod filter_flags;
+pub(crate) mod filter_flags;
 
 /// The `reed` command line.
 #[derive(Parser)]
@@ -14,7 +14,7 @@ pub mod filter_flags;
     version,
     about = "Population-genetics statistics and hard filtering, in pure Rust"
 )]
-pub struct Cli {
+pub(crate) struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Command,
@@ -25,7 +25,7 @@ pub struct Cli {
 // exactly once at startup, so the padding between variants is irrelevant.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
-pub enum Command {
+pub(crate) enum Command {
     /// Deprecated alias of `stats --summary` (hidden; removed after one
     /// version per 04-cleanup §C4)
     #[command(hide = true)]
@@ -41,7 +41,7 @@ pub enum Command {
 /// Deprecated `reed qc` (§10): the bcftools-stats-compatible report now
 /// lives behind `reed stats --summary` (04-cleanup §C4).
 #[derive(Args)]
-pub struct QcCli {
+pub(crate) struct QcCli {
     /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
     /// Write the structured JSON report here
@@ -59,7 +59,7 @@ pub struct QcCli {
 /// Hard filtering (02-cli.md §3): the bcftools `view` + `filter` + `annotate -x`
 /// flags in one command.
 #[derive(Args)]
-pub struct FilterCli {
+pub(crate) struct FilterCli {
     /// Input BGZF VCF (.vcf.gz)
     pub input: String,
     #[command(flatten)]
@@ -130,7 +130,7 @@ pub struct FilterCli {
 
 /// Build a CSI (default) or TBI index for an existing BGZF VCF.
 #[derive(Args)]
-pub struct IndexCli {
+pub(crate) struct IndexCli {
     /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
     /// Write a CSI index (default; bcftools `-c`)
@@ -154,7 +154,7 @@ pub struct IndexCli {
 /// Window statistics (02-cli.md §5): the statistics are named after the method,
 /// never after a tool.
 #[derive(Args)]
-pub struct StatsCli {
+pub(crate) struct StatsCli {
     /// Input VCF/VCF.gz/BCF, or `-` for stdin
     pub input: String,
     #[command(flatten)]

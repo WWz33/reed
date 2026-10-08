@@ -14,7 +14,7 @@ use crate::units::input_path;
 /// # Errors
 ///
 /// Unknown variant types or malformed expressions.
-pub fn site_spec(
+pub(crate) fn site_spec(
     args: &crate::cli::filter_flags::SiteFilterArgs,
 ) -> Result<reed_filter::spec::FilterSpecV2, String> {
     use reed_filter::spec::{FilterSpecV2, GenotypeMaskRule, OnMissing};
@@ -148,8 +148,8 @@ pub fn site_spec(
 /// # Errors
 ///
 /// Unknown tokens (variant types, output type) and malformed expressions.
-pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
-    use reed_filter::spec::{FilterSpecV2, SampleList, SampleSelect};
+pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
+    use reed_filter::spec::{SampleList, SampleSelect};
     let mut spec = site_spec(&cli.site_args)?;
 
     // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
@@ -254,7 +254,7 @@ pub fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV
 }
 
 
-pub fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let FilterCli {
         input,
         out,

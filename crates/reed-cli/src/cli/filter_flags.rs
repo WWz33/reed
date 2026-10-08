@@ -6,7 +6,7 @@ use clap::Args;
 
 /// Region selection (`doc_v2/02-cli.md` §2): indexed and streamed regions.
 #[derive(Args, Clone, Debug, Default)]
-pub struct RegionArgs {
+pub(crate) struct RegionArgs {
     /// Regions to keep, comma-separated (`Chr01`, `Chr01:100-200`);
     /// needs an index next to the input (bcftools `-r`)
     #[arg(short = 'r', long = "regions", value_name = "LIST")]
@@ -24,7 +24,7 @@ pub struct RegionArgs {
 
 /// Sample selection (`doc_v2/02-cli.md` §3): keep and remove lists.
 #[derive(Args, Clone, Debug, Default)]
-pub struct SampleArgs {
+pub(crate) struct SampleArgs {
     /// Samples to keep: comma-separated names; `^` prefix excludes
     /// (`^A,B` = keep all but A and B; bcftools `-s`)
     #[arg(short = 's', long = "samples", value_name = "[^]LIST")]
@@ -44,7 +44,7 @@ pub struct SampleArgs {
 /// bcftools `view`/`filter` spellings both `reed filter` and `reed stats`
 /// accept. INFO *updates* (`-x`, `--fill-tags`, `-I`) stay filter-only.
 #[derive(Args, Clone, Debug, Default)]
-pub struct SiteFilterArgs {
+pub(crate) struct SiteFilterArgs {
     /// Variant types to keep: snps,mnps,indels,other,ref (bcftools `-v`)
     #[arg(short = 'v', long = "types", value_name = "LIST")]
     pub types: Option<String>,

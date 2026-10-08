@@ -92,7 +92,7 @@ proptest! {
         // ALT bits only appear where the input had an ALT allele.
         let n_input_alt_carriers: u32 = genotypes
             .iter()
-            .filter(|&&(p, a, b)| a == Some(1) || b == Some(1))
+            .filter(|&&(_p, a, b)| a == Some(1) || b == Some(1))
             .map(|_| 1)
             .sum();
         prop_assert!(n_alt <= n_input_alt_carriers);

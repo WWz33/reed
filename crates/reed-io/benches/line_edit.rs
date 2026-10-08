@@ -1,5 +1,8 @@
 //! O7 gate (doc_v3 03-performance.md): time the sample-column edit of one
 //! realistic 348-sample record, with the gold mask rate applied.
+// The criterion macro expands to a `pub fn main()` with nothing to document.
+#![allow(missing_docs)]
+
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use reed_core::Bitset;
