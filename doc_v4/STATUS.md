@@ -43,13 +43,25 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | O-5 计时扩展（A4-5） | `StageMetrics` 新增 `n_chunks_read`（此前恒 0）、`reader_time`（`next_chunk` 累计）、`reduce_time`（`accept` 累计）、`chain_wait`（`ChunkJob::wait_time`；BCF 链在 `FrameChain::wait` 内累计）与 `merge`（多遍求和、在途峰值取最大）；filter 的 `--timing`/`--verbosity 2` 与 stats 的 `--verbosity 2` 都打印（`chunks_read`/`reader_ms`/`reduce_ms`/`chain_wait_ms`/`worker_busy_ms`） | 子集 VCF：reader 535 ms / reduce 64 ms / chain_wait 0；子集 BCF：reader 613 ms / chain_wait 72 ms；全量五统计：VCF reader 2.16–2.20 s、BCF 2.28–2.43 s（reader 占 wall 的 87%，即 W3 的靶子） |
 | F4-14 看门狗 | `STALL_LIMIT` 由「单 cell 等待 120 s」改为「自上次任何 cell 发布以来的全局静默 120 s」，错误文本带等待的 chunk id、等待时长与最后发布的 chunk id；`FrameChain::wait_time()` 供 O-5 读取 | `frame_chain::tests::stall_watchdog_reports_the_global_silence`（缩短限时断言错误文本与发布后恢复）；全部 BCF e2e 通过 |
 
+### W3 reader 吞吐（O-3；03 §3.4）
+
+| 步 | 内容 | 验证 |
+|---|---|---|
+| 1 fadvise + 8 MiB 缓冲 | **未做（被第 3 步取代）**：mmap 路径没有 read 系统调用，缓冲层不存在；fadvise 需要新依赖且无独立可测收益 | 见第 3 步的门 |
+| 2 整 chunk 直读 | `BgzfChunkReader` 的 `append_block` 改为 `fill_to_target`/`read_into`：按 slab 直接读进 chunk 缓冲（不再经 `BufReader` 的二次拷贝），空成员就地 `drain`，`carry` 承接跨 chunk 的块尾；`input.rs` 的文件路径不再包 `BufReader` | 全量五统计：reader VCF 2.16–2.20 → 2.04–2.15 s、BCF 2.28–2.43 → 2.21–2.27 s（约 −3%：真正的开销是每 chunk 新分配 1 MiB 缓冲的缺页，不是缓冲拷贝） |
+| 3 mmap 零拷贝 | 新增 `MmapChunkSource`：文件输入映射为 `Arc<Mmap>`，chunk 是映射里的一个区间（新类型 `ChunkPayload::{Owned, Mapped}`，`Deref<Target=[u8]>` 保持所有调用点不变）；切分规则与流式 reader 相同（整块直到 target），空成员留在区间内（`(len, 0)`，索引偏移保持连续）；非普通文件/映射失败回退流式 | 全量五统计：reader VCF 2.16–2.20 → **0.35–0.36 s**、BCF 2.28–2.43 → **0.35–0.37 s**（−84%）；wall VCF 2.44 → **1.71–1.75 s**、BCF 2.57 → **1.47 s**（**BCF ≤ VCF** ✓，W3 的门） |
+| 一致性 | 输出与 reader 无关 | 10 个 stats 输出文件与 W2 时逐字节相同；gold 全量正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 不变 + `check_parity` PASS；子集 CSI sha256 与流式 reader 完全相同（`7048abbd…`）；`cargo test --workspace` 362 通过 |
+| 安全性（偏差） | `memmap2::Mmap::map` 是 `unsafe`，工作区 `unsafe_code = deny`；在 `MmapChunkSource::open` 上加了**唯一一处** `#[allow(unsafe_code)]` 并写明契约：只读映射、生命周期覆盖全部 chunk、输入不被写入、非普通文件回退流式 | 评审点：这是一处有意的策略例外，见"未完成 / 偏差"表 |
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 输出索引的默认值 | 已修正（非文档列出） | 见 W1 表末两行的"额外修正" |
+| reports 两族 ≤ 3.2 s（W2 门） | **未达标（已登记）** | 实测 3.58–3.65 s（负载 18.5；CPU 181 s，wall 下限 ≈ 181/54 = 3.35 s）——瓶颈已从 reader 变成 CPU：QC summary 用**自己的扫描器**再解一遍 GT（策略与 reports 相同但带 `tracking_alleles`）。下一步：让 reports job 在 `--summary` 时用带 tracking 的扫描器，并把 QC 的累加部分拆成消费 `ScanOutput` 的入口（预计省 ~25–30 CPU-s，可望 ≤3.2 s）。旧两遍实现为 5.35 s / 232 s CPU，本轮已 −22% CPU |
+| `unsafe_code` 策略 | **一处例外（已登记）** | `MmapChunkSource::open` 的 `Mmap::map` 需要 `unsafe`；契约写在调用点，回退路径保证非普通文件不受影响。其余 crate 仍为 `deny` |
 | `sample.max_missing` 的形态 | 偏差（已登记） | 现实现没有样本级漏斗条目（报告只有 head/tail/mask 的**记录**计数），故 `sample.max_missing` 不是 `FilterReport.funnel` 的元素，而是报告新增的 `sample_rule: {rule, threshold, n_dropped}`（`reed-filter/src/funnel.rs`）；`after_mask.max_missing`、`after_mask.max_missing_count` 按 §5.3 作为 tail 漏斗 id |
-| W3–W6 | 待做 | 见 `06-roadmap.md` |
+| W4–W6 | 待做 | 见 `06-roadmap.md` |
 
 ## 基准（2026-10-09 复审基线，56 线程，负载 0.3，热缓存）
 

@@ -52,24 +52,25 @@ reed-core-v02-oracle  冻结的 v0.2（dev-dependency）
 
 ## 3. 本轮新增的结构性建议
 
-### 3.1 参数到 spec 的字段命名与方向一致（配合 02）
+### 3.1 参数名与 spec 字段名同形（配合 02 回退版）
 
-`TailRules.max_missing: Option<f64>` 现存丢弃比例（`--geno` 的值）。改为 `min_call_rate: Option<f64>`（保留比例），并新增 `max_missing_alleles: Option<u64>`（`--max-missing-count`）、`FilterSpec.min_sample_call_rate: Option<f64>`（取代 `mind`）。字段名、CLI 名、漏斗 id、`to_args()` 四处同向，往返测试锁定。
+`TailRules.max_missing: Option<f64>` 存的就是 `--geno` 的值（缺失比例），名字与语义同形，保持；`FilterSpec.mind: Option<f64>` 同理（首版改的 `min_call_rate`/`max_missing_alleles`/`min_sample_call_rate` 由 02 §5.4 撤回）。字段名、CLI 名、漏斗 id（`after_mask.missing`、`sample.mind`）、`to_args()` 四处同形，往返测试锁定。
 
 ### 3.2 阈值判定抽成一个类型
 
 ```rust
-/// A "keep if called fraction ≥ X" threshold, stored as a rational q/10^9
+/// A "keep if missing fraction ≤ X" threshold, stored as a rational q/10^9
 /// so boundary cases are exact (02-cli-semantics.md §4).
-pub struct CallRate { q: u64 }
-impl CallRate {
-    pub fn parse(text: &str) -> Result<Self, SpecError>;      // 0 ≤ X ≤ 1
-    pub fn keeps(&self, called: u64, total: u64) -> bool;     // called·D ≥ q·total (u128)
-    pub fn render(&self) -> String;                            // shortest decimal
+pub struct MissingRate { q: u64 }
+impl MissingRate {
+    pub fn parse(text: &str) -> Result<Self, SpecError>;          // 0 ≤ X ≤ 1
+    pub fn tolerates(&self, missing: u64, total: u64) -> bool;    // missing·D ≤ q·total (u128)
+    pub fn complement(&self) -> Self;    // exact 1 − X; only for the withdrawn-flag error text
+    pub fn render(&self) -> String;      // shortest decimal
 }
 ```
 
-位点与样本规则共用它；plink2 的 ε 规则只在对拍测试里出现。
+位点与样本规则共用它；plink2 的 ε 规则只在对拍测试里出现。首版的名字 `CallRate`（`keeps(called, total)`）与保留方向随 02 §5.4 一起回退，`complement()`/`render()` 现在只服务于 02 §5.2 的撤回参数报错文本。
 
 ### 3.3 `--verbosity` 的统一实现
 

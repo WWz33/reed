@@ -33,12 +33,16 @@ check "the reed-qc crate is gone (doc_v3 C4)" \
 check "no FilterSpecV2/SiteRulesV2 remain (doc_v2 05 §4)" \
     bash -c '! grep -rq "FilterSpecV2\|SiteRulesV2" crates/*/src'
 
-# doc_v4 W0: the keep-direction spellings exist and the drop-direction flags
-# are parse-time errors (never silent aliases).
-check "the --max-missing family exists (doc_v4 W0)" \
-    grep -q -- '--max-missing-sample' crates/reed-cli/src/cli.rs
-check "removed --geno errors with the conversion (doc_v4 W0)" \
-    grep -q 'was removed: it stated the fraction to drop' crates/reed-cli/src/cli/filter_flags.rs
+# doc_v4 02 §5 (W0b): the plink2 spellings are the real flags; the withdrawn
+# --max-missing family survives only as parse-time errors (never as aliases).
+# NOTE: these three guards report DRIFT until W0b lands -- expected, since the
+# documents are reverted and the code is not yet.
+check "the withdrawn --max-missing flags error (doc_v4 02 §5.2)" \
+    grep -q 'fn removed_max_missing' crates/reed-cli/src/cli/filter_flags.rs
+check "no text points at the withdrawn --max-missing name (doc_v4 02 §5.2)" \
+    bash -c '! grep -rq "use --max-missing" crates/*/src'
+check "the funnel ids are after_mask.missing / sample.mind (doc_v4 02 §5.3)" \
+    grep -q 'after_mask.missing' crates/reed-filter/src/funnel.rs
 
 # doc_v4 W1: index documents and enforces its file-only input.
 check "reed index rejects stdin (doc_v4 W1/F4-4)" \

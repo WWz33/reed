@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use reed_core::ChunkId;
 
-use crate::chunk::{ChunkBytes, CHUNK_TARGET_COMPRESSED};
+use crate::chunk::{ChunkBytes, ChunkPayload, CHUNK_TARGET_COMPRESSED};
 use crate::error::IoError;
 use crate::header::HeaderFacts;
 
@@ -97,7 +97,7 @@ impl crate::chunk::ChunkSource for PlainChunkSource {
         let offset = std::mem::take(&mut self.first_offset);
         Ok(Some(ChunkBytes {
             id,
-            compressed: Arc::from(self.buf.as_slice()),
+            compressed: ChunkPayload::from(Arc::<[u8]>::from(self.buf.as_slice())),
             first_in_block_offset: offset,
             plain: true,
             compressed_start: 0,

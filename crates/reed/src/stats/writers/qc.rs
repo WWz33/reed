@@ -118,7 +118,7 @@ pub fn run_qc(
     budget: &ThreadBudget,
 ) -> Result<SummaryReport, Box<dyn std::error::Error + Send + Sync>> {
     let file = std::fs::File::open(input)?;
-    let (mut source, header) = BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
+    let (mut source, header) = BgzfChunkSource::open(file)?;
     let n_samples = header.n_samples();
     let abort = reed_engine::abort::abort();
     let slot = std::sync::Arc::new(std::sync::Mutex::new(None));

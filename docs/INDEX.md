@@ -31,13 +31,13 @@
 
 | 被取代的条款 | 取代者 |
 |---|---|
-| doc_v2 02 §3.1 `--mind`（plink2 丢弃方向） | doc_v4 02 §3.2 `--max-missing-sample`（保留方向、等位计） |
-| doc_v2 02 §3.4 `--geno`（plink2 丢弃方向） | doc_v4 02 §3.1 `--max-missing` + `--max-missing-count`（vcftools 方向） |
-| doc_v2 05 §2.3"`--max-missing` 方向与 `--geno` 相反，不提供别名" | doc_v4 02 §8：反转，`--max-missing` 成为主名 |
+| doc_v2 02 §3.1 `--mind` / §3.4 `--geno`（plink2 丢弃方向） | doc_v4 02 §3：**名字保留**，语义精确定义（等位计、掩码后、精确边界） |
+| doc_v4 02 首版 §5.1–§5.4、§6、§7 的改名（`--max-missing*`） | doc_v4 02（回退版）同名小节：撤回改名 |
+| doc_v2 05 §2.3"`--max-missing` 方向与 `--geno` 相反，不提供别名" | doc_v4 02 §8：结论保留（不提供别名）；`--max-missing` 已不是 reed 的参数 |
 | doc_v3 04 §C3"`TagTable` 未做" | doc_v3/STATUS.md 更正为**已做**（doc_v4 01 F4-2） |
-| docs/architecture-spec.md §13.17 的漏斗 id 示例（`after_mask.missing`） | doc_v4 02 §5.3（`after_mask.max_missing` 等）；architecture-spec.md §13.17 已就地更新 |
+| docs/architecture-spec.md §13.17 的漏斗 id 示例（`after_mask.missing`） | doc_v4 02 §5.3 定名（`after_mask.missing`、`sample.mind`）；architecture-spec.md §13.17 已就地回改 |
 
 ## 一致性守卫
 
 `bash scripts/check-doc-drift.sh` 校验若干"STATUS 声明 vs 代码事实"的断言（C3 无 noodles、无版本后缀类型、
-`--max-missing` 家族存在、`reed index` 拒绝 stdin、`Verbosity` 单一实现）。文档声明"未做"的项应在该脚本里有一条守卫。
+`--geno`/`--mind` 是真实参数、`--max-missing` 只出现在报错文本里、`reed index` 拒绝 stdin、`Verbosity` 单一实现）。文档声明"未做"的项应在该脚本里有一条守卫。

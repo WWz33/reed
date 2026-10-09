@@ -24,13 +24,88 @@ use crate::error::IoError;
 /// (`docs/architecture-spec.md` §6.2).
 pub const CHUNK_TARGET_COMPRESSED: u64 = 1 << 20; // 1 MiB
 
+/// A chunk's compressed bytes. Owned when read from a stream; a range of a
+/// memory-mapped input otherwise, in which case the reader copies nothing
+/// and issues no read syscall (doc_v4 03 §3.4 step 3).
+#[derive(Clone, Debug)]
+pub enum ChunkPayload {
+    /// Bytes read into a heap buffer (files without mmap, stdin, plain
+    /// input, region slices).
+    Owned(Arc<[u8]>),
+    /// A byte range of the mapped input file, shared by every chunk.
+    Mapped {
+        /// The mapping (one per run).
+        map: Arc<memmap2::Mmap>,
+        /// The chunk's range within the mapping.
+        range: Range<usize>,
+    },
+}
+
+impl ChunkPayload {
+    /// The chunk's bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Mapped { map, range } => &map[range.clone()],
+        }
+    }
+
+    /// The chunk's compressed length.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Owned(bytes) => bytes.len(),
+            Self::Mapped { range, .. } => range.len(),
+        }
+    }
+
+    /// Whether the chunk has no bytes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl std::ops::Deref for ChunkPayload {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl AsRef<[u8]> for ChunkPayload {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl From<Arc<[u8]>> for ChunkPayload {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        Self::Owned(bytes)
+    }
+}
+
+impl From<Vec<u8>> for ChunkPayload {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Owned(Arc::from(bytes.into_boxed_slice()))
+    }
+}
+
+impl From<Box<[u8]>> for ChunkPayload {
+    fn from(bytes: Box<[u8]>) -> Self {
+        Self::Owned(Arc::from(bytes))
+    }
+}
+
 /// One chunk of compressed input, ready for a worker to inflate.
 #[derive(Clone, Debug)]
 pub struct ChunkBytes {
     /// Input-order index; the only basis of reduction order.
     pub id: ChunkId,
     /// Whole BGZF blocks, concatenated.
-    pub compressed: Arc<[u8]>,
+    pub compressed: ChunkPayload,
     /// Inflated-text offset where records start (nonzero only for the chunk
     /// that carries the end of the header).
     pub first_in_block_offset: u64,

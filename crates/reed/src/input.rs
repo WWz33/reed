@@ -66,8 +66,7 @@ pub fn open_regions(
         Format::detect(&prefix, inflated.as_deref())?
     };
     let file = std::fs::File::open(p)?;
-    let (_, facts) =
-        BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
+    let (_, facts) = BgzfChunkSource::open(file)?;
     // The index sits next to the input as `.csi` or `.tbi`.
     let mut csi = p.as_os_str().to_os_string();
     csi.push(".csi");
@@ -193,10 +192,8 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
     };
     match Format::detect(&prefix, inflated.as_deref())? {
         Format::VcfBgzf => {
-            let file = std::fs::File::open(p)?;
-            let (source, facts) =
-                BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
+            let (source, facts) = open_bgzf(p)?;
+            Ok(OpenedInput { source, facts, bcf: None })
         }
         Format::Vcf => {
             let file = std::fs::File::open(p)?;
@@ -212,11 +209,24 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
         Format::Bcf => {
             // BCF shares the BGZF chunk source; the dictionaries come from
             // the header text embedded in the file.
-            let file = std::fs::File::open(p)?;
-            let (source, facts) =
-                BgzfChunkSource::open(std::io::BufReader::with_capacity(1 << 20, file))?;
+            let (source, facts) = open_bgzf(p)?;
             let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: Some(std::sync::Arc::new(dict)) })
+            Ok(OpenedInput { source, facts, bcf: Some(std::sync::Arc::new(dict)) })
+        }
+    }
+}
+
+/// Opens a BGZF file: memory-mapped when possible (doc_v4 03 §3.4 step 3 —
+/// no copies, no read syscalls), else the streaming reader. Both cut chunks
+/// by the same rule, so the choice cannot change the output.
+fn open_bgzf(
+    p: &Path,
+) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
+    match reed_io::chunk::bgzf::MmapChunkSource::open(std::fs::File::open(p)?) {
+        Ok((source, facts)) => Ok((Box::new(source), facts)),
+        Err(_) => {
+            let (source, facts) = BgzfChunkSource::open(std::fs::File::open(p)?)?;
+            Ok((Box::new(source), facts))
         }
     }
 }
@@ -245,7 +255,11 @@ fn open_stdin() -> Result<OpenedInput, IoError> {
         Format::Bcf => {
             let (source, facts) = BgzfChunkSource::open(reader)?;
             let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: Some(std::sync::Arc::new(dict)) })
+            Ok(OpenedInput {
+                source: Box::new(source),
+                facts,
+                bcf: Some(std::sync::Arc::new(dict)),
+            })
         }
     }
 }

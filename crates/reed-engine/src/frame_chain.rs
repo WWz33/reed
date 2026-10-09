@@ -270,7 +270,6 @@ pub type SharedChain = Arc<FrameChain>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering as _;
 
     /// F4-14: the watchdog fires on *global* silence and names the waiter,
     /// the waited time and the last publish.

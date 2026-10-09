@@ -8,7 +8,7 @@ use std::sync::Arc;
 use reed_core::ChunkId;
 
 use crate::bgzf::block::{is_empty_member, is_eof_block, parse_block_size, BGZF_HEADER_LEN};
-use crate::chunk::{ChunkBytes, CHUNK_TARGET_COMPRESSED};
+use crate::chunk::{ChunkBytes, ChunkPayload, CHUNK_TARGET_COMPRESSED};
 use crate::error::IoError;
 
 /// Locates the end of the VCF header and hands out chunks from there.
@@ -16,11 +16,12 @@ pub struct BgzfChunkReader<R: Read> {
     inner: R,
     chunk_target: u64,
     next_chunk_id: u64,
-    /// Compressed bytes of the block where the header ends (chunk 0 starts
-    /// here, so it is not read twice).
-    pending_block: Option<Vec<u8>>,
-    /// Compressed offset of `pending_block`.
-    pending_block_offset: u64,
+    /// Compressed bytes read but not yet handed to a chunk: the block where
+    /// the header ends (chunk 0 starts here, so it is not read twice), and
+    /// the tail of the last slab read that belongs to the next chunk.
+    carry: Vec<u8>,
+    /// Compressed offset of `carry[0]`.
+    carry_offset: u64,
     /// Compressed offset of the next byte to read (bytes consumed so far,
     /// empty members included).
     compressed_offset: u64,
@@ -32,17 +33,6 @@ pub struct BgzfChunkReader<R: Read> {
     last_was_eof_marker: bool,
     /// Whether the missing-EOF-marker warning already fired (once per run).
     warned_missing_eof: bool,
-}
-
-/// One block appended to a chunk buffer by
-/// [`BgzfChunkReader::append_block`].
-struct Appended {
-    /// Compressed offset of the block's first byte.
-    offset: u64,
-    /// Block length in compressed bytes (header included).
-    len: usize,
-    /// Uncompressed payload length.
-    inflated: u32,
 }
 
 /// Result of the header scan: the accumulated header text plus where
@@ -71,8 +61,8 @@ impl<R: Read> BgzfChunkReader<R> {
             inner,
             chunk_target,
             next_chunk_id: 0,
-            pending_block: None,
-            pending_block_offset: 0,
+            carry: Vec::new(),
+            carry_offset: 0,
             compressed_offset: 0,
             first_in_block_offset: 0,
             header_done: false,
@@ -81,61 +71,107 @@ impl<R: Read> BgzfChunkReader<R> {
         }
     }
 
-    /// Appends the next non-empty block (header + payload) to `out`, reading
-    /// the payload straight into it — no intermediate block buffer. `None`
-    /// at end of stream.
+    /// Reads up to `want` bytes into `out`, directly into the chunk buffer
+    /// (one syscall per call in practice). Returns how many bytes arrived;
+    /// `0` means end of stream.
     ///
-    /// # Errors
-    ///
-    /// [`IoError::MalformedBgzf`] for a truncated header, trailing garbage or
-    /// a short payload; transport errors pass through.
-    fn append_block(&mut self, out: &mut Vec<u8>) -> Result<Option<Appended>, IoError> {
-        loop {
-            let offset = self.compressed_offset;
-            let start = out.len();
-            let mut header = [0_u8; BGZF_HEADER_LEN];
-            let mut filled = 0;
-            while filled < BGZF_HEADER_LEN {
-                match self.inner.read(&mut header[filled..]) {
-                    Ok(0) => {
-                        if filled == 0 {
-                            self.warn_if_missing_eof_marker();
-                            return Ok(None);
-                        }
-                        return Err(IoError::MalformedBgzf {
-                            locus: None,
-                            reason: "stream ends inside a block header",
-                        });
-                    }
-                    Ok(n) => filled += n,
-                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(err) => return Err(err.into()),
-                }
-            }
-            let Some(total) = parse_block_size(&header) else {
-                return Err(IoError::MalformedBgzf {
-                    locus: None,
-                    reason: "not a BGZF block header (trailing garbage after the last block?)",
-                });
-            };
-            out.extend_from_slice(&header);
-            out.resize(start + total, 0);
-            match self.inner.read_exact(&mut out[start + BGZF_HEADER_LEN..]) {
-                Ok(()) => {}
+    /// The old path read through a `BufReader`, which copied every byte
+    /// twice (kernel → buffer, buffer → chunk); `--timing` showed the reader
+    /// at 87% of the stats wall, so the copy is gone (doc_v4 03 §3.4 step 2).
+    fn read_into(&mut self, out: &mut Vec<u8>, want: usize) -> Result<usize, IoError> {
+        let start = out.len();
+        out.resize(start + want, 0);
+        let mut filled = 0;
+        while filled < want {
+            match self.inner.read(&mut out[start + filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(err) => {
                     out.truncate(start);
                     return Err(err.into());
                 }
             }
-            self.compressed_offset += total as u64;
-            if is_empty_member(&out[start..start + total]) {
-                self.last_was_eof_marker = is_eof_block(&out[start..start + total]);
-                out.truncate(start);
-                continue;
+        }
+        out.truncate(start + filled);
+        self.compressed_offset += filled as u64;
+        Ok(filled)
+    }
+
+    /// Grows `out` until it holds at least `chunk_target` bytes of whole
+    /// BGZF blocks, and returns the offset just past the last whole block
+    /// (bytes beyond it belong to the next chunk).
+    ///
+    /// Empty members (ISIZE = 0: the EOF marker and concatenation joins) are
+    /// removed in place and never terminate the stream — the stream ends
+    /// only at the underlying EOF (01-review D2).
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedBgzf`] for trailing garbage, a truncated header
+    /// or a truncated payload.
+    fn fill_to_target(
+        &mut self,
+        out: &mut Vec<u8>,
+        blocks: &mut Vec<(u32, u32)>,
+    ) -> Result<usize, IoError> {
+        let mut pos = 0_usize;
+        loop {
+            // Parse every whole block currently in `out`.
+            while out.len() >= pos + BGZF_HEADER_LEN {
+                let Some(total) = parse_block_size(&out[pos..pos + BGZF_HEADER_LEN]) else {
+                    return Err(IoError::MalformedBgzf {
+                        locus: None,
+                        reason: "not a BGZF block header (trailing garbage after the last block?)",
+                    });
+                };
+                if out.len() < pos + total {
+                    break; // The block spans further: read more bytes.
+                }
+                if is_empty_member(&out[pos..pos + total]) {
+                    self.last_was_eof_marker = is_eof_block(&out[pos..pos + total]);
+                    out.drain(pos..pos + total);
+                    continue; // The next block now starts at `pos`.
+                }
+                self.last_was_eof_marker = false;
+                blocks.push((
+                    u32::try_from(total).unwrap_or(u32::MAX),
+                    crate::bgzf::block::block_inflated_size(&out[pos..pos + total]),
+                ));
+                pos += total;
             }
-            self.last_was_eof_marker = false;
-            let inflated = crate::bgzf::block::block_inflated_size(&out[start..start + total]);
-            return Ok(Some(Appended { offset, len: total, inflated }));
+            // At least one whole block and the target reached: the chunk is
+            // complete (the cut is always a block boundary).
+            if pos > 0 && out.len() as u64 >= self.chunk_target {
+                return Ok(pos);
+            }
+            // Read what is still missing. When a block announced more bytes
+            // than the target, read exactly that block's remainder so a
+            // chunk is never empty and the loop always progresses.
+            let mut want = self.chunk_target.saturating_sub(out.len() as u64);
+            if want == 0 {
+                want = if out.len() >= BGZF_HEADER_LEN {
+                    parse_block_size(&out[..BGZF_HEADER_LEN])
+                        .map_or(1, |total| (total as u64).saturating_sub(out.len() as u64))
+                } else {
+                    (BGZF_HEADER_LEN - out.len()) as u64
+                };
+            }
+            let want = usize::try_from(want.max(1)).unwrap_or(usize::MAX);
+            if self.read_into(out, want)? == 0 {
+                self.warn_if_missing_eof_marker();
+                if pos == out.len() {
+                    return Ok(pos); // Clean end at a block boundary.
+                }
+                return Err(IoError::MalformedBgzf {
+                    locus: None,
+                    reason: if out.len() - pos < BGZF_HEADER_LEN {
+                        "stream ends inside a block header"
+                    } else {
+                        "stream ends inside a block payload"
+                    },
+                });
+            }
         }
     }
 
@@ -223,8 +259,8 @@ impl<R: Read> BgzfChunkReader<R> {
             let text_len_before = text.len();
             inflater.inflate_block(&block, &mut text)?;
             if let Some(end) = find_chrom_line_end(&text) {
-                self.pending_block = Some(block);
-                self.pending_block_offset = block_offset;
+                self.carry = block;
+                self.carry_offset = block_offset;
                 // The offset is *within this block's* inflated text, not in
                 // the accumulated header text. A BCF stream NUL-terminates
                 // the header, so its records start one byte later.
@@ -256,36 +292,29 @@ impl<R: Read> BgzfChunkReader<R> {
         if !self.header_done {
             return Err(IoError::Header("scan_header must run before chunks".into()));
         }
-        // Reserve the target up front: the per-block growth reallocs would
-        // copy the whole chunk several times over.
+        // Reserve the target up front: growth reallocs would copy the whole
+        // chunk several times over.
         let mut compressed = Vec::with_capacity(self.chunk_target as usize + (1 << 17));
         let mut blocks = Vec::with_capacity(24);
-        let compressed_start;
-        match self.pending_block.take() {
-            Some(first) => {
-                compressed_start = self.pending_block_offset;
-                blocks.push(block_pair(&first));
-                compressed.extend_from_slice(&first);
-            }
-            None => match self.append_block(&mut compressed)? {
-                Some(block) => {
-                    compressed_start = block.offset;
-                    blocks.push((block.len as u32, block.inflated));
-                }
-                None => return Ok(None),
-            },
+        // The chunk starts with the bytes carried over from the previous
+        // read (the header block for chunk 0, else a partial block tail).
+        let compressed_start = self.carry_offset;
+        compressed.extend_from_slice(&self.carry);
+        self.carry.clear();
+        let cut = self.fill_to_target(&mut compressed, &mut blocks)?;
+        if compressed.is_empty() {
+            return Ok(None);
         }
-        while (compressed.len() as u64) < self.chunk_target {
-            match self.append_block(&mut compressed)? {
-                Some(block) => blocks.push((block.len as u32, block.inflated)),
-                None => break,
-            }
-        }
+        // Bytes beyond the last whole block belong to the next chunk; the
+        // overflow is bounded by one block (<= 64 KiB + 26).
+        self.carry_offset = compressed_start + cut as u64;
+        self.carry.extend_from_slice(&compressed[cut..]);
+        compressed.truncate(cut);
         let id = ChunkId(self.next_chunk_id);
         self.next_chunk_id += 1;
         Ok(Some(ChunkBytes {
             id,
-            compressed: Arc::from(compressed.into_boxed_slice()),
+            compressed: ChunkPayload::from(compressed),
             first_in_block_offset: std::mem::take(&mut self.first_in_block_offset),
             plain: false,
             compressed_start,
@@ -294,12 +323,145 @@ impl<R: Read> BgzfChunkReader<R> {
     }
 }
 
-/// One block's `(compressed length, inflated length)`.
-fn block_pair(block: &[u8]) -> (u32, u32) {
-    (
-        u32::try_from(block.len()).unwrap_or(u32::MAX),
-        crate::bgzf::block::block_inflated_size(block),
-    )
+/// A memory-mapped BGZF file's chunk source (doc_v4 03 §3.4 step 3): a chunk
+/// is a byte range of the mapping, so the reader copies nothing and issues no
+/// read syscall. Chunk boundaries follow the same rule as the streaming
+/// reader — whole blocks until the compressed target is reached — so the
+/// two readers produce identical chunks and identical output.
+pub struct MmapChunkSource {
+    map: Arc<memmap2::Mmap>,
+    chunk_target: u64,
+    next_chunk_id: u64,
+    /// Compressed offset of the next chunk's first block.
+    next_offset: usize,
+    /// Records' start offset inside that block's inflated text.
+    first_in_block_offset: u64,
+    /// The canonical EOF marker was the last empty member seen.
+    last_was_eof_marker: bool,
+    warned_missing_eof: bool,
+}
+
+impl MmapChunkSource {
+    /// Maps `file` and scans its header. The mapping is read-only and lives
+    /// exactly as long as the source.
+    ///
+    /// # Errors
+    ///
+    /// Mapping failures (the caller falls back to the streaming reader) and
+    /// [`IoError::Header`] when the header is missing or unparsable.
+    pub fn open(
+        file: std::fs::File,
+    ) -> Result<(Self, crate::header::HeaderFacts), IoError> {
+        // SAFETY: `Mmap::map` is unsafe because a concurrent writer could
+        // change the file under the mapping (the worst case is a SIGBUS on
+        // truncation). reed opens the input read-only, never writes it, and
+        // the mapping outlives every chunk; the callers fall back to the
+        // streaming reader when the input is not a regular file. This is the
+        // single audited `unsafe` in the workspace (`unsafe_code = deny`).
+        #[allow(unsafe_code)]
+        let map = unsafe { memmap2::Mmap::map(&file) }?;
+        let map = Arc::new(map);
+        // The header scan reuses the streaming reader over the mapped bytes:
+        // it copies a handful of header blocks, which is negligible.
+        let mut probe = BgzfChunkReader::new(std::io::Cursor::new(&map[..]));
+        let scan = probe.scan_header(&mut crate::bgzf::inflate::Inflater::new())?;
+        let facts = crate::header::HeaderFacts::parse(&scan.text)?;
+        // The probe borrows the mapping; read what it found before moving
+        // the `Arc` into the source.
+        let first_offset = usize::try_from(probe.carry_offset).unwrap_or(0);
+        let first_in_block_offset = probe.first_in_block_offset;
+        drop(probe);
+        let source = Self {
+            map,
+            chunk_target: CHUNK_TARGET_COMPRESSED,
+            next_chunk_id: 0,
+            next_offset: first_offset,
+            first_in_block_offset,
+            last_was_eof_marker: false,
+            warned_missing_eof: false,
+        };
+        Ok((source, facts))
+    }
+
+    /// Warns once when the stream ended without the canonical EOF marker.
+    fn warn_if_missing_eof_marker(&mut self) {
+        if !self.warned_missing_eof && !self.last_was_eof_marker {
+            self.warned_missing_eof = true;
+            eprintln!("reed: warning: BGZF stream ends without an EOF marker");
+        }
+    }
+}
+
+impl crate::chunk::ChunkSource for MmapChunkSource {
+    fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, IoError> {
+        let start = self.next_offset;
+        let mut pos = start;
+        let mut blocks: Vec<(u32, u32)> = Vec::with_capacity(24);
+        let mut total = 0_u64;
+        loop {
+            if pos >= self.map.len() {
+                break;
+            }
+            if pos + BGZF_HEADER_LEN > self.map.len() {
+                return Err(IoError::MalformedBgzf {
+                    locus: None,
+                    reason: "stream ends inside a block header",
+                });
+            }
+            let Some(size) = parse_block_size(&self.map[pos..pos + BGZF_HEADER_LEN]) else {
+                return Err(IoError::MalformedBgzf {
+                    locus: None,
+                    reason: "not a BGZF block header (trailing garbage after the last block?)",
+                });
+            };
+            if pos + size > self.map.len() {
+                return Err(IoError::MalformedBgzf {
+                    locus: None,
+                    reason: "stream ends inside a block payload",
+                });
+            }
+            let block = &self.map[pos..pos + size];
+            if is_empty_member(block) {
+                // Empty members stay in the chunk's byte range (their
+                // inflated length is zero) so the block offsets remain
+                // contiguous for the index.
+                self.last_was_eof_marker = is_eof_block(block);
+                blocks.push((u32::try_from(size).unwrap_or(u32::MAX), 0));
+                pos += size;
+                continue;
+            }
+            self.last_was_eof_marker = false;
+            blocks.push((
+                u32::try_from(size).unwrap_or(u32::MAX),
+                crate::bgzf::block::block_inflated_size(block),
+            ));
+            pos += size;
+            total += size as u64;
+            if total >= self.chunk_target {
+                break;
+            }
+        }
+        if blocks.is_empty() {
+            self.warn_if_missing_eof_marker();
+            return Ok(None);
+        }
+        let id = ChunkId(self.next_chunk_id);
+        self.next_chunk_id += 1;
+        let first_in_block_offset =
+            if self.next_chunk_id == 1 { self.first_in_block_offset } else { 0 };
+        self.next_offset = pos;
+        Ok(Some(ChunkBytes {
+            id,
+            compressed: ChunkPayload::Mapped {
+                map: Arc::clone(&self.map),
+                range: start..pos,
+            },
+            first_in_block_offset,
+            plain: false,
+            compressed_start: start as u64,
+            blocks,
+        }))
+    }
 }
 
 /// Offset just past the newline ending the `#CHROM` line, scanning text

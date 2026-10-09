@@ -12,7 +12,7 @@ doc_v3 的路线基本全部落地，质量与 v3 时一致：每项都有 commi
 
 本轮的问题分三类：
 
-1. **参数语义方向不一致**（用户本轮的首要问题）：`--geno`、`--mind` 用"丢弃条件"，其他阈值用"保留条件"。证据与修法见 02-cli-semantics.md。
+1. **缺失阈值的命名再裁决**（用户本轮的首要问题）：首版把 `--geno`、`--mind` 改名为 `--max-missing` 家族，理由是"统一方向"；2026-10-09 晚用户裁决**撤回改名**——缺失阈值只有位点/样本两级，短名字保留，改为把语义写成条文（02-cli-semantics.md §3/§4：分子、分母、求值阶段、精确边界）。W0 在实现层的修正（精确有理数判定、等位计分子、掩码后求值）全部保留。
 2. **文档与代码的漂移**：STATUS 说 C3 未做，代码已做；`--verbosity` 被接受但在 stats 中无效；`reed index -` 的帮助说支持 stdin，实际报 "No such file"。
 3. **若干可优化的实现点**：BCF 输入的 filter 走"渲染→文本→重扫"（CPU +38%）；`stats` 两族报告同时请求时读两遍；`--timing` 没有 reader 阶段的分解。
 
@@ -97,7 +97,7 @@ doc_v3 的路线基本全部落地，质量与 v3 时一致：每项都有 commi
 
 | # | 级 | 位置 | 问题 | 证据 | 修法 |
 |---|---|---|---|---|---|
-| F4-1 | **P1（语义）** | `reed-cli/src/translate/filter.rs:116-117`、`reed-filter/src/eval/tail.rs:33-36`、`reed/src/filter/mod.rs:256-268` | `--geno`/`--mind` 是"丢弃条件"，其余阈值是"保留条件"；`TailRules.max_missing` 字段存的是丢弃比例 | §2；用户裁决 | 02-cli-semantics.md |
+| F4-1 | **P1（语义）** | `reed-cli/src/translate/filter.rs:116-117`、`reed-filter/src/eval/tail.rs:33-36`、`reed/src/filter/mod.rs:256-268` | 首版判为"`--geno`/`--mind` 是丢弃条件、其余是保留条件"，据此要求改名；用户裁决后重新定性：方向本就一致（两者是"缺失率的上限"，与 `--max-maf` 同族），真正的缺口是**语义未成文**（分子按基因型还是等位、分母是哪些记录、在掩码前还是后、边界怎么判） | §2；用户裁决 | 02-cli-semantics.md §3/§4 给出定义；名字不改（02 §1.1）；首版改名撤回（02 §5.2） |
 | F4-2 | P2（文档） | `doc_v3/STATUS.md` "未完成" 表 | 写 "C3 `TagTable` 未做"，但 `reed-core/src/tag_table.rs` 存在、`reed_io::header::tag_table()` 已接入 `plan::compile`、`reed-filter/Cargo.toml` 已无 noodles | `grep noodles crates/reed-filter/src` 为空 | STATUS 改为"已做"，并补 C3 的验证行 |
 | F4-3 | P2（CLI） | `reed-cli/src/translate/stats.rs:341` `let _ = verbosity;` | `reed stats --verbosity` 被接受但无任何效果；filter 中只映射为 `quiet` | 代码 | 两个命令统一：0 静默、1 摘要、2 阶段计时（= `--timing` 到 stderr）、3 调试（`RUST_LOG=debug`）；没实现的级别不接受 |
 | F4-4 | P2（CLI） | `reed index` 帮助 "or `-` for stdin"；`reed/src/index.rs:457` 用 `std::fs::metadata(input)` 取文件尾虚拟偏移 | `cat x.vcf.gz \| reed index -` 报 `No such file or directory`，而非"stdin 不支持"的明确错误 | 实测 | 索引需要文件尾偏移与可重读，stdin 不可能；帮助文本改为 "file only"，参数校验报清楚的错误 |

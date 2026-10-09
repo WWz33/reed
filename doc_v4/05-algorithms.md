@@ -46,7 +46,7 @@
 | 项 | 现状 | 风险 | 处理 |
 |---|---|---|---|
 | 多等位位点的逐等位重算（AC/AF Number=A） | 默认双等位门剔除；显式允许多等位且需重算时**报错**（不再静默写错） | 多等位数据（indel 集）无法直接用 `--fill-tags` | 解码层已保留原始等位下标（`ScanOutput::alleles`）；`fill_tags` 按 Number=A 输出逐 ALT 向量，MAF 取第二常见等位（fill-tags 口径）；pixy 式多等位 π/dxy 推广已在累加器中 |
-| `reed stats` 的样本缺失阈值 | 不提供（明确报错） | 用户需先 `reed filter` | 维持；02 的 `--max-missing-sample` 同样只在 filter 中 |
+| `reed stats` 的样本缺失阈值 | 不提供（明确报错） | 用户需先 `reed filter` | 维持；02 的 `--mind` 同样只在 filter 中 |
 | 报告模式的 `-t/-T` | 报错 | 可用性 | 01 F4-10 |
 | `FMT/` 下标 `[0]/[*]`、通用正则 | 明确报 "not supported yet" | 少见 | 需求出现再做 |
 | HWE mid-p 的 plink2 数值对拍 | `midp` 已实现 | 极端位点末位差异未量化 | 补对拍用例（plink2 `--hwe P midp`） |

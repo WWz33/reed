@@ -142,7 +142,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         self.next_chunk_id += 1;
         Ok(Some(ChunkBytes {
             id,
-            compressed: std::sync::Arc::from(compressed.into_boxed_slice()),
+            compressed: crate::chunk::ChunkPayload::from(compressed),
             first_in_block_offset: std::mem::take(&mut self.first_in_block_offset),
             plain: false,
             compressed_start,
