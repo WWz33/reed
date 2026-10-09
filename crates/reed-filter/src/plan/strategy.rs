@@ -46,12 +46,12 @@ pub fn sketch_size_bytes(n_records: u64, n_samples: usize, n_rules: usize) -> u6
         .saturating_add(n_records.div_ceil(64) * 8)
 }
 
-/// Picks the strategy for a `--max-missing-sample` cohort: the sketch path
+/// Picks the strategy for a `--mind` cohort: the sketch path
 /// when the upper-bounded sketch fits the memory budget, TwoPassReparse
 /// otherwise (§11.4; the record count comes from the first-chunk
 /// records/byte extrapolation, spec-sanctioned when no index is available).
 #[must_use]
-pub fn choose_for_sample_call_rate(
+pub fn choose_for_mind(
     estimated_records: u64,
     n_samples: usize,
     n_rules: usize,

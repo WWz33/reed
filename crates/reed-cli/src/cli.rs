@@ -74,15 +74,16 @@ pub(crate) struct FilterCli {
     pub regions_args: filter_flags::RegionArgs,
     #[command(flatten)]
     pub sample_args: filter_flags::SampleArgs,
-    /// Keep samples whose call rate (called alleles / 2·sites, after the
+    /// Keep samples whose missing rate (missing alleles / 2·sites, after the
     /// genotype mask, over the sites that pass the pre-mask rules) is at
-    /// least FLOAT; applied before --max-missing/--maf/--hwe
-    #[arg(long, value_name = "FLOAT", value_parser = reed_filter::spec::CallRate::parse)]
-    pub max_missing_sample: Option<reed_filter::spec::CallRate>,
-    /// Removed flag: it stated the fraction to drop; the replacement names
-    /// the fraction that must be called
-    #[arg(long, value_name = "FLOAT", hide = true, value_parser = filter_flags::removed_mind)]
-    pub mind: Option<String>,
+    /// most FLOAT; applied before --geno/--maf/--hwe
+    #[arg(long, value_name = "FLOAT", value_parser = reed_filter::spec::MissingRate::parse)]
+    pub mind: Option<reed_filter::spec::MissingRate>,
+    /// Withdrawn flag: it stated the fraction that must be called; the
+    /// replacement names the fraction that may be missing
+    #[arg(long, value_name = "FLOAT", hide = true,
+          value_parser = filter_flags::removed_max_missing_sample)]
+    pub max_missing_sample: Option<String>,
     /// Sample lists naming samples absent from the header only warn
     #[arg(long)]
     pub force_samples: bool,
@@ -181,14 +182,14 @@ pub(crate) struct StatsCli {
     pub sample_args: filter_flags::SampleArgs,
     #[command(flatten)]
     pub site_args: filter_flags::SiteFilterArgs,
-    /// Removed flag: it stated the fraction to drop; the replacement names
-    /// the fraction that must be called
-    #[arg(long, value_name = "FLOAT", hide = true, value_parser = filter_flags::removed_mind)]
-    pub mind: Option<String>,
-    /// Not available here (doc_v4 02-cli-semantics.md §3.2): filter the
-    /// samples with `reed filter --max-missing-sample` first
+    /// Not available here (doc_v4 02 回退版 §3.2): filter the samples with
+    /// `reed filter --mind` first
     #[arg(long, value_name = "FLOAT", hide = true,
-          value_parser = filter_flags::unsupported_stats_call_rate)]
+          value_parser = filter_flags::unsupported_stats_mind)]
+    pub mind: Option<String>,
+    /// Withdrawn flag: it stated the fraction that must be called
+    #[arg(long, value_name = "FLOAT", hide = true,
+          value_parser = filter_flags::removed_max_missing_sample)]
     pub max_missing_sample: Option<String>,
     /// Groups file: `sample<TAB>population` rows, no header (pixy
     /// populations-file format); required by the windowed/pixy modes

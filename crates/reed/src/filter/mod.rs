@@ -147,7 +147,7 @@ pub fn run_filter(
         ));
     }
     // ---- input: stdin streams straight into the single-pass pipeline;
-    // multi-pass runs (`--max-missing-sample`) spill it once and delete the
+    // multi-pass runs (`--mind`) spill it once and delete the
     // spill on every exit path (03-performance.md O5). The first open doubles
     // as pass0's source when nothing consumes it before pass1. ----
     let _spill: Option<crate::input::StdinSpill>;
@@ -158,7 +158,7 @@ pub fn run_filter(
             first = Some(crate::input::open_regions(Some(p), &opts.regions).map_err(io_err)?);
             _spill = None;
         }
-        None if spec.min_sample_call_rate.is_some() => {
+        None if spec.mind.is_some() => {
             let guard =
                 crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
             let path = guard.path().to_path_buf();
@@ -191,7 +191,7 @@ pub fn run_filter(
         // The sketch path's record-count estimate is line-based; BCF input
         // takes the two-pass path (doc_v3 02-bcf.md B1).
         None if is_bcf => ExecStrategy::TwoPassReparse,
-        None => match &spec.min_sample_call_rate {
+        None => match &spec.mind {
             Some(_) if replay_path.is_some() => {
                 // §11.4: the sketch path when the upper-bounded sketch fits
                 // the memory budget (records extrapolated from the first
@@ -199,7 +199,7 @@ pub fn run_filter(
                 let estimated = estimate_records(
                     replay_path.as_deref().expect("invariant: guarded above"),
                 )?;
-                reed_filter::plan::strategy::choose_for_sample_call_rate(
+                reed_filter::plan::strategy::choose_for_mind(
                     estimated,
                     n_samples_in,
                     plan.mask.len(),
@@ -227,9 +227,9 @@ pub fn run_filter(
     }
 
     // ---- static subset (`-s/-S/--keep/--remove`), then the sample-level
-    // call-rate rule (`--max-missing-sample`, doc_v4 02-cli-semantics.md
-    // §3.2: counted after masking, over the records the head rules keep;
-    // the numerator is called alleles, the denominator 2·records) ----
+    // missing-rate rule (`--mind`, doc_v4 02 回退版 §3.2: counted after
+    // masking, over the records the head rules keep; the numerator is
+    // missing alleles, the denominator 2·records) ----
     let mut keep_vec: Vec<bool> = match &spec.sample_select {
         None => vec![true; n_samples_in],
         Some(select) => {
@@ -259,7 +259,7 @@ pub fn run_filter(
         }
     };
     let mut sample_rule = None;
-    if let Some(rate) = spec.min_sample_call_rate {
+    if let Some(rate) = spec.mind {
         let missing_partial;
         let (n_records, called): (u64, &[u64]) = match &sketch_pass {
             Some(sketch) => (sketch.n_records, &sketch.cohort_called),
@@ -270,18 +270,19 @@ pub fn run_filter(
                 (missing_partial.n_records, &missing_partial.called)
             }
         };
-        // Keep iff `called · 10^9 ≥ q · 2L` (exact integers). With no
-        // head-surviving record there is no evidence, so every sample stays
-        // (`keeps(0, 0)` is vacuously true).
+        // Keep iff `(2L − called) · 10^9 ≤ q · 2L` (exact integers). With
+        // no head-surviving record there is no evidence, so every sample
+        // stays (`tolerates(0, 0)` is vacuously true).
+        let total = 2 * n_records;
         let mut n_dropped = 0_u64;
         for (keep, &called) in keep_vec.iter_mut().zip(called) {
-            if *keep && !rate.keeps(called, 2 * n_records) {
+            if *keep && !rate.tolerates(total.saturating_sub(called), total) {
                 *keep = false;
                 n_dropped += 1;
             }
         }
         sample_rule = Some(reed_filter::funnel::SampleRuleReport {
-            rule: "sample.max_missing".to_string(),
+            rule: reed_filter::funnel::SAMPLE_MIND.to_string(),
             threshold: rate.render(),
             n_dropped,
         });

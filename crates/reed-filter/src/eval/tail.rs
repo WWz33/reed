@@ -34,11 +34,9 @@ pub fn eval_tail(
                 .is_some_and(|freq| freq >= *bound),
             TailRule::MaxAf(bound) => non_reference_af(values, counts)
                 .is_some_and(|freq| freq <= *bound),
-            TailRule::MinCallRate(rate) => {
-                n_samples_out > 0 && rate.keeps(counts.an, total_alleles)
-            }
-            TailRule::MaxMissingCount(cap) => {
-                total_alleles.saturating_sub(counts.an) <= *cap
+            TailRule::MaxMissing(rate) => {
+                n_samples_out > 0
+                    && rate.tolerates(total_alleles.saturating_sub(counts.an), total_alleles)
             }
             TailRule::MinMaf(m) => counts.maf() >= *m,
             TailRule::MaxMaf(m) => counts.maf() <= *m,
@@ -110,38 +108,39 @@ mod tests {
         let _ = (PloidyPolicy::HaploidAsHalfCall, MultiallelicPolicy::CollapseAlt, GenotypePolicies::default());
     }
 
-    /// doc_v4 02 §7.6: the call-rate decisions are exact at the boundary —
-    /// `X = 0.8, N = 10, missing = 2` keeps (the float form `1 − 0.8` would
-    /// drop it), `X = 0.7, N = 10, missing = 3` keeps.
+    /// doc_v4 02 回退版 §7.6: the decisions are exact at the boundary —
+    /// `X = 0.2, N = 10` (20 allele slots) with 2 missing keeps (equality)
+    /// and 3 missing drops; `X = 0.3` with 3 missing keeps (0.3 is not a
+    /// binary fraction).
     #[test]
-    fn call_rate_boundaries_are_exact() {
-        use crate::spec::CallRate;
-        // 16 of 20 alleles called: exactly 0.8.
-        let c = counts(2, 16, 8, 0, 2);
+    fn missing_rate_boundaries_are_exact() {
+        use crate::spec::MissingRate;
+        // 18 of 20 alleles called → 2 missing of 20: exactly 0.2.
+        let c = counts(2, 18, 8, 2, 0);
         let v = values(&c);
         let run = |rules: &[TailRule]| {
             let mut hits = vec![0_u64; rules.len()];
             eval_tail(&v, &c, 10, rules, &mut hits)
         };
-        assert!(run(&[TailRule::MinCallRate(CallRate::parse("0.8").expect("valid"))]));
-        assert!(!run(&[TailRule::MinCallRate(CallRate::parse("0.9").expect("valid"))]));
-        assert!(run(&[TailRule::MinCallRate(CallRate::parse("0.75").expect("valid"))]));
-        // 14 of 20 called against 0.7 (1 − 0.7 = 0.30000000000000004: a
-        // decision written through that float would drop this site).
-        let c = counts(2, 14, 6, 2, 0);
+        assert!(run(&[TailRule::MaxMissing(MissingRate::parse("0.2").expect("valid"))]));
+        assert!(!run(&[TailRule::MaxMissing(MissingRate::parse("0.05").expect("valid"))]));
+        // 17 of 20 called → 3 missing (0.15): 0.3 keeps, 0.1 drops.
+        let c = counts(2, 17, 7, 3, 0);
         let v = values(&c);
         assert!(eval_tail(
             &v,
             &c,
             10,
-            &[TailRule::MinCallRate(CallRate::parse("0.7").expect("valid"))],
+            &[TailRule::MaxMissing(MissingRate::parse("0.3").expect("valid"))],
             &mut [0]
         ));
-        // --max-missing-count: 2N − an ≤ C. 17 of 20 called → 3 missing.
-        let c = counts(2, 17, 7, 3, 0);
-        let v = values(&c);
-        assert!(eval_tail(&v, &c, 10, &[TailRule::MaxMissingCount(3)], &mut [0]));
-        assert!(!eval_tail(&v, &c, 10, &[TailRule::MaxMissingCount(2)], &mut [0]));
+        assert!(!eval_tail(
+            &v,
+            &c,
+            10,
+            &[TailRule::MaxMissing(MissingRate::parse("0.1").expect("valid"))],
+            &mut [0]
+        ));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `--max-missing-sample` pass0 (doc_v4 02-cli-semantics.md §3.2): the
+//! `--mind` pass0 (doc_v4 02-cli-semantics.md 回退版 §3.2): the
 //! per-sample reduction that resolves the dynamic sample rule.
 //!
 //! vcftools semantics: a sample's call rate is counted **after** the

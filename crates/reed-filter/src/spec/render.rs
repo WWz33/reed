@@ -51,8 +51,8 @@ impl FilterSpec {
                 }
             }
         }
-        if let Some(rate) = self.min_sample_call_rate {
-            flag(&mut args, "--max-missing-sample", rate.render());
+        if let Some(rate) = self.mind {
+            flag(&mut args, "--mind", rate.render());
         }
 
         // ---- regions (one `-t` list: `^` prefixes the excludes) ----
@@ -123,11 +123,8 @@ impl FilterSpec {
         if let Some(af) = self.site_after_mask.max_af {
             flag(&mut args, "-Q", f(af));
         }
-        if let Some(rate) = self.site_after_mask.min_call_rate {
-            flag(&mut args, "--max-missing", rate.render());
-        }
-        if let Some(count) = self.site_after_mask.max_missing_alleles {
-            flag(&mut args, "--max-missing-count", count);
+        if let Some(rate) = self.site_after_mask.max_missing {
+            flag(&mut args, "--geno", rate.render());
         }
         if let Some(m) = self.site_after_mask.min_maf {
             flag(&mut args, "--maf", f(m));
@@ -173,7 +170,7 @@ impl FilterSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::CallRate;
+    use crate::spec::MissingRate;
 
     fn args_of(spec: &FilterSpec) -> Vec<String> {
         spec.to_args()
@@ -186,13 +183,13 @@ mod tests {
                 keep: Some(SampleList::Names(vec!["a".into(), "b".into()])),
                 remove: Some(SampleList::Names(vec!["c".into()])),
             }),
-            min_sample_call_rate: Some(CallRate::parse("0.25").expect("valid")),
+            mind: Some(MissingRate::parse("0.25").expect("valid")),
             ..Default::default()
         };
         let args = args_of(&spec);
         assert_eq!(
             &args[..6],
-            &["-s", "a,b", "-s", "^c", "--max-missing-sample", "0.25"]
+            &["-s", "a,b", "-s", "^c", "--mind", "0.25"]
         );
     }
 
@@ -207,8 +204,7 @@ mod tests {
                 ..Default::default()
             },
             site_after_mask: super::super::TailRules {
-                min_call_rate: Some(CallRate::parse("0.9").expect("valid")),
-                max_missing_alleles: Some(42),
+                max_missing: Some(MissingRate::parse("0.1").expect("valid")),
                 min_maf: Some(0.05),
                 max_maf: Some(0.4),
                 min_mac: 3,
@@ -226,19 +222,18 @@ mod tests {
         assert_eq!(
             args_of(&spec),
             vec![
-                "-v", "snv", "-V", "indel", "-M", "2", "-f", "PASS", "--max-missing", "0.9",
-                "--max-missing-count", "42", "--maf", "0.05", "--max-maf", "0.4", "--mac", "3",
-                "--max-mac", "30", "--hwe", "0.000001", "-x", "INFO/DP", "--fill-tags", "AC,AN",
-                "-I",
+                "-v", "snv", "-V", "indel", "-M", "2", "-f", "PASS", "--geno", "0.1", "--maf",
+                "0.05", "--max-maf", "0.4", "--mac", "3", "--max-mac", "30", "--hwe", "0.000001",
+                "-x", "INFO/DP", "--fill-tags", "AC,AN", "-I",
             ]
         );
     }
 
     #[test]
-    fn call_rates_always_render_as_parsable() {
+    fn missing_rates_always_render_as_parsable() {
         let spec = FilterSpec {
             site_after_mask: super::super::TailRules {
-                min_call_rate: Some(CallRate::parse("0.5").expect("valid")),
+                max_missing: Some(MissingRate::parse("0.5").expect("valid")),
                 ..Default::default()
             },
             ..Default::default()

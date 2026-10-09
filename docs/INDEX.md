@@ -8,7 +8,7 @@
 
 | 主题 | 当前文档 | 说明 |
 |---|---|---|
-| CLI 参数语义 | `doc_v4/02-cli-semantics.md` + `doc_v2/02-cli.md` | v4 §1 的"方向规则"（一切阈值都是保留条件）优先；v4 未提到的章节仍按 doc_v2/02-cli.md |
+| CLI 参数语义 | `doc_v4/02-cli-semantics.md`（回退版）+ `doc_v2/02-cli.md` | v4 §1 的"方向规则"（每个阈值是作用在某个量上的保留条件：要保证的量写 `≥`、要抑制的量写 `≤`）优先；v4 未提到的章节仍按 doc_v2/02-cli.md |
 | 统计与过滤算法 | `doc_v2/04-algorithms.md` + `doc_v4/05-algorithms.md` | 方法与文献定义在 doc_v2；对齐状态与缺口台账在 v4/05 |
 | 架构 | `docs/architecture-spec.md`（v1 基础）+ `doc_v2/03-architecture.md` + `doc_v3/02-bcf.md` + `doc_v4/03-architecture.md` | v1 §13 的命名/输出列/提交纪律等长期条款仍有效；BCF 编解码在 doc_v3/02；当前形态与残留在 v4/03 |
 | 性能 | `doc_v3/03-performance.md` + `doc_v4/04-performance.md` | 优化清单与测量纪律在 v4/04（含共享机器污染样本的处理） |

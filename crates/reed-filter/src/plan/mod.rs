@@ -221,11 +221,9 @@ pub enum TailRule {
     MinAf(f64),
     /// Non-reference allele frequency upper bound (bcftools `-Q`).
     MaxAf(f64),
-    /// Site call-rate floor (`--max-missing`: called alleles / 2·kept
-    /// samples; exact integer judgment, doc_v4 02-cli-semantics.md §4).
-    MinCallRate(crate::spec::CallRate),
-    /// Missing-allele ceiling (`--max-missing-count`: `2N − an ≤ C`).
-    MaxMissingCount(u64),
+    /// Site missing-rate cap (`--geno`: `2N − an ≤ X · 2N`; exact integer
+    /// judgment, doc_v4 02 回退版 §4).
+    MaxMissing(crate::spec::MissingRate),
     /// MAF lower bound.
     MinMaf(f64),
     /// MAF upper bound.
@@ -246,8 +244,7 @@ impl TailRule {
             Self::Expr { id, .. } => id.clone(),
             Self::MinAf(_) => "after_mask.min_af".to_string(),
             Self::MaxAf(_) => "after_mask.max_af".to_string(),
-            Self::MinCallRate(_) => "after_mask.max_missing".to_string(),
-            Self::MaxMissingCount(_) => "after_mask.max_missing_count".to_string(),
+            Self::MaxMissing(_) => crate::funnel::AFTER_MASK_MISSING.to_string(),
             Self::MinMaf(_) => "after_mask.maf".to_string(),
             Self::MaxMaf(_) => "after_mask.max_maf".to_string(),
             Self::MinMac(_) => "after_mask.mac".to_string(),
@@ -509,13 +506,11 @@ pub fn compile(
         }
         tail.push(TailRule::MaxAf(af_threshold(f)));
     }
-    if let Some(rate) = spec.site_after_mask.min_call_rate {
-        // The range is validated where the rate is parsed (spec/call_rate.rs),
-        // so a compiled spec can only carry `q ≤ 10^9`.
-        tail.push(TailRule::MinCallRate(rate));
-    }
-    if let Some(cap) = spec.site_after_mask.max_missing_alleles {
-        tail.push(TailRule::MaxMissingCount(cap));
+    if let Some(rate) = spec.site_after_mask.max_missing {
+        // The range is validated where the rate is parsed
+        // (spec/missing_rate.rs), so a compiled spec can only carry
+        // `q ≤ 10^9`.
+        tail.push(TailRule::MaxMissing(rate));
     }
     if let Some(m) = spec.site_after_mask.min_maf {
         if !(0.0..=0.5).contains(&m) {
@@ -653,7 +648,7 @@ pub fn compile(
     let has_tail_expr = tail.iter().any(|r| matches!(r, TailRule::Expr { .. }));
     let strategy = if has_tail_expr {
         ExecStrategy::SinglePass
-    } else if spec.min_sample_call_rate.is_some() {
+    } else if spec.mind.is_some() {
         ExecStrategy::TwoPassReparse
     } else {
         ExecStrategy::SinglePass

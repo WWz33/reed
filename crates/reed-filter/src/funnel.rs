@@ -7,6 +7,14 @@ use serde::Serialize;
 /// serialized as a string.
 pub type RuleId = String;
 
+/// The site-level missing-rate rule's funnel id (`--geno`).
+pub const AFTER_MASK_MISSING: &str = "after_mask.missing";
+/// The sample-level missing-rate rule's id (`--mind`). The funnel stages
+/// count records, so this rule is reported through
+/// [`FilterReport::sample_rule`] instead of posing as a stage
+/// (doc_v4 02-cli-semantics.md 回退版 §5.3).
+pub const SAMPLE_MIND: &str = "sample.mind";
+
 /// One funnel stage: the rule and the count of records that passed it
 /// (cumulative semantics: a record that failed rule i counts in stages
 /// 1..i only).

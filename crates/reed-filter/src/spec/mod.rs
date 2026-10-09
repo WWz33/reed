@@ -5,7 +5,7 @@
 //! into these types by `reed-cli`; tests construct it directly. There is no
 //! TOML or conf file format (02-cli.md §0).
 
-pub mod call_rate;
+pub mod missing_rate;
 pub mod cohort;
 pub mod mask;
 pub mod predicate;
@@ -15,7 +15,7 @@ pub mod render;
 
 use serde::{Deserialize, Serialize};
 
-pub use call_rate::CallRate;
+pub use missing_rate::MissingRate;
 pub use cohort::{SampleList, SampleSelect};
 pub use mask::GenotypeMaskRule;
 pub use predicate::{Cmp, OnMissing, Quantifier, Typed};
@@ -29,12 +29,12 @@ pub struct FilterSpec {
     /// Static sample subset (`-s/-S/--keep/--remove`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_select: Option<SampleSelect>,
-    /// Dynamic sample rule: keep samples whose call rate reaches this
-    /// (`--max-missing-sample`, doc_v4 02-cli-semantics.md §3.2). Computed
+    /// Dynamic sample rule: keep samples whose **missing rate** is at most
+    /// this (`--mind`, doc_v4 02-cli-semantics.md 回退版 §3.2). Computed
     /// after masking, over the alleles of the sites that pass the head
     /// rules; applied before the tail rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_sample_call_rate: Option<CallRate>,
+    pub mind: Option<MissingRate>,
     /// Streaming region predicates (bcftools `-t` semantics).
     #[serde(default)]
     pub targets: RegionRule,
@@ -141,15 +141,12 @@ pub struct TailRules {
     /// `-e` expressions that read genotype-derived quantities.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
-    /// Site call-rate floor (`--max-missing`: keep sites whose called-allele
-    /// fraction reaches this; denominator: kept samples, numerator: called
-    /// alleles — vcftools semantics, doc_v4 02-cli-semantics.md §3.1).
+    /// Site missing-rate cap (`--geno`: keep sites whose missing-allele
+    /// fraction is at most this; denominator: kept samples' allele slots,
+    /// numerator: missing alleles — vcftools/plink2 semantics, doc_v4 02
+    /// 回退版 §3.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_call_rate: Option<CallRate>,
-    /// Missing-allele ceiling (`--max-missing-count`: keep sites with at
-    /// most this many missing alleles; vcftools semantics).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_missing_alleles: Option<u64>,
+    pub max_missing: Option<MissingRate>,
     /// MAF lower bound (recomputed from GT).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_maf: Option<f64>,

@@ -103,13 +103,13 @@ fn write_fixture(name: &str, n_records: usize) -> std::path::PathBuf {
 /// through the spec types; the flag-based CLI builds exactly this).
 fn gold_spec() -> FilterSpec {
     use reed_filter::spec::{
-        CallRate, GenotypeMaskRule, GenotypeRules, InfoPredicate, OnMissing, RecomputeSpec,
+        GenotypeMaskRule, GenotypeRules, InfoPredicate, MissingRate, OnMissing, RecomputeSpec,
         SiteRules, TailRules,
     };
     FilterSpec {
         // s3 is missing in 98% of the records; s1's `--min-dp` mask leaves it
-        // at exactly 0.9 (the boundary is kept).
-        min_sample_call_rate: Some(CallRate::parse("0.9").expect("valid")),
+        // at exactly 0.1 (the boundary is kept).
+        mind: Some(MissingRate::parse("0.1").expect("valid")),
         site: SiteRules {
             variant_class: vec!["snv".into()],
             max_alt_alleles: 1,
@@ -143,7 +143,7 @@ fn gold_spec() -> FilterSpec {
             ..GenotypeRules::default()
         },
         site_after_mask: TailRules {
-            min_call_rate: Some(CallRate::parse("0.5").expect("valid")),
+            max_missing: Some(MissingRate::parse("0.5").expect("valid")),
             min_maf: Some(0.05),
             ..TailRules::default()
         },
@@ -835,17 +835,17 @@ fn format_expressions_need_set_gts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// doc_v4 02 §3.2 gate (vcftools direction): `--max-missing-sample` counts
-/// post-mask **called alleles** over the records that survive the head
-/// rules, and the denominator is `2 × that record count`. Here s0 is
-/// missing in 90 records that fail the head rule and once in the 10 that
-/// survive (call rate 0.9 — the head failures must not drag it down); s1 is
-/// masked by `--min-dp` in half the survivors (0.5, exactly the threshold →
-/// kept); s3 is missing in 9 of the 10 survivors (0.1 → dropped).
+/// doc_v4 02 回退版 §3.2 gate: `--mind` counts post-mask **missing alleles**
+/// over the records that survive the head rules, and the denominator is
+/// `2 × that record count`. Here s0 is missing in 90 records that fail the
+/// head rule and once in the 10 that survive (0.1 — the head failures must
+/// not drag it down); s1 is masked by `--min-dp` in half the survivors (0.5,
+/// exactly the threshold → kept); s3 is missing in 9 of the 10 survivors
+/// (0.9 → dropped).
 #[test]
-fn sample_call_rate_counts_post_mask_over_head_survivors() {
+fn mind_counts_post_mask_over_head_survivors() {
     use reed_filter::plan::ExecStrategy;
-    use reed_filter::spec::{CallRate, GenotypeMaskRule, GenotypeRules, SiteRules};
+    use reed_filter::spec::{GenotypeMaskRule, GenotypeRules, MissingRate, SiteRules};
     let mut text = String::from(HEADER);
     for i in 0..100_u32 {
         let pass = i >= 90;
@@ -864,7 +864,7 @@ fn sample_call_rate_counts_post_mask_over_head_survivors() {
     let path = dir.join("in.vcf.gz");
     std::fs::write(&path, bgzf(&text, 256)).expect("invariant: write");
     let spec_with = |threshold: &str| FilterSpec {
-        min_sample_call_rate: Some(CallRate::parse(threshold).expect("valid")),
+        mind: Some(MissingRate::parse(threshold).expect("valid")),
         site: SiteRules {
             require_filter: vec!["PASS".into()],
             ..SiteRules::default()
@@ -888,10 +888,10 @@ fn sample_call_rate_counts_post_mask_over_head_survivors() {
         let report = run_filter(Some(&path), &spec_with("0.5"), &options(Some(strategy), &out))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(report.n_samples_out, 3, "{name}: s3 dropped, s0/s1/s2 kept");
-        // The rule reports under its stable id (doc_v4 02 §5.3), not as a
-        // record funnel stage.
+        // The rule reports under its stable id (doc_v4 02 回退版 §5.3), not
+        // as a record funnel stage.
         let rule = report.sample_rule.as_ref().expect("sample rule reported");
-        assert_eq!(rule.rule, "sample.max_missing", "{name}");
+        assert_eq!(rule.rule, "sample.mind", "{name}");
         assert_eq!(rule.threshold, "0.5", "{name}");
         assert_eq!(rule.n_dropped, 1, "{name}");
         let mut text = String::new();
@@ -906,26 +906,27 @@ fn sample_call_rate_counts_post_mask_over_head_survivors() {
             .expect("invariant: header")
             .split('\t')
             .collect();
-        // s1's 10/20 alleles is exactly the threshold → kept; s3's 2/20 →
-        // dropped; s0's 18/20 → kept (the 90 head failures are not counted).
+        // s1's 10/20 missing alleles is exactly the threshold → kept; s3's
+        // 18/20 → dropped; s0's 2/20 → kept (the 90 head failures are not
+        // counted).
         assert!(!columns.contains(&"s3"), "{name}: s3 dropped: {columns:?}");
         assert!(columns.contains(&"s1"), "{name}: s1 kept at the boundary: {columns:?}");
         assert!(columns.contains(&"s0"), "{name}: s0 kept: {columns:?}");
 
-        // One step above s1's exact rate drops it too.
+        // One step below s1's exact rate drops it too (missing > 0.5).
         let out = dir.join(format!("{name}-strict.vcf.gz"));
-        let report = run_filter(Some(&path), &spec_with("0.500000001"), &options(Some(strategy), &out))
+        let report = run_filter(Some(&path), &spec_with("0.499999999"), &options(Some(strategy), &out))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(report.n_samples_out, 2, "{name}: s1 drops just above its rate");
+        assert_eq!(report.n_samples_out, 2, "{name}: s1 drops just below its rate");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// 04 §C0b: `-s ^A,B` excludes, `-S FILE` + the dynamic sample rule combine
-/// (the static subset first, then the call-rate rule).
+/// (the static subset first, then `--mind`).
 #[test]
-fn static_subset_and_sample_call_rate_combine() {
-    use reed_filter::spec::{CallRate, SampleList, SampleSelect};
+fn static_subset_and_mind_combine() {
+    use reed_filter::spec::{MissingRate, SampleList, SampleSelect};
     let dir_path = write_fixture("subsetmind", 1_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
     // Keep s0,s3 statically; drop s3 via the call-rate rule (98% missing).
@@ -934,7 +935,7 @@ fn static_subset_and_sample_call_rate_combine() {
             keep: Some(SampleList::Names(vec!["s0".into(), "s3".into()])),
             remove: None,
         }),
-        min_sample_call_rate: Some(CallRate::parse("0.5").expect("valid")),
+        mind: Some(MissingRate::parse("0.5").expect("valid")),
         ..FilterSpec::default()
     };
     let out = dir.join("o.vcf.gz");
@@ -943,7 +944,7 @@ fn static_subset_and_sample_call_rate_combine() {
     assert_eq!(report.n_samples_in, 4);
     assert_eq!(
         report.n_samples_out, 1,
-        "s3 dropped by --max-missing-sample after the static subset"
+        "s3 dropped by --mind after the static subset"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

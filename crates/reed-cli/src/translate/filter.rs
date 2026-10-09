@@ -116,11 +116,8 @@ pub(crate) fn site_spec(
     if let Some(f) = cli.max_af {
         spec.site_after_mask.max_af = Some(f);
     }
-    if let Some(rate) = cli.max_missing {
-        spec.site_after_mask.min_call_rate = Some(rate);
-    }
-    if let Some(cap) = cli.max_missing_count {
-        spec.site_after_mask.max_missing_alleles = Some(cap);
+    if let Some(rate) = cli.geno {
+        spec.site_after_mask.max_missing = Some(rate);
     }
     if let Some(m) = cli.maf {
         spec.site_after_mask.min_maf = Some(m);
@@ -203,7 +200,7 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::Filt
     if keep.is_some() || remove.is_some() {
         spec.sample_select = Some(SampleSelect { keep, remove });
     }
-    spec.min_sample_call_rate = cli.max_missing_sample;
+    spec.mind = cli.mind;
 
     // ---- regions (02-cli.md §2): the spec predicate, validated here.
     // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----
@@ -435,8 +432,7 @@ mod tests {
             "-i", "F_MISSING<0.05",
             "-e", "N_MISSING>10",
             "--min-dp", "5", "--max-dp", "100", "--min-gq", "20",
-            "--max-missing", "0.9", "--max-missing-count", "12",
-            "--maf", "0.05", "--max-maf", "0.4",
+            "--geno", "0.1", "--maf", "0.05", "--max-maf", "0.4",
             "--mac", "3", "--max-mac", "30",
             "--hwe", "0.000001", "midp",
             "-x", "INFO/DP,INFO/MLEAC",
@@ -452,15 +448,15 @@ mod tests {
         assert_eq!(rendered, flags, "the rendering is the canonical spelling");
     }
 
-    /// `--max-missing-sample` is the dynamic sample rule the spec renders as
-    /// a threshold (and the CLI parses back into `min_sample_call_rate`).
+    /// `--mind` is the dynamic sample rule the spec renders as a threshold
+    /// (and the CLI parses back into `mind`).
     #[test]
-    fn sample_call_rate_round_trips() {
-        let flags = vec!["--max-missing-sample".to_string(), "0.75".to_string()];
+    fn mind_round_trips() {
+        let flags = vec!["--mind".to_string(), "0.25".to_string()];
         let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translates");
         assert_eq!(
-            first.min_sample_call_rate,
-            Some(reed_filter::spec::CallRate::parse("0.75").expect("valid"))
+            first.mind,
+            Some(reed_filter::spec::MissingRate::parse("0.25").expect("valid"))
         );
         assert_eq!(first.sample_select, None);
         let rendered = first.to_args();
@@ -471,22 +467,23 @@ mod tests {
         assert!(rendered[flags.len()] == "-x", "{rendered:?}");
     }
 
-    /// doc_v4 02 §5.2: the removed drop-direction flags error with the
-    /// converted spelling, and no silent alias exists.
+    /// doc_v4 02 回退版 §5.2: the withdrawn keep-direction flags error with
+    /// the converted spelling (exact decimal), and no silent alias exists.
     #[test]
-    fn removed_flags_error_with_the_conversion() {
+    fn withdrawn_flags_error_with_the_conversion() {
         use clap::Parser;
         let cases = [
-            (vec!["--geno", "0.1"], "--max-missing 0.9"),
-            (vec!["--geno", "0.8"], "--max-missing 0.2"),
-            (vec!["--mind", "0.2"], "--max-missing-sample 0.8"),
+            (vec!["--max-missing", "0.9"], "--geno 0.1"),
+            (vec!["--max-missing", "0.8"], "--geno 0.2"),
+            (vec!["--max-missing-sample", "0.9"], "--mind 0.1"),
+            (vec!["--max-missing-count", "5"], "the missing-threshold family is --geno/--mind only"),
         ];
         for (flags, expected) in cases {
             let mut argv = vec!["reed".to_string(), "filter".to_string(), "in.vcf.gz".to_string()];
             argv.extend(flags.iter().map(ToString::to_string));
             let err = crate::cli::Cli::try_parse_from(argv)
                 .err()
-                .expect("removed flag must fail");
+                .expect("withdrawn flag must fail");
             assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "{flags:?}");
             let text = err.to_string();
             assert!(text.contains("was removed"), "{flags:?}: {text}");
@@ -498,8 +495,8 @@ mod tests {
     /// dynamic sample rule round-trip; the rendering is the canonical
     /// spelling.
     #[test]
-    fn static_subset_and_sample_rate_round_trip() {
-        let flags: Vec<String> = ["-S", "keep.txt", "-s", "^drop1,drop2", "--max-missing-sample", "0.8"]
+    fn static_subset_and_mind_round_trip() {
+        let flags: Vec<String> = ["-S", "keep.txt", "-s", "^drop1,drop2", "--mind", "0.2"]
             .iter()
             .map(ToString::to_string)
             .collect();
@@ -511,8 +508,8 @@ mod tests {
             Some(reed_filter::spec::SampleList::Names(vec!["drop1".into(), "drop2".into()]))
         );
         assert_eq!(
-            first.min_sample_call_rate,
-            Some(reed_filter::spec::CallRate::parse("0.8").expect("valid"))
+            first.mind,
+            Some(reed_filter::spec::MissingRate::parse("0.2").expect("valid"))
         );
         let rendered = first.to_args();
         assert_eq!(&rendered[..flags.len()], &flags[..]);

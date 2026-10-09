@@ -64,14 +64,14 @@ fn input_help_is_shared() {
 #[test]
 fn help_lists_the_renamed_flags_only() {
     let filter = help(&["filter", "--help"]);
-    for flag in ["--max-missing", "--max-missing-count", "--max-missing-sample"] {
+    for flag in ["--geno", "--mind"] {
         assert!(filter.contains(flag), "filter help lacks {flag}");
     }
-    assert!(!filter.contains("--geno"), "the removed --geno is still listed");
-    assert!(!filter.contains("--mind"), "the removed --mind is still listed");
+    assert!(!filter.contains("--max-missing"), "the withdrawn --max-missing is still listed");
 
     let stats = help(&["stats", "--help"]);
-    assert!(stats.contains("--max-missing"), "stats shares the site flags");
+    assert!(stats.contains("--geno"), "stats shares the site flags");
+    assert!(!stats.contains("--max-missing"), "stats must not list --max-missing");
     assert!(!stats.contains("-g, --pop"), "-g must not abbreviate --pop");
     assert!(stats.contains("--pop"), "the long spelling stays");
     assert!(stats.contains("--populations"), "the visible alias stays");

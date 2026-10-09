@@ -1,19 +1,19 @@
-//! doc_v4 02-cli-semantics.md §7.1–7.2 gates: the call-rate boundaries are
-//! exact and agree with the reference tools.
+//! doc_v4 02-cli-semantics.md 回退版 §7.1–7.2 gates: the missing-rate
+//! boundaries are exact and agree with the reference tools.
 //!
-//! Each fixture is a small plain VCF whose per-record call rate is known by
-//! construction (`N = 10` and `N = 7`, so `X·2N` is sometimes an integer and
-//! sometimes not; with and without half calls). reed's surviving site set is
-//! compared against the set computed independently here; when `vcftools` and
-//! `plink2` are present (the gold tool paths), the same fixtures are run
-//! through them and the sets must agree (`--max-missing X`, and
-//! `--geno 1−X` for the half-call-free fixture).
+//! Each fixture is a small plain VCF whose per-record missing rate is known
+//! by construction (`N = 10` and `N = 7`, so `X·2N` is sometimes an integer
+//! and sometimes not; with and without half calls). reed's surviving site set
+//! is compared against the set computed independently here; when `vcftools`
+//! and `plink2` are present (the gold tool paths), the same fixtures run
+//! through them and the sets must agree — `plink2 --geno X` directly, and
+//! `vcftools --max-missing 1−X` with the subtraction done in exact decimal.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use reed::filter::{run_filter, FilterOptions};
-use reed_filter::spec::{CallRate, FilterSpec, TailRules};
+use reed_filter::spec::{FilterSpec, MissingRate, TailRules};
 
 /// Writes `text` as a plain VCF under a per-test temp directory.
 fn write_vcf(dir: &Path, name: &str, text: &str) -> PathBuf {
@@ -156,41 +156,42 @@ fn site_call_rate_boundaries_match_reference_sets_and_tools() {
     let vcftools = tool("VCFTOOLS", "biosoft/vcftools");
     let plink2 = tool("PLINK2", "biosoft/plink2");
 
-    // X → expected survivors (call rate ≥ X, allele-based).
-    let cases: [(&str, &[u64]); 9] = [
-        ("1", &[1]),
-        ("0.9", &[1, 2]),
-        ("0.8", &[1, 2, 3]),
-        ("0.75", &[1, 2, 3]),
-        ("0.7", &[1, 2, 3, 4]),
+    // X (--geno: missing rate ≤ X) → expected survivors. The fixture's
+    // records have missing rates 0, 0.1, 0.2, 0.3, 0.5, 0.9, 1.0.
+    let cases: [(&str, &[u64]); 7] = [
+        ("0", &[1]),
+        ("0.1", &[1, 2]),
+        ("0.2", &[1, 2, 3]),
+        ("0.3", &[1, 2, 3, 4]),
         ("0.5", &[1, 2, 3, 4, 5]),
-        ("0.1", &[1, 2, 3, 4, 5, 6]),
-        ("0.05", &[1, 2, 3, 4, 5, 6]),
-        ("0", &[1, 2, 3, 4, 5, 6, 7]),
+        ("0.9", &[1, 2, 3, 4, 5, 6]),
+        ("1", &[1, 2, 3, 4, 5, 6, 7]),
     ];
     for (x, expected) in cases {
-        let rate = CallRate::parse(x).expect("valid");
+        let rate = MissingRate::parse(x).expect("valid");
         let got = reed_positions(
             &input,
             &out,
-            TailRules { min_call_rate: Some(rate), ..TailRules::default() },
+            TailRules { max_missing: Some(rate), ..TailRules::default() },
         );
-        assert_eq!(got, expected, "reed --max-missing {x}");
+        assert_eq!(got, expected, "reed --geno {x}");
         if let Some(vcftools) = &vcftools {
+            // vcftools states the keep direction; the conversion is exact
+            // decimal (doc_v4 02 回退版 §5.2).
+            let keep = rate.complement().render();
             assert_eq!(
-                vcftools_positions(vcftools, &dir, &input, x).expect("vcftools runs"),
+                vcftools_positions(vcftools, &dir, &input, &keep).expect("vcftools runs"),
                 expected,
-                "vcftools --max-missing {x}"
+                "vcftools --max-missing {keep}"
             );
         }
-        // plink2 states the drop direction (`--geno 1−X`); the fixtures have
-        // no half calls, so its genotype-missing numerator agrees.
+        // plink2 spells the same threshold the same way; the fixtures have no
+        // half calls, so its genotype-missing numerator agrees.
         if let Some(plink2) = &plink2 {
-            let geno = rate.complement().render();
             assert_eq!(
-                plink2_positions(plink2, &dir, &input, &geno, x).expect("plink2 runs"),
+                plink2_positions(plink2, &dir, &input, x, x).expect("plink2 runs"),
                 expected,
-                "plink2 --geno {geno}"
+                "plink2 --geno {x}"
             );
         }
     }
@@ -208,30 +209,38 @@ fn seven_sample_boundaries_are_exact() {
     );
     let out = dir.join("out.vcf");
     let vcftools = tool("VCFTOOLS", "biosoft/vcftools");
-    // 14/14 = 1.0, 12/14 ≈ 0.857, 10/14 ≈ 0.714, 8/14 ≈ 0.571, 0/14 = 0.
+    let plink2 = tool("PLINK2", "biosoft/plink2");
+    // Missing alleles out of 14: 0, 2 (≈0.142857), 4 (≈0.285714),
+    // 6 (≈0.428571), 14. The cases straddle the repeating decimals.
     let cases: [(&str, &[u64]); 6] = [
-        ("0.857", &[1, 2]),
-        ("0.8", &[1, 2]),
-        ("0.714", &[1, 2, 3]),
-        ("0.72", &[1, 2]),
-        ("0.571", &[1, 2, 3, 4]),
-        ("0.57", &[1, 2, 3, 4]),
+        ("0.1428572", &[1, 2]),
+        ("0.1428571", &[1]),
+        ("0.2857143", &[1, 2, 3]),
+        ("0.28", &[1, 2]),
+        ("0.4285715", &[1, 2, 3, 4]),
+        ("0.42", &[1, 2, 3]),
     ];
     for (x, expected) in cases {
+        let rate = MissingRate::parse(x).expect("valid");
         let got = reed_positions(
             &input,
             &out,
-            TailRules {
-                min_call_rate: Some(CallRate::parse(x).expect("valid")),
-                ..TailRules::default()
-            },
+            TailRules { max_missing: Some(rate), ..TailRules::default() },
         );
-        assert_eq!(got, expected, "reed --max-missing {x} (N = 7)");
+        assert_eq!(got, expected, "reed --geno {x} (N = 7)");
         if let Some(vcftools) = &vcftools {
+            let keep = rate.complement().render();
             assert_eq!(
-                vcftools_positions(vcftools, &dir, &input, x).expect("vcftools runs"),
+                vcftools_positions(vcftools, &dir, &input, &keep).expect("vcftools runs"),
                 expected,
-                "vcftools --max-missing {x} (N = 7)"
+                "vcftools --max-missing {keep} (N = 7)"
+            );
+        }
+        if let Some(plink2) = &plink2 {
+            assert_eq!(
+                plink2_positions(plink2, &dir, &input, x, &format!("seven{x}")).expect("plink2 runs"),
+                expected,
+                "plink2 --geno {x} (N = 7)"
             );
         }
     }
@@ -258,62 +267,37 @@ fn half_calls_count_as_one_called_allele() {
     // pos 1: 20/20 = 1.0; pos 2: 16/20 = 0.8; pos 3: 1/20 = 0.05;
     // pos 4: 10/20 = 0.5.
     let cases: [(&str, &[u64]); 5] = [
-        ("1", &[1]),
-        ("0.8", &[1, 2]),
+        ("0", &[1]),
+        ("0.2", &[1, 2]),
         ("0.5", &[1, 2, 4]),
-        ("0.05", &[1, 2, 3, 4]),
-        ("0", &[1, 2, 3, 4]),
+        ("0.95", &[1, 2, 3, 4]),
+        ("1", &[1, 2, 3, 4]),
     ];
     let vcftools = tool("VCFTOOLS", "biosoft/vcftools");
     for (x, expected) in cases {
+        let rate = MissingRate::parse(x).expect("valid");
         let got = reed_positions(
             &input,
             &out,
-            TailRules {
-                min_call_rate: Some(CallRate::parse(x).expect("valid")),
-                ..TailRules::default()
-            },
+            TailRules { max_missing: Some(rate), ..TailRules::default() },
         );
-        assert_eq!(got, expected, "reed --max-missing {x} (half calls)");
+        assert_eq!(got, expected, "reed --geno {x} (half calls)");
         if let Some(vcftools) = &vcftools {
+            let keep = rate.complement().render();
             assert_eq!(
-                vcftools_positions(vcftools, &dir, &input, x).expect("vcftools runs"),
+                vcftools_positions(vcftools, &dir, &input, &keep).expect("vcftools runs"),
                 expected,
-                "vcftools --max-missing {x} (half calls)"
+                "vcftools --max-missing {keep} (half calls)"
             );
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `--max-missing-count C`: keep iff `2N − an ≤ C` (the numerator is the
-/// missing-allele count, not the record count).
-#[test]
-fn max_missing_count_matches_the_reference() {
-    let dir = temp_dir("count");
-    let input = fixture_10(&dir);
-    let out = dir.join("out.vcf");
-    let cases: [(u64, &[u64]); 4] = [
-        (0, &[1]),
-        (2, &[1, 2]),
-        (4, &[1, 2, 3]),
-        (10, &[1, 2, 3, 4, 5]),
-    ];
-    for (cap, expected) in cases {
-        let got = reed_positions(
-            &input,
-            &out,
-            TailRules { max_missing_alleles: Some(cap), ..TailRules::default() },
-        );
-        assert_eq!(got, expected, "reed --max-missing-count {cap}");
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// doc_v4 02 §7.2: the sample-level rule (`--min-gq 20 --max-missing-sample
-/// 0.9`) keeps exactly what plink2's `--vcf-min-gq 20 --mind 0.1` keeps.
-/// s1 is masked in 2 of 10 records (0.8 → dropped), s2 is missing exactly
-/// once (0.9 → kept at the boundary), s3 is missing 3 times (0.7 → dropped).
+/// doc_v4 02 回退版 §7.2: the sample-level rule (`--min-gq 20 --mind 0.1`)
+/// keeps exactly what plink2's `--vcf-min-gq 20 --mind 0.1` keeps. s1 is
+/// masked in 2 of 10 records (0.2 → dropped), s2 is missing exactly once
+/// (0.1 → kept at the boundary), s3 is missing 3 times (0.3 → dropped).
 #[test]
 fn sample_call_rate_matches_plink2_mind() {
     let dir = temp_dir("sample");
@@ -338,7 +322,7 @@ fn sample_call_rate_matches_plink2_mind() {
     let input = write_vcf(&dir, "samples.vcf", &body);
     let out = dir.join("out.vcf");
     let spec = FilterSpec {
-        min_sample_call_rate: Some(CallRate::parse("0.9").expect("valid")),
+        mind: Some(MissingRate::parse("0.1").expect("valid")),
         genotype: reed_filter::spec::GenotypeRules {
             mask_if: vec![reed_filter::spec::GenotypeMaskRule {
                 field: "GQ".into(),
@@ -375,7 +359,7 @@ fn sample_call_rate_matches_plink2_mind() {
         .split('\t')
         .collect();
     let kept: Vec<&str> = columns[9..].to_vec();
-    assert_eq!(kept, vec!["s0", "s2"], "s2 sits exactly on the 0.9 boundary");
+    assert_eq!(kept, vec!["s0", "s2"], "s2 sits exactly on the 0.1 boundary");
 
     if let Some(plink2) = tool("PLINK2", "biosoft/plink2") {
         let prefix = dir.join("plink2-mind");

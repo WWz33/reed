@@ -1,7 +1,7 @@
 //! The sketch path's pass0 (`doc_v2/03-architecture.md` §8, §11.4):
 //! head rules → per-sample GT planes + per-rule mask bitmaps (head
 //! survivors) + per-sample post-mask called-allele counts over head
-//! survivors (`--max-missing-sample`'s vcftools semantics, doc_v4 02 §3.2).
+//! survivors (`--mind`'s vcftools semantics, doc_v4 02 回退版 §3.2).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -56,7 +56,7 @@ pub(super) struct SketchScratch {
 
 /// The pass0 job: head rules → per-sample GT planes + per-rule mask
 /// bitmaps (head survivors) + per-sample post-mask called-allele counts
-/// (head survivors, the `--max-missing-sample` numerator).
+/// (head survivors, the `--mind` numerator).
 pub(super) struct SketchJob {
     pub(super) plan: Arc<FilterPlan>,
     pub(super) n_samples: usize,
@@ -203,7 +203,7 @@ impl SketchJob {
                 v.iter_mut().for_each(|word| *word = 0);
             }
             for (i, &code) in view.scan.codes.iter().enumerate() {
-                // `--max-missing-sample` (doc_v4 02 §3.2): post-mask called
+                // `--mind` (doc_v4 02 回退版 §3.2): post-mask called
                 // alleles over the head survivors.
                 let n = super::reduce::called_alleles(code, view.masked.get(i));
                 if let Some(slot) = called.get_mut(i) {
