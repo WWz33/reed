@@ -7,8 +7,9 @@ Current names that must change are listed only in the rename ledger (§3); nothi
 existing accidents. Authority: `DESIGN.md` §4.5, `docs/filter-architecture.md` §3.
 
 Applies to every `pub` item in reed-core / reed-io / reed-filter, and to doc comments that name
-concepts. Published-API status: reed-core 0.2.0 and reed-io 0.2.0 are published surfaces; reed-filter
-0.1.0 is still free to rename. §6 extends the scheme from identifiers to file names (Rust modules,
+concepts. Stability status (doc_v5 08 §6): the crates are **internal** — none is published, and the
+only stability promise is on the CLI flags and the output file formats (`docs/spec/cli.md` §0); the
+Rust items are free to rename. §6 extends the scheme from identifiers to file names (Rust modules,
 gold scripts) and bioinformatics artifacts (VCF/BCF outputs, index sidecars, logs, reports).
 
 ## 1. Concept → canonical name

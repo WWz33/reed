@@ -21,12 +21,12 @@ fn fixture() -> Vec<u8> {
             i + 1
         ));
     }
-    let mut deflater = reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater.deflate_block(block, &mut out).expect("invariant: block");
     }
-    out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+    out.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
     out
 }
 

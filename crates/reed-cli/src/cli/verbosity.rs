@@ -58,14 +58,20 @@ impl Verbosity {
         self >= Self::Timing
     }
 
-    /// Initializes the tracing subscriber at level 3 (`RUST_LOG` wins when
-    /// set; the default is `debug`). Levels below 3 install nothing.
+    /// Initializes the tracing subscriber. Level 0 installs nothing; levels
+    /// 1–2 print the backend's `warn`+ events (08 §6.1: the backend only
+    /// emits `tracing` events, the front end decides whether to show them);
+    /// level 3 uses `RUST_LOG` (default `debug`).
     pub(crate) fn init_tracing(self) {
-        if self < Self::Debug {
+        if self < Self::Summary {
             return;
         }
         use tracing_subscriber::EnvFilter;
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+        let filter = if self >= Self::Debug {
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"))
+        } else {
+            EnvFilter::new("warn")
+        };
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)

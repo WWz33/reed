@@ -89,13 +89,6 @@ impl<S: Default> Default for FilteredScratch<S> {
 }
 
 impl<J: ChunkJob> FilteredJob<J> {
-    /// Wraps `inner` with `plan` (the same compiler `reed filter` uses) over
-    /// the sample keep mask; survivors reach the inner job as rewritten text.
-    #[must_use]
-    pub fn new(plan: Option<Arc<FilterPlan>>, keep: Arc<[bool]>, inner: J) -> Self {
-        Self::build(plan, keep, None, inner)
-    }
-
     /// Wraps `inner` with the record path: survivors reach `records` as
     /// [`ScannedRecord`]s, so the inner job neither re-parses the rewritten
     /// record nor decodes GT again (doc_v4 O-2).
@@ -254,13 +247,6 @@ impl<J: ChunkJob> FilteredJob<J> {
         scratch.buffer.clear();
         scratch.codes.clear();
         scratch.spans.clear();
-    }
-
-    /// Whether the record path is active (the inner job must expect
-    /// [`ScannedRecord`]s instead of text).
-    #[must_use]
-    pub const fn uses_records(&self) -> bool {
-        self.records.is_some()
     }
 }
 

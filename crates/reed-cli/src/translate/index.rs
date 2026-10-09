@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use reed::index::{run_index, WriteIndex};
+use reed::{run_index, WriteIndex};
 
 use crate::cli::IndexCli;
 

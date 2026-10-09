@@ -1,36 +1,85 @@
-//! `reed` (L4): the facade library. Wires the pure policy layers
-//! (reed-stats; reed-filter) onto the parallel engine
-//! (`docs/architecture-spec.md` §3.1, §7.1).
+//! `reed` (L4): the facade library — the backend API boundary of the
+//! front/back-end split (doc_v5 08 §6). The `reed` binary is the only front
+//! end and depends on this crate alone. Nothing here prints to stderr or
+//! knows about clap or exit codes.
 //!
-//! **Embedded API**: the typed requests (`FilterSpec`, `StatsRequest`) with
-//! the `run_*` entry points and their report/error types, plus the output
-//! writers reachable as `reed::pixy` / `reed::reports` / `reed::summary`.
-//! Everything else is implementation detail: `bcf_input` and `filtered` are
-//! crate-private, `input` is hidden from the docs. The binary is the
-//! product; the stability promise is on the CLI flags and output formats
-//! (`docs/spec/cli.md` §0), not on these Rust items.
+//! This file is a re-export list (08 §6.2), not a module tree: the typed
+//! requests, the `run_*` entry points and their reports, the output writers,
+//! the expression entry point and the parallel budgets. The implementation
+//! modules (`input`, `bcf_input`, `filtered`, `stats`, `filter`, `index`)
+//! are private; their items are `pub` but only reachable through the
+//! re-exports below, so the crate-wide `unreachable_pub` lint is allowed
+//! here by construction.
+//!
+//! # Examples
+//!
+//! Build a request from types and render it back to the CLI spelling
+//! (`to_args` is the text contract the provenance header records):
+//!
+//! ```
+//! use reed::spec::{FilterSpec, MissingRate};
+//! let mut spec = FilterSpec::default();
+//! spec.site_after_mask.max_missing = Some(MissingRate::parse("0.1").expect("valid"));
+//! let args = spec.to_args();
+//! assert!(args.windows(2).any(|w| w[0] == "--geno" && w[1] == "0.1"), "{args:?}");
+//! ```
+//!
+//! A statistics request is a plain struct; unnamed fields take their default:
+//!
+//! ```
+//! use reed::{StatKind, StatsRequest};
+//! let request = StatsRequest {
+//!     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
+//!     ..StatsRequest::default()
+//! };
+//! assert_eq!(request.kinds.len(), 1);
+//! ```
+//!
+//! Drive a run (the caller opens the input path; `run_*` never prints):
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let report = reed::run_filter(
+//!     Some(std::path::Path::new("in.vcf.gz")),
+//!     &reed::spec::FilterSpec::default(),
+//!     &reed::FilterOptions::default(),
+//! )?;
+//! let _ = report;
+//! # Ok(())
+//! # }
+//! ```
 
-pub mod filter;
-pub mod index;
-pub mod stats;
+#![allow(unreachable_pub)]
 
-pub(crate) mod bcf_input;
-pub(crate) mod filtered;
+mod bcf_input;
+mod filter;
+mod filtered;
+mod index;
+mod input;
+mod stats;
 
-/// Input opening stays reachable for the binary's one-shot opens
-/// (`run_*` does its own); hidden from the docs.
+// Requests, drivers and their reports (08 §6.2).
+pub use crate::filter::{run_filter, FilterOptions, WriteIndex};
+pub use crate::index::run_index;
+pub use crate::stats::{
+    assign_groups, default_kinds, pixy_kinds, run_stats, run_stats_opened, FstKind, InvariantMode,
+    Levels, PbsKind, PixyOptions, StatKind, StatsReport, StatsRequest,
+};
+
+// The output writers (08 §6.2 `reed::writers`): pixy layout, per-site reports
+// and the bcftools-stats summary renderer.
+pub use crate::stats::writers::{pixy, reports, summary};
+
+// The request sub-modules the CLI builds against (08 §6.2): `spec`, `expr`,
+// `plan`, `funnel`.
+pub use reed_filter::{expr, funnel, plan, spec};
+
+// Input opening (the binary's one-shot opens); hidden from the docs.
 #[doc(hidden)]
-pub mod input;
+pub use crate::input::open_regions;
 
-/// Implementation types the integration tests drive directly (not part of
-/// the embedded API).
-#[doc(hidden)]
-pub mod internal {
-    pub use crate::bcf_input::{BcfRecordFn, InputJob, InputScratch};
-    pub use crate::filtered::{FilteredJob, FilteredScratch, ScannedRecord, ScannedRecordFn};
-    pub use crate::input::{open, open_regions, OpenedInput};
-}
-
-// The writers that belong to the embedded API: the pixy-layout statistics,
-// the per-site/per-sample reports and the bcftools-stats summary renderer.
-pub use stats::writers::{pixy, reports, summary};
+// Front-end re-exports (08 §6.2): the parallel budgets, the region type and
+// the BGZF helpers the tests write fixtures with.
+pub use reed_engine::budget;
+pub use reed_engine::metrics;
+pub use reed_io::{bgzf, chunk, header};

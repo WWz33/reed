@@ -10,7 +10,7 @@ use noodles::vcf::variant::io::Write as _;
 use noodles::vcf::variant::record_buf::samples::{sample::Value, Keys, Samples};
 
 use crate::error::{IoError, Locus};
-use crate::noodles_vcf as vcf;
+use noodles::vcf as vcf;
 
 /// The per-worker encoder: noodles' BCF writer over a byte buffer.
 pub struct BcfEncoder {

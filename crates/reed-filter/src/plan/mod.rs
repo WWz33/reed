@@ -143,8 +143,8 @@ fn stale_info_hits(expr: &crate::expr::Expr, tags: &TagTable) -> Vec<&'static st
 
 fn warn_stale_info(expr: &crate::expr::Expr, text: &str, tags: &TagTable) {
     for name in stale_info_hits(expr, tags) {
-        eprintln!(
-            "reed filter: warning: {text:?} reads {name}, which the header declares as \
+        tracing::warn!(
+            "{text:?} reads {name}, which the header declares as \
              INFO/{name}; the INFO value may be stale — use --maf/--mac (recomputed from \
              genotypes) or remove the tag with -x INFO/{name}"
         );

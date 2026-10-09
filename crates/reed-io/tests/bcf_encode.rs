@@ -51,7 +51,7 @@ fn fixture_parts() -> (String, Vec<Vec<u8>>) {
 #[test]
 fn native_and_noodles_encoders_agree() {
     let (header_text, records) = fixture_parts();
-    let header: reed_io::noodles_vcf::Header =
+    let header: noodles::vcf::Header =
         header_text.parse().expect("invariant: header parses");
     let mut native = reed_io::bcf::NativeEncoder::new(&header).expect("invariant: native encoder");
     let mut noodles = reed_io::bcf::BcfEncoder::new().expect("invariant: noodles encoder");
@@ -72,7 +72,7 @@ fn native_and_noodles_encoders_agree() {
 #[test]
 fn encode_round_trips_through_the_renderer() {
     let (header_text, records) = fixture_parts();
-    let header: reed_io::noodles_vcf::Header =
+    let header: noodles::vcf::Header =
         header_text.parse().expect("invariant: header parses");
     let mut encoder = reed_io::bcf::NativeEncoder::new(&header).expect("invariant: encoder");
     // A synthetic BCF stream: header text + records, rendered back.

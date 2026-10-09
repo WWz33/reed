@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use reed::stats::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
+use reed::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::fst::FstKind;
 use reed_stats::request::StatKind;

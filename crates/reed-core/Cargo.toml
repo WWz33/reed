@@ -1,10 +1,11 @@
 [package]
 name = "reed-core"
-description = "Canonical population-genetics statistics over windowed genotype buffers (no I/O)."
+description = "Core models, the genotype count kernel and the math for reed (no I/O)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 bitflags.workspace = true

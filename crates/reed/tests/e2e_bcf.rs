@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use reed::filter::{run_filter, FilterOptions};
-use reed::stats::{run_stats, Levels, PixyOptions, StatsRequest};
+use reed::{run_filter, FilterOptions};
+use reed::{run_stats, Levels, PixyOptions, StatsRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_filter::spec::FilterSpec;
 
@@ -71,14 +71,14 @@ fn budget() -> ThreadBudget {
 
 fn request() -> StatsRequest {
     StatsRequest {
-        kinds: reed::stats::pixy_kinds(2, true, true, true, false, None, None),
+        kinds: reed::pixy_kinds(2, true, true, true, false, None, None),
         gt_groups: vec![Some(0), Some(0), Some(1)],
         window_size: 1000,
         step: 1000,
         levels: Levels { window: true, contig: false, genome: false },
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
-        pixy: Some(PixyOptions { invariant: reed::stats::InvariantMode::VariantOnly }),
+        pixy: Some(PixyOptions { invariant: reed::InvariantMode::VariantOnly }),
         ..StatsRequest::default()
     }
 }
@@ -147,7 +147,7 @@ fn bcf_output_round_trips_to_the_same_records() {
         let opts = FilterOptions {
             threads: 2,
             output: Some(out.to_path_buf()),
-            write_index: reed::filter::WriteIndex::None,
+            write_index: reed::WriteIndex::None,
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
@@ -223,7 +223,7 @@ fn bcf_output_is_thread_count_independent() {
         let opts = FilterOptions {
             threads,
             output: Some(out.to_path_buf()),
-            write_index: reed::filter::WriteIndex::None,
+            write_index: reed::WriteIndex::None,
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
@@ -280,7 +280,7 @@ fn af_bounds_match_bcftools_on_the_fixture() {
         let opts = FilterOptions {
             threads: 2,
             output: Some(out.clone()),
-            write_index: reed::filter::WriteIndex::None,
+            write_index: reed::WriteIndex::None,
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
@@ -332,7 +332,7 @@ fn chain_framing_is_boundary_independent() {
         let opts = FilterOptions {
             threads: 2,
             output: Some(out.to_path_buf()),
-            write_index: reed::filter::WriteIndex::None,
+            write_index: reed::WriteIndex::None,
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
@@ -393,7 +393,7 @@ fn filter_output_is_identical_across_formats() {
         let opts = FilterOptions {
             threads: 4,
             output: Some(out.to_path_buf()),
-            write_index: reed::filter::WriteIndex::None,
+            write_index: reed::WriteIndex::None,
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),

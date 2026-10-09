@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use reed::stats::{pixy_kinds, run_stats, InvariantMode, Levels, PixyOptions, StatsRequest};
+use reed::{pixy_kinds, run_stats, InvariantMode, Levels, PixyOptions, StatsRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::request::StatKind;
 
@@ -214,8 +214,8 @@ fn watterson_theta_and_tajima_d_hand_computed() {
 fn fst_hudson_and_wc84_hand_computed() {
     let path = write_fixture("fst", FIXTURE);
     for (kind, name) in [
-        (reed::stats::FstKind::Hudson, "hudson"),
-        (reed::stats::FstKind::WeirCockerham84, "wc84"),
+        (reed::FstKind::Hudson, "hudson"),
+        (reed::FstKind::WeirCockerham84, "wc84"),
     ] {
         let mut request = request(InvariantMode::Bypass);
         request.kinds = pixy_kinds(2, false, false, false, false, Some(kind), None);
@@ -257,7 +257,7 @@ fn pbs_matches_scikit_allel_reference() {
     let gt_groups: Vec<Option<u32>> = (0..12).map(|i| Some((i / 4) as u32)).collect();
     for (kind, expected, expected_fst) in [
         (
-            reed::stats::PbsKind::Yi2010,
+            reed::PbsKind::Yi2010,
             [0.002309472928147316_f64, -0.051839214737420786],
             [
                 (0.1428571428571429, 0.004608294930875617, 0.1428571428571429),
@@ -265,7 +265,7 @@ fn pbs_matches_scikit_allel_reference() {
             ],
         ),
         (
-            reed::stats::PbsKind::PbsN1,
+            reed::PbsKind::PbsN1,
             [0.001997019026245494, -0.046598561709660744],
             [
                 (0.1428571428571429, 0.004608294930875617, 0.1428571428571429),

@@ -1,6 +1,7 @@
 //! reed-io: formats, BGZF, chunk sources, VCF text decoding, editing,
 //! output and indexing (L1). The single noodles boundary of the workspace;
-//! downstream crates take `noodles_vcf` from here.
+//! crates that need noodles types declare the dependency themselves (08 §4
+//! L-3: no noodles re-export).
 
 pub mod bcf;
 pub mod bgzf;
@@ -12,9 +13,6 @@ pub mod header;
 pub mod vcf;
 pub mod write;
 
-// Public re-export: reed-io is the single noodles boundary, and downstream
-// crates (reed-filter) have no direct noodles dependency.
-pub use noodles::vcf as noodles_vcf;
 pub use error::{IoError, Locus};
 
 /// The total byte length of a BGZF block from its 18-byte header, when the

@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use reed::index::{run_index, WriteIndex};
+use reed::{run_index, WriteIndex};
 
 fn bgzf(text: &str) -> Vec<u8> {
     let mut deflater =

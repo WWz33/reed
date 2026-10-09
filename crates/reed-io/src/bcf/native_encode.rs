@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use crate::error::{IoError, Locus};
-use crate::noodles_vcf as vcf;
+use noodles::vcf as vcf;
 use crate::vcf::line::LineRef;
 use crate::vcf::site::SiteView;
 

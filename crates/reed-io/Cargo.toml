@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 reed-core.workspace = true
@@ -16,11 +17,13 @@ flate2.workspace = true
 bitflags.workspace = true
 bstr.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 crossbeam-channel.workspace = true
 proptest.workspace = true
 criterion.workspace = true
+noodles.workspace = true
 
 [[bench]]
 name = "line_edit"

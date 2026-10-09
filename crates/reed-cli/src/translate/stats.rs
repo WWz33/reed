@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use reed::stats::{assign_groups, default_kinds, run_stats_opened, Levels, StatsRequest};
-use reed_engine::budget::{MemBudget, ThreadBudget};
+use reed::{assign_groups, default_kinds, run_stats_opened, Levels, StatsRequest};
+use reed::budget::{MemBudget, ThreadBudget};
 
 use crate::cli::StatsCli;
 use crate::units::input_path;
@@ -13,7 +13,7 @@ use crate::units::input_path;
 /// Prints the engine's stage metrics (doc_v4 03 A4-5): the reader, reducer
 /// and frame-chain cumulative times without which "reader-bound" is only an
 /// inference.
-fn print_engine_metrics(m: &reed_engine::metrics::StageMetrics) {
+fn print_engine_metrics(m: &reed::metrics::StageMetrics) {
     eprintln!("chunks_read\t{}", m.n_chunks_read);
     eprintln!("engine.reader_ms\t{:.3}", m.reader_time.as_secs_f64() * 1e3);
     eprintln!("engine.reduce_ms\t{:.3}", m.reduce_time.as_secs_f64() * 1e3);
@@ -23,19 +23,19 @@ fn print_engine_metrics(m: &reed_engine::metrics::StageMetrics) {
 
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
-fn site_spec_is_empty(spec: &reed_filter::spec::FilterSpec) -> bool {
+fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
     
-    spec.site == reed_filter::spec::SiteRules::default()
-        && spec.genotype == reed_filter::spec::GenotypeRules::default()
-        && spec.site_after_mask == reed_filter::spec::TailRules::default()
+    spec.site == reed::spec::SiteRules::default()
+        && spec.genotype == reed::spec::GenotypeRules::default()
+        && spec.site_after_mask == reed::spec::TailRules::default()
 }
 
 /// The parsed region flags: indexed regions, target includes, target
 /// excludes.
 type ParsedRegions = (
-    Vec<reed_io::chunk::region::Region>,
-    Vec<reed_filter::spec::region::RegionTriple>,
-    Vec<reed_filter::spec::region::RegionTriple>,
+    Vec<reed::chunk::region::Region>,
+    Vec<reed::spec::region::RegionTriple>,
+    Vec<reed::spec::region::RegionTriple>,
 );
 
 /// Parses the shared region flags: indexed regions (`-r/-R`, needing a
@@ -59,9 +59,9 @@ fn parse_regions(
                 value.clone()
             };
             for token in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-                let parsed = reed_filter::spec::Region::parse(token)
+                let parsed = reed::spec::Region::parse(token)
                     .map_err(|e| format!("invalid region {token:?}: {e}"))?;
-                regions.push(reed_io::chunk::region::Region {
+                regions.push(reed::chunk::region::Region {
                     contig: parsed.contig.clone(),
                     start1: parsed.start,
                     end1: parsed.end,
@@ -86,7 +86,7 @@ fn parse_regions(
                     Some(rest) => (rest, false),
                     None => (raw, true),
                 };
-                let parsed = reed_filter::spec::Region::parse(token)
+                let parsed = reed::spec::Region::parse(token)
                     .map_err(|e| format!("invalid region {token:?}: {e}"))?;
                 let triple = (parsed.contig, parsed.start, parsed.end);
                 if include_it {
@@ -285,7 +285,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     let input_file = input_path(&input);
     let open_path: Option<PathBuf> = input_file.clone();
     let mut opened = Some(
-        reed::input::open_regions(open_path.as_deref(), &regions)
+        reed::open_regions(open_path.as_deref(), &regions)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
     );
     let open_secs = started.elapsed().as_secs_f64();
@@ -307,9 +307,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         // No biallelic gate here: the stats reporters decide per statistic
         // how to treat multiallelic sites (doc_v3 05-roadmap R7); gating
         // records would silently change the summary counts.
-        Some(std::sync::Arc::new(reed_filter::plan::compile(
+        Some(std::sync::Arc::new(reed::plan::compile(
             &site_spec,
-            &reed_io::header::tag_table(&facts.header),
+            &reed::header::tag_table(&facts.header),
             "",
             false,
         )?))
@@ -424,31 +424,31 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     if pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() {
         let step = if step == 0 { size } else { step };
         let invariant = if variant_only {
-            reed::stats::InvariantMode::VariantOnly
+            reed::InvariantMode::VariantOnly
         } else if bypass_invariant_check {
             eprintln!(
                 "reed stats: warning: --bypass-invariant-check computes over present sites \
                  only; π and dxy are overestimated"
             );
-            reed::stats::InvariantMode::Bypass
+            reed::InvariantMode::Bypass
         } else {
-            reed::stats::InvariantMode::Require
+            reed::InvariantMode::Require
         };
-        let pixy = reed::stats::PixyOptions { invariant };
+        let pixy = reed::PixyOptions { invariant };
         let fst_kind = match fst.as_deref() {
             None => None,
-            Some("wc84") => Some(reed::stats::FstKind::WeirCockerham84),
-            Some("hudson") => Some(reed::stats::FstKind::Hudson),
+            Some("wc84") => Some(reed::FstKind::WeirCockerham84),
+            Some("hudson") => Some(reed::FstKind::Hudson),
             Some(other) => {
                 return Err(format!("unknown --fst method {other:?} (expected wc84 or hudson)").into());
             }
         };
         let pbs_kind = if pbs_normed {
-            reed::stats::PbsKind::PbsN1
+            reed::PbsKind::PbsN1
         } else {
-            reed::stats::PbsKind::Yi2010
+            reed::PbsKind::Yi2010
         };
-        let mut kinds = reed::stats::pixy_kinds(
+        let mut kinds = reed::pixy_kinds(
             group_names.len(),
             pi,
             dxy,
@@ -458,7 +458,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             None,
         );
         for &(a, b, c) in &pbs_triples {
-            kinds.push(reed::stats::StatKind::Pbs { a, b, c, kind: pbs_kind });
+            kinds.push(reed::StatKind::Pbs { a, b, c, kind: pbs_kind });
         }
         let request = StatsRequest {
             kinds: kinds.clone(),

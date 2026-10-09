@@ -67,4 +67,21 @@ check "no code says --fst-pops (doc_v5 A5-3)" \
 check "reed qc is gone (doc_v5 03 C-2)" \
     bash -c '! grep -q "Command::Qc" crates/reed-cli/src/main.rs'
 
+# doc_v5 08 §6.4: the front/back-end boundary. The front end depends on the
+# facade alone; the backend never prints; the facade is a re-export list.
+check "reed-cli depends only on the facade (doc_v5 08 §6.4.1)" \
+    bash -c '! grep -qE "reed-(core|io|engine|stats|filter)" crates/reed-cli/Cargo.toml'
+check "the backend never prints to stdout/stderr (doc_v5 08 §6.4.2)" \
+    bash -c '! grep -rqE "eprintln!|println!" crates/reed/src crates/reed-core/src crates/reed-io/src crates/reed-engine/src crates/reed-stats/src crates/reed-filter/src --include=*.rs'
+check "the facade has no pub mod (doc_v5 08 §6.4.3)" \
+    bash -c '[ "$(grep -c "^pub mod" crates/reed/src/lib.rs)" -eq 0 ]'
+
+# doc_v5 08 §4 L-1: the README describes v0.3, not the v0.2 API.
+check "the README has no v0.2 API examples (doc_v5 08 §4 L-1)" \
+    bash -c '! grep -qE "WindowBuffer|exec::execute|--groups" README.md'
+
+# doc_v5 08 §4 L-3: reed-io no longer re-exports noodles.
+check "no noodles re-export remains (doc_v5 08 §4 L-3)" \
+    bash -c '! grep -rq "noodles_vcf" crates'
+
 exit "$fail"

@@ -1,5 +1,5 @@
 //! `reed filter` flag translation (02-cli.md §3, §6): the typed
-//! [`reed_filter::spec::FilterSpec`] plus the driver call. The inverse
+//! [`reed::spec::FilterSpec`] plus the driver call. The inverse
 //! mapping (`FilterSpec::to_args`) lives in `reed-filter`.
 
 use std::path::PathBuf;
@@ -16,8 +16,8 @@ use crate::units::input_path;
 /// Unknown variant types or malformed expressions.
 pub(crate) fn site_spec(
     args: &crate::cli::filter_flags::SiteFilterArgs,
-) -> Result<reed_filter::spec::FilterSpec, String> {
-    use reed_filter::spec::{FilterSpec, GenotypeMaskRule, OnMissing};
+) -> Result<reed::spec::FilterSpec, String> {
+    use reed::spec::{FilterSpec, GenotypeMaskRule, OnMissing};
     // `site_spec` serves both `reed filter` and `reed stats`; the removed
     // drop-direction flags never reach here (their value parsers reject them
     // with the conversion hint at parse time).
@@ -77,7 +77,7 @@ pub(crate) fn site_spec(
         .map(|t| (t, true))
         .chain(cli.exclude.iter().map(|t| (t, false)))
     {
-        let expr = reed_filter::expr::parse(text)
+        let expr = reed::expr::parse(text)
             .map_err(|e| format!("{} {text:?}: {e}", if include { "-i" } else { "-e" }))?;
         let genotype_derived = expr.references_genotypes();
         match (include, genotype_derived) {
@@ -137,22 +137,22 @@ pub(crate) fn site_spec(
             .map_err(|_| format!("invalid --hwe p-value {:?}", cli.hwe[0]))?;
         spec.site_after_mask.min_hwe_p = Some(p);
         if cli.hwe.get(1).is_some_and(|m| m == "midp") {
-            spec.site_after_mask.hwe_mode = reed_filter::spec::HweMode::MidP;
+            spec.site_after_mask.hwe_mode = reed::spec::HweMode::MidP;
         }
     }
 
     Ok(spec)
 }
 
-/// Translates the CLI flags into a typed [`reed_filter::spec::FilterSpec`]
+/// Translates the CLI flags into a typed [`reed::spec::FilterSpec`]
 /// (02-cli.md §3, §6): the shared site/threshold flags (04-cleanup §2.1)
 /// plus the sample, region and INFO-update parts that stay filter-only.
 ///
 /// # Errors
 ///
 /// Unknown tokens (variant types, output type) and malformed expressions.
-pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpec, String> {
-    use reed_filter::spec::{SampleList, SampleSelect};
+pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec, String> {
+    use reed::spec::{SampleList, SampleSelect};
     let mut spec = site_spec(&cli.site_args)?;
 
     // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
@@ -210,7 +210,7 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::Filt
                 Some(rest) => (rest, false),
                 None => (raw, include),
             };
-            reed_filter::spec::Region::parse(token)
+            reed::spec::Region::parse(token)
                 .map_err(|e| format!("invalid region {token:?}: {e}"))?;
             if include {
                 spec.targets.include.push(token.to_string());
@@ -278,9 +278,9 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
     let strategy = strategy
         .as_deref()
         .map(|s| match s {
-            "single_pass" => Ok(reed_filter::plan::ExecStrategy::SinglePass),
-            "two_pass_reparse" => Ok(reed_filter::plan::ExecStrategy::TwoPassReparse),
-            "sketch_then_emit" => Ok(reed_filter::plan::ExecStrategy::SketchThenEmit),
+            "single_pass" => Ok(reed::plan::ExecStrategy::SinglePass),
+            "two_pass_reparse" => Ok(reed::plan::ExecStrategy::TwoPassReparse),
+            "sketch_then_emit" => Ok(reed::plan::ExecStrategy::SketchThenEmit),
             other => Err(format!("unknown strategy {other:?}")),
         })
         .transpose()?;
@@ -330,19 +330,19 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
     };
     if let Some(list) = &indexed_list {
         for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-            let parsed = reed_filter::spec::Region::parse(token)
+            let parsed = reed::spec::Region::parse(token)
                 .map_err(|e| format!("invalid region {token:?}: {e}"))?;
-            regions.push(reed_io::chunk::region::Region {
+            regions.push(reed::chunk::region::Region {
                 contig: parsed.contig.clone(),
                 start1: parsed.start,
                 end1: parsed.end,
             });
         }
     }
-    let opts = reed::filter::FilterOptions {
+    let opts = reed::FilterOptions {
         threads,
         output,
-        write_index: reed::filter::WriteIndex::parse(write_index.as_deref())?,
+        write_index: reed::WriteIndex::parse(write_index.as_deref())?,
         compress_level,
         strategy,
         command_line,
@@ -358,7 +358,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
         no_command: cli.no_command,
     };
     tracing::debug!(threads, strategy = ?strategy, "reed filter starting");
-    let report = reed::filter::run_filter(input_path(input).as_deref(), &spec, &opts)?;
+    let report = reed::run_filter(input_path(input).as_deref(), &spec, &opts)?;
     if verbosity.shows_summary() {
         eprint_report(&report);
     }
@@ -376,7 +376,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
 
 /// The human summary (`--verbosity 1`): one line plus the funnel table
 /// (doc_v4 03 §3.3). Moved out of the driver so the library never prints.
-fn eprint_report(report: &reed_filter::funnel::FilterReport) {
+fn eprint_report(report: &reed::funnel::FilterReport) {
     eprintln!(
         "reed filter: {} -> {} records ({} of {} samples), strategy {}, {:.1}s",
         report.n_input_records,
@@ -404,7 +404,7 @@ fn eprint_report(report: &reed_filter::funnel::FilterReport) {
 mod tests {
     use super::*;
     use clap::Parser;
-    use reed_filter::spec::FilterSpec;
+    use reed::spec::FilterSpec;
 
     /// Parses a flag vector through the real clap definitions.
     fn cli_from(args: &[String]) -> FilterCli {
@@ -457,7 +457,7 @@ mod tests {
         let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translates");
         assert_eq!(
             first.mind,
-            Some(reed_filter::spec::MissingRate::parse("0.25").expect("valid"))
+            Some(reed::spec::MissingRate::parse("0.25").expect("valid"))
         );
         assert_eq!(first.sample_select, None);
         let rendered = first.to_args();
@@ -503,14 +503,14 @@ mod tests {
             .collect();
         let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translate");
         let select = first.sample_select.as_ref().expect("invariant: subset");
-        assert_eq!(select.keep, Some(reed_filter::spec::SampleList::File("keep.txt".into())));
+        assert_eq!(select.keep, Some(reed::spec::SampleList::File("keep.txt".into())));
         assert_eq!(
             select.remove,
-            Some(reed_filter::spec::SampleList::Names(vec!["drop1".into(), "drop2".into()]))
+            Some(reed::spec::SampleList::Names(vec!["drop1".into(), "drop2".into()]))
         );
         assert_eq!(
             first.mind,
-            Some(reed_filter::spec::MissingRate::parse("0.2").expect("valid"))
+            Some(reed::spec::MissingRate::parse("0.2").expect("valid"))
         );
         let rendered = first.to_args();
         assert_eq!(&rendered[..flags.len()], &flags[..]);
@@ -540,9 +540,9 @@ mod tests {
         let base = FilterSpec::default();
         assert!(!base.to_args().contains(&"-I".to_string()));
         let spec = FilterSpec {
-            recompute: reed_filter::spec::RecomputeSpec {
+            recompute: reed::spec::RecomputeSpec {
                 no_update: true,
-                ..reed_filter::spec::RecomputeSpec::default()
+                ..reed::spec::RecomputeSpec::default()
             },
             ..FilterSpec::default()
         };

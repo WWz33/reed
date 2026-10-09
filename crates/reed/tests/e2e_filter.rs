@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-use reed::filter::{run_filter, FilterOptions};
+use reed::{run_filter, FilterOptions};
 use reed_filter::spec::{FilterSpec, OnMissing};
 use reed_filter::FilterError;
 
@@ -156,7 +156,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
     FilterOptions {
         threads: 4,
         output: Some(out.to_path_buf()),
-        write_index: reed::filter::WriteIndex::None,
+        write_index: reed::WriteIndex::None,
         compress_level: 6,
         strategy,
         command_line: "test".to_string(),
@@ -421,7 +421,7 @@ mod write_index {
         path
     }
 
-    fn opts(out: &std::path::Path, index: reed::filter::WriteIndex) -> FilterOptions {
+    fn opts(out: &std::path::Path, index: reed::WriteIndex) -> FilterOptions {
         FilterOptions {
             threads: 2,
             output: Some(out.to_path_buf()),
@@ -449,7 +449,7 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.out.vcf.gz");
 
-        run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::filter::WriteIndex::Csi))
+        run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::WriteIndex::Csi))
             .expect("invariant: filter runs");
 
         let index = noodles::csi::fs::read(dir.join("wide.out.vcf.gz.csi"))
@@ -489,7 +489,7 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.tbi.vcf.gz");
 
-        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::filter::WriteIndex::Tbi));
+        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::WriteIndex::Tbi));
         assert!(result.is_err(), "TBI must refuse coordinates ≥ 2^29");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -505,7 +505,7 @@ mod write_index {
         std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
         let out = dir.join("und.out.vcf.gz");
 
-        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::filter::WriteIndex::None));
+        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::WriteIndex::None));
         assert!(result.is_err(), "an undeclared contig must fail, not alias tid 0");
         let _ = std::fs::remove_dir_all(&dir);
     }

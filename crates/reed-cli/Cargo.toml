@@ -5,15 +5,13 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reed.workspace = true
-reed-io.workspace = true
-reed-engine.workspace = true
-reed-filter.workspace = true
 
 [[bin]]
 name = "reed"

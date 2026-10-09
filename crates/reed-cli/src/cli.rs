@@ -55,8 +55,8 @@ pub(crate) struct FilterCli {
     /// Keep samples whose missing rate (missing alleles / 2·sites, after the
     /// genotype mask, over the sites that pass the pre-mask rules) is at
     /// most FLOAT; applied before --geno/--maf/--hwe
-    #[arg(long, value_name = "FLOAT", value_parser = reed_filter::spec::MissingRate::parse)]
-    pub mind: Option<reed_filter::spec::MissingRate>,
+    #[arg(long, value_name = "FLOAT", value_parser = reed::spec::MissingRate::parse)]
+    pub mind: Option<reed::spec::MissingRate>,
     /// Withdrawn flag: it stated the fraction that must be called; the
     /// replacement names the fraction that may be missing
     #[arg(long, value_name = "FLOAT", hide = true,

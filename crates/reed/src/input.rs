@@ -265,8 +265,8 @@ fn open_stdin() -> Result<OpenedInput, IoError> {
 }
 
 fn warn_serial_gzip() {
-    eprintln!(
-        "reed: warning: the input is plain gzip, not BGZF; decompression is \
-         serial (repack with `bgzip` for parallel reads)"
+    tracing::warn!(
+        "the input is plain gzip, not BGZF; decompression is serial \
+         (repack with `bgzip` for parallel reads)"
     );
 }

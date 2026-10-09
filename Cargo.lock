@@ -959,6 +959,7 @@ dependencies = [
  "reed-stats",
  "serde_json",
  "sha2",
+ "tracing",
 ]
 
 [[package]]
@@ -967,9 +968,6 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "reed",
- "reed-engine",
- "reed-filter",
- "reed-io",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1026,6 +1024,7 @@ dependencies = [
  "proptest",
  "reed-core",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

@@ -98,13 +98,6 @@ impl<J: ChunkJob> InputJob<J> {
         job
     }
 
-    /// Whether the input is BCF (the drivers branch on it when the framing
-    /// changes more than the record source, e.g. the index offsets).
-    #[must_use]
-    pub const fn is_bcf(&self) -> bool {
-        self.bcf.is_some()
-    }
-
     /// Ends the run: releases chain waiters and rejects a file that stopped
     /// inside a record.
     ///

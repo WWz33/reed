@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use reed::filter::{run_filter, FilterOptions};
+use reed::{run_filter, FilterOptions};
 use reed_filter::spec::{FilterSpec, MissingRate, TailRules};
 
 /// Writes `text` as a plain VCF under a per-test temp directory.
@@ -36,7 +36,7 @@ fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
     let opts = FilterOptions {
         threads: 2,
         output: Some(out.to_path_buf()),
-        write_index: reed::filter::WriteIndex::None,
+        write_index: reed::WriteIndex::None,
         compress_level: 6,
         strategy: None,
         command_line: "e2e_missing_boundary".to_string(),
@@ -337,7 +337,7 @@ fn sample_call_rate_matches_plink2_mind() {
     let opts = FilterOptions {
         threads: 2,
         output: Some(out.clone()),
-        write_index: reed::filter::WriteIndex::None,
+        write_index: reed::WriteIndex::None,
         compress_level: 6,
         strategy: None,
         command_line: "e2e_missing_boundary".to_string(),

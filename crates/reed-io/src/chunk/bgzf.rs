@@ -237,7 +237,7 @@ impl<R: Read> BgzfChunkReader<R> {
     fn warn_if_missing_eof_marker(&mut self) {
         if !self.warned_missing_eof && self.header_done && !self.last_was_eof_marker {
             self.warned_missing_eof = true;
-            eprintln!("reed: warning: BGZF stream ends without an EOF marker");
+            tracing::warn!("BGZF stream ends without an EOF marker");
         }
     }
 
@@ -388,7 +388,7 @@ impl MmapChunkSource {
     fn warn_if_missing_eof_marker(&mut self) {
         if !self.warned_missing_eof && !self.last_was_eof_marker {
             self.warned_missing_eof = true;
-            eprintln!("reed: warning: BGZF stream ends without an EOF marker");
+            tracing::warn!("BGZF stream ends without an EOF marker");
         }
     }
 }

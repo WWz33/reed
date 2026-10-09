@@ -3,7 +3,7 @@
 //! the definitions live here once.
 
 use clap::Args;
-use reed_filter::spec::MissingRate;
+use reed::spec::MissingRate;
 
 /// The error text for a withdrawn keep-direction flag (doc_v4 02 回退版
 /// §5.2): the replacement names the fraction that **may be missing**, `1 − X`

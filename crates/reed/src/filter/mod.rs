@@ -29,7 +29,7 @@ use reed_filter::plan::{ExecStrategy, HeadRule};
 use reed_filter::spec::{FilterSpec, SampleList};
 use reed_filter::FilterError;
 use reed_core::ChunkId;
-use reed_io::noodles_vcf as vcf;
+use noodles::vcf as vcf;
 use reed_io::write::index::Indexer;
 use reed_io::write::ordered_output::OrderedOutput;
 
@@ -669,7 +669,7 @@ fn keep_list_from_names(
     for name in names {
         match index.get(name.as_str()) {
             Some(&i) => keep[i] = true,
-            None if force => eprintln!("reed filter: warning: sample {name:?} is not in the header"),
+            None if force => tracing::warn!("sample {name:?} is not in the header"),
             None => {
                 return Err(FilterError::Spec(format!("sample {name:?} is not in the header")))
             }
