@@ -80,6 +80,15 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | 适用条件与回退 | 仅当 BCF 输入 ∧ 掩码不含 `--set-gts .` FMT 表达式 ∧ 计划内 FORMAT 列均为 Number=1 时走原生，否则回退渲染路径 | `e2e_bcf` 7 条；子集 `--set-gts . -e 'FMT/DP>20'` 正文 md5 `ae4c8d79…` 与 pre-W4 二进制相同（2.4 s） |
 | 门（全量 gold，56 线程，负载 2.15） | BCF 输入：wall **8.95 / 9.06 / 9.36 s（中位 9.06）≤ 9.5 s**；user **631.6 → 468.3–469.5 s（−26%）**；worker_busy **639.0 → 472.6–480.9 s（−25%）** | 全量正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 与 VCF 输入相同；子集 VCF/BCF 正文 md5 相同（`ca00a0de…`；`--mind` 版 `7a2ba1c5…`）；`-Ob` 读回正文 md5 相同（`fef4cb07…`） |
 
+### W5 统计接入（**未做**；前置调查与 fixture 生成器已完成）
+
+| 项 | 状态 | 调查结论（可复现） |
+|---|---|---|
+| 投影 SFS（05 §2 第 1 项） | 未做，**参照链已打通** | `easySFS` 不在 PyPI，已从 GitHub 取得（`git clone https://github.com/isaacovercast/easySFS`）；其依赖 `dadi` 已装（`pip install --user dadi` → 2.4.4，`numpy`/`scipy` 已在本机）。在 `gold/popgen/make_fixtures.py` 的 `sfs.vcf`（4 样本 1 群体，ALT 计数 1,1,2,2,3,3,4,4,5,6,7）上 `easySFS.py -i sfs.vcf -p sfs.pops --proj 6 -o out --unfolded --dtype int -a -f` 的输出已实测固定：dadi 文件三行 = `7 unfolded` / `1 3 3 2 1 1 0` / mask `1 0 0 0 0 0 1`；fsc2 文件 = `1 observations. No. of demes…` + `1\t6` + 数据行。**待做的改动**：(a) `ProjectedSfsAcc::push_weighted` 只累加 k∈1..n，丢弃 k=0/k=n 的非分离质量，而 easySFS 的数组是 k=0..n，需先保留该质量（`bins` 加两个槽位）；(b) SFS 不是窗口标量，套不进现有 `StatKind`/窗口行模型，需新增 genome-wide 输出路径（`StatsRequest.sfs` + sink 收尾写出）；(c) dadi/fsc2 两个写出格式 + easySFS 的 mask 策略（variant-only 输入时 mask[0]=mask[n]=1；给 `--total-length` 时把单态质量加到 k=0）；(d) `gold/popgen/run_easysfs.sh` + compare 脚本 |
+| 联合 SFS / 多群体 WC84 / LD / f 统计 / block jackknife | 未做 | 累加器都在（`#[doc(hidden)]`）；参照物均已就绪：scikit-allel 1.3.13、plink2、vcftools、admixture。每项需要 CLI 出口 + **输出形状设计**（文档未固定：`--fst-pops` 的矩阵形态、LD/pruning 的列、f 统计的 block jackknife 表），属功能设计工作 |
+| fixture 生成器（05 §4） | **已交付** | `gold/popgen/make_fixtures.py`：固定、可手算、无随机数；输出 `missing_rate.vcf`（缺失阈值边界 + 半调用）、`sfs.vcf`+`sfs.pops`（投影 SFS）、`multiallelic.vcf`（W6 的逐等位重算）、`fstats.vcf`+`fstats.pops`、`ld.vcf`+`ld.pops`；全部经 `bcftools view -h` 校验，且 `sfs.vcf` 已跑通 easySFS（见上）。`gold/` 未纳入版本控制，改动在工作区 |
+
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
