@@ -125,6 +125,15 @@ X4 的四项（3.1 SFS、3.2 `--fst-global`、3.3 f 统计、3.4 LD）全部落�
 
 **偏差**：bp 窗口（`--indep-pairwise 50kb 0.2`）尚未与 plink2 逐 ID 一致（区域内 reed 保留 131 vs plink2 158），窗口推进的 bp 语义仍需对齐；位点窗口（plink2 的主用法与 05 §3.4.1 的门）已逐 ID 相同。
 
+### X6 CLI 缺口（`-q/-Q :type` 完成；`--bed-file`/`--sites-file` 待做）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| `-q/-Q` 的 `:type` 后缀 | `nref/alt1/minor/major/nonmajor` 五种定义，照 bcftools `vcfview.c`：逐等位计数优先取 INFO/AC+AN（REF 计数 = AN − ΣALT），否则用基因型；`minor/major` 取**全部等位**（含 REF）计数的 min/max，`nonmajor = 1 − major`；比较在 f64 中进行（与 bcftools 的 `ac/(double)an` 同口径）；`nref` 的 head 规则（INFO 捷径）只对 `nref` 生效，其余类型走基因型 tail 规则 | `21d8032` | `crates/reed/tests/e2e_af_type.rs`（2 项，期望值取自 bcftools）；`gold/popgen/run_bcftools_af.sh` |
+| 对拍 | 区域（Chr01:1-2,000,000，8,364 位点）上 `-q`/`-Q` × 4 阈值 × 5 类型 = **40 组**，位点集合与 bcftools **零对称差** | `21d8032` | `bash gold/popgen/run_bcftools_af.sh`：40/40 PASS |
+
+**待做**：`--bed-file BED`（BED 给定窗口）与 `--sites-file FILE`（只统计列出的位点）。两者都需要在 stats 窗口层新增 `WindowGrid::Regions` 路径（模型已在 `reed-core/src/grid.rs` 有 `RegionSet`，但 `reed-stats/src/window.rs` 与 `reed/src/stats/job.rs` 只支持 Bp/Sites 网格），是一块独立的窗口层工作。
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -137,7 +146,8 @@ X4 的四项（3.1 SFS、3.2 `--fst-global`、3.3 f 统计、3.4 LD）全部落�
 | C-5 拆 `individual.rs` | 未做 | X4 的四个统计量已落地，但 `individual.rs`（individual F + joint SFS 两个统计量）未拆为 `het.rs` + `sfs/{projected,joint}.rs`；属纯归属调整，留待后续 |
 | 联合 SFS（两群体二维谱） | 未做 | 05 §3.1 的两群体二维谱（`JointSfsAcc` 已有实现）未接 CLI；当前 `--sfs` 写一维谱（每群体一个） |
 | X5 多等位重算 | 待做 | 05 §4（`--fill-tags` 的逐等位 AC/AF、MAF 次等位口径、HWE 多等位写 `.`） |
-| X6 CLI 缺口 | 待做 | `--bed-file`、`--sites-file`、`-q/-Q` 的 `:type` 后缀 |
+| X6（部分） | 部分完成 | `-q/-Q :type` 已完成并对拍（40/40）；`--bed-file`/`--sites-file` 需要 stats 窗口层新增 `WindowGrid::Regions` 路径，待做 |
+| 全量基准重测 | 待做 | X4 的四个统计量落地后未重跑全量基线（`bench/suites/e2e/results.tsv`）；`--ld-decay` 的区域级数字（427,152 对/1/4/56 线程一致）已记录 |
 | LD bp 窗口 | 偏差 | `--indep-pairwise Wkb` 的窗口推进未与 plink2 对齐（位点窗口已逐 ID 相同），见上表 |
 | `reed stats --indep-pairwise` | 未做 | 规范 §3.4.1 说 filter/stats 共用；stats 侧需要第二遍，现为显式报错并指向 filter |
 | X7 | 已落地 | `.github/workflows/ci.yml`（X2 时创建，数据门条件化） |
