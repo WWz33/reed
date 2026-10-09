@@ -22,6 +22,7 @@
 | [05-algorithms.md](05-algorithms.md) | 对齐台账；**W5 出口设计**：`--sfs --proj`（genome-wide 路径、dadi/fsc2、easySFS 对拍）、`--fst-global`（vcftools weighted Fst 对拍）、f 统计（Patterson、block jackknife、allel 对拍）、LD（尾窗携带、plink2 对拍）；W6 多等位重算 |
 | [06-layout.md](06-layout.md) | 目录树执行版（承 doc_v4/07）：目标树、映射与 `git mv`、要同步改的引用、注意事项 |
 | [07-roadmap.md](07-roadmap.md) | X0 解除阻塞 → X1 卫生 → X2 搬迁 → X3 reports 门；X4 统计接入；X5 多等位；X6 CLI 缺口；X7 CI |
+| [08-api-surface.md](08-api-surface.md) | **项目定位**：用代码事实回答"像不像 API 库"（结论：CLI 产品，库是内部结构，README 停在 v0.2）；两种终态 A（工具优先，推荐）/ B（API 库）；A 的清单 L-1…L-7 并入 X1 |
 | [STATUS.md](STATUS.md) | 实施状态（实现者填写） |
 
 ## 结论速览
@@ -45,3 +46,4 @@
 | LD 的默认 | `--ld-decay` 默认 `100k`、1 kb 分箱；`--indep-pairwise` 照 plink2 三参数 | 只做 `--indep-pairwise`，`--ld-decay` 后置 |
 | 边过滤 `--pi` 的门 | 改为 CPU 口径 ≤ 130 s（wall 作参考） | 维持 wall ≤ 3.0 s 并继续优化 |
 | 目录搬迁时机（X2） | 与 X1 合成一个"卫生"PR，在 X4 之前 | X4 之后 |
+| 项目定位（08） | **A：工具优先**——产品是 `reed` 二进制，只对 CLI 参数与输出格式承诺稳定；crate 全部 `publish = false`；README 重写；门面公开面收口为嵌入 API（`FilterSpec`/`StatsRequest`/`run_*`） | B：真正的 API 库（发布 `reed` crate、semver、docs.rs、CHANGELOG），在 X4–X6 之后做 |
