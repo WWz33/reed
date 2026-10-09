@@ -103,8 +103,10 @@ impl SfsAcc {
 /// C(alt,k)·C(m−alt, n−k) / C(m, n)` (Marth 2004; dadi `project`), built
 /// with the ratio recursion `P(k+1)/P(k) = (alt−k)(n−k) /
 /// ((k+1)(m−alt−n+k+1))`, normalized, and truncated at a relative weight
-/// of 1e−15 (§9.4). Returns `(k, weight)` pairs with `k` in `1..n`
-/// (the segregating bins; k = 0 and k = n carry no SFS mass).
+/// of 1e−15 (§9.4). Returns `(k, weight)` pairs over the **full** support
+/// `k ∈ 0..=n`: the non-segregating mass at k = 0/n is part of the
+/// distribution and is what the dadi/fastsimcoal2 writers report
+/// (docs/rounds/v5/05-algorithms.md §3.1).
 #[must_use]
 pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
     let (m, alt, n) = (u64::from(m), u64::from(alt), u64::from(n));
@@ -155,7 +157,7 @@ pub type WeightsArc = std::sync::Arc<Vec<(u32, f64)>>;
 
 /// Per-`n` projection-weight memo (§9.4): cleared wholesale whenever it
 /// reaches [`PROJECTION_CACHE_CAPACITY`] entries.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ProjectionCache {
     n: u32,
     map: std::collections::HashMap<(u32, u32), WeightsArc>,
@@ -197,11 +199,16 @@ impl ProjectionCache {
 /// bins `ξ_k` by hypergeometric weights; `m < n` sites are skipped and
 /// counted. Float bins are [`NeumaierSum`]s so chunk merges stay within the
 /// §8.4 tolerance.
+///
+/// `bins` spans the **full** support `k ∈ 0..=n` (folded: `0..=n/2`), so
+/// the dadi/fastsimcoal2 writers can report the non-segregating mass
+/// (docs/rounds/v5/05-algorithms.md §3.1); the ratio statistics
+/// ([`Self::pi`], [`Self::segregating`]) still use only `1..n`.
 #[derive(Clone, Debug)]
 pub struct ProjectedSfsAcc {
     n: u32,
     folded: bool,
-    /// `bins[k]` = ξ_k for `k` in `1..n` (index 0 unused).
+    /// `bins[k]` = ξ_k for `k` in `0..=n` (folded: `0..=n/2`).
     bins: Vec<NeumaierSum>,
     n_sites: u64,
     n_skipped_m_lt_n: u64,
@@ -214,7 +221,7 @@ impl ProjectedSfsAcc {
         (n >= 2).then(|| Self {
             n,
             folded,
-            bins: vec![NeumaierSum::new(); n as usize],
+            bins: vec![NeumaierSum::new(); n as usize + 1],
             n_sites: 0,
             n_skipped_m_lt_n: 0,
         })
@@ -235,8 +242,10 @@ impl ProjectedSfsAcc {
         }
         self.n_sites += 1;
         for &(k, w) in weights.unwrap_or(&[]) {
+            // Folded spectra put k and n−k in one bin; the whole support
+            // (including k = 0/n) is stored.
             let k = if self.folded { k.min(self.n - k) } else { k };
-            if k >= 1 && u64::from(k) < u64::from(self.n) {
+            if k <= self.n {
                 self.bins[k as usize].add(w);
             }
         }
@@ -253,16 +262,30 @@ impl ProjectedSfsAcc {
         self.n_skipped_m_lt_n += other.n_skipped_m_lt_n;
     }
 
-    /// Bin ξ_k (k in 1..n).
+    /// Bin ξ_k (k in 0..=n; folded: 0..=n/2).
     #[must_use]
     pub fn xi(&self, k: u32) -> f64 {
         self.bins[k as usize].value()
     }
 
-    /// All bins as a slice view (k = 0 unused, always 0).
+    /// All bins as a slice view (index = k, length n+1).
     #[must_use]
     pub fn bins(&self) -> &[NeumaierSum] {
         &self.bins
+    }
+
+    /// Whether the spectrum is folded.
+    #[must_use]
+    pub const fn folded(&self) -> bool {
+        self.folded
+    }
+
+    /// The spectrum as the dadi/fastsimcoal2 array: `k = 0..=n` (unfolded)
+    /// or `k = 0..=n/2` (folded), docs/rounds/v5/05-algorithms.md §3.1.
+    #[must_use]
+    pub fn spectrum(&self) -> Vec<f64> {
+        let top = if self.folded { self.n / 2 } else { self.n };
+        (0..=top).map(|k| self.bins[k as usize].value()).collect()
     }
 
     /// θ_π = Σ_k k(n−k)·ξ_k / C(n,2).

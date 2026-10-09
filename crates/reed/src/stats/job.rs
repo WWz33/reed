@@ -37,6 +37,7 @@ use reed_io::vcf::line::LineRef;
 pub use reed_stats::fst::FstKind;
 pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey};
+use reed_stats::sfs::{ProjectedSfsAcc, ProjectionCache};
 pub use reed_stats::request::StatKind;
 use reed_stats::window::{BpBinning, ContigBins};
 
@@ -241,6 +242,64 @@ pub struct StatsRequest {
     /// 04-cleanup §2.1): applied to every record in the same pass by
     /// [`crate::filtered::FilteredJob`]. `None` = no site-level filtering.
     pub filter: Option<Arc<reed_filter::plan::FilterPlan>>,
+    /// Projected SFS, genome-wide (docs/rounds/v5/05-algorithms.md §3.1);
+    /// `None` = not requested. Not a window statistic.
+    pub sfs: Option<SfsRequest>,
+}
+
+/// A projected site-frequency-spectrum request (docs/rounds/v5/05-algorithms.md
+/// §3.1): one genome-wide spectrum per population.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SfsRequest {
+    /// Projection size in chromosomes, one entry per group (the CLI
+    /// broadcasts a single `--proj` value to every group).
+    pub projections: Vec<u32>,
+    /// Fold the spectrum (default: unfolded — REF is the ancestral state).
+    pub folded: bool,
+}
+
+/// The spectra an [`SfsRequest`] produced.
+#[derive(Clone, Debug)]
+pub struct SfsReport {
+    /// Per group: ξ_k for k = 0..=n (folded: 0..=n/2).
+    pub spectra: Vec<Vec<f64>>,
+    /// Per group: the projection size in chromosomes.
+    pub projections: Vec<u32>,
+    /// Whether the spectra are folded.
+    pub folded: bool,
+    /// Per group: sites absorbed.
+    pub n_sites: Vec<u64>,
+    /// Per group: sites skipped for `m < n`.
+    pub n_skipped_m_lt_n: Vec<u64>,
+}
+
+/// The validated SFS plan shared by the job and the sink.
+#[derive(Clone, Debug)]
+struct SfsPlan {
+    projections: Arc<[u32]>,
+    folded: bool,
+}
+
+/// Per-chunk SFS partials: one projected spectrum per group.
+#[derive(Clone, Debug)]
+struct SfsPartial {
+    per_group: Vec<ProjectedSfsAcc>,
+}
+
+impl SfsPartial {
+    fn new(plan: &SfsPlan) -> Option<Self> {
+        let mut per_group = Vec::with_capacity(plan.projections.len());
+        for &n in plan.projections.iter() {
+            per_group.push(ProjectedSfsAcc::new(n, plan.folded)?);
+        }
+        Some(Self { per_group })
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for (dst, src) in self.per_group.iter_mut().zip(&other.per_group) {
+            dst.merge(src);
+        }
+    }
 }
 
 /// The run's output and counters.
@@ -260,6 +319,8 @@ pub struct StatsReport {
     pub n_records: u64,
     /// Records skipped for a multi-allelic ALT column.
     pub n_multiallelic_skipped: u64,
+    /// The projected spectra when [`StatsRequest::sfs`] was set.
+    pub sfs: Option<SfsReport>,
     /// Chunks processed.
     pub n_chunks: u64,
     /// The engine's stage metrics (doc_v4 03 A4-5): reader/reducer/chain
@@ -328,6 +389,8 @@ pub struct StatsPartial {
     n_invariant_sites: u64,
     /// Records whose ALT column is `.` (pixy's all-sites marker).
     n_no_alt_records: u64,
+    /// Genome-wide projected spectra (docs/rounds/v5/05-algorithms.md §3.1).
+    sfs: Option<SfsPartial>,
 }
 
 /// The chunk job: line → `LineRef` → GT tallies → group count row → the
@@ -348,6 +411,8 @@ pub struct StatsJob {
     /// The BCF-native fast path (doc_v3 02-bcf.md §2.4/§2.5): present only
     /// when the input is BCF.
     bcf: Option<BcfNative>,
+    /// The genome-wide projected-SFS plan; `None` = not requested.
+    sfs: Option<SfsPlan>,
 }
 
 /// The BCF fast path's shared state: the dictionaries, the FORMAT index of
@@ -367,6 +432,8 @@ pub struct StatsScratch {
     counters: PolicyCounters,
     /// The native BCF path's decoded GT codes (one per sample, per record).
     codes: Vec<GtCode>,
+    /// Per-group projection-weight memos for the SFS path.
+    sfs_caches: Vec<ProjectionCache>,
 }
 
 /// The statistics decode policies: haploid calls are half calls and ALT
@@ -504,6 +571,7 @@ impl StatsJob {
         pos0: u64,
         codes: &[GtCode],
         row: &mut [SiteGroupCounts],
+        sfs_caches: &mut Vec<ProjectionCache>,
         current: &mut Option<SegmentPartial>,
         partial: &mut StatsPartial,
     ) -> Result<(), EngineError> {
@@ -534,8 +602,40 @@ impl StatsJob {
         if !any_alt {
             partial.n_invariant_sites += 1;
         }
+        self.push_sfs(row, partial, sfs_caches);
         partial.n_records += 1;
         Ok(())
+    }
+
+    /// Feeds the genome-wide projected spectra for one site (docs/rounds/v5/
+    /// 05-algorithms.md §3.1): `m < n` sites are skipped and counted.
+    fn push_sfs(
+        &self,
+        row: &[SiteGroupCounts],
+        partial: &mut StatsPartial,
+        sfs_caches: &mut Vec<ProjectionCache>,
+    ) {
+        let Some(plan) = &self.sfs else { return };
+        let sfs = partial.sfs.get_or_insert_with(|| {
+            SfsPartial::new(plan).expect("invariant: projections validated at request time")
+        });
+        if sfs_caches.len() != sfs.per_group.len() {
+            *sfs_caches = plan
+                .projections
+                .iter()
+                .map(|&n| ProjectionCache::new(n))
+                .collect();
+        }
+        for (g, acc) in sfs.per_group.iter_mut().enumerate() {
+            let counts = &row[g];
+            let m = counts.n_ref_alleles + counts.n_alt_alleles;
+            if m >= acc.n() {
+                let weights = sfs_caches[g].weights(m, counts.n_alt_alleles);
+                acc.push_weighted(Some(&weights));
+            } else {
+                acc.push_weighted(None);
+            }
+        }
     }
 
     fn push_line(
@@ -560,7 +660,7 @@ impl StatsJob {
         else {
             return Ok(());
         };
-        let StatsScratch { row, scanner, counters, .. } = scratch;
+        let StatsScratch { row, scanner, counters, sfs_caches, .. } = scratch;
         *counters = PolicyCounters::default();
         let n_samples = self.n_samples;
         let scanner = scanner
@@ -568,7 +668,7 @@ impl StatsJob {
         let out = scanner
             .scan(&lr, &site, counters)
             .map_err(EngineError::from)?;
-        self.push_row(pos0, out.codes, row, current, partial)
+        self.push_row(pos0, out.codes, row, sfs_caches, current, partial)
     }
 
     /// The record sink for a filtering wrapper (doc_v4 O-2): the wrapper
@@ -603,7 +703,14 @@ impl StatsJob {
             else {
                 continue;
             };
-            self.push_row(pos0, rec.codes, &mut scratch.row, &mut current, &mut partial)?;
+            self.push_row(
+                pos0,
+                rec.codes,
+                &mut scratch.row,
+                &mut scratch.sfs_caches,
+                &mut current,
+                &mut partial,
+            )?;
         }
         if let Some(segment) = current.take() {
             partial.segments.push(segment);
@@ -680,7 +787,14 @@ impl StatsJob {
             &mut scratch.counters,
         )
         .map_err(EngineError::from)?;
-        self.push_row(pos0, &scratch.codes, &mut scratch.row, current, partial)
+        self.push_row(
+            pos0,
+            &scratch.codes,
+            &mut scratch.row,
+            &mut scratch.sfs_caches,
+            current,
+            partial,
+        )
     }
 }
 
@@ -688,6 +802,8 @@ impl StatsJob {
 struct SinkOutput {
     rows: String,
     windows: Vec<WindowRow>,
+    /// Genome-wide projected spectra.
+    sfs: Option<SfsPartial>,
     n_invariant_sites: u64,
     n_no_alt_records: u64,
     n_windows: u64,
@@ -736,6 +852,8 @@ struct StatsSink {
     current: Option<CurrentContig>,
     closed: Vec<Vec<u8>>,
     genome_totals: Vec<StatAcc>,
+    /// Merged genome-wide projected spectra.
+    sfs: Option<SfsPartial>,
     genome_span: u64,
     rows: String,
     n_windows: u64,
@@ -750,6 +868,12 @@ impl OrderedSink<StatsPartial> for StatsSink {
         self.n_multiallelic_skipped += partial.n_multiallelic_skipped;
         self.n_invariant_sites += partial.n_invariant_sites;
         self.n_no_alt_records += partial.n_no_alt_records;
+        if let Some(src) = &partial.sfs {
+            match &mut self.sfs {
+                Some(dst) => dst.merge(src),
+                None => self.sfs = Some(src.clone()),
+            }
+        }
         for mut segment in std::mem::take(&mut partial.segments) {
             let mut current = match self.current.take() {
                 Some(mut cur) if cur.name == segment.contig => {
@@ -810,6 +934,7 @@ impl OrderedSink<StatsPartial> for StatsSink {
             .expect("invariant: stats slot not poisoned") = Some(SinkOutput {
             rows: self.rows,
             windows: std::mem::take(&mut self.windows),
+            sfs: self.sfs.take(),
             n_invariant_sites: self.n_invariant_sites,
             n_no_alt_records: self.n_no_alt_records,
             n_windows: self.n_windows,
@@ -1007,6 +1132,27 @@ pub fn run_stats_opened(
         .copied()
         .max()
         .map_or(0, |g| g as usize + 1);
+    // The SFS is genome-wide and per group: validate the projections once
+    // (docs/rounds/v5/05-algorithms.md §3.1).
+    let sfs_plan = match &request.sfs {
+        None => None,
+        Some(sfs) => {
+            if sfs.projections.len() != n_groups {
+                return Err(EngineError::job(format!(
+                    "the SFS requests {} group projection(s) but the sample assignment declares                      {n_groups} group(s)",
+                    sfs.projections.len()
+                )));
+            }
+            for &n in &sfs.projections {
+                if n < 2 {
+                    return Err(EngineError::job(format!(
+                        "projection size must be at least 2 chromosomes, got {n}"
+                    )));
+                }
+            }
+            Some(SfsPlan { projections: sfs.projections.clone().into(), folded: sfs.folded })
+        }
+    };
     // `-s/-S/--keep/--remove`: excluded samples lose their group before the
     // group sizes are derived, so the denominators shrink with them.
     let mut gt_groups = request.gt_groups.clone();
@@ -1079,9 +1225,11 @@ pub fn run_stats_opened(
             gt_key: reed_io::bcf::format_key(dict, b"GT"),
             table: reed_io::bcf::GtTable::new(stats_policies()),
         }),
+        sfs: sfs_plan,
     };
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
+        sfs: None,
         size: request.window_size,
         step: request.step,
         width: binning.width(),
@@ -1155,6 +1303,13 @@ pub fn run_stats_opened(
     Ok(StatsReport {
         tsv,
         windows: output.windows,
+        sfs: output.sfs.as_ref().map(|partial| SfsReport {
+            spectra: partial.per_group.iter().map(ProjectedSfsAcc::spectrum).collect(),
+            projections: partial.per_group.iter().map(ProjectedSfsAcc::n).collect(),
+            folded: partial.per_group.first().is_some_and(ProjectedSfsAcc::folded),
+            n_sites: partial.per_group.iter().map(|a| a.site_tally().0).collect(),
+            n_skipped_m_lt_n: partial.per_group.iter().map(|a| a.site_tally().1).collect(),
+        }),
         n_invariant_sites: output.n_invariant_sites,
         n_no_alt_records: output.n_no_alt_records,
         n_windows: output.n_windows,

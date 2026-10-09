@@ -81,13 +81,25 @@ fn ratio_recursion_matches_exact_binomials() {
 }
 
 #[test]
-fn non_segregating_sites_carry_no_spectrum_mass() {
-    // A fixed site (alt = 0) projects entirely to k = 0: the returned
-    // distribution is the certain event, and the caller stores none of it
-    // (k = 0 is not a segregating bin).
+fn non_segregating_bins_are_stored_but_out_of_the_ratio_stats() {
+    // projection_weights returns the whole distribution, endpoints included.
     assert_eq!(projection_weights(8, 0, 4), vec![(0, 1.0)]);
-    // A fully-alt site (alt = m) projects to k = n: same shape.
     assert_eq!(projection_weights(8, 8, 4), vec![(4, 1.0)]);
+    // The accumulator stores the full support: the dadi/fastsimcoal2 writers
+    // report k = 0/n, so a fixed site puts its whole mass in ξ_0 and a
+    // fully-ALT site in ξ_n.
+    let mut acc = ProjectedSfsAcc::new(4, false).expect("invariant: n ≥ 2");
+    let mut cache = ProjectionCache::new(4);
+    let fixed = cache.weights(4, 0);
+    acc.push_weighted(Some(&fixed));
+    let all_alt = cache.weights(4, 4);
+    acc.push_weighted(Some(&all_alt));
+    assert!((acc.xi(0) - 1.0).abs() < 1e-12);
+    assert!((acc.xi(4) - 1.0).abs() < 1e-12);
+    assert_eq!(acc.spectrum(), vec![1.0, 0.0, 0.0, 0.0, 1.0]);
+    // π and the segregating count use only 1..n, so this input has neither.
+    assert!((acc.pi() - 0.0).abs() < 1e-12);
+    assert!((acc.segregating() - 0.0).abs() < 1e-12);
 }
 
 #[test]

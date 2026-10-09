@@ -12,3 +12,6 @@ work/
 # python bytecode
 __pycache__/
 *.pyc
+
+# fixtures are tracked (small, hand-checkable boundary cases)
+!fixtures/*.vcf

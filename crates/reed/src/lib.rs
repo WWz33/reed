@@ -63,12 +63,12 @@ pub use crate::filter::{run_filter, FilterOptions, WriteIndex};
 pub use crate::index::run_index;
 pub use crate::stats::{
     assign_groups, default_kinds, pixy_kinds, run_stats, run_stats_opened, FstKind, InvariantMode,
-    Levels, PbsKind, PixyOptions, StatKind, StatsReport, StatsRequest,
+    Levels, PbsKind, PixyOptions, SfsReport, SfsRequest, StatKind, StatsReport, StatsRequest,
 };
 
 // The output writers (08 §6.2 `reed::writers`): pixy layout, per-site reports
 // and the bcftools-stats summary renderer.
-pub use crate::stats::writers::{pixy, reports, summary};
+pub use crate::stats::writers::{pixy, reports, sfs, summary};
 
 // The request sub-modules the CLI builds against (08 §6.2): `spec`, `expr`,
 // `plan`, `funnel`.

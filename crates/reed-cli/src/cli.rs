@@ -225,6 +225,19 @@ pub(crate) struct StatsCli {
     /// Report PBSn1 (Malaspinas et al. 2016) instead of the raw PBS
     #[arg(long)]
     pub pbs_normed: bool,
+    /// Projected site-frequency spectrum, genome-wide (docs/rounds/v5/05
+    /// §3.1): writes PREFIX_sfs/dadi and PREFIX_sfs/fastsimcoal2; needs
+    /// --proj. Default unfolded (REF = ancestral); `--sfs folded` folds it
+    #[arg(long, value_name = "folded", num_args = 0..=1, default_missing_value = "unfolded",
+          value_parser = ["unfolded", "folded"])]
+    pub sfs: Option<String>,
+    /// Projection sizes in chromosomes (--sfs): one value broadcasts to
+    /// every population, or one per population in first-appearance order
+    #[arg(long, value_name = "N[,N...]")]
+    pub proj: Option<String>,
+    /// Round the projected spectrum to integers (easySFS `--dtype int`)
+    #[arg(long)]
+    pub sfs_int: bool,
     /// Declare an all-variant input: window positions the file does not
     /// contain count as monomorphic with all samples called
     #[arg(long)]

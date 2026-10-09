@@ -62,6 +62,18 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 | summary 消费共享扫描 | reports job 在请求含 `--summary` 时用 `.tracking_alleles()` 扫描器并解码 DP（`depth \|\| summary`）；`QcAccumulator::push_scan(&ScanOutput, &LineRef, &SiteView)` 取代自建扫描——删 `QcJob` 的 scanner/`QcScratch`/`push_line` 与 `GenotypeScanner` 依赖；`reports.rs` 把同一 `out` 交给 summary | `23ea380` | 守卫 `! grep -qE 'GenotypeScanner\|QcScratch' summary.rs` |
 | 输出不变 + 门 | 全量 `clean.vcf.gz --freq --hardy --het --missing --depth --summary`（56 线程）：重构前后 8 个报告文件 md5 逐一相同（afreq `b2884092…`、hardy `fd8fbf27…`、het `790293d9…`、smiss `5f4fe4f8…`、vmiss `7c325d64…`、idepth `a4b6dd3a…`、ldepth.mean `475ee083…`、stats `189e025b…`）；wall 3.75 → **3.037 s**、CPU 184 → **152.0 s**（门 ≤ 3.2 s / ≤ 155 s；3 次 3.037/3.037/3.044 s、151.9/152.1/152.0 s，极差 ≤ 0.3%；批次开始负载 4.63 为自抬升，按 04 §4 纪律标注） | `23ea380` | 上述 md5 逐文件对比；`e2e_reports`、`determinism`、`e2e_bcf` 全绿 |
 
+### X4.1 投影 SFS（05 §3.1）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| genome-wide 请求路径 | `StatsRequest.sfs: Option<SfsRequest { projections, folded }>`；job 在 `push_row` 里喂每个群体的 `ProjectedSfsAcc`（`ProjectionCache` 记忆权重），partial 与窗口 partial 并列上交，sink 收尾合并；`StatsReport.sfs: Option<SfsReport>`。不是窗口统计，不进 `_*.txt` 行模型 | `cbcba18` | `crates/reed/tests/e2e_sfs.rs`（3 项）；buf 与 BCF 原生输入共用 `push_row`，`clean.bcf --sfs --proj 428` 三群体 1.1 s 跑通 |
+| 累加器全支撑 | `ProjectedSfsAcc::bins` 扩到 `n+1`（folded: `n/2+1`），新增 `folded()`/`spectrum()`；`pi()`/`segregating()` 仍只用 `1..n`；`ProjectionCache` 加 `Clone` | `cbcba18` | `cargo test -p reed-stats --test projected_sfs`（7 项，含改写后的全支撑断言） |
+| 输出格式 | `PREFIX_sfs/dadi/<pop>-<n>.sfs`（`<n+1> unfolded\|folded` / 谱 / mask；folded 保持 n+1 长度、上半补零，mask 标 k=0 与结构零区）；`PREFIX_sfs/fastsimcoal2/<pop>_{DAF\|MAF}pop0.obs`（`1 observation` / `d0_0…d0_n` / 谱）；`--sfs-int` 取整 | `cbcba18` | 与 easySFS 的实际文件逐字段对齐（`gold/popgen/compare_sfs.py`） |
+| CLI | `--sfs [folded] --proj N[,N…]`（默认 unfolded；单值广播到各群体）、`--sfs-int`；无 `--pop` 时全体样本为一个群体（名为 `all`）；裸 `--sfs`（无窗口统计）不触发 all-sites 检查，levels 自动 genome-only | `cbcba18` | `e2e_sfs`；手工：`reed stats gold/fixtures/sfs.vcf --pop … --sfs --proj 6` |
+| 对拍 | `gold/popgen/run_easysfs.sh` + `compare_sfs.py`（rtol 1e-6，取整前） | `cbcba18` | fixture：unfolded 7 bins 最大相对差 **1.04e-15**、folded **4.36e-16**；子集全量级（Chr01-03 × clean.3pop.txt 三群体，各投影到 2·min(n_i)=214）见下 |
+
+**偏差**：`--sfs-int` 与 easySFS `--dtype int` 在“恰为半整数”的分箱可差 1（easySFS 的浮点噪声把精确 1.5 落成 1.499999999999999 → 取整 1；reed 的补偿求和得 1.5 → 取整 2）。规范里的 `1 3 3 2 1 1 0` 即此例；对拍以“取整前”的浮点 rtol 1e-6 为准（05 §3.1 的措辞“取整前”）。两群体（二维联合谱）与 `--sfs-int` 的半整数取整规则留待后续。
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -71,7 +83,7 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 | 08 §6.2 单一 `reed::Error` + `kind()` | 未做 | 现有 `FilterError`/`EngineError`/`IoError`/`CoreError` 未合并为 `reed::Error`；退出码仍由前端各自映射。留待后续 PR |
 | 08 §6.4.4 cli_contract 往返 | 未做 | 现有往返测试只覆盖 filter；stats/index 的往返测试未补 |
 | L-2 完全精选 | 部分 | 门面以 `pub use` 重导出模块（`spec/expr/plan/funnel`、`budget/metrics`、`bgzf/chunk/header`）与类型；`unreachable_pub` 为 crate 级 allow。未逐项把非精选项改 `pub(crate)`（量大，留待后续） |
-| X4–X6 | 待做 | X4 统计接入（SFS genome-wide 路径 → `--fst-global` → f 统计 → LD；含 C-5 拆 `individual.rs`；SFS 可参考 `stash@{0}` 的累加器与 writers，但其窗口形态不采用）；X5 多等位重算；X6 CLI 缺口。X7 已随 X2 落地（`.github/workflows/ci.yml`，数据门条件化） |
+| X4.2–X4.4、X5、X6 | 待做 | X4.2 `--fst-global`（`StatKind::FstGlobal`、`_fst_global.txt`、`run_vcftools_fst.sh`）；X4.3 f 统计（`.fstats`、block jackknife、`compare_fstats.py`）；X4.4 LD（尾窗携带、`LdPruner`、`run_plink2_ld.sh`）；C-5 拆 `individual.rs` 随 X4 一并；X5 多等位重算；X6 CLI 缺口。X7 已随 X2 落地 |
 
 > 本轮收口于 green 主干：X0、X1、X2、X3、X7 已落地，未完成项逐条在上表登记。X4 按计划"每个统计量单独 PR"，从 05 §3.1 的 SFS genome-wide 路径开始。
 

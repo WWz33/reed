@@ -238,6 +238,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         fst,
         pbs,
         pbs_normed,
+        sfs,
+        proj,
+        sfs_int,
         freq,
         hardy,
         het,
@@ -402,12 +405,20 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         return Ok(());
     }
 
-    // Windowed modes need the populations file.
-    let Some(groups) = pop else {
-        return Err("a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into());
+    // Windowed statistics need the populations file; a bare `--sfs` (no
+    // windowed statistic) treats every sample as one population.
+    let windowed = pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty();
+    let (gt_groups, group_names) = match &pop {
+        Some(groups) => assign_groups(Path::new(groups), &sample_names, force_samples)?,
+        None if sfs.is_some() && !windowed => {
+            (vec![Some(0); sample_names.len()], vec!["all".to_string()])
+        }
+        None => {
+            return Err(
+                "a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into()
+            );
+        }
     };
-    let (gt_groups, group_names) =
-        assign_groups(Path::new(&groups), &sample_names, force_samples)?;
     if verbosity.shows_summary() {
         eprintln!(
             "{} samples, {} groups: {}",
@@ -421,9 +432,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
 
     // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with pixy's columns (02-cli.md §5).
-    if pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() {
+    if windowed || sfs.is_some() {
         let step = if step == 0 { size } else { step };
-        let invariant = if variant_only {
+        // A bare `--sfs` has no window denominators, so the all-sites check
+        // does not apply (05 §3.1 accepts variant-only input).
+        let invariant = if variant_only || (sfs.is_some() && !windowed) {
             reed::InvariantMode::VariantOnly
         } else if bypass_invariant_check {
             eprintln!(
@@ -460,6 +473,45 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         for &(a, b, c) in &pbs_triples {
             kinds.push(reed::StatKind::Pbs { a, b, c, kind: pbs_kind });
         }
+        // `--sfs [folded] --proj N[,N…]`: a genome-wide spectrum per
+        // population (docs/rounds/v5/05-algorithms.md §3.1).
+        let sfs_request = match sfs.as_deref() {
+            None => None,
+            Some(mode) => {
+                let Some(raw) = proj.as_deref() else {
+                    return Err("--sfs needs --proj N (the projection size in chromosomes)".into());
+                };
+                let mut values = Vec::new();
+                for token in raw.split(',') {
+                    let token = token.trim();
+                    values.push(token.parse::<u32>().map_err(|_| {
+                        format!("invalid --proj value {token:?} (want an integer)")
+                    })?);
+                }
+                if values.len() == 1 {
+                    values = vec![values[0]; group_names.len()];
+                }
+                if values.len() != group_names.len() {
+                    return Err(format!(
+                        "--proj gives {} value(s) but the population file declares {}",
+                        values.len(),
+                        group_names.len()
+                    )
+                    .into());
+                }
+                Some(reed::SfsRequest { projections: values, folded: mode == "folded" })
+            }
+        };
+        // The SFS is genome-wide: with no windowed kind, skip the window
+        // grid entirely (genome level only) and give it a nominal size.
+        let sfs_only = kinds.is_empty();
+        let size = if size == 0 && sfs_only { 1000 } else { size };
+        let step = if step == 0 { size } else { step };
+        let levels = if sfs_only {
+            Levels { window: false, contig: false, genome: true }
+        } else {
+            Levels { window: true, contig: false, genome: false }
+        };
         let request = StatsRequest {
             kinds: kinds.clone(),
             regions: regions.clone(),
@@ -467,10 +519,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             targets_exclude: targets_exclude.clone(),
             keep_samples: keep_samples.clone(),
             filter: filter.clone(),
+            sfs: sfs_request,
             gt_groups,
             window_size: size,
             step,
-            levels: Levels { window: true, contig: false, genome: false },
+            levels,
             skip_empty: false,
             contig_lengths,
             pixy: Some(pixy),
@@ -483,22 +536,34 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             return Err("pixy mode writes files: pass -o PREFIX".into());
         };
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-        let written = reed::pixy::write(
-            Path::new(&prefix),
-            &report,
-            &group_names,
-            &kinds,
-            pixy,
-            &command_line,
-            env!("CARGO_PKG_VERSION"),
-        )?;
+        let mut files = Vec::new();
+        if let Some(sfs_report) = &report.sfs {
+            files.extend(reed::sfs::write_projected_sfs(
+                Path::new(&prefix),
+                &group_names,
+                sfs_report,
+                sfs_int,
+            )?);
+        }
+        // A bare `--sfs` has no window rows to write.
+        if !kinds.is_empty() {
+            files.extend(reed::pixy::write(
+                Path::new(&prefix),
+                &report,
+                &group_names,
+                &kinds,
+                pixy,
+                &command_line,
+                env!("CARGO_PKG_VERSION"),
+            )?);
+        }
         if verbosity.shows_summary() {
             eprintln!(
                 "{} windows, {} records in {:.1}s -> {}",
                 report.n_windows,
                 report.n_records,
                 report.elapsed.as_secs_f64(),
-                written
+                files
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>()
@@ -524,6 +589,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         targets_exclude,
         keep_samples,
         filter,
+        sfs: None,
         gt_groups,
         window_size: size,
         step: if step == 0 { size } else { step },

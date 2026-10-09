@@ -3,4 +3,5 @@
 
 pub mod pixy;
 pub mod reports;
+pub mod sfs;
 pub mod summary;
