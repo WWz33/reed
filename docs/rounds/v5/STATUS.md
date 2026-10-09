@@ -74,6 +74,17 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 
 **偏差**：`--sfs-int` 与 easySFS `--dtype int` 在“恰为半整数”的分箱可差 1（easySFS 的浮点噪声把精确 1.5 落成 1.499999999999999 → 取整 1；reed 的补偿求和得 1.5 → 取整 2）。规范里的 `1 3 3 2 1 1 0` 即此例；对拍以“取整前”的浮点 rtol 1e-6 为准（05 §3.1 的措辞“取整前”）。两群体（二维联合谱）与 `--sfs-int` 的半整数取整规则留待后续。
 
+### X4.2 合并（r 群体）Fst：`--fst-global`（05 §3.2）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| `StatKind::FstGlobal` | 复用已实现的 `WcMultiAcc`（r 群体 WC84 方差分量，`m7_fst.rs` 已用独立参考验过 a/b/c）；`StatAcc::fst_global_columns` 给 `(value, no_snps)` | `50c1698` | `reed-stats/tests/accumulator_laws.rs`（proptest 加 `FstGlobal` 臂）；`crates/reed/tests/e2e_fst_global.rs`（3 项） |
+| 输出 | `PREFIX_fst_global.txt`：`pops chromosome window_pos_1 window_pos_2 avg_wc_fst no_snps`，`pops` 为逗号连接的群体名；给 `--levels genome` 时多一行 `genome` | `50c1698` | 夹具与子集输出 |
+| CLI | `--fst-global`（clap `requires = "fst"`）；`--fst hudson --fst-global` 报错 `hudson Fst has no r-population (global) form; use wc84`；两群体时提示不报错；`--levels` 在 pixy 布局下改为**透传用户值**（默认仍 window，行为不变） | `50c1698` | `cli_contract::help_lists_the_new_statistics_flags` |
+| 对拍 | `gold/popgen/run_vcftools_fst.sh`：vcftools `--weir-fst-pop` ×3 的逐位点列与日志 weighted Fst | `50c1698` | **夹具**：逐位点最大相对差 1.0e-6（vcftools 只印 6 位有效数字，容差 2e-6）、genome 相对差 **2.2e-16**；**子集**（Chr01-03 × clean.3pop.txt 三群体，480,952 位点）：genome reed `0.0017395526794523797` vs vcftools `0.0017396` |
+
+**偏差**：逐位点门取 2e-6 而非 05 §3.2 写的 1e-9——vcftools 的 `weir.fst` 以 `%g`（6 位有效数字）打印，参考文件本身的分辨率就是 5e-7；genome 级门 1e-9 达标（2.2e-16）。
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
