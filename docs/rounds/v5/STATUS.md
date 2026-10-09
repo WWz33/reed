@@ -113,6 +113,18 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 
 X4 的四项（3.1 SFS、3.2 `--fst-global`、3.3 f 统计、3.4 LD）全部落地，每项都有 fixture 逐值门与全量级（子集/区域）对拍，参照物分别为 easySFS、vcftools、scikit-allel、plink2。C-5（拆 `individual.rs`）未做，登记在下方偏差表。
 
+### X4.4-rev `--indep-pairwise` 迁入 `reed filter`（05 §3.4.1，裁决 2026-10-10）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| 归属与请求 | `FilterSpec.ld_prune: Option<LdPruneSpec>`（window/kb/step/r2），由共享 `SiteFilterArgs` 的 `--indep-pairwise W[kb] [S] R2` 解析；`reed stats` 对该旗标报错并指向 filter；`reed stats` 侧只留 `--ld-decay/--ld-pairs` | `33c8948` | 手工：`reed filter --indep-pairwise …` 输出剪枝后的 VCF；`reed stats --indep-pairwise …` 报错 |
+| pass0 | `reed/src/filter/ld_prune.rs`：与 pass1 同一 `RecordPipeline` 存活判定（head→mask→tail），把每个 contig 的存活位点按序交给 sink 线程上的一个 `LdPruner`；结果是"每 contig 保留位点集合"，pass1 发射前二分查找 | `33c8948` | `e2e_ld::filter_indep_pairwise_keeps_the_plink2_set` |
+| 算法 | `LdPruner` 严格照 `plink2_ld.cc`：到达空间的窗口（W 位点或 W bp）、step 推进、到达即剪单态（全 hom-ref / 全 hom-alt / 全杂合 / 无调用）、只对**新进入**的槽位反向最近优先扫描、被剪的 second 仍参与比较、主等位频率高者被剪（1e-6 内平局剪靠后）、contig 末尾的残余窗口也要扫 | `33c8948` | `reed-stats/tests/ld.rs`（7 项） |
+| 漏斗 | `after_mask.ld_prune`；`FilterReport.ld_prune = (survivors, pruned)` | `33c8948` | `e2e_ld` 断言 `Some((6, 3))` |
+| 对拍 | `gold/popgen/run_plink2_ld.sh`：r² 用 stats 的 `--ld-decay`，prune 集合用 filter 的输出 | `33c8948` | **夹具** `10 1 0.5`：保留位点 `{1,5,6}` == plink2 `prune.in`；**区域**（Chr01:1-2,000,000，8,364 位点）`50 5 0.2`：277 == 277，对称差 **0**；1/4/56 线程正文逐字节相同 |
+
+**偏差**：bp 窗口（`--indep-pairwise 50kb 0.2`）尚未与 plink2 逐 ID 一致（区域内 reed 保留 131 vs plink2 158），窗口推进的 bp 语义仍需对齐；位点窗口（plink2 的主用法与 05 §3.4.1 的门）已逐 ID 相同。
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -126,6 +138,8 @@ X4 的四项（3.1 SFS、3.2 `--fst-global`、3.3 f 统计、3.4 LD）全部落�
 | 联合 SFS（两群体二维谱） | 未做 | 05 §3.1 的两群体二维谱（`JointSfsAcc` 已有实现）未接 CLI；当前 `--sfs` 写一维谱（每群体一个） |
 | X5 多等位重算 | 待做 | 05 §4（`--fill-tags` 的逐等位 AC/AF、MAF 次等位口径、HWE 多等位写 `.`） |
 | X6 CLI 缺口 | 待做 | `--bed-file`、`--sites-file`、`-q/-Q` 的 `:type` 后缀 |
+| LD bp 窗口 | 偏差 | `--indep-pairwise Wkb` 的窗口推进未与 plink2 对齐（位点窗口已逐 ID 相同），见上表 |
+| `reed stats --indep-pairwise` | 未做 | 规范 §3.4.1 说 filter/stats 共用；stats 侧需要第二遍，现为显式报错并指向 filter |
 | X7 | 已落地 | `.github/workflows/ci.yml`（X2 时创建，数据门条件化） |
 
 > 本轮收口于 green 主干：X0、X1、X2、X3、X7 已落地，未完成项逐条在上表登记。X4 按计划"每个统计量单独 PR"，从 05 §3.1 的 SFS genome-wide 路径开始。
