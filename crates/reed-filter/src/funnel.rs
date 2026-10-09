@@ -28,6 +28,19 @@ pub struct MaskedBy {
     pub n_masked: u64,
 }
 
+/// The dynamic sample rule's outcome (`sample.max_missing`, doc_v4
+/// 02-cli-semantics.md §5.3). The funnel stages count records, so the
+/// sample-level rule reports separately instead of posing as a stage.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SampleRuleReport {
+    /// The stable rule id (`sample.max_missing`).
+    pub rule: RuleId,
+    /// The threshold as rendered (exact decimal).
+    pub threshold: String,
+    /// Samples the rule dropped.
+    pub n_dropped: u64,
+}
+
 /// The run report (§11.5).
 #[derive(Clone, Debug, Serialize)]
 pub struct FilterReport {
@@ -39,6 +52,8 @@ pub struct FilterReport {
     pub n_samples_in: u32,
     /// Sample columns after the cohort rule.
     pub n_samples_out: u32,
+    /// The `--max-missing-sample` outcome when the rule was requested.
+    pub sample_rule: Option<SampleRuleReport>,
     /// Funnel stages in evaluation order.
     pub funnel: Vec<FunnelStage>,
     /// Total GT masked to `./.` (called-to-missing transitions only).

@@ -1,11 +1,12 @@
-//! `--mind` pass0 (04 §C0, `doc_v2/03-architecture.md` §8): the per-sample
-//! missing reduction that resolves the dynamic sample rule.
+//! `--max-missing-sample` pass0 (doc_v4 02-cli-semantics.md §3.2): the
+//! per-sample reduction that resolves the dynamic sample rule.
 //!
-//! plink2 semantics: a sample's missing rate is counted **after** the
+//! vcftools semantics: a sample's call rate is counted **after** the
 //! genotype mask and only over the records that pass the head rules (the
-//! genotype-independent site rules); the denominator is that record count.
-//! This runs the same pipeline the single pass runs (`RecordPipeline`), so
-//! the three strategies cannot drift.
+//! genotype-independent site rules); the numerator is its called alleles
+//! (a half call counts one, a masked call none) and the denominator is
+//! `2 × that record count`. This runs the same pipeline the single pass
+//! runs (`RecordPipeline`), so the three strategies cannot drift.
 
 use std::sync::{Arc, Mutex};
 
@@ -21,24 +22,24 @@ use reed_core::ChunkId;
 use super::record_pipeline::{PipelineOptions, RecordPipeline};
 use super::{ferr, FilterOptions};
 
-/// Pass0 partial: per-sample fully-missing GT counts after masking, over
+/// Pass0 partial: per-sample called-allele counts after masking, over
 /// head-surviving records.
 #[derive(Default)]
 pub(super) struct MissingPartial {
-    /// Records that passed the head rules (the `--mind` denominator).
+    /// Records that passed the head rules (the `2L` denominator).
     pub(super) n_records: u64,
-    /// Per-sample fully-missing genotype counts (post-mask).
-    pub(super) counts: Vec<u64>,
+    /// Per-sample called-allele counts (post-mask).
+    pub(super) called: Vec<u64>,
 }
 
 /// Worker scratch: the shared record pipeline plus the per-sample counters.
 pub(super) struct MissingScratch {
     pipeline: RecordPipeline,
-    miss: Vec<u64>,
+    called: Vec<u64>,
     funnel: FunnelPartial,
 }
 
-/// The GT-only missing-count job (`--mind` pass0).
+/// The GT-only call-rate job (`--max-missing-sample` pass0).
 pub(super) struct MissingJob {
     pub(super) plan: Arc<FilterPlan>,
     pub(super) n_samples: usize,
@@ -51,7 +52,8 @@ const OPTS: PipelineOptions = PipelineOptions {
     // The mask runs for every sample (the keep set is not decided yet).
     mask_all_samples: true,
     require_contig: false,
-    // The tail rules are not evaluated in pass0 (`--mind` runs before them).
+    // The tail rules are not evaluated in pass0 (the sample rule runs
+    // before them).
     tail_n_samples: None,
     counts: false,
 };
@@ -72,7 +74,7 @@ impl MissingJob {
         pipeline.resize_for(&self.plan);
         MissingScratch {
             pipeline,
-            miss: vec![0; self.n_samples],
+            called: vec![0; self.n_samples],
             funnel: FunnelPartial {
                 head_hits: vec![0; self.plan.head.len()],
                 tail_hits: vec![0; self.plan.tail.len()],
@@ -83,21 +85,20 @@ impl MissingJob {
     }
 
     /// Runs one record and returns whether it survived the head rules; the
-    /// body counts the post-mask fully-missing calls of such records.
+    /// body adds the post-mask called alleles of such records.
     fn scan_line(
         &self,
         line: &[u8],
         scratch: &mut MissingScratch,
     ) -> Result<bool, EngineError> {
         let plan = &self.plan;
-        let MissingScratch { pipeline, miss, funnel } = scratch;
-        let miss = &mut *miss;
+        let MissingScratch { pipeline, called, funnel } = scratch;
+        let called = &mut *called;
         let processed = pipeline.process(line, plan, &[], OPTS, funnel, |view| {
             for (i, &code) in view.scan.codes.iter().enumerate() {
-                if (code.is_fully_missing() || view.masked.get(i))
-                    && let Some(slot) = miss.get_mut(i)
-                {
-                    *slot += 1;
+                let n = called_alleles(code, view.masked.get(i));
+                if let Some(slot) = called.get_mut(i) {
+                    *slot += n;
                 }
             }
             Ok(())
@@ -117,8 +118,8 @@ impl ChunkJob for MissingJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
-        scratch.miss.clear();
-        scratch.miss.resize(self.n_samples, 0);
+        scratch.called.clear();
+        scratch.called.resize(self.n_samples, 0);
         let mut n_records = 0_u64;
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
@@ -128,7 +129,7 @@ impl ChunkJob for MissingJob {
                 n_records += 1;
             }
         }
-        Ok(MissingPartial { n_records, counts: scratch.miss.clone() })
+        Ok(MissingPartial { n_records, called: scratch.called.clone() })
     }
 
     fn run_seam(
@@ -138,10 +139,10 @@ impl ChunkJob for MissingJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
-        scratch.miss.clear();
-        scratch.miss.resize(self.n_samples, 0);
+        scratch.called.clear();
+        scratch.called.resize(self.n_samples, 0);
         let n_records = u64::from(self.scan_line(line, scratch)?);
-        Ok(MissingPartial { n_records, counts: scratch.miss.clone() })
+        Ok(MissingPartial { n_records, called: scratch.called.clone() })
     }
 }
 
@@ -190,17 +191,17 @@ impl OrderedSink<MissingPartial> for SumSink {
         match guard.as_mut() {
             Some(total) => {
                 total.n_records += partial.n_records;
-                if total.counts.len() < partial.counts.len() {
-                    total.counts.resize(partial.counts.len(), 0);
+                if total.called.len() < partial.called.len() {
+                    total.called.resize(partial.called.len(), 0);
                 }
-                for (t, m) in total.counts.iter_mut().zip(&partial.counts) {
+                for (t, m) in total.called.iter_mut().zip(&partial.called) {
                     *t += m;
                 }
             }
             None => {
                 *guard = Some(MissingPartial {
                     n_records: partial.n_records,
-                    counts: partial.counts.clone(),
+                    called: partial.called.clone(),
                 });
             }
         }
@@ -211,4 +212,13 @@ impl OrderedSink<MissingPartial> for SumSink {
         let total = self.total.lock().expect("invariant: missing slot not poisoned");
         Ok(total.as_ref().map_or(0, |t| t.n_records))
     }
+}
+
+/// Post-mask called alleles of one sample's genotype (doc_v4 02 §3.1: a
+/// half call contributes one allele, a masked call none).
+pub(super) fn called_alleles(code: reed_core::genotype::GtCode, masked: bool) -> u64 {
+    if masked || !code.is_called_any() {
+        return 0;
+    }
+    2 - u64::from(code.slot_missing(0)) - u64::from(code.slot_missing(1))
 }

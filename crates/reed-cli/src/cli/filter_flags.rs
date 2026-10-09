@@ -3,6 +3,46 @@
 //! the definitions live here once.
 
 use clap::Args;
+use reed_filter::spec::CallRate;
+
+/// The error text for a removed drop-direction flag (doc_v4 02-cli-semantics.md
+/// §5.2): no hidden alias with silent conversion — the message names the
+/// exact replacement value (`1 − X` in exact decimal, so `--geno 0.1` →
+/// `--max-missing 0.9`, not `0.9000000000000001`).
+pub(crate) fn removed_drop_direction(
+    flag: &str,
+    replacement: &str,
+    text: &str,
+) -> Result<String, String> {
+    let rate = CallRate::parse(text).map_err(|e| e.to_string())?;
+    Err(format!(
+        "{flag} was removed: it stated the fraction to drop; use {replacement} {} \
+         (the fraction that must be called)",
+        rate.complement().render()
+    ))
+}
+
+/// `--geno X` → `--max-missing 1−X`.
+pub(crate) fn removed_geno(text: &str) -> Result<String, String> {
+    removed_drop_direction("--geno", "--max-missing", text)
+}
+
+/// `--mind X` → `--max-missing-sample 1−X`.
+pub(crate) fn removed_mind(text: &str) -> Result<String, String> {
+    removed_drop_direction("--mind", "--max-missing-sample", text)
+}
+
+/// `reed stats` does not take the sample-level call-rate rule: it needs a
+/// full pass over the input before the statistics can be computed
+/// (doc_v4 02-cli-semantics.md §3.2).
+pub(crate) fn unsupported_stats_call_rate(_text: &str) -> Result<String, String> {
+    Err(
+        "reed stats does not support --max-missing-sample (the sample rule needs a full \
+         pass before the statistics); run `reed filter --max-missing-sample X` first and \
+         feed its output to reed stats"
+            .to_string(),
+    )
+}
 
 /// Region selection (`doc_v2/02-cli.md` §2): indexed and streamed regions.
 #[derive(Args, Clone, Debug, Default)]
@@ -92,9 +132,18 @@ pub(crate) struct SiteFilterArgs {
     /// Maximum non-reference allele frequency (bcftools -Q)
     #[arg(short = 'Q', long = "max-af", value_name = "FLOAT")]
     pub max_af: Option<f64>,
-    /// Drop sites whose missing rate (after masking) exceeds FLOAT
-    #[arg(long, value_name = "FLOAT")]
-    pub geno: Option<f64>,
+    /// Keep sites whose call rate (called alleles / 2·samples, after
+    /// masking) is at least FLOAT (vcftools --max-missing direction)
+    #[arg(long, value_name = "FLOAT", value_parser = CallRate::parse)]
+    pub max_missing: Option<CallRate>,
+    /// Keep sites with at most INT missing alleles (after masking;
+    /// vcftools --max-missing-count)
+    #[arg(long, value_name = "INT")]
+    pub max_missing_count: Option<u64>,
+    /// Removed flag: it stated the fraction to drop; the replacement names
+    /// the fraction that must be called
+    #[arg(long, value_name = "FLOAT", hide = true, value_parser = removed_geno)]
+    pub geno: Option<String>,
     /// Minimum minor allele frequency (after masking)
     #[arg(long, value_name = "FLOAT")]
     pub maf: Option<f64>,

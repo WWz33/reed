@@ -15,7 +15,8 @@ const HEADER: &str = "\
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
 ";
 
-/// 3 samples; s2 is missing in 9 of 10 records so `--mind` drops it.
+/// 3 samples; s2 is missing in 9 of 10 records so the sample-level call-rate
+/// rule drops it.
 fn fixture() -> Vec<u8> {
     let mut text = String::from(HEADER);
     for i in 0..10_u32 {
@@ -95,8 +96,8 @@ fn single_pass_stdin_streams_and_leaves_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `--mind` reads twice: stdin spills under `--tmp-dir` and the spill is
-/// deleted on exit; the sample set matches the file run.
+/// `--max-missing-sample` reads twice: stdin spills under `--tmp-dir` and
+/// the spill is deleted on exit; the sample set matches the file run.
 #[test]
 fn multi_pass_stdin_spills_and_cleans_up() {
     let dir = std::env::temp_dir().join(format!("reed-o5-multi-{}", std::process::id()));
@@ -112,7 +113,7 @@ fn multi_pass_stdin_spills_and_cleans_up() {
         &[
             "filter",
             input.to_str().unwrap(),
-            "--mind",
+            "--max-missing-sample",
             "0.5",
             "-Oz",
             "-o",
@@ -125,7 +126,7 @@ fn multi_pass_stdin_spills_and_cleans_up() {
         &[
             "filter",
             "-",
-            "--mind",
+            "--max-missing-sample",
             "0.5",
             "-Oz",
             "-o",
@@ -164,7 +165,7 @@ fn spill_is_removed_on_error_exit() {
         &[
             "filter",
             "-",
-            "--mind",
+            "--max-missing-sample",
             "0.5",
             "-Oz",
             "-o",
@@ -306,7 +307,7 @@ fn stats_site_filters_match_the_filter_then_stats_composition() {
     for args in [
         vec!["--maf", "0.05"],
         vec!["--min-dp", "20"],
-        vec!["--geno", "0.1"],
+        vec!["--max-missing", "0.9"],
         vec!["-Q", "0.9"],
     ] {
         let mut filter_argv = vec!["filter", input.to_str().unwrap()];

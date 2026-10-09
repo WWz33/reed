@@ -249,6 +249,10 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         regions_args,
         sample_args,
         site_args,
+        // The removed / unsupported sample-level flags never reach this
+        // point: their value parsers reject them at parse time.
+        mind: _,
+        max_missing_sample: _,
     } = args;
 
     // `-r/-R` (indexed) and `-t/-T` (streamed) share the filter's spellings

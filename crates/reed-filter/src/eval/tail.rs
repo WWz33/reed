@@ -16,6 +16,10 @@ pub fn eval_tail(
 ) -> bool {
     // A short counter slice would silently skip rules (caller invariant).
     assert_eq!(rules.len(), hits.len(), "invariant: tail counters align with the rules");
+    // The call-rate denominator: every kept sample carries two allele slots
+    // (doc_v4 02-cli-semantics.md §3.1 — the numerator is `counts.an`, so a
+    // half call contributes one called allele).
+    let total_alleles = 2 * n_samples_out as u64;
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
             TailRule::Expr { include, expr, .. } => {
@@ -30,9 +34,11 @@ pub fn eval_tail(
                 .is_some_and(|freq| freq >= *bound),
             TailRule::MaxAf(bound) => non_reference_af(values, counts)
                 .is_some_and(|freq| freq <= *bound),
-            TailRule::MaxMissing(m) => {
-                n_samples_out > 0
-                    && f64::from_u64(counts.n_missing) / f64::from_u64(n_samples_out as u64) <= *m
+            TailRule::MinCallRate(rate) => {
+                n_samples_out > 0 && rate.keeps(counts.an, total_alleles)
+            }
+            TailRule::MaxMissingCount(cap) => {
+                total_alleles.saturating_sub(counts.an) <= *cap
             }
             TailRule::MinMaf(m) => counts.maf() >= *m,
             TailRule::MaxMaf(m) => counts.maf() <= *m,
@@ -63,15 +69,6 @@ fn non_reference_af(values: &crate::expr::SiteValues<'_>, counts: &SiteCounts) -
         return Some(freq);
     }
     (counts.an > 0).then(|| counts.ac as f64 / counts.an as f64)
-}
-
-trait FromU64 {
-    fn from_u64(v: u64) -> Self;
-}
-impl FromU64 for f64 {
-    fn from_u64(v: u64) -> Self {
-        v as f64
-    }
 }
 
 #[cfg(test)]
@@ -111,6 +108,40 @@ mod tests {
         assert!(!run(&[TailRule::MinMac(5)]));
         assert!(!run(&[TailRule::MaxMac(3)]));
         let _ = (PloidyPolicy::HaploidAsHalfCall, MultiallelicPolicy::CollapseAlt, GenotypePolicies::default());
+    }
+
+    /// doc_v4 02 §7.6: the call-rate decisions are exact at the boundary —
+    /// `X = 0.8, N = 10, missing = 2` keeps (the float form `1 − 0.8` would
+    /// drop it), `X = 0.7, N = 10, missing = 3` keeps.
+    #[test]
+    fn call_rate_boundaries_are_exact() {
+        use crate::spec::CallRate;
+        // 16 of 20 alleles called: exactly 0.8.
+        let c = counts(2, 16, 8, 0, 2);
+        let v = values(&c);
+        let run = |rules: &[TailRule]| {
+            let mut hits = vec![0_u64; rules.len()];
+            eval_tail(&v, &c, 10, rules, &mut hits)
+        };
+        assert!(run(&[TailRule::MinCallRate(CallRate::parse("0.8").expect("valid"))]));
+        assert!(!run(&[TailRule::MinCallRate(CallRate::parse("0.9").expect("valid"))]));
+        assert!(run(&[TailRule::MinCallRate(CallRate::parse("0.75").expect("valid"))]));
+        // 14 of 20 called against 0.7 (1 − 0.7 = 0.30000000000000004: a
+        // decision written through that float would drop this site).
+        let c = counts(2, 14, 6, 2, 0);
+        let v = values(&c);
+        assert!(eval_tail(
+            &v,
+            &c,
+            10,
+            &[TailRule::MinCallRate(CallRate::parse("0.7").expect("valid"))],
+            &mut [0]
+        ));
+        // --max-missing-count: 2N − an ≤ C. 17 of 20 called → 3 missing.
+        let c = counts(2, 17, 7, 3, 0);
+        let v = values(&c);
+        assert!(eval_tail(&v, &c, 10, &[TailRule::MaxMissingCount(3)], &mut [0]));
+        assert!(!eval_tail(&v, &c, 10, &[TailRule::MaxMissingCount(2)], &mut [0]));
     }
 
     #[test]

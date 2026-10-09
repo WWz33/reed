@@ -34,7 +34,7 @@ impl FilterSpecV2 {
     pub fn to_args(&self) -> Vec<String> {
         let mut args: Vec<String> = Vec::new();
 
-        // ---- samples (static subset, then the dynamic --mind threshold) ----
+        // ---- samples (static subset, then the dynamic call-rate threshold) ----
         if let Some(select) = &self.sample_select {
             match &select.keep {
                 Some(SampleList::Names(names)) => flag(&mut args, "-s", names.join(",")),
@@ -51,8 +51,8 @@ impl FilterSpecV2 {
                 }
             }
         }
-        if let Some(threshold) = self.mind {
-            flag(&mut args, "--mind", threshold);
+        if let Some(rate) = self.min_sample_call_rate {
+            flag(&mut args, "--max-missing-sample", rate.render());
         }
 
         // ---- regions (one `-t` list: `^` prefixes the excludes) ----
@@ -123,8 +123,11 @@ impl FilterSpecV2 {
         if let Some(af) = self.site_after_mask.max_af {
             flag(&mut args, "-Q", f(af));
         }
-        if let Some(g) = self.site_after_mask.max_missing {
-            flag(&mut args, "--geno", f(g));
+        if let Some(rate) = self.site_after_mask.min_call_rate {
+            flag(&mut args, "--max-missing", rate.render());
+        }
+        if let Some(count) = self.site_after_mask.max_missing_alleles {
+            flag(&mut args, "--max-missing-count", count);
         }
         if let Some(m) = self.site_after_mask.min_maf {
             flag(&mut args, "--maf", f(m));
@@ -170,6 +173,7 @@ impl FilterSpecV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec::CallRate;
 
     fn args_of(spec: &FilterSpecV2) -> Vec<String> {
         spec.to_args()
@@ -182,11 +186,14 @@ mod tests {
                 keep: Some(SampleList::Names(vec!["a".into(), "b".into()])),
                 remove: Some(SampleList::Names(vec!["c".into()])),
             }),
-            mind: Some(0.25),
+            min_sample_call_rate: Some(CallRate::parse("0.25").expect("valid")),
             ..Default::default()
         };
         let args = args_of(&spec);
-        assert_eq!(&args[..6], &["-s", "a,b", "-s", "^c", "--mind", "0.25"]);
+        assert_eq!(
+            &args[..6],
+            &["-s", "a,b", "-s", "^c", "--max-missing-sample", "0.25"]
+        );
     }
 
     #[test]
@@ -200,7 +207,8 @@ mod tests {
                 ..Default::default()
             },
             site_after_mask: super::super::TailRules {
-                max_missing: Some(0.1),
+                min_call_rate: Some(CallRate::parse("0.9").expect("valid")),
+                max_missing_alleles: Some(42),
                 min_maf: Some(0.05),
                 max_maf: Some(0.4),
                 min_mac: 3,
@@ -218,18 +226,19 @@ mod tests {
         assert_eq!(
             args_of(&spec),
             vec![
-                "-v", "snv", "-V", "indel", "-M", "2", "-f", "PASS", "--geno", "0.1", "--maf",
-                "0.05", "--max-maf", "0.4", "--mac", "3", "--max-mac", "30", "--hwe", "0.000001",
-                "-x", "INFO/DP", "--fill-tags", "AC,AN", "-I",
+                "-v", "snv", "-V", "indel", "-M", "2", "-f", "PASS", "--max-missing", "0.9",
+                "--max-missing-count", "42", "--maf", "0.05", "--max-maf", "0.4", "--mac", "3",
+                "--max-mac", "30", "--hwe", "0.000001", "-x", "INFO/DP", "--fill-tags", "AC,AN",
+                "-I",
             ]
         );
     }
 
     #[test]
-    fn floats_always_render_as_parsable() {
+    fn call_rates_always_render_as_parsable() {
         let spec = FilterSpecV2 {
             site_after_mask: super::super::TailRules {
-                max_missing: Some(0.5),
+                min_call_rate: Some(CallRate::parse("0.5").expect("valid")),
                 ..Default::default()
             },
             ..Default::default()

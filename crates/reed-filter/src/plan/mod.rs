@@ -221,8 +221,11 @@ pub enum TailRule {
     MinAf(f64),
     /// Non-reference allele frequency upper bound (bcftools `-Q`).
     MaxAf(f64),
-    /// Site missing-rate cap (denominator: kept samples).
-    MaxMissing(f64),
+    /// Site call-rate floor (`--max-missing`: called alleles / 2·kept
+    /// samples; exact integer judgment, doc_v4 02-cli-semantics.md §4).
+    MinCallRate(crate::spec::CallRate),
+    /// Missing-allele ceiling (`--max-missing-count`: `2N − an ≤ C`).
+    MaxMissingCount(u64),
     /// MAF lower bound.
     MinMaf(f64),
     /// MAF upper bound.
@@ -243,7 +246,8 @@ impl TailRule {
             Self::Expr { id, .. } => id.clone(),
             Self::MinAf(_) => "after_mask.min_af".to_string(),
             Self::MaxAf(_) => "after_mask.max_af".to_string(),
-            Self::MaxMissing(_) => "after_mask.missing".to_string(),
+            Self::MinCallRate(_) => "after_mask.max_missing".to_string(),
+            Self::MaxMissingCount(_) => "after_mask.max_missing_count".to_string(),
             Self::MinMaf(_) => "after_mask.maf".to_string(),
             Self::MaxMaf(_) => "after_mask.max_maf".to_string(),
             Self::MinMac(_) => "after_mask.mac".to_string(),
@@ -505,11 +509,13 @@ pub fn compile(
         }
         tail.push(TailRule::MaxAf(af_threshold(f)));
     }
-    if let Some(m) = spec.site_after_mask.max_missing {
-        if !(0.0..=1.0).contains(&m) {
-            return Err(FilterError::Spec(format!("max_missing out of range [0,1]: {m}")));
-        }
-        tail.push(TailRule::MaxMissing(m));
+    if let Some(rate) = spec.site_after_mask.min_call_rate {
+        // The range is validated where the rate is parsed (spec/call_rate.rs),
+        // so a compiled spec can only carry `q ≤ 10^9`.
+        tail.push(TailRule::MinCallRate(rate));
+    }
+    if let Some(cap) = spec.site_after_mask.max_missing_alleles {
+        tail.push(TailRule::MaxMissingCount(cap));
     }
     if let Some(m) = spec.site_after_mask.min_maf {
         if !(0.0..=0.5).contains(&m) {
@@ -645,14 +651,9 @@ pub fn compile(
     // record bytes are gone; a genotype-derived expression therefore forces
     // the single-pass path (02-cli.md §4: expressions run on the record).
     let has_tail_expr = tail.iter().any(|r| matches!(r, TailRule::Expr { .. }));
-    if let Some(m) = spec.mind
-        && !(0.0..=1.0).contains(&m)
-    {
-        return Err(FilterError::Spec(format!("--mind out of range [0,1]: {m}")));
-    }
     let strategy = if has_tail_expr {
         ExecStrategy::SinglePass
-    } else if spec.mind.is_some() {
+    } else if spec.min_sample_call_rate.is_some() {
         ExecStrategy::TwoPassReparse
     } else {
         ExecStrategy::SinglePass

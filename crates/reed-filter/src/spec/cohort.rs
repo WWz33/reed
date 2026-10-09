@@ -1,7 +1,7 @@
 //! Sample-level rules: the static subset (`-s/-S/--keep/--remove`) and the
-//! dynamic `--mind` threshold. They are modelled separately (04 §C0b) so
-//! both can be given at once: the static subset is applied first, `--mind`
-//! second (plink2's order).
+//! dynamic `--max-missing-sample` call-rate rule. They are modelled
+//! separately (04 §C0b) so both can be given at once: the static subset is
+//! applied first, the call-rate rule second.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,7 +1,7 @@
 //! The sketch path's pass0 (`doc_v2/03-architecture.md` §8, §11.4):
 //! head rules → per-sample GT planes + per-rule mask bitmaps (head
-//! survivors) + per-sample post-mask missing counts over head survivors
-//! (`--mind`'s plink2 semantics, 04 §C0).
+//! survivors) + per-sample post-mask called-allele counts over head
+//! survivors (`--max-missing-sample`'s vcftools semantics, doc_v4 02 §3.2).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -21,9 +21,9 @@ use super::{ferr, io_err, FilterOptions};
 pub(super) struct SketchPassOutput {
     /// Per-chunk sketches in chunk order.
     pub sketches: Vec<ChunkSketch>,
-    /// Genome-wide per-sample post-mask missing counts (head survivors).
-    pub cohort_miss: Vec<u64>,
-    /// Head-surviving records (the `--mind` denominator, body + seams).
+    /// Genome-wide per-sample post-mask called-allele counts (head survivors).
+    pub cohort_called: Vec<u64>,
+    /// Head-surviving records (the `2L` denominator, body + seams).
     pub n_records: u64,
     /// The pass0 funnel (head-rule hits; tail/mask counters still zero —
     /// the mid stage fills them).
@@ -48,13 +48,13 @@ pub(super) struct SketchScratch {
     p1a: Vec<u64>,
     p1m: Vec<u64>,
     rule_bits: Vec<Vec<u64>>,
-    miss: Vec<u64>,
+    called: Vec<u64>,
     funnel: FunnelPartial,
 }
 
 /// The pass0 job: head rules → per-sample GT planes + per-rule mask
-/// bitmaps (head survivors) + per-sample post-mask missing counts (head
-/// survivors, the `--mind` denominator).
+/// bitmaps (head survivors) + per-sample post-mask called-allele counts
+/// (head survivors, the `--max-missing-sample` numerator).
 pub(super) struct SketchJob {
     pub(super) plan: Arc<FilterPlan>,
     pub(super) n_samples: usize,
@@ -68,7 +68,7 @@ pub(super) struct SketchJob {
 pub(super) struct SketchPartial {
     pre: Option<reed_filter::sketch::SketchFragment>,
     fragment: reed_filter::sketch::SketchFragment,
-    cohort_miss: Vec<u64>,
+    cohort_called: Vec<u64>,
     /// Head-surviving records in this chunk.
     n_head_passed: u64,
     funnel: FunnelPartial,
@@ -90,8 +90,8 @@ impl ChunkJob for SketchJob {
             self.plan.tail.len(),
             self.plan.mask.len(),
         );
-        scratch.miss.clear();
-        scratch.miss.resize(self.n_samples, 0);
+        scratch.called.clear();
+        scratch.called.resize(self.n_samples, 0);
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
@@ -102,7 +102,7 @@ impl ChunkJob for SketchJob {
         Ok(SketchPartial {
             pre: None,
             fragment,
-            cohort_miss: scratch.miss.clone(),
+            cohort_called: scratch.called.clone(),
             n_head_passed,
             funnel: std::mem::take(&mut scratch.funnel),
         })
@@ -121,14 +121,14 @@ impl ChunkJob for SketchJob {
             self.plan.tail.len(),
             self.plan.mask.len(),
         );
-        scratch.miss.clear();
-        scratch.miss.resize(self.n_samples, 0);
+        scratch.called.clear();
+        scratch.called.resize(self.n_samples, 0);
         self.sketch_line(line, scratch, &mut pre)?;
         let n_head_passed = head_survivors(self.plan.head.len(), &scratch.funnel);
         Ok(SketchPartial {
             pre: Some(pre),
             fragment: reed_filter::sketch::SketchFragment::new(self.w, self.plan.mask.len()),
-            cohort_miss: scratch.miss.clone(),
+            cohort_called: scratch.called.clone(),
             n_head_passed,
             funnel: std::mem::take(&mut scratch.funnel),
         })
@@ -154,7 +154,7 @@ impl SketchJob {
             p1a: vec![0; self.w],
             p1m: vec![0; self.w],
             rule_bits: vec![vec![0; self.w]; self.plan.mask.len()],
-            miss: vec![0; self.n_samples],
+            called: vec![0; self.n_samples],
             funnel: FunnelPartial {
                 head_hits: vec![0; self.plan.head.len()],
                 tail_hits: vec![0; self.plan.tail.len()],
@@ -167,8 +167,8 @@ impl SketchJob {
     /// Sketches one record through the shared pipeline: the head rules run
     /// first (the funnel counts every rule passed); head survivors
     /// contribute a site (planes + per-rule mask bitmaps over all samples —
-    /// the mid stage intersects with `keep`); every record feeds the
-    /// cohort's raw missing counts (§11.4 pass0).
+    /// the mid stage intersects with `keep`); every head survivor feeds the
+    /// cohort's called-allele counts (§11.4 pass0).
     fn sketch_line(
         &self,
         line: &[u8],
@@ -176,10 +176,11 @@ impl SketchJob {
         fragment: &mut reed_filter::sketch::SketchFragment,
     ) -> Result<(), EngineError> {
         let plan = &self.plan;
-        let SketchScratch { pipeline, p0a, p0m, p1a, p1m, rule_bits, miss, funnel } = scratch;
-        // The scan runs for EVERY record (the cohort's missing counts cover
-        // all records); the plane/mask bitmaps are only filled for head
-        // survivors. The tail is the mid stage's job.
+        let SketchScratch { pipeline, p0a, p0m, p1a, p1m, rule_bits, called, funnel } = scratch;
+        // The scan runs for EVERY record (the denominator counts every
+        // head-surviving record); the plane/mask bitmaps and the cohort
+        // counts are only filled for head survivors. The tail is the mid
+        // stage's job.
         let opts = PipelineOptions {
             scan_head_failures: true,
             mask_all_samples: true,
@@ -200,12 +201,11 @@ impl SketchJob {
                 v.iter_mut().for_each(|word| *word = 0);
             }
             for (i, &code) in view.scan.codes.iter().enumerate() {
-                // `--mind` (04 §C0, plink2 semantics): post-mask fully-missing
-                // calls over the head survivors.
-                if (code.is_fully_missing() || view.masked.get(i))
-                    && let Some(slot) = miss.get_mut(i)
-                {
-                    *slot += 1;
+                // `--max-missing-sample` (doc_v4 02 §3.2): post-mask called
+                // alleles over the head survivors.
+                let n = super::reduce::called_alleles(code, view.masked.get(i));
+                if let Some(slot) = called.get_mut(i) {
+                    *slot += n;
                 }
                 let (word, bit) = (i / 64, 1_u64 << (i % 64));
                 if code.slot_alt(0) {
@@ -262,10 +262,10 @@ impl OrderedSink<SketchPartial> for SketchSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut SketchPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
         self.n_records += partial.n_head_passed;
-        if self.cohort.len() < partial.cohort_miss.len() {
-            self.cohort.resize(partial.cohort_miss.len(), 0);
+        if self.cohort.len() < partial.cohort_called.len() {
+            self.cohort.resize(partial.cohort_called.len(), 0);
         }
-        for (dst, src) in self.cohort.iter_mut().zip(&partial.cohort_miss) {
+        for (dst, src) in self.cohort.iter_mut().zip(&partial.cohort_called) {
             *dst += src;
         }
         if let Some(pre) = partial.pre.take() {
@@ -292,7 +292,7 @@ impl OrderedSink<SketchPartial> for SketchSink {
         let n_records = self.n_records;
         *self.out.lock().expect("invariant: sketch slot not poisoned") = Some(SketchPassOutput {
             sketches: self.sketches,
-            cohort_miss: self.cohort,
+            cohort_called: self.cohort,
             n_records,
             funnel: self.funnel,
         });

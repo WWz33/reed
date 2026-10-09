@@ -237,7 +237,7 @@ pub struct StatsRequest {
     pub targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
     /// Per-sample keep mask (`-s/-S/--keep/--remove`); `None` = all kept.
     pub keep_samples: Option<Vec<bool>>,
-    /// The compiled filter plan (`-v/-m/-f/-i/-e/--min-dp/--geno/--maf/...`,
+    /// The compiled filter plan (`-v/-m/-f/-i/-e/--min-dp/--max-missing/--maf/...`,
     /// 04-cleanup §2.1): applied to every record in the same pass by
     /// [`crate::filtered::FilteredJob`]. `None` = no site-level filtering.
     pub filter: Option<Arc<reed_filter::plan::FilterPlan>>,

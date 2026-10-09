@@ -1542,8 +1542,10 @@ snake_case，见 §12.1；`n_*` 表示计数；坐标列固定为 `chrom/start/e
 
 ### 13.17 漏斗规则 id【规】
 
-点分小写层级 + 原始标签名：`cohort.max_missing`、`site.variant_class`、`site.filter`、`site.qual`、
-`site.info.QD`、`genotype.mask.DP`、`after_mask.missing`、`after_mask.maf`、`after_mask.hwe`。
+点分小写层级 + 原始标签名：`site.variant_class`、`site.filter`、`site.qual`、
+`site.info.QD`、`genotype.mask.DP`、`after_mask.max_missing`、`after_mask.max_missing_count`、
+`after_mask.maf`、`after_mask.hwe`；样本级规则用 `sample.max_missing`
+（doc_v4 02-cli-semantics.md §5.3 取代 `after_mask.missing`/`sample.mind`）。
 
 ### 13.18 Git【规】
 
