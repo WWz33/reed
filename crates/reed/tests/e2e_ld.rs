@@ -103,6 +103,36 @@ fn pairwise_r2_matches_plink2() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The `--indep-pairwise` site rule lives in `reed filter`
+/// (docs/rounds/v5/05-algorithms.md §3.4.1); this is the unit-level check of
+/// its end-to-end contract on the fixture (plink2's `prune.in` = sites
+/// 1, 5, 6 for `10 1 0.5`).
+#[test]
+fn filter_indep_pairwise_keeps_the_plink2_set() {
+    let dir = std::env::temp_dir().join(format!("reed-ldf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, VCF).expect("invariant: fixture write");
+    let out = dir.join("pruned.vcf");
+    let mut spec = reed::spec::FilterSpec::default();
+    spec.ld_prune = Some(reed::spec::LdPruneSpec { window: 10, kb: false, step: 1, r2: 0.5 });
+    let opts = reed::FilterOptions {
+        threads: 2,
+        output: Some(out.clone()),
+        ..reed::FilterOptions::default()
+    };
+    let report = reed::run_filter(Some(&vcf), &spec, &opts).expect("invariant: filter runs");
+    assert_eq!(report.ld_prune, Some((6, 3)), "6 survivors, 3 pruned");
+    let text = std::fs::read_to_string(&out).expect("invariant: output");
+    let positions: Vec<u64> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').nth(1).expect("POS").parse().expect("pos"))
+        .collect();
+    assert_eq!(positions, vec![1, 5, 6], "plink2 prune.in");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn ld_is_identical_across_thread_counts() {
     let dir = std::env::temp_dir().join(format!("reed-ld-det-{}", std::process::id()));

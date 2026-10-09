@@ -14,6 +14,9 @@ pub const AFTER_MASK_MISSING: &str = "after_mask.missing";
 /// [`FilterReport::sample_rule`] instead of posing as a stage
 /// (doc_v4 02-cli-semantics.md 回退版 §5.3).
 pub const SAMPLE_MIND: &str = "sample.mind";
+/// The LD-pruning rule's funnel id (`--indep-pairwise`,
+/// docs/rounds/v5/05-algorithms.md §3.4.1).
+pub const AFTER_MASK_LD_PRUNE: &str = "after_mask.ld_prune";
 
 /// One funnel stage: the rule and the count of records that passed it
 /// (cumulative semantics: a record that failed rule i counts in stages
@@ -90,6 +93,9 @@ pub struct FilterReport {
     pub n_samples_out: u32,
     /// The `--max-missing-sample` outcome when the rule was requested.
     pub sample_rule: Option<SampleRuleReport>,
+    /// `--indep-pairwise`: `(survivors, pruned)` when the rule was
+    /// requested (docs/rounds/v5/05-algorithms.md §3.4.1).
+    pub ld_prune: Option<(u64, u64)>,
     /// Funnel stages in evaluation order.
     pub funnel: Vec<FunnelStage>,
     /// Total GT masked to `./.` (called-to-missing transitions only).
@@ -186,6 +192,9 @@ pub struct FunnelPartial {
     pub mask_hits: Vec<u64>,
     /// Called-to-missing transitions.
     pub masked_gt: u64,
+    /// Records dropped by the LD-pruning rule (`after_mask.ld_prune`,
+    /// docs/rounds/v5/05-algorithms.md §3.4.1).
+    pub n_ld_pruned: u64,
     /// Records read.
     pub n_input: u64,
     /// Records written.

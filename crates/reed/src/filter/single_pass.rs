@@ -83,6 +83,10 @@ pub(super) struct FilterJob {
     pub(super) int_keys: Arc<[Vec<u8>]>,
     /// See [`FilterJob::int_keys`].
     pub(super) float_keys: Arc<[Vec<u8>]>,
+    /// `--indep-pairwise`: the kept sites, per contig, from pass0
+    /// (docs/rounds/v5/05-algorithms.md §3.4.1). Pass1 drops a surviving
+    /// record the pruner removed.
+    pub(super) site_keep: Option<Arc<super::ld_prune::SiteKeepSet>>,
 }
 
 /// Worker scratch (reused across chunks).
@@ -280,6 +284,7 @@ impl FilterJob {
         let mut full = std::mem::take(full_slot);
         let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel, .. } =
             scratch;
+        let site_keep = self.site_keep.as_deref();
         pipeline.process_scanned(
             site_line,
             plan,
@@ -293,6 +298,13 @@ impl FilterJob {
                 counters,
             },
             |view| {
+                // The LD-pruning rule (§3.4.1): pass0 removed this site.
+                if let Some(keep) = site_keep
+                    && !keep.contains(view.site.contig_name, view.pos1.saturating_sub(1))
+                {
+                    view.funnel.n_ld_pruned += 1;
+                    return Ok(());
+                }
                 // Survivor: render the full record, edit it, write it.
                 let rec = record_ref(bytes).map_err(EngineError::from)?;
                 full.clear();
@@ -350,8 +362,16 @@ impl FilterJob {
         };
         let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel, .. } =
             scratch;
+        let site_keep = self.site_keep.as_deref();
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let site = view.site;
+            // The LD-pruning rule (§3.4.1): pass0 removed this site.
+            if let Some(keep) = site_keep
+                && !keep.contains(site.contig_name, view.pos1.saturating_sub(1))
+            {
+                view.funnel.n_ld_pruned += 1;
+                return Ok(());
+            }
             let counts = view.counts.expect("invariant: counts requested");
 
             // ---- edit + emit ----

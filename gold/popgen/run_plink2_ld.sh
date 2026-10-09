@@ -7,7 +7,9 @@
 #
 # Checks two things on the shared fixture (6 samples, 6 sites):
 #   1. `--r2-unphased` per-pair r² against reed's `--ld-decay --ld-pairs`;
-#   2. `--indep-pairwise W S R2` prune.in/prune.out against reed's.
+#   2. `--indep-pairwise W S R2` prune.in against the sites
+#      `reed filter --indep-pairwise` emits (docs/rounds/v5/05 §3.4.1: the
+#      pruning is a filter site rule, not a stats output).
 # plink2 needs unique variant ids and ≥ 50 samples for LD, so the fixture
 # run passes `--set-all-var-ids '@_#'` and `--bad-ld`. Two plink2
 # conventions the comparison normalizes:
@@ -44,9 +46,12 @@ echo "== plink2 =="
 "$PLINK2" --vcf "$VCF" --set-all-var-ids '@_#' --indep-pairwise "$W" "$S" "$R2" \
     --bad-ld --out "$OUT/plink2_prune" >/dev/null 2>&1
 
-echo "== reed =="
+echo "== reed (decay) =="
 "$REED" stats "$VCF" --pop "$POPS" --variant-only --ld-decay 100k --ld-pairs \
-    --indep-pairwise "$W $S $R2" -o "$OUT/reed" --verbosity 0
+    -o "$OUT/reed" --verbosity 0
+echo "== reed (prune) =="
+"$REED" filter "$VCF" --indep-pairwise "$W" "$S" "$R2" -Ov \
+    -o "$OUT/reed_pruned.vcf" --verbosity 0
 
 python3 - "$OUT" <<'PY'
 import sys
@@ -101,8 +106,15 @@ def numeric(keys):
 
 want_in = numeric(prune(f"{out}/plink2_prune.prune.in"))
 want_out = numeric(prune(f"{out}/plink2_prune.prune.out"))
-got_in = numeric(prune(f"{out}/reed.prune.in"))
-got_out = numeric(prune(f"{out}/reed.prune.out"))
+# reed's kept sites come from the filtered VCF (one POS per record); the
+# pruned set is the input's sites minus the kept ones.
+got_in = {
+    line.split("\t")[1].strip()
+    for line in open(f"{out}/reed_pruned.vcf")
+    if not line.startswith("#")
+}
+all_sites = want_in | want_out
+got_out = all_sites - got_in
 ok = want_in == got_in and want_out == got_out
 if not ok:
     print(f"FAIL prune: in reed={sorted(got_in)} plink2={sorted(want_in)}", file=sys.stderr)

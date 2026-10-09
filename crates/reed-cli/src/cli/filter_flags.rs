@@ -158,6 +158,10 @@ pub(crate) struct SiteFilterArgs {
     /// Minimum minor allele count (after masking)
     #[arg(long, value_name = "INT")]
     pub mac: Option<u32>,
+    /// LD pruning (plink2 algorithm): W[kb] [S] R2, e.g. `50 5 0.2` or
+    /// `50kb 0.2`; the kept sites are the ones the command emits
+    #[arg(long = "indep-pairwise", value_name = "W[kb] [S] R2", num_args = 2..=3)]
+    pub indep_pairwise: Vec<String>,
     /// Maximum minor allele count (after masking)
     #[arg(long, value_name = "INT")]
     pub max_mac: Option<u32>,

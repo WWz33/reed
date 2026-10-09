@@ -2,7 +2,17 @@
 //! f64 Pearson correlation (the reference), hand-computed cases, decay
 //! binning, and ordered-carry pruning semantics.
 
-use reed_stats::ld::{LdDecayAcc, LdPruner, LdWindow, pair_sums};
+use reed_stats::ld::{LdDecayAcc, LdPruner, LdWindow, SitePruneStats, pair_sums};
+
+/// A polymorphic site's aggregates (2 het + 2 hom per the fixture planes).
+fn poly(maj_freq: f64) -> SitePruneStats {
+    SitePruneStats { maj_freq, n_hom_ref: 2, n_hom_alt: 2, n_het: 2 }
+}
+
+/// A monomorphic site (all hom-ref).
+fn mono() -> SitePruneStats {
+    SitePruneStats { maj_freq: 1.0, n_hom_ref: 4, n_hom_alt: 0, n_het: 0 }
+}
 
 /// Builds a site's four planes from per-sample genotypes
 /// (`(slot0, slot1)` with `None` = missing).
@@ -222,13 +232,14 @@ fn pruner_keeps_the_lower_major_frequency_of_a_high_ld_pair() {
     let p = planes(&g);
     // Major-allele frequency 0.5 at every site (3 alt of 6 alleles each
     // slot: 6 of 12) → ties, so the later site is pruned.
-    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(10), 1, p[0].len(), g.len());
-    assert!(pruner.push(0, 0, p, 0.5));
-    assert!(pruner.push(1, 10, p, 0.5));
+    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(2), 1, p[0].len(), g.len());
+    assert!(pruner.push(0, 0, p, poly(0.5)));
+    // The window fills with the second site, the pair fires and the tie
+    // prunes the later one — so this very push reports "not kept".
+    assert!(!pruner.push(1, 10, p, poly(0.5)));
     pruner.finish_contig();
-    // One of the pair is pruned (the later one, on a tie).
-    assert_eq!(pruner.kept_sites().len(), 1);
     assert_eq!(pruner.pruned_sites(), vec![1]);
+    assert_eq!(pruner.kept_sites(), vec![0]);
 }
 
 #[test]
@@ -241,8 +252,8 @@ fn pruner_drops_monomorphic_sites_on_arrival() {
     let constant = gts(&[(b'0', b'0'), (b'0', b'0'), (b'0', b'0'), (b'0', b'0')]);
     let q = planes(&constant);
     let mut pruner = LdPruner::new(0.8, LdWindow::Variants(10), 1, p[0].len(), g.len());
-    assert!(pruner.push(0, 0, p, 0.5));
-    assert!(!pruner.push(1, 10, q, 1.0), "monomorphic → pruned on arrival");
+    assert!(pruner.push(0, 0, p, poly(0.5)));
+    assert!(!pruner.push(1, 10, q, mono()), "monomorphic → pruned on arrival");
     pruner.finish_contig();
     assert_eq!(pruner.kept_sites(), vec![0]);
     assert_eq!(pruner.pruned_sites(), vec![1]);
@@ -257,7 +268,7 @@ fn pruner_window_advances_by_step() {
     let p = planes(&g);
     let mut pruner = LdPruner::new(0.8, LdWindow::Variants(2), 2, p[0].len(), g.len());
     for (i, pos) in [0_u64, 10, 20, 30].into_iter().enumerate() {
-        pruner.push(i, pos, p, 0.5);
+        pruner.push(i, pos, p, poly(0.5));
     }
     pruner.finish_contig();
     // Every site is identical, so each window prunes its second member:

@@ -14,6 +14,46 @@ use crate::units::input_path;
 /// # Errors
 ///
 /// Unknown variant types or malformed expressions.
+/// Parses `--indep-pairwise W[kb] [S] R2` (docs/rounds/v5/05-algorithms.md
+/// §3.4.1): `W` variants (or `W kb`), the step defaults to 1 and must be 1
+/// when the window is in kb.
+fn parse_indep_pairwise(
+    args: &[String],
+) -> Result<Option<reed::spec::LdPruneSpec>, String> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let mut window_token = None;
+    let mut step = 1_usize;
+    let mut r2 = None;
+    for token in args {
+        if window_token.is_none() {
+            window_token = Some(token.clone());
+        } else if r2.is_none() && token.contains('.') {
+            r2 = Some(token.clone());
+        } else if r2.is_none() {
+            step = token
+                .parse()
+                .map_err(|_| format!("invalid --indep-pairwise step {token:?}"))?;
+        } else {
+            return Err(format!("unexpected --indep-pairwise value {token:?}"));
+        }
+    }
+    let window_token = window_token.expect("invariant: args is non-empty");
+    let r2: f64 = r2
+        .ok_or("--indep-pairwise needs an r² threshold (W[kb] [S] R2)")?
+        .parse()
+        .map_err(|_| "--indep-pairwise r² must be a number".to_string())?;
+    let (window, kb) = match window_token.strip_suffix("kb") {
+        Some(w) => (crate::units::parse_size(w)?, true),
+        None => (crate::units::parse_size(&window_token)?, false),
+    };
+    if kb && step != 1 {
+        return Err("--indep-pairwise with a kb window requires step 1".into());
+    }
+    Ok(Some(reed::spec::LdPruneSpec { window, kb, step, r2 }))
+}
+
 pub(crate) fn site_spec(
     args: &crate::cli::filter_flags::SiteFilterArgs,
 ) -> Result<reed::spec::FilterSpec, String> {
@@ -201,6 +241,7 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
         spec.sample_select = Some(SampleSelect { keep, remove });
     }
     spec.mind = cli.mind;
+    spec.ld_prune = parse_indep_pairwise(&cli.site_args.indep_pairwise)?;
 
     // ---- regions (02-cli.md §2): the spec predicate, validated here.
     // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----

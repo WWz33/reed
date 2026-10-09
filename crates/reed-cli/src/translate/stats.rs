@@ -312,6 +312,14 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     let keep_samples = parse_sample_keep(&sample_args, &sample_names)?;
     // The site/threshold flags go through the filter's own compiler, so the
     // two commands cannot drift (04-cleanup §2.1).
+    if !site_args.indep_pairwise.is_empty() {
+        return Err(
+            "reed stats does not support --indep-pairwise yet (the pruning needs a second \
+             pass); run `reed filter --indep-pairwise W[kb] [S] R2` first and feed its \
+             output to reed stats"
+                .into(),
+        );
+    }
     let site_spec = super::filter::site_spec(&site_args)?;
     let filter = if site_spec_is_empty(&site_spec) {
         None

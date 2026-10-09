@@ -53,6 +53,23 @@ pub struct FilterSpec {
     /// Ploidy / multiallelic policy.
     #[serde(default)]
     pub policy: PolicyRules,
+    /// `--indep-pairwise W S R2`: LD pruning as a site rule
+    /// (docs/rounds/v5/05-algorithms.md §3.4.1). `None` = no pruning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ld_prune: Option<LdPruneSpec>,
+}
+
+/// The `--indep-pairwise` rule (docs/rounds/v5/05-algorithms.md §3.4.1).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LdPruneSpec {
+    /// Window size: `W` variants, or `W` bp when `kb`.
+    pub window: u64,
+    /// Whether the window is in kb (plink2 `W kb`).
+    pub kb: bool,
+    /// Step in variants (1 when the window is in kb).
+    pub step: usize,
+    /// r² threshold.
+    pub r2: f64,
 }
 
 impl FilterSpec {

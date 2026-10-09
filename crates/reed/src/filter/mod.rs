@@ -39,6 +39,7 @@ pub(crate) mod record_pipeline;
 mod reduce;
 mod report;
 mod single_pass;
+mod ld_prune;
 mod sketch;
 
 use emit::EmitJob;
@@ -334,6 +335,36 @@ pub fn run_filter(
         ));
     }
 
+    let mut ld_prune_report: Option<(u64, u64)> = None;
+
+    // ---- LD pruning pass0 (docs/rounds/v5/05-algorithms.md §3.4.1): the
+    // site rule that needs a second pass, because the pruning is
+    // order-dependent. Runs after the sample bitmap (it prunes the sites
+    // that survived every other rule) and before the mid stage/emit. ----
+    let site_keep = if let Some(prune) = &spec.ld_prune {
+        let opened = first.take().expect("invariant: pass0 consumes the first open");
+        let config = ld_prune::PruneConfig {
+            threshold: prune.r2,
+            window: if prune.kb {
+                reed_stats::ld::LdWindow::Bp(prune.window)
+            } else {
+                reed_stats::ld::LdWindow::Variants(
+                    usize::try_from(prune.window).unwrap_or(usize::MAX),
+                )
+            },
+            step: prune.step,
+        };
+        let pass_start = Instant::now();
+        let result =
+            ld_prune::run_ld_prune_pass(opened, &plan, &keep, config, opts, native_bcf)?;
+        timing_engine.merge(&result.metrics);
+        timing_phases.push(("pass0_ld", pass_start.elapsed().as_secs_f64()));
+        ld_prune_report = Some((result.n_survivors, result.n_pruned));
+        Some(Arc::new(result.keep))
+    } else {
+        None
+    };
+
     // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions ----
     let mid_start = Instant::now();
     let sketch_out: Option<(FunnelPartial, std::collections::HashMap<u64, Arc<ChunkDecision>>)> =
@@ -507,6 +538,7 @@ pub fn run_filter(
         let int_keys = plan.int_fields.clone();
         let float_keys = plan.float_fields.clone();
         let job = FilterJob {
+            site_keep: site_keep.clone(),
             plan: Arc::new(plan),
             keep,
             keep_mask,
@@ -585,6 +617,7 @@ pub fn run_filter(
         n_samples_in: n_samples_in as u32,
         n_samples_out: n_samples_out as u32,
         sample_rule,
+        ld_prune: ld_prune_report,
         funnel: funnel_stages,
         n_masked_gt: funnel.masked_gt,
         masked_by_rule,
