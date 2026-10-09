@@ -37,6 +37,7 @@
 | doc_v2 02 §5.2 `--fst-pops A,B,C`（多群体合并 Fst） | doc_v4 05 §2.1：作废，改为 `--fst` + 布尔开关 `--fst-global`（默认成对） |
 | doc_v2 02（整体）与 doc_v4 02（回退版） | **doc_v5 02-cli.md 合并版**是当前有效的 CLI 规范；两者转为历史 |
 | doc_v4 05 §2–§2.1、06-roadmap.md 的 W5/W6、07-layout.md | doc_v5 05（出口设计）、07（X0–X7）、06（目录树执行版） |
+| docs/architecture-spec.md D12（Python 绑定 M8 之后再做） | doc_v5 08 §6.5：**不做**；项目定调为前后端形态，`reed-cli` 是唯一前端 |
 | doc_v2 05 §2.3"`--max-missing` 方向与 `--geno` 相反，不提供别名" | doc_v4 02 §8：结论保留（不提供别名）；`--max-missing` 已不是 reed 的参数 |
 | doc_v3 04 §C3"`TagTable` 未做" | doc_v3/STATUS.md 更正为**已做**（doc_v4 01 F4-2） |
 | docs/architecture-spec.md §13.17 的漏斗 id 示例（`after_mask.missing`） | doc_v4 02 §5.3 定名（`after_mask.missing`、`sample.mind`）；architecture-spec.md §13.17 已就地回改 |

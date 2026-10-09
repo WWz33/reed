@@ -46,4 +46,4 @@
 | LD 的默认 | `--ld-decay` 默认 `100k`、1 kb 分箱；`--indep-pairwise` 照 plink2 三参数 | 只做 `--indep-pairwise`，`--ld-decay` 后置 |
 | 边过滤 `--pi` 的门 | 改为 CPU 口径 ≤ 130 s（wall 作参考） | 维持 wall ≤ 3.0 s 并继续优化 |
 | 目录搬迁时机（X2） | 与 X1 合成一个"卫生"PR，在 X4 之前 | X4 之后 |
-| 项目定位（08） | **A：工具优先**——产品是 `reed` 二进制，只对 CLI 参数与输出格式承诺稳定；crate 全部 `publish = false`；README 重写；门面公开面收口为嵌入 API（`FilterSpec`/`StatsRequest`/`run_*`） | B：真正的 API 库（发布 `reed` crate、semver、docs.rs、CHANGELOG），在 X4–X6 之后做 |
+| 项目定位（08） | **已定调：前后端形态**（08 §6）——后端 = `reed` 门面 + 下层 crate，前端 = `reed-cli`（唯一前端），契约 = 02 的参数语法与输出格式；不发布 crate；前端只依赖门面、后端不打 stderr、门面只 `pub use` 三条规则进守卫 | —（`reed-py` 已裁决不做，08 §6.5） |

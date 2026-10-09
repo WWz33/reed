@@ -107,3 +107,14 @@ W3 把 reader 从 2.2 s 压到 0.35 s 之后，stats 的 wall 由 CPU 决定（�
 - 代码里不再出现 `sample.max_missing`、`--fst-pops`（排除撤回参数的报错函数与测试里对 vcftools 的调用）；
 - `reed qc` 不存在（`! grep -q 'Command::Qc' crates/reed-cli/src/main.rs`，C-2 后生效）；
 - `cargo test --workspace` 编译通过是 CI 的第一条（A5-4 的教训）。
+
+---
+
+## 7. 前后端边界（08 §6 的架构落点）
+
+```
+前端  reed-cli ──只依赖──► 门面 reed ──► reed-filter / reed-stats / reed-engine / reed-io / reed-core   ← 后端
+      （唯一前端；reed-py 已裁决不做）
+```
+
+三条硬规则：**前端只依赖门面**；**后端不打 stderr、不认识 clap、不定退出码**（警告走 `tracing::warn!`，错误带 `kind()`）；**门面只 `pub use`**（§6.2 的清单，不 `pub mod` 实现模块）。现状违规（前端 20 处直接拿下层 crate、后端 5 处 `eprintln!`、`plan::compile`/`assign_groups` 落在前端）与守卫见 08 §6.3–6.4，动作并入 X1。
