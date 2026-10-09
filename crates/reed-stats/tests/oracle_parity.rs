@@ -3,12 +3,12 @@
 //! exact, floats within 1e-12 (`docs/architecture-spec.md` milestone M4).
 
 use reed_core::count::SiteGroupCounts;
-use reed_core_v02_oracle::estimators::dxy::{dxy, DxyEstimator};
-use reed_core_v02_oracle::estimators::fst::{fst, FstEstimator};
-use reed_core_v02_oracle::estimators::pbs::{pbs, PbsEstimator};
-use reed_core_v02_oracle::estimators::pi::{pi, PiEstimator};
-use reed_core_v02_oracle::estimators::spectrum::{sfs, tajima_d, watterson_theta};
-use reed_core_v02_oracle::{Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer};
+use reed_oracle::estimators::dxy::{dxy, DxyEstimator};
+use reed_oracle::estimators::fst::{fst, FstEstimator};
+use reed_oracle::estimators::pbs::{pbs, PbsEstimator};
+use reed_oracle::estimators::pi::{pi, PiEstimator};
+use reed_oracle::estimators::spectrum::{sfs, tajima_d, watterson_theta};
+use reed_oracle::{Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer};
 use reed_stats::fst::FstKind;
 use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKind};

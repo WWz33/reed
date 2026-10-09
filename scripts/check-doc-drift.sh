@@ -52,4 +52,19 @@ check "reed index rejects stdin (doc_v4 W1/F4-4)" \
 check "the shared Verbosity enum exists (doc_v4 03 §3.3)" \
     grep -q 'pub(crate) enum Verbosity' crates/reed-cli/src/cli/verbosity.rs
 
+# doc_v5 03 §2 / A5-2: exactly two audited `unsafe` sites (the AVX-512 count
+# kernel and the mmap). A new one must change the docs and this guard first.
+check "exactly two allow(unsafe_code) sites (doc_v5 03 §2)" \
+    bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | wc -l)" -eq 2 ]'
+
+# doc_v5 03 §6 / A5-3: the stale names are gone from the code.
+check "no code says sample.max_missing (doc_v5 A5-3)" \
+    bash -c '! grep -rq "sample\.max_missing" crates/*/src'
+check "no code says --fst-pops (doc_v5 A5-3)" \
+    bash -c '! grep -rq -e "--fst-pops" crates/*/src'
+
+# doc_v5 03 §6 / C-2: the deprecated `reed qc` subcommand is gone.
+check "reed qc is gone (doc_v5 03 C-2)" \
+    bash -c '! grep -q "Command::Qc" crates/reed-cli/src/main.rs'
+
 exit "$fail"

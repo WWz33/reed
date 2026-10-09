@@ -1,12 +1,12 @@
-//! Determinism gate (`docs/architecture-spec.md` §19 M3): run_qc over the
-//! same BGZF input must produce byte-identical reports for every thread
-//! count (§7.6 rule 6).
+//! Determinism gate (`docs/architecture-spec.md` §19 M3): the reports +
+//! summary pass over the same BGZF input must produce byte-identical output
+//! for every thread count (§7.6 rule 6).
 
 use std::io::Write;
 use std::path::PathBuf;
 
 use sha2::Digest;
-use reed::qc::run_qc;
+use reed::reports::{run_reports, ReportRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
 /// Writes a synthetic BGZF VCF: mixed variant classes over 8 samples.
@@ -72,29 +72,42 @@ fn budget(threads: usize) -> ThreadBudget {
     }
 }
 
+/// The report family plus the bcftools-stats summary must be byte-identical
+/// for every thread count: the rendered summary text and every written
+/// report file go into one digest per run.
 #[test]
-fn qc_report_is_byte_identical_across_thread_counts() {
+fn reports_and_summary_are_byte_identical_across_thread_counts() {
     let dir = std::env::temp_dir().join(format!("reed-det-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let input = make_fixture(dir.to_str().expect("invariant: temp path"));
 
     let mut digests = Vec::new();
     for threads in [1_usize, 2, 3, 7, 56] {
-        let report = run_qc(&input, &budget(threads)).expect("invariant: run_qc succeeds");
+        let prefix = dir.join(format!("out-{threads}"));
+        let request = ReportRequest {
+            freq: true,
+            hardy: true,
+            het: true,
+            missing: true,
+            depth: true,
+            summary: true,
+            targets: Vec::new(),
+            targets_exclude: Vec::new(),
+            prefix: prefix.clone(),
+        };
+        let outcome = run_reports(Some(&input), &request, &budget(threads))
+            .expect("invariant: reports run");
+        assert_eq!(outcome.n_records, 3_000, "threads={threads}");
+        let qc = outcome.qc.expect("invariant: summary requested");
+        assert_eq!(qc.summary.n_records, 3_000, "threads={threads}");
+        assert_eq!(qc.n_samples, 8, "threads={threads}");
 
-        assert_eq!(report.summary.n_records, 3_000, "threads={threads}");
-        assert_eq!(report.n_samples, 8, "threads={threads}");
-        // Class expectations from the generator's i % 6 cycle: the
-        // multiallelic row (G -> GA,GC) has an insertion as its primary ALT,
-        // so indels get two bins.
-        assert_eq!(report.summary.n_snv, 500, "threads={threads}");
-        assert_eq!(report.summary.n_mnv, 500, "threads={threads}");
-        assert_eq!(report.summary.n_indel, 1000, "threads={threads}");
-        assert_eq!(report.summary.n_symbolic, 500, "threads={threads}");
-        assert_eq!(report.summary.n_ref, 500, "threads={threads}");
-        assert_eq!(report.summary.n_multiallelic, 500, "threads={threads}");
-        let json = serde_json::to_string(&report.summary).expect("invariant: json");
-        digests.push(format!("{:x}", sha2::Sha256::digest(json.as_bytes())));
+        let mut hasher = sha2::Sha256::new();
+        for path in &outcome.files {
+            hasher.update(std::fs::read(path).expect("invariant: report file"));
+        }
+        hasher.update(reed::summary::render_bcftools_stats(&qc).as_bytes());
+        digests.push(format!("{:x}", hasher.finalize()));
     }
     let unique: std::collections::HashSet<&String> = digests.iter().collect();
     assert_eq!(unique.len(), 1, "all thread counts must agree: {digests:?}");

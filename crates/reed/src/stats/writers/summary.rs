@@ -1,6 +1,7 @@
-//! `run_qc`: the M6 QC driver — the full §10.1 report on the chunk
-//! pipeline, with a `bcftools stats`-compatible text output (feedable to
-//! `plot-vcfstats` and MultiQC) plus `<prefix>.qc.json`.
+//! The bcftools-stats-compatible QC summary (spec §10.1): the accumulator
+//! the reports job feeds in its own pass (`--summary`, doc_v4 O-1) and the
+//! text renderer for `PREFIX.stats` (feedable to `plot-vcfstats` and
+//! MultiQC).
 //!
 //! Semantics are pinned to bcftools `vcfstats.c` (§ refs in each section)
 //! and locked by the subset differential test: SN, TSTV, SiS, AF, QUAL,
@@ -10,13 +11,7 @@
 // Casts in this file are bounded by construction: Quantiles and AF fractions are bounded to [0, 1] upstream.
 #![allow(clippy::cast_possible_truncation)]
 
-use std::path::Path;
-use std::sync::{Arc, Mutex};
-
-use reed_core::ChunkId;
-use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
 use reed_io::vcf::fixed::{parse_pos1, parse_qual};
 use reed_io::vcf::info::info_fragments;
 use reed_io::vcf::line::LineRef;
@@ -28,17 +23,9 @@ use reed_io::vcf::site::SiteView;
 use reed_io::Locus;
 use reed_stats::summary::report::{acgt, alt_class, is_transition, subst_index, QcReportAcc};
 
-/// Run options.
-#[derive(Clone, Debug, Default)]
-pub struct QcOptions {
-    /// Worker threads (clamped to ≥ 1).
-    pub threads: usize,
-    /// Write `<output>.qc.json` here (the structured report).
-    pub json: Option<std::path::PathBuf>,
-}
-
-/// The chunk job: parses only what each section needs — fixed columns for
-/// SN/TSTV/ST/QUAL/IDD, INFO for DP-sites, GT+DP for AF/SiS/PSC/DP-genotypes.
+/// The per-record parser: reads only what each section needs — fixed
+/// columns for SN/TSTV/ST/QUAL/IDD, INFO for DP-sites, GT+DP for
+/// AF/SiS/PSC/DP-genotypes.
 struct QcJob {
     n_samples: usize,
 }
@@ -82,11 +69,6 @@ impl QcAccumulator {
     }
 }
 
-#[derive(Default)]
-struct QcPartial {
-    acc: Option<QcReportAcc>,
-}
-
 /// Worker scratch: scanner + INFO fragment ranges + per-record allele state.
 struct QcScratch {
     scanner: GenotypeScanner,
@@ -98,40 +80,6 @@ struct QcScratch {
     /// Per-record policy triggers (the summary never rejects a record for a
     /// tolerable policy trigger; `Reject`/`RequireDiploid` still error).
     counters: PolicyCounters,
-}
-
-impl ChunkJob for QcJob {
-    type Partial = QcPartial;
-    type Scratch = Option<QcScratch>;
-
-    fn run_chunk(
-        &self,
-        _chunk: &reed_io::chunk::ChunkBytes,
-        body: &[u8],
-        scratch: &mut Self::Scratch,
-    ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch.get_or_insert_with(|| self.build_scratch());
-        let mut acc = QcReportAcc::new(u32::try_from(self.n_samples).unwrap_or(u32::MAX));
-        for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            self.push_line(line, scratch, &mut acc)?;
-        }
-        Ok(QcPartial { acc: Some(acc) })
-    }
-
-    fn run_seam(
-        &self,
-        _id: ChunkId,
-        line: &[u8],
-        scratch: &mut Self::Scratch,
-    ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch.get_or_insert_with(|| self.build_scratch());
-        let mut acc = QcReportAcc::new(u32::try_from(self.n_samples).unwrap_or(u32::MAX));
-        self.push_line(line, scratch, &mut acc)?;
-        Ok(QcPartial { acc: Some(acc) })
-    }
 }
 
 impl QcJob {
@@ -523,89 +471,12 @@ impl Positions for [u8] {
     }
 }
 
-/// The ordered sink: merges partials and hands the report back.
-struct QcSink {
-    acc: Option<QcReportAcc>,
-    out: Arc<Mutex<Option<QcReportAcc>>>,
-}
-
-impl OrderedSink<QcPartial> for QcSink {
-    fn accept(&mut self, _id: ChunkId, partial: &mut QcPartial) -> Result<(), EngineError> {
-        if let Some(src) = partial.acc.take() {
-            match &mut self.acc {
-                Some(dst) => dst.merge(&src),
-                None => self.acc = Some(src),
-            }
-        }
-        Ok(())
-    }
-
-    fn finish(mut self) -> Result<u64, EngineError> {
-        let n = self.acc.as_ref().map_or(0, |a| a.summary.n_records);
-        *self.out.lock().expect("invariant: qc slot not poisoned") = self.acc.take();
-        Ok(n)
-    }
-}
-
-/// The `reed qc` result.
-#[derive(Clone, Debug)]
-pub struct QcOutcome {
-    /// The structured report (§10.3 `<prefix>.qc.json` payload).
-    pub report: QcReportAcc,
-    /// The bcftools-stats-compatible text (§10.3 `--format bcftools-stats`).
-    pub bcftools_text: String,
-}
-
-/// Runs the full QC report over a BGZF VCF.
-///
-/// # Errors
-///
-/// Transport and job failures.
-pub fn run_qc_report(input: Option<&Path>, opts: &QcOptions) -> Result<QcOutcome, EngineError> {
-    let opened = crate::input::open(input).map_err(EngineError::from)?;
-    run_qc_report_opened(opened, opts)
-}
-
-/// Runs the QC report over an already-opened input (the CLI opens once so
-/// stdin streams; doc_v3 03-performance.md O5).
-///
-/// # Errors
-///
-/// As [`run_qc_report`].
-pub fn run_qc_report_opened(
-    opened: crate::input::OpenedInput,
-    opts: &QcOptions,
-) -> Result<QcOutcome, EngineError> {
-    let n_samples = opened.facts.n_samples();
-    let job = QcJob { n_samples };
-    let slot: Arc<Mutex<Option<QcReportAcc>>> = Arc::new(Mutex::new(None));
-    let sink = QcSink { acc: Some(QcReportAcc::new(u32::try_from(n_samples).unwrap_or(u32::MAX))), out: Arc::clone(&slot) };
-    let budget = ThreadBudget { threads: opts.threads.max(1), mem: reed_engine::budget::MemBudget::default_half_memory() };
-    let abort = reed_engine::abort::abort();
-    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
-    let crate::input::OpenedInput { mut source, .. } = opened;
-    let report = run(source.as_mut(), &job, sink, &budget, &abort)?;
-    job.finish(report.n_chunks, true)?;
-    let report = slot
-        .lock()
-        .expect("invariant: qc slot not poisoned")
-        .take()
-        .expect("invariant: sink finish stored the report");
-    let bcftools_text = render_bcftools_stats(&report);
-    if let Some(path) = &opts.json {
-        let json = serde_json::to_string_pretty(&report)
-            .map_err(|e| EngineError::job(e.to_string()))?;
-        std::fs::write(path, json).map_err(EngineError::Io)?;
-    }
-    Ok(QcOutcome { report, bcftools_text })
-}
-
 /// Renders the `bcftools stats`-compatible text (§10.3).
 #[must_use]
 pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
     let mut out = String::new();
-    out.push_str("# This file was produced by reed qc and can be plotted using plot-vcfstats.\n");
-    out.push_str("# The command line was:\treed qc\n#\n");
+    out.push_str("# This file was produced by reed stats and can be plotted using plot-vcfstats.\n");
+    out.push_str("# The command line was:\treed stats --summary\n#\n");
     out.push_str("# Definition of sets:\n# ID\t[2]id\t[3]tab-separated file names\n");
     out.push_str("ID\t0\t-\n");
 

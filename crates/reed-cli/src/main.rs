@@ -22,7 +22,6 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match Cli::parse().command {
-        Command::Qc(args) => translate::qc::run_qc(args),
         Command::Filter(args) => translate::filter::run_filter_cli(args),
         Command::Stats(args) => translate::stats::run_stats_cli(args),
         Command::Index(args) => translate::index::run_index_cli(args),

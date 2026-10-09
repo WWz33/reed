@@ -9,11 +9,11 @@
 //! | 1    | 4   | 0/0  | 0/0  | 0/1  | 0/0  |
 //! | 2    | 8   | 0/0  | 0/0  | 0/0  | 0/0  |
 
-use reed_core_v02_oracle::estimators::allele_counts::allele_counts;
-use reed_core_v02_oracle::estimators::dxy::{dxy, DxyEstimator};
-use reed_core_v02_oracle::estimators::fst::{fst, FstEstimator};
-use reed_core_v02_oracle::estimators::pi::{pi, PiEstimator};
-use reed_core_v02_oracle::{Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer, WindowError};
+use reed_oracle::estimators::allele_counts::allele_counts;
+use reed_oracle::estimators::dxy::{dxy, DxyEstimator};
+use reed_oracle::estimators::fst::{fst, FstEstimator};
+use reed_oracle::estimators::pi::{pi, PiEstimator};
+use reed_oracle::{Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer, WindowError};
 
 const EPS: f64 = 1e-12;
 

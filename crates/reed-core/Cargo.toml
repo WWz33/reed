@@ -14,7 +14,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-reed-core-v02-oracle = { path = "../reed-core-v02-oracle" }
+reed-oracle = { path = "../oracle" }
 
 [lints]
 workspace = true

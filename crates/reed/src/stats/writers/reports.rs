@@ -149,7 +149,7 @@ struct ReportScratch {
     counters: PolicyCounters,
     mask: SampleMask,
     /// The QC summary accumulator (`--summary`, doc_v4 O-1).
-    qc: Option<crate::stats::writers::qc_report::QcAccumulator>,
+    qc: Option<crate::stats::writers::summary::QcAccumulator>,
 }
 
 impl ReportScratch {
@@ -171,7 +171,7 @@ impl ReportScratch {
             counters: PolicyCounters::default(),
             mask: SampleMask::all(n_samples),
             qc: summary.then(|| {
-                crate::stats::writers::qc_report::QcAccumulator::new(n_samples)
+                crate::stats::writers::summary::QcAccumulator::new(n_samples)
             }),
         }
     }

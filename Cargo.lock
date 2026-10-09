@@ -967,11 +967,9 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "reed",
- "reed-core",
  "reed-engine",
  "reed-filter",
  "reed-io",
- "reed-stats",
  "tracing",
  "tracing-subscriber",
 ]
@@ -982,15 +980,11 @@ version = "0.3.0"
 dependencies = [
  "bitflags",
  "proptest",
- "reed-core-v02-oracle",
+ "reed-oracle",
  "serde",
  "thiserror",
  "tracing",
 ]
-
-[[package]]
-name = "reed-core-v02-oracle"
-version = "0.2.0"
 
 [[package]]
 name = "reed-engine"
@@ -1035,12 +1029,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "reed-oracle"
+version = "0.2.0"
+
+[[package]]
 name = "reed-stats"
 version = "0.3.0"
 dependencies = [
  "proptest",
  "reed-core",
- "reed-core-v02-oracle",
+ "reed-oracle",
  "serde",
  "thiserror",
 ]

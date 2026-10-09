@@ -11,10 +11,8 @@ clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reed.workspace = true
-reed-core.workspace = true
 reed-io.workspace = true
 reed-engine.workspace = true
-reed-stats.workspace = true
 reed-filter.workspace = true
 
 [[bin]]

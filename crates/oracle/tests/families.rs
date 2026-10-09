@@ -5,13 +5,13 @@
 //! enumeration of the Levene-Haldane distribution. Constants are embedded
 //! verbatim; tolerances are 1e-12 unless noted.
 
-use reed_core_v02_oracle::estimators::fst::{fst, FstEstimator};
-use reed_core_v02_oracle::estimators::fstats::{d_stat, f2, f3, f4};
-use reed_core_v02_oracle::estimators::hwe::{hardy_weinberg_p_value, heterozygosity, hwe_exact};
-use reed_core_v02_oracle::estimators::ld::{ld_r2_pairs, ld_r2_summary};
-use reed_core_v02_oracle::estimators::pbs::{pbs, PbsEstimator};
-use reed_core_v02_oracle::estimators::spectrum::{sfs, tajima_d, watterson_theta};
-use reed_core_v02_oracle::{
+use reed_oracle::estimators::fst::{fst, FstEstimator};
+use reed_oracle::estimators::fstats::{d_stat, f2, f3, f4};
+use reed_oracle::estimators::hwe::{hardy_weinberg_p_value, heterozygosity, hwe_exact};
+use reed_oracle::estimators::ld::{ld_r2_pairs, ld_r2_summary};
+use reed_oracle::estimators::pbs::{pbs, PbsEstimator};
+use reed_oracle::estimators::spectrum::{sfs, tajima_d, watterson_theta};
+use reed_oracle::{
     Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer,
 };
 

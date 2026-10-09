@@ -34,10 +34,6 @@ pub(crate) struct Cli {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Deprecated alias of `stats --summary` (hidden; removed after one
-    /// version per 04-cleanup §C4)
-    #[command(hide = true)]
-    Qc(QcCli),
     /// Hard filtering
     Filter(FilterCli),
     /// Window statistics
@@ -45,24 +41,6 @@ pub(crate) enum Command {
     /// Build a CSI/TBI index
     Index(IndexCli),
 }
-
-/// Deprecated `reed qc` (§10): the bcftools-stats-compatible report now
-/// lives behind `reed stats --summary` (04-cleanup §C4).
-#[derive(Args)]
-pub(crate) struct QcCli {
-    /// Input VCF/VCF.gz/BCF, or `-` for stdin
-    pub input: String,
-    /// Write the structured JSON report here
-    #[arg(long)]
-    pub json: Option<String>,
-    /// Output path for the bcftools-stats text (omit for stdout)
-    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
-    pub out: Option<String>,
-    /// Worker threads (default: all cores)
-    #[arg(long)]
-    pub threads: Option<usize>,
-}
-
 
 /// Hard filtering (02-cli.md §3): the bcftools `view` + `filter` + `annotate -x`
 /// flags in one command.
@@ -280,8 +258,7 @@ pub(crate) struct StatsCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
-    /// Directory for temporary files (the stdin spill of report runs that
-    /// read twice)
+    /// Directory for temporary files (the stdin spill for report runs)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
     /// In-flight memory budget in MiB (default: half of physical memory)

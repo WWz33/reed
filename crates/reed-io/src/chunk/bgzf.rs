@@ -356,8 +356,9 @@ impl MmapChunkSource {
         // change the file under the mapping (the worst case is a SIGBUS on
         // truncation). reed opens the input read-only, never writes it, and
         // the mapping outlives every chunk; the callers fall back to the
-        // streaming reader when the input is not a regular file. This is the
-        // single audited `unsafe` in the workspace (`unsafe_code = deny`).
+        // streaming reader when the input is not a regular file. This is one
+        // of the two audited `unsafe` sites in the workspace (the other is
+        // the AVX-512 count kernel, `reed-core/src/count/kernel.rs`).
         #[allow(unsafe_code)]
         let map = unsafe { memmap2::Mmap::map(&file) }?;
         let map = Arc::new(map);

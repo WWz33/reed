@@ -9,7 +9,7 @@
 //! (one entry per group) plus a site-wide "any ALT called" flag — the same
 //! integer quantities the frozen v0.2 estimators derived from
 //! `WindowBuffer::allele_counts`, so parity with the oracle
-//! (`reed-core-v02-oracle`) is exact by construction.
+//! (`reed-oracle`) is exact by construction.
 
 // Count-to-float conversions are the domain here: every estimator turns
 // exact integer tallies into f64 once per site or once per window. The
@@ -44,7 +44,7 @@ pub use window::{BpBinning, ContigBins};
 
 // Statistics whose CLI is not wired yet (doc_v3 04 §C2): they stay available
 // for the parity suites but are excluded from the documented API until they
-// have a CLI exit and a reference comparison (`--fst-pops`, `--sfs --proj`,
+// have a CLI exit and a reference comparison (`--fst-global`, `--sfs --proj`,
 // the R8 LD/f-statistics work).
 #[doc(hidden)]
 pub use fst::{FstMatrixAcc, WcMultiAcc};

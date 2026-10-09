@@ -380,7 +380,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         if let Some(qc) = &outcome.qc {
             let mut path = std::ffi::OsString::from(&prefix);
             path.push(".stats");
-            let text = reed::qc_report::render_bcftools_stats(qc);
+            let text = reed::summary::render_bcftools_stats(qc);
             std::fs::write(std::path::PathBuf::from(&path), &text)?;
             files.push(std::path::PathBuf::from(path));
         }

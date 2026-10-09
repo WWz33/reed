@@ -2,6 +2,5 @@
 //! family.
 
 pub mod pixy;
-pub mod qc;
-pub mod qc_report;
 pub mod reports;
+pub mod summary;

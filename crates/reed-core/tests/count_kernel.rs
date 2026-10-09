@@ -5,13 +5,13 @@
 
 use proptest::prelude::*;
 
-use reed_core_v02_oracle::bits::Bits;
+use reed_oracle::bits::Bits;
 use reed_core::count::{count_site_group, count_site_group_scalar, CountTable};
 use reed_core::genotype::{write_genotype, GenotypePolicies, Ploidy, PolicyCounters};
 use reed_core::id::SampleId;
-use reed_core_v02_oracle::manifest::{Ascertainment, SiteCompleteness};
+use reed_oracle::manifest::{Ascertainment, SiteCompleteness};
 use reed_core::sample::SampleMask;
-use reed_core_v02_oracle::window::{ContigId, WindowBuffer};
+use reed_oracle::window::{ContigId, WindowBuffer};
 
 /// One site's genotypes: `(slot0, slot1)` per sample, `None` = missing.
 type SiteGt = Vec<(Option<u16>, Option<u16>)>;

@@ -8,9 +8,9 @@
 //! Hudson/WC84 implementations agreeing with allel only in the degenerate
 //! equal-coverage regime.
 
-use reed_core_v02_oracle::estimators::fst::{fst, FstEstimator};
-use reed_core_v02_oracle::estimators::pbs::{pbs, PbsEstimator};
-use reed_core_v02_oracle::{Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer};
+use reed_oracle::estimators::fst::{fst, FstEstimator};
+use reed_oracle::estimators::pbs::{pbs, PbsEstimator};
+use reed_oracle::{Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer};
 
 const EPS: f64 = 1e-12;
 

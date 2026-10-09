@@ -64,12 +64,12 @@ pub struct TimingReport {
     pub in_flight_peak_bytes: Option<u64>,
 }
 
-/// The dynamic sample rule's outcome (`sample.max_missing`, doc_v4
+/// The dynamic sample rule's outcome (`sample.mind`, doc_v4
 /// 02-cli-semantics.md §5.3). The funnel stages count records, so the
 /// sample-level rule reports separately instead of posing as a stage.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SampleRuleReport {
-    /// The stable rule id (`sample.max_missing`).
+    /// The stable rule id (`sample.mind`).
     pub rule: RuleId,
     /// The threshold as rendered (exact decimal).
     pub threshold: String,

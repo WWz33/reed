@@ -79,12 +79,25 @@ fn single_pass_stdin_streams_and_leaves_nothing() {
     let input = dir.join("in.vcf.gz");
     std::fs::write(&input, fixture()).expect("invariant: write fixture");
 
-    // qc reads the input exactly once: it must stream from stdin.
-    let file_out = run(&["qc", input.to_str().unwrap()], None);
+    // The reports + summary pass reads the input exactly once: it must
+    // stream from stdin and leave no spill.
+    let p_file = dir.join("file");
+    let p_stdin = dir.join("stdin");
+    let file_out = run(
+        &["stats", input.to_str().unwrap(), "--summary", "-o", p_file.to_str().unwrap(), "--verbosity", "0"],
+        None,
+    );
     assert!(file_out.status.success(), "{}", String::from_utf8_lossy(&file_out.stderr));
-    let stdin_out = run(&["qc", "-"], Some(&fixture()));
+    let stdin_out = run(
+        &["stats", "-", "--summary", "-o", p_stdin.to_str().unwrap(), "--verbosity", "0"],
+        Some(&fixture()),
+    );
     assert!(stdin_out.status.success(), "{}", String::from_utf8_lossy(&stdin_out.stderr));
-    assert_eq!(file_out.stdout, stdin_out.stdout, "streamed stdin matches the file run");
+    let file_stats =
+        std::fs::read_to_string(format!("{}.stats", p_file.display())).expect("invariant: stats");
+    let stdin_stats =
+        std::fs::read_to_string(format!("{}.stats", p_stdin.display())).expect("invariant: stats");
+    assert_eq!(file_stats, stdin_stats, "streamed stdin matches the file run");
 
     let leftovers: Vec<_> = std::fs::read_dir(std::env::temp_dir())
         .expect("invariant: temp dir")
