@@ -168,3 +168,70 @@ fn verbosity_levels_are_uniform() {
     assert!(timed.contains("phase.run_ms"), "{timed}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 01 F4-8: the body is the deterministic artefact; the recorded argv
+/// (binary path, `--threads`, …) is environment information and can be
+/// suppressed with `--no-command`.
+#[test]
+fn no_command_drops_only_the_argv_line() {
+    let dir = temp_dir("nocommand");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let out = dir.join("out.vcf");
+    let run_with = |extra: &[&str]| {
+        let mut argv = vec![
+            "filter",
+            input.to_str().unwrap(),
+            "-Ov",
+            "-o",
+            out.to_str().unwrap(),
+            "--verbosity",
+            "0",
+        ];
+        argv.extend_from_slice(extra);
+        let o = run(&argv);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        std::fs::read_to_string(&out).expect("invariant: read")
+    };
+    assert!(run_with(&[]).contains("##reed_command="), "argv is recorded by default");
+    let text = run_with(&["--no-command"]);
+    assert!(!text.contains("##reed_command="), "--no-command drops the argv line");
+    assert!(text.contains("##reed_version="), "the other provenance lines stay");
+    assert!(!run_with(&["--no-version"]).contains("##reed_"), "--no-version drops all");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 01 F4-10: report mode accepts `-t/-T` — the region predicate gates the
+/// records in the same pass (it used to error "not supported yet").
+#[test]
+fn report_mode_accepts_targets() {
+    let dir = temp_dir("report-targets");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let prefix = dir.join("p").display().to_string();
+    let o = run(&[
+        "stats",
+        input.to_str().unwrap(),
+        "--freq",
+        "--summary",
+        "-t",
+        "Chr01:1-5",
+        "-o",
+        &prefix,
+        "--verbosity",
+        "0",
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let afreq = std::fs::read_to_string(format!("{prefix}.afreq")).expect("invariant: afreq");
+    assert_eq!(
+        afreq.lines().filter(|l| !l.starts_with('#')).count(),
+        5,
+        "only the target range's records: {afreq}"
+    );
+    let stats = std::fs::read_to_string(format!("{prefix}.stats")).expect("invariant: stats");
+    assert!(
+        stats.contains("number of records:\t5"),
+        "the summary sees the same five records"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

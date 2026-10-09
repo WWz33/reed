@@ -355,6 +355,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
         output_bcf,
         mem_bytes: memory.map(|m| m.saturating_mul(1 << 20)),
         no_version: *no_version,
+        no_command: cli.no_command,
     };
     tracing::debug!(threads, strategy = ?strategy, "reed filter starting");
     let report = reed::filter::run_filter(input_path(input).as_deref(), &spec, &opts)?;

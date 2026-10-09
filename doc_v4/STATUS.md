@@ -45,6 +45,8 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | `doc_v3/STATUS.md` C3 更正（F4-2） | "未完成"表 C3 行改为**已做**并附证据（`reed-core/src/tag_table.rs`、`reed_io::header::tag_table()` 接入 `plan::compile`、`reed-filter/Cargo.toml` 无 noodles） | 同上 grep 守卫（`! grep -q noodles crates/reed-filter/Cargo.toml`） |
 | `docs/INDEX.md`（A4-7） | 新增：当前规范（按主题）与历史文档一览、每轮**明确取代的章节**表、守卫脚本说明；`doc_v2/README.md`、`doc_v3/README.md` 顶部加"后继修订"说明；`docs/architecture-spec.md` §13.17 的漏斗 id 示例更新 | 人工；文件在 `docs/INDEX.md` |
 | `results.tsv` 补登（F4-11、04 §4.5） | 表头新增 `load_1m`、`median_of`、`timing_path`；补登 V0–V6 数字 14 行（负载当时未记录 → `unrecorded`，来源 `doc_v3/STATUS.md`）、2026-10-09 复审基线 7 行（负载 0.3）、W0 子集门 1 行（3 次中位数 1.244 s，负载 4.5–8.5 忙碌）；timing 文件放 `bench/e2e/timing/` | 每行 18 列（`awk -F'\t'` 校验）；子集行含 263,420 与 381,672 |
+| `##reed_command` 与环境信息（F4-8） | 新增 `--no-command`：只省略 `##reed_command`（记录的 argv 含二进制路径/`--threads`），其余 provenance 行保留；`--no-version` 仍省略全部 `##reed_*`。文档化"正文确定、header 含环境信息" | `cli_contract::no_command_drops_only_the_argv_line` |
+| 报告模式的 `-t/-T`（F4-10） | `ReportRequest` 增加 `targets`/`targets_exclude`，report job 对每条记录先过 `region_allows`；报告模式不再报 "not supported yet"，`--summary` 也走同一次读取（QC 累加器在 report partial 里），`-r` 的粗区间同样被精确谓词过滤 | `cli_contract::report_mode_accepts_targets`（`-t Chr01:1-5` → `.afreq` 5 行、`.stats` 记录数 5）；`e2e_reports`/`e2e_bcf` 全绿 |
 | grep 守卫（03 §3.6） | 新增 `scripts/check-doc-drift.sh`：C3 无 noodles、无 `reed-qc` crate、无版本后缀类型、`--geno/--mind` 存在、`--max-missing` 只出现在报错文本、index 拒绝 stdin、`Verbosity` 单一实现 | `bash scripts/check-doc-drift.sh` 全部 ok |
 | 额外修正：输出索引改为 opt-in（非文档列出） | `WriteIndex::parse(None)` 此前返回 `Csi`，即不给 `-W` 也写索引；`-Oz -o /dev/null` 因此报 `/dev/null.csi: Permission denied`（旧二进制同样复现，属既有缺陷）。改为 bcftools 语义：`-W`/`-W=csi` 才写 | `write::index::tests::flavor_parsing_and_suffixes`；手工 `filter subset --geno 0.1 -Oz6 -o /dev/null` 通过 |
 | 额外修正：错误渲染（非文档列出） | `main` 改为 `eprintln!("reed: {err}")`（Display）；此前 `String` 错误经 `Result` 的 Debug 打印带引号（`Error: "…"`） | `cli_contract` 的 index 用例；手工 `reed index -` 输出 `reed: reed index needs a seekable file: …` |
@@ -77,7 +79,7 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | `unsafe_code` 策略 | **一处例外（已登记）** | `MmapChunkSource::open` 的 `Mmap::map` 需要 `unsafe`；契约写在调用点，回退路径保证非普通文件不受影响。其余 crate 仍为 `deny` |
 | `sample.mind` 的形态 | 偏差（已登记，02 回退版 §5.3 接受） | 现实现没有样本级漏斗条目（报告只有 head/tail/mask 的**记录**计数），故 `sample.mind` 不是 `FilterReport.funnel` 的元素，而是报告新增的 `sample_rule: {rule, threshold, n_dropped}`（常量在 `reed-filter/src/funnel.rs`）；`after_mask.missing` 作为 tail 漏斗 id |
 | W4（O-4，BCF 原生过滤输入） | **未做** | 需要把 `RecordPipeline` 的输入从「文本行」变成「`SiteView` + `ScanOutput`」：BCF 解码器直接产出这两样，跳过 `render_record` 的整行渲染。阻塞点是 `eval_head` 与表达式求值全是 `LineRef` 字节切片接口（INFO 按文本取值），要原生输入就得先抽象出 site/INFO 取值 trait 并让 BCF 侧实现（doc_v4 03 A4-1「不强求 trait」在此被推翻）。改动面：`record_pipeline`、`eval/head`、`expr`、`bcf_input`，且要保证正文 md5 不变。最小可行的过渡：先做「选择性渲染」（只渲染计划读到的 INFO 标签 + GT/DP/GQ 列），再逐步去掉渲染 |
-| W5（统计接入：SFS → `--fst-pops` → f 统计 → LD） | **未做** | 累加器都已存在且 `#[doc(hidden)]`（`ProjectedSfsAcc`/`JointSfsAcc`/`WcMultiAcc`/`LdDecayAcc`/`F2Acc`…），缺 CLI 出口、请求种类、写出格式与 `gold/popgen` 对拍脚本（easySFS、plink2 LD、scikit-allel f 统计）；每项都要「逐位/逐行对拍通过后才去掉 `#[doc(hidden)]`」，属功能开发 |
+| W5（统计接入：SFS → `--fst-pops` → f 统计 → LD） | **未做**（05 §3 的"报告模式 `-t/-T`"已随 F4-10 完成） | 累加器都已存在且 `#[doc(hidden)]`（`ProjectedSfsAcc`/`JointSfsAcc`/`WcMultiAcc`/`LdDecayAcc`/`F2Acc`…），缺 CLI 出口、请求种类、写出格式与 `gold/popgen` 对拍脚本（easySFS、plink2 LD、scikit-allel f 统计）；每项都要「逐位/逐行对拍通过后才去掉 `#[doc(hidden)]`」，属功能开发 |
 | W6（多等位逐等位重算） | **未做** | 现状是**显式拒绝**（默认双等位门；显式允许多等位且需 AC/MAF/HWE 重算时报错），不会静默写错；实现需要 `fill_tags` 按 Number=A 输出逐 ALT 向量（MAF 取第二常见等位）并与 `bcftools +fill-tags` 在多等位 fixture 上逐字节对拍 |
 
 ## 最终验证（2026-10-09，W0–W3 全部落地之后）
@@ -87,6 +89,7 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | `cargo test --release --workspace` | **361 通过 / 0 失败** |
 | `cargo build --release --workspace --all-targets` | **0 警告** |
 | `cargo clippy --release --workspace --all-targets` | 0 error（pedantic 提示沿用 doc_v3 C7 的豁免政策） |
+| 01 发现清单 | F4-1/2/3/4/6/7/8/9/10/11/12/13/14 全部处理；仅 F4-5（= W4，BCF 原生过滤输入）未做（见下表） |
 | `bash scripts/check-doc-drift.sh` | 全部 ok（C3 无 noodles、无 `reed-qc`、无版本后缀类型、`--geno/--mind` 存在、`--max-missing` 只在报错文本、index 拒绝 stdin、`Verbosity` 单一实现） |
 | gold 全量（W0b + mmap reader 之后重跑） | 正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 不变；`##reed_filterCommand` 含 `--geno 0.1`；`check_parity.py` 对 `out/full/gold.vcf.gz` **PASS**（1,768,759 位点，jaccard 1.0，基因型不一致 0） |
 | 子集数字门 | `--min-dp 5 --min-gq 20 --geno 0.1` → 263,420、`--geno 0.2` → 381,672（== 三家基线） |

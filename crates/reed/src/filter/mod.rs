@@ -94,6 +94,11 @@ pub struct FilterOptions {
     pub mem_bytes: Option<u64>,
     /// Suppress the `##reed_*` provenance lines (`--no-version`).
     pub no_version: bool,
+    /// Suppress only the `##reed_command` line (`--no-command`): the recorded
+    /// argv carries environment information (binary path, `--threads`), so
+    /// the body is the deterministic artefact and the header is not
+    /// (doc_v4 01 F4-8).
+    pub no_command: bool,
 }
 
 /// Pass1's source: the still-unconsumed first open (single-pass runs), else
@@ -337,7 +342,10 @@ pub fn run_filter(
     };
     let mut out_header = ensure_info_defs(out_header, &plan.recompute);
     for (key, value) in plan.provenance.header_lines().into_iter().filter(|(k, _)| {
-        !opts.no_version || !k.starts_with("reed_")
+        if opts.no_version && k.starts_with("reed_") {
+            return false;
+        }
+        !(opts.no_command && k == "reed_command")
     }) {
         out_header
             .insert(key.as_str().parse().expect("invariant: valid key"), value.into())

@@ -49,6 +49,7 @@ fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
         output_bcf: None,
         mem_bytes: None,
         no_version: false,
+        no_command: false,
     };
     run_filter(Some(input), &spec, &opts).expect("invariant: filter run");
     let text = std::fs::read_to_string(out).expect("invariant: read output");
@@ -349,6 +350,7 @@ fn sample_call_rate_matches_plink2_mind() {
         output_bcf: None,
         mem_bytes: None,
         no_version: false,
+        no_command: false,
     };
     run_filter(Some(&input), &spec, &opts).expect("invariant: run");
     let text = std::fs::read_to_string(&out).expect("invariant: read");

@@ -352,86 +352,52 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     };
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
-    // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts.
+    // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts. One pass
+    // serves every requested family — the QC summary accumulates inside the
+    // report job (O-1) — and `-t/-T` gate the records (F4-10).
     if freq || hardy || het || missing || depth || summary {
-        if !targets.is_empty() || !targets_exclude.is_empty() {
-            return Err(
-                "stats report mode: -t/-T targets are not supported yet; use -r with an index".into(),
-            );
-        }
         let Some(prefix) = out.clone() else {
             return Err("report mode writes files: pass -o PREFIX".into());
         };
-        let mut files = Vec::new();
-        if freq || hardy || het || missing || depth {
-            // O-1: `--summary` rides along in the same pass (one read for
-            // both families).
-            let request = reed::reports::ReportRequest {
-                freq,
-                hardy,
-                het,
-                missing,
-                depth,
-                summary,
-                prefix: PathBuf::from(&prefix),
-            };
-            let source = opened
-                .take()
-                .expect("invariant: the first family consumes the first open");
-            let reports_start = std::time::Instant::now();
-            let outcome = reed::reports::run_reports_opened(source, &request, &budget)?;
-            let reports_secs = reports_start.elapsed().as_secs_f64();
-            files.extend(outcome.files);
-            if let (Some(qc), true) = (&outcome.qc, summary) {
-                let mut path = std::ffi::OsString::from(&prefix);
-                path.push(".stats");
-                let text = reed::qc_report::render_bcftools_stats(qc);
-                std::fs::write(std::path::PathBuf::from(&path), &text)?;
-                files.push(std::path::PathBuf::from(path));
-            }
-            if verbosity.shows_summary() {
-                eprintln!(
-                    "{} records in {:.1}s -> {}",
-                    outcome.n_records,
-                    reports_secs,
-                    files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-                );
-            }
-            if verbosity.shows_timing() {
-                eprintln!("# reed stats timing (reports)");
-                eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
-                eprintln!("phase.reports_ms\t{:.3}", reports_secs * 1e3);
-                eprintln!("n_records\t{}", outcome.n_records);
-                print_engine_metrics(&outcome.metrics);
-            }
-        }
-        if summary && files.is_empty() {
-            // Summary alone: the QC job is the whole pass.
-            let source = match opened.take() {
-                Some(source) => source,
-                None => reed::input::open(open_path.as_deref())
-                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
-            };
-            let summary_start = std::time::Instant::now();
-            let outcome = reed::qc_report::run_qc_report_opened(
-                source,
-                &reed::qc_report::QcOptions { threads, json: None },
-            )?;
+        let request = reed::reports::ReportRequest {
+            freq,
+            hardy,
+            het,
+            missing,
+            depth,
+            summary,
+            targets: targets.clone(),
+            targets_exclude: targets_exclude.clone(),
+            prefix: PathBuf::from(&prefix),
+        };
+        let source = opened
+            .take()
+            .expect("invariant: the report mode consumes the first open");
+        let reports_start = std::time::Instant::now();
+        let outcome = reed::reports::run_reports_opened(source, &request, &budget)?;
+        let reports_secs = reports_start.elapsed().as_secs_f64();
+        let mut files = outcome.files.clone();
+        if let Some(qc) = &outcome.qc {
             let mut path = std::ffi::OsString::from(&prefix);
             path.push(".stats");
-            std::fs::write(std::path::PathBuf::from(&path), &outcome.bcftools_text)?;
+            let text = reed::qc_report::render_bcftools_stats(qc);
+            std::fs::write(std::path::PathBuf::from(&path), &text)?;
             files.push(std::path::PathBuf::from(path));
-            if verbosity.shows_summary() {
-                eprintln!(
-                    "reed stats: summary written in {:.1}s",
-                    summary_start.elapsed().as_secs_f64()
-                );
-            }
-            if verbosity.shows_timing() {
-                eprintln!("# reed stats timing (summary)");
-                eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
-                eprintln!("phase.summary_ms\t{:.3}", summary_start.elapsed().as_secs_f64() * 1e3);
-            }
+        }
+        if verbosity.shows_summary() {
+            eprintln!(
+                "{} records in {:.1}s -> {}",
+                outcome.n_records,
+                reports_secs,
+                files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        if verbosity.shows_timing() {
+            eprintln!("# reed stats timing (reports)");
+            eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
+            eprintln!("phase.reports_ms\t{:.3}", reports_secs * 1e3);
+            eprintln!("n_records\t{}", outcome.n_records);
+            print_engine_metrics(&outcome.metrics);
         }
         return Ok(());
     }

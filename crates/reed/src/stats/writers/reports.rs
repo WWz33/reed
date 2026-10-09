@@ -48,6 +48,11 @@ pub struct ReportRequest {
     /// `--summary`: also accumulate the bcftools-stats QC summary in this
     /// same pass (doc_v4 O-1: the two families used to read twice).
     pub summary: bool,
+    /// Streamed targets (`-t/-T`, `^` = exclude): the region predicate gates
+    /// every record (doc_v4 01 F4-10: report mode used to reject them).
+    pub targets: Vec<reed_filter::spec::region::RegionTriple>,
+    /// See [`Self::targets`].
+    pub targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
     /// Output prefix (`-o PREFIX`).
     pub prefix: PathBuf,
 }
@@ -131,6 +136,9 @@ struct ReportJob {
     n_samples: usize,
     policies: GenotypePolicies,
     plan: ReportPlan,
+    /// Streamed target predicate (`-t/-T`).
+    targets: Vec<reed_filter::spec::region::RegionTriple>,
+    targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
 }
 
 /// Reused per-worker buffers.
@@ -255,6 +263,18 @@ impl ReportJob {
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let pos1 = site.pos1;
+        // Streamed targets gate every record before any accumulator (the
+        // same predicate the windowed path applies).
+        if (!self.targets.is_empty() || !self.targets_exclude.is_empty())
+            && !reed_filter::spec::region::region_allows(
+                &self.targets,
+                &self.targets_exclude,
+                site.contig_name,
+                pos1,
+            )
+        {
+            return Ok(());
+        }
         // The scanner adds its policy triggers; reset the per-record slot.
         scratch.counters = PolicyCounters::default();
         let out = scratch
@@ -713,6 +733,8 @@ pub fn run_reports_opened(
             multiallelic: MultiallelicPolicy::CollapseAlt,
             ..GenotypePolicies::default()
         },
+        targets: request.targets.clone(),
+        targets_exclude: request.targets_exclude.clone(),
     };
     let mut afreq = request.freq.then(|| ReportSink::open(&request.prefix, ".afreq")).transpose()?;
     if let Some(w) = &mut afreq {

@@ -106,6 +106,8 @@ fn reports_are_identical_across_formats() {
         missing: true,
         depth: true,
         summary: false,
+        targets: Vec::new(),
+        targets_exclude: Vec::new(),
         prefix: prefix.to_path_buf(),
     };
     reed::reports::run_reports(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
@@ -158,6 +160,7 @@ fn bcf_output_round_trips_to_the_same_records() {
             output_bcf: bcf,
             mem_bytes: None,
             no_version: false,
+            no_command: false,
         };
         run_filter(Some(input), &spec, &opts)
     };
@@ -233,6 +236,7 @@ fn bcf_output_is_thread_count_independent() {
             output_bcf: Some(1),
             mem_bytes: None,
             no_version: false,
+            no_command: false,
         };
         run_filter(Some(&fixture("fix.bcf")), &spec, &opts)
     };
@@ -289,6 +293,7 @@ fn af_bounds_match_bcftools_on_the_fixture() {
             output_bcf: None,
             mem_bytes: None,
             no_version: false,
+            no_command: false,
         };
         run_filter(Some(&fixture("fix.vcf.gz")), &spec, &opts).expect("invariant: run");
         inflate_bgzf(&std::fs::read(&out).expect("invariant: output"))
@@ -340,6 +345,7 @@ fn chain_framing_is_boundary_independent() {
             output_bcf: None,
             mem_bytes: None,
             no_version: false,
+            no_command: false,
         };
         run_filter(Some(input), &spec, &opts).expect("invariant: run");
         let text = inflate_bgzf(&std::fs::read(out).expect("invariant: output"));
@@ -400,6 +406,7 @@ fn filter_output_is_identical_across_formats() {
             output_bcf: None,
             mem_bytes: None,
             no_version: false,
+            no_command: false,
         };
         run_filter(Some(input), &spec, &opts)
     };

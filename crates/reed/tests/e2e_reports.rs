@@ -61,6 +61,8 @@ fn reports_match_hand_computed_values() {
         missing: true,
         depth: true,
         summary: false,
+        targets: Vec::new(),
+        targets_exclude: Vec::new(),
         prefix: prefix.clone(),
     };
     let budget = ThreadBudget { threads: 2, mem: MemBudget::default_half_memory() };

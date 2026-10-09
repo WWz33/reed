@@ -169,6 +169,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
         output_bcf: None,
         mem_bytes: None,
         no_version: false,
+        no_command: false,
     }
 }
 
@@ -437,6 +438,7 @@ mod write_index {
             output_bcf: None,
             mem_bytes: None,
             no_version: false,
+            no_command: false,
         }
     }
 

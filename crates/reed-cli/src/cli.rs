@@ -140,6 +140,10 @@ pub(crate) struct FilterCli {
     /// Do not write the ##reed_* provenance header lines
     #[arg(long)]
     pub no_version: bool,
+    /// Do not write the ##reed_command line (the body stays deterministic;
+    /// the recorded argv carries machine-specific paths)
+    #[arg(long)]
+    pub no_command: bool,
 }
 
 
