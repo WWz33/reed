@@ -18,4 +18,4 @@ pub use gt::{decode_record_gt, format_key, site_header, GtQuery, GtTable, SiteHe
 pub use record::{declared_len, record_len, record_ref, record_site, BcfRecordRef, VirtualMap};
 pub use encode::{bcf_header_text, BcfEncoder};
 pub use native_encode::NativeEncoder;
-pub use render::render_record;
+pub use render::{decode_format_columns, render_record, render_sample_part, render_site_line, render_site_part};

@@ -183,14 +183,26 @@ pub fn run_filter(
         .facts
         .clone();
     let is_bcf = first.as_ref().is_some_and(|opened| opened.bcf.is_some());
+    let input_bcf = first.as_ref().and_then(|opened| opened.bcf.clone());
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
-    let mut plan = reed_filter::plan::compile(
-        spec,
-        &reed_io::header::tag_table(&header),
-        &opts.command_line,
-        true,
-    )?;
+    let tags = reed_io::header::tag_table(&header);
+    let mut plan = reed_filter::plan::compile(spec, &tags, &opts.command_line, true)?;
+    // doc_v4 O-4: the native BCF path needs the plan's mask to be a set of
+    // single-valued FORMAT columns (no `--set-gts .` expressions), so the
+    // typed decode and the text scan cannot disagree.
+    let native_bcf = is_bcf
+        && plan.mask.iter().all(|m| m.expr.is_none())
+        && plan.fmt_expr_fields.is_empty()
+        && plan
+            .int_fields
+            .iter()
+            .chain(plan.float_fields.iter())
+            .all(|field| {
+                let name = String::from_utf8_lossy(field);
+                tags.format(&name)
+                    .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
+            });
     let strategy = match opts.strategy {
         Some(forced) => forced,
         // The sketch path's record-count estimate is line-based; BCF input
@@ -270,7 +282,7 @@ pub fn run_filter(
             Some(sketch) => (sketch.n_records, &sketch.cohort_called),
             None => {
                 let opened = first.take().expect("invariant: pass0 consumes the first open");
-                missing_partial = run_missing_pass(opened, &plan, opts)?;
+                missing_partial = run_missing_pass(opened, &plan, opts, native_bcf)?;
                 timing_engine.merge(&missing_partial.metrics);
                 (missing_partial.n_records, &missing_partial.called)
             }
@@ -491,6 +503,9 @@ pub fn run_filter(
         sketch_funnel
     } else {
         let bcf = bcf_level.map(|_| Arc::new(out_header.clone()));
+        // The native path's FORMAT keys (copied before the plan is shared).
+        let int_keys = plan.int_fields.clone();
+        let float_keys = plan.float_fields.clone();
         let job = FilterJob {
             plan: Arc::new(plan),
             keep,
@@ -501,6 +516,9 @@ pub fn run_filter(
             contig_names: Arc::clone(&contig_names),
             level: bcf_level.unwrap_or(opts.compress_level),
             bcf,
+            bcf_input: if native_bcf { input_bcf.clone() } else { None },
+            int_keys: Arc::from(int_keys.into_boxed_slice()),
+            float_keys: Arc::from(float_keys.into_boxed_slice()),
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
         let mut sink = OutputSink {
@@ -518,7 +536,18 @@ pub fn run_filter(
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
         let abort = reed_engine::abort::abort();
-        let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        // doc_v4 O-4: BCF input with a native-eligible plan decodes the
+        // records directly; everything else renders text as before.
+        let job = if native_bcf {
+            crate::bcf_input::InputJob::with_bcf_records(
+                job,
+                &opened,
+                &abort,
+                FilterJob::run_bcf_records,
+            )
+        } else {
+            crate::bcf_input::InputJob::new(job, &opened, &abort)
+        };
         let pass1_start = Instant::now();
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));

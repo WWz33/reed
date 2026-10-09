@@ -70,6 +70,16 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | 一致性 | 输出与 reader 无关 | 10 个 stats 输出文件与 W2 时逐字节相同；gold 全量正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 不变 + `check_parity` PASS；子集 CSI sha256 与流式 reader 完全相同（`7048abbd…`）；`cargo test --workspace` 362 通过 |
 | 安全性（偏差） | `memmap2::Mmap::map` 是 `unsafe`，工作区 `unsafe_code = deny`；在 `MmapChunkSource::open` 上加了**唯一一处** `#[allow(unsafe_code)]` 并写明契约：只读映射、生命周期覆盖全部 chunk、输入不被写入、非普通文件回退流式 | 评审点：这是一处有意的策略例外，见"未完成 / 偏差"表 |
 
+### W4 BCF 原生过滤输入（O-4；01 F4-5）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| 原生判定输入 | `reed-io`：`render_site_line`（固定列 + 完整 INFO + 占位 FORMAT + 每样本 `.`，保住 `N_SAMPLES`）与 `decode_format_columns`（计划内 Number=1 FORMAT 列的类型化解码；缺失用与文本扫描器相同的哨兵 `INT_MISSING`/`NaN`，负值同 `parse_int` 视为缺失）；GT 复用既有 64K 表 `decode_record_gt` | 新增 `crates/reed-io/tests/bcf_native_input.rs`：fixture 上站点列/INFO/`N_SAMPLES`/DP 列/GT codes 与「整行渲染 + 文本扫描」逐个相同 |
+| 管线两段式接口 | `RecordPipeline::process_scanned` + `NativeScan`：跳过文本扫描器，用原生 codes/列走同一套 mask/count/tail/body；`run_stages` 由 `process` 与 `process_scanned` 共用（不是两份实现） | 策略等价与 gold 门；`cargo test --release --workspace` 364 通过 |
+| 输出侧仍渲染 | 单遍 `FilterJob::run_bcf_records`：只有存活记录才 `render_record` 全量渲染 → `edit_vcf_line` → 写块（与文本路径共用 edit/索引）；pass0 `MissingJob::run_bcf_records` 同构（`--mind` 的 BCF 输入全程不渲染） | 见下表门 |
+| 适用条件与回退 | 仅当 BCF 输入 ∧ 掩码不含 `--set-gts .` FMT 表达式 ∧ 计划内 FORMAT 列均为 Number=1 时走原生，否则回退渲染路径 | `e2e_bcf` 7 条；子集 `--set-gts . -e 'FMT/DP>20'` 正文 md5 `ae4c8d79…` 与 pre-W4 二进制相同（2.4 s） |
+| 门（全量 gold，56 线程，负载 2.15） | BCF 输入：wall **8.95 / 9.06 / 9.36 s（中位 9.06）≤ 9.5 s**；user **631.6 → 468.3–469.5 s（−26%）**；worker_busy **639.0 → 472.6–480.9 s（−25%）** | 全量正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 与 VCF 输入相同；子集 VCF/BCF 正文 md5 相同（`ca00a0de…`；`--mind` 版 `7a2ba1c5…`）；`-Ob` 读回正文 md5 相同（`fef4cb07…`） |
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -78,7 +88,6 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | reports 两族 ≤ 3.2 s（W2 门） | **未达标（已登记）** | 实测 3.58–3.65 s（负载 18.5；CPU 181 s，wall 下限 ≈ 181/54 = 3.35 s）——瓶颈已从 reader 变成 CPU：QC summary 用**自己的扫描器**再解一遍 GT（策略与 reports 相同但带 `tracking_alleles`）。下一步：让 reports job 在 `--summary` 时用带 tracking 的扫描器，并把 QC 的累加部分拆成消费 `ScanOutput` 的入口（预计省 ~25–30 CPU-s，可望 ≤3.2 s）。旧两遍实现为 5.35 s / 232 s CPU，本轮已 −22% CPU |
 | `unsafe_code` 策略 | **一处例外（已登记）** | `MmapChunkSource::open` 的 `Mmap::map` 需要 `unsafe`；契约写在调用点，回退路径保证非普通文件不受影响。其余 crate 仍为 `deny` |
 | `sample.mind` 的形态 | 偏差（已登记，02 回退版 §5.3 接受） | 现实现没有样本级漏斗条目（报告只有 head/tail/mask 的**记录**计数），故 `sample.mind` 不是 `FilterReport.funnel` 的元素，而是报告新增的 `sample_rule: {rule, threshold, n_dropped}`（常量在 `reed-filter/src/funnel.rs`）；`after_mask.missing` 作为 tail 漏斗 id |
-| W4（O-4，BCF 原生过滤输入） | **未做** | 需要把 `RecordPipeline` 的输入从「文本行」变成「`SiteView` + `ScanOutput`」：BCF 解码器直接产出这两样，跳过 `render_record` 的整行渲染。阻塞点是 `eval_head` 与表达式求值全是 `LineRef` 字节切片接口（INFO 按文本取值），要原生输入就得先抽象出 site/INFO 取值 trait 并让 BCF 侧实现（doc_v4 03 A4-1「不强求 trait」在此被推翻）。改动面：`record_pipeline`、`eval/head`、`expr`、`bcf_input`，且要保证正文 md5 不变。最小可行的过渡：先做「选择性渲染」（只渲染计划读到的 INFO 标签 + GT/DP/GQ 列），再逐步去掉渲染 |
 | W5（统计接入：SFS → `--fst-pops` → f 统计 → LD） | **未做**（05 §3 的"报告模式 `-t/-T`"已随 F4-10 完成） | 累加器都已存在且 `#[doc(hidden)]`（`ProjectedSfsAcc`/`JointSfsAcc`/`WcMultiAcc`/`LdDecayAcc`/`F2Acc`…），缺 CLI 出口、请求种类、写出格式与 `gold/popgen` 对拍脚本（easySFS、plink2 LD、scikit-allel f 统计）；每项都要「逐位/逐行对拍通过后才去掉 `#[doc(hidden)]`」，属功能开发 |
 | W6（多等位逐等位重算） | **未做** | 现状是**显式拒绝**（默认双等位门；显式允许多等位且需 AC/MAF/HWE 重算时报错），不会静默写错；实现需要 `fill_tags` 按 Number=A 输出逐 ALT 向量（MAF 取第二常见等位）并与 `bcftools +fill-tags` 在多等位 fixture 上逐字节对拍 |
 
@@ -89,7 +98,7 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | `cargo test --release --workspace` | **361 通过 / 0 失败** |
 | `cargo build --release --workspace --all-targets` | **0 警告** |
 | `cargo clippy --release --workspace --all-targets` | 0 error（pedantic 提示沿用 doc_v3 C7 的豁免政策） |
-| 01 发现清单 | F4-1/2/3/4/6/7/8/9/10/11/12/13/14 全部处理；仅 F4-5（= W4，BCF 原生过滤输入）未做（见下表） |
+| 01 发现清单 | **F4-1…F4-14 全部处理**（F4-5 = W4 已完成） |
 | `bash scripts/check-doc-drift.sh` | 全部 ok（C3 无 noodles、无 `reed-qc`、无版本后缀类型、`--geno/--mind` 存在、`--max-missing` 只在报错文本、index 拒绝 stdin、`Verbosity` 单一实现） |
 | gold 全量（W0b + mmap reader 之后重跑） | 正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 不变；`##reed_filterCommand` 含 `--geno 0.1`；`check_parity.py` 对 `out/full/gold.vcf.gz` **PASS**（1,768,759 位点，jaccard 1.0，基因型不一致 0） |
 | 子集数字门 | `--min-dp 5 --min-gq 20 --geno 0.1` → 263,420、`--geno 0.2` → 381,672（== 三家基线） |

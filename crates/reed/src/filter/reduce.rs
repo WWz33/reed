@@ -19,7 +19,7 @@ use reed_filter::FilterError;
 
 use reed_core::ChunkId;
 
-use super::record_pipeline::{PipelineOptions, RecordPipeline};
+use super::record_pipeline::{NativeScan, NativeScratch, PipelineOptions, RecordPipeline};
 use super::{ferr, FilterOptions};
 
 /// Pass0 partial: per-sample called-allele counts after masking, over
@@ -39,12 +39,21 @@ pub(super) struct MissingScratch {
     pipeline: RecordPipeline,
     called: Vec<u64>,
     funnel: FunnelPartial,
+    /// Native BCF input buffers (doc_v4 O-4).
+    native: Option<NativeScratch>,
 }
 
 /// The GT-only call-rate job (`--max-missing-sample` pass0).
 pub(super) struct MissingJob {
     pub(super) plan: Arc<FilterPlan>,
     pub(super) n_samples: usize,
+    /// BCF input: when set, pass0 decodes the records natively instead of
+    /// rendering them (doc_v4 O-4).
+    pub(super) bcf_input: Option<Arc<reed_io::bcf::BcfDict>>,
+    /// The plan's Integer FORMAT keys.
+    pub(super) int_keys: Arc<[Vec<u8>]>,
+    /// The plan's Float FORMAT keys.
+    pub(super) float_keys: Arc<[Vec<u8>]>,
 }
 
 const OPTS: PipelineOptions = PipelineOptions {
@@ -83,7 +92,102 @@ impl MissingJob {
                 mask_hits: vec![0; self.plan.mask.len()],
                 ..FunnelPartial::default()
             },
+            native: self.bcf_input.as_ref().map(|_| {
+                NativeScratch::new(
+                    self.plan.policies,
+                    self.n_samples,
+                    &self.int_keys,
+                    &self.float_keys,
+                )
+            }),
         }
+    }
+
+    /// The native BCF record path for pass0 (doc_v4 O-4): the wrapper hands
+    /// the framed records over decoded.
+    ///
+    /// # Errors
+    ///
+    /// As [`MissingJob::scan_line`].
+    pub(super) fn run_bcf_records(
+        &self,
+        _chunk: &reed_io::chunk::ChunkBytes,
+        records: &[&[u8]],
+        scratch: &mut Option<MissingScratch>,
+    ) -> Result<MissingPartial, EngineError> {
+        let scratch = scratch.get_or_insert_with(|| self.build_scratch());
+        let dict = self
+            .bcf_input
+            .as_ref()
+            .expect("invariant: the native path needs the input dictionary");
+        scratch.funnel.reset(
+            self.plan.head.len(),
+            self.plan.tail.len(),
+            self.plan.mask.len(),
+        );
+        scratch.called.clear();
+        scratch.called.resize(self.n_samples, 0);
+        let mut n_records = 0_u64;
+        for bytes in records {
+            let mut native = scratch
+                .native
+                .take()
+                .expect("invariant: the native scratch exists with the dictionary");
+            let result = self.scan_bcf_record(dict, bytes, scratch, &mut native);
+            scratch.native = Some(native);
+            if result? {
+                n_records += 1;
+            }
+        }
+        Ok(MissingPartial {
+            n_records,
+            called: scratch.called.clone(),
+            metrics: reed_engine::metrics::StageMetrics::default(),
+        })
+    }
+
+    /// Decodes and counts one native record; returns whether it passed the
+    /// head rules (the `2L` denominator).
+    fn scan_bcf_record(
+        &self,
+        dict: &reed_io::bcf::BcfDict,
+        bytes: &[u8],
+        scratch: &mut MissingScratch,
+        native: &mut NativeScratch,
+    ) -> Result<bool, EngineError> {
+        native.decode(
+            dict,
+            bytes,
+            &self.int_keys,
+            &self.float_keys,
+            self.n_samples,
+        )?;
+        let plan = &self.plan;
+        let MissingScratch { pipeline, called, funnel, .. } = scratch;
+        let called = &mut *called;
+        let processed = pipeline.process_scanned(
+            &native.site_line,
+            plan,
+            &[],
+            OPTS,
+            funnel,
+            NativeScan {
+                codes: &native.codes,
+                int_columns: &native.int_columns,
+                float_columns: &native.float_columns,
+                counters: &native.counters,
+            },
+            |view| {
+                for (i, &code) in view.scan.codes.iter().enumerate() {
+                    let n = called_alleles(code, view.masked.get(i));
+                    if let Some(slot) = called.get_mut(i) {
+                        *slot += n;
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        Ok(processed.head_passed)
     }
 
     /// Runs one record and returns whether it survived the head rules; the
@@ -94,7 +198,7 @@ impl MissingJob {
         scratch: &mut MissingScratch,
     ) -> Result<bool, EngineError> {
         let plan = &self.plan;
-        let MissingScratch { pipeline, called, funnel } = scratch;
+        let MissingScratch { pipeline, called, funnel, .. } = scratch;
         let called = &mut *called;
         let processed = pipeline.process(line, plan, &[], OPTS, funnel, |view| {
             for (i, &code) in view.scan.codes.iter().enumerate() {
@@ -160,6 +264,7 @@ pub(super) fn run_missing_pass(
     opened: crate::input::OpenedInput,
     plan: &FilterPlan,
     opts: &FilterOptions,
+    native_bcf: bool,
 ) -> Result<MissingPartial, FilterError> {
     let budget = ThreadBudget {
         threads: opts.threads.max(1),
@@ -170,11 +275,23 @@ pub(super) fn run_missing_pass(
     };
     let n_samples = opened.facts.header.sample_names().len();
     let abort = reed_engine::abort::abort();
-    let job = crate::bcf_input::InputJob::new(
-        MissingJob { plan: Arc::new(plan.clone()), n_samples },
-        &opened,
-        &abort,
-    );
+    let inner = MissingJob {
+        plan: Arc::new(plan.clone()),
+        n_samples,
+        bcf_input: native_bcf.then(|| {
+            opened
+                .bcf
+                .clone()
+                .expect("invariant: a BCF input carries its dictionary")
+        }),
+        int_keys: Arc::from(plan.int_fields.clone().into_boxed_slice()),
+        float_keys: Arc::from(plan.float_fields.clone().into_boxed_slice()),
+    };
+    let job = if native_bcf {
+        crate::bcf_input::InputJob::with_bcf_records(inner, &opened, &abort, MissingJob::run_bcf_records)
+    } else {
+        crate::bcf_input::InputJob::new(inner, &opened, &abort)
+    };
     let crate::input::OpenedInput { mut source, .. } = opened;
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
     let sink = SumSink { total: Arc::clone(&total) };

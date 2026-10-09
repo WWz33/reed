@@ -36,6 +36,28 @@ pub fn render_record(
     dict: &BcfDict,
     out: &mut Vec<u8>,
 ) -> Result<(), IoError> {
+    let (n_sample, n_fmt) = render_site_part(rec, dict, out)?;
+    render_sample_part(rec, dict, n_sample, n_fmt, out)?;
+    out.push(b'\n');
+    Ok(())
+}
+
+/// Renders a record's site columns — CHROM, POS, ID, REF, ALT, QUAL, FILTER
+/// and the whole INFO column — into `out`, returning the record's
+/// `(n_sample, n_fmt)`.
+///
+/// The native filter path uses this for the line it evaluates head rules and
+/// expressions on (doc_v4 O-4): the sample columns are decoded as typed
+/// values instead of being rendered.
+///
+/// # Errors
+///
+/// As [`render_record`].
+pub fn render_site_part(
+    rec: &BcfRecordRef<'_>,
+    dict: &BcfDict,
+    out: &mut Vec<u8>,
+) -> Result<(usize, usize), IoError> {
     let mut c = Cursor::new(rec.shared);
     let chrom = c.i32()?;
     let pos0 = c.i32()?;
@@ -140,6 +162,30 @@ pub fn render_record(
         }
     }
 
+    Ok((n_sample, n_fmt))
+}
+
+/// Renders the FORMAT keys and every sample's values (the `render_record`
+/// tail).
+///
+/// # Errors
+///
+/// As [`render_record`].
+pub fn render_sample_part(
+    rec: &BcfRecordRef<'_>,
+    dict: &BcfDict,
+    n_sample: usize,
+    n_fmt: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), IoError> {
+    // The locus is only needed for error messages; read it back cheaply.
+    let mut hc = Cursor::new(rec.shared);
+    let chrom = hc.i32().unwrap_or(-1);
+    let pos0 = hc.i32().unwrap_or(-1);
+    let locus = Locus {
+        contig_name: String::from_utf8_lossy(dict.contig(chrom).unwrap_or(b"<bcf>")).into_owned(),
+        pos1: u64::try_from(pos0).unwrap_or(0) + 1,
+    };
     // FORMAT + samples.
     out.push(b'\t');
     if n_fmt == 0 {
@@ -197,8 +243,130 @@ pub fn render_record(
             }
         }
     }
-    out.push(b'\n');
     Ok(())
+}
+
+/// Renders the line the native filter path decides on (doc_v4 O-4): the
+/// site columns plus a placeholder FORMAT column and one `.` per sample, so
+/// the sample *count* stays visible to expressions (`N_SAMPLES`) while the
+/// values come from [`decode_format_columns`]. No trailing newline.
+///
+/// # Errors
+///
+/// As [`render_record`].
+pub fn render_site_line(
+    rec: &BcfRecordRef<'_>,
+    dict: &BcfDict,
+    out: &mut Vec<u8>,
+) -> Result<(), IoError> {
+    let (n_sample, _) = render_site_part(rec, dict, out)?;
+    out.extend_from_slice(b"\t.");
+    for _ in 0..n_sample {
+        out.extend_from_slice(b"\t.");
+    }
+    Ok(())
+}
+
+/// Decodes the requested `Number=1` FORMAT columns for every sample without
+/// rendering them (doc_v4 O-4): the typed values feed the filter's mask
+/// stage directly.
+///
+/// Missing values use the text scanner's sentinels — `INT_MISSING`
+/// ([`crate::vcf::genotype_scan::INT_MISSING`]) and `NaN` — and a negative or
+/// non-integer value maps to `INT_MISSING`, exactly as the text scanner's
+/// `parse_int` does, so the native and text paths agree bit for bit.
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] for a truncated individual block.
+pub fn decode_format_columns(
+    rec: &BcfRecordRef<'_>,
+    header: &super::gt::SiteHeader,
+    dict: &BcfDict,
+    int_keys: &[&[u8]],
+    float_keys: &[&[u8]],
+    int_columns: &mut [Vec<u32>],
+    float_columns: &mut [Vec<f32>],
+) -> Result<(), IoError> {
+    let n_sample = header.n_sample;
+    for column in int_columns.iter_mut() {
+        column.clear();
+        column.resize(n_sample, crate::vcf::genotype_scan::INT_MISSING);
+    }
+    for column in float_columns.iter_mut() {
+        column.clear();
+        column.resize(n_sample, f32::NAN);
+    }
+    if header.n_fmt == 0 || n_sample == 0 || (int_keys.is_empty() && float_keys.is_empty()) {
+        return Ok(());
+    }
+    // The individual block is field-major: descriptors first, then each
+    // field's `n_sample × count` elements.
+    let indiv = rec.indiv;
+    let mut ci = Cursor::new(indiv);
+    let mut fields: Vec<(u32, u8, usize, usize)> = Vec::with_capacity(header.n_fmt);
+    for _ in 0..header.n_fmt {
+        let key = ci.typed_int()?;
+        let key = u32::try_from(key)
+            .map_err(|_| malformed("BCF FORMAT key is negative"))?;
+        let (ty, count) = ci.typed()?;
+        let start = indiv.len() - ci.remaining();
+        ci.take(type_width(ty) * count * n_sample)?;
+        fields.push((key, ty, count, start));
+    }
+    for &(key, ty, count, start) in &fields {
+        let Some(name) = dict.tag(key) else { continue };
+        let width = type_width(ty);
+        if width == 0 || count != 1 {
+            continue;
+        }
+        if let Some(i) = int_keys.iter().position(|k| *k == name) {
+            let Some(column) = int_columns.get_mut(i) else { continue };
+            for (s, slot) in column.iter_mut().enumerate() {
+                let elem = &indiv[start + s * width..start + (s + 1) * width];
+                *slot = int_element_column(ty, elem);
+            }
+        }
+        if let Some(i) = float_keys.iter().position(|k| *k == name) {
+            let Some(column) = float_columns.get_mut(i) else { continue };
+            for (s, slot) in column.iter_mut().enumerate() {
+                let elem = &indiv[start + s * width..start + (s + 1) * width];
+                *slot = float_element_column(ty, elem);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One integer FORMAT element as the text scanner would parse it.
+fn int_element_column(ty: u8, elem: &[u8]) -> u32 {
+    let (missing, _) = int_sentinels(ty);
+    let value = int_element(ty, elem);
+    if value == missing || value < 0 {
+        crate::vcf::genotype_scan::INT_MISSING
+    } else {
+        u32::try_from(value).unwrap_or(crate::vcf::genotype_scan::INT_MISSING)
+    }
+}
+
+/// One float FORMAT element as the text scanner would parse it.
+fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
+    if ty == value_type::FLOAT {
+        let bits = u32::from_le_bytes([elem[0], elem[1], elem[2], elem[3]]);
+        if bits == FLOAT_MISSING || bits == FLOAT_VECTOR_END {
+            f32::NAN
+        } else {
+            f32::from_bits(bits)
+        }
+    } else {
+        let (missing, _) = int_sentinels(ty);
+        let value = int_element(ty, elem);
+        if value == missing {
+            f32::NAN
+        } else {
+            value as f32
+        }
+    }
 }
 
 /// A malformed record at a known locus.

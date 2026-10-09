@@ -11,11 +11,15 @@ use reed_engine::pipeline::ChunkJob;
 use reed_filter::eval::edit_plan::fill_info_set;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
+use reed_io::vcf::line::LineRef;
 use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan, InfoValueOut};
+use reed_io::bcf::{record_ref, render_record, BcfDict};
 use reed_io::bcf::{BcfEncoder, NativeEncoder};
 use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
-use super::record_pipeline::{gt_subfield_index, PipelineOptions, RecordPipeline};
+use super::record_pipeline::{
+    gt_subfield_index, NativeScan, NativeScratch, PipelineOptions, RecordPipeline,
+};
 use super::job_err;
 
 /// The BCF encoders a worker may use: the native B4 encoder by default,
@@ -71,6 +75,14 @@ pub(super) struct FilterJob {
     /// Each worker builds its own encoder from it (and the environment
     /// selects the native encoder over noodles' B2 fallback for A/B tests).
     pub(super) bcf: Option<Arc<noodles::vcf::Header>>,
+    /// BCF *input* (doc_v4 O-4): when set, the job takes the native record
+    /// path — the site line plus decoded GT/FORMAT columns — instead of
+    /// rendered text.
+    pub(super) bcf_input: Option<Arc<BcfDict>>,
+    /// The plan's Integer/Float FORMAT keys (the mask's columns).
+    pub(super) int_keys: Arc<[Vec<u8>]>,
+    /// See [`FilterJob::int_keys`].
+    pub(super) float_keys: Arc<[Vec<u8>]>,
 }
 
 /// Worker scratch (reused across chunks).
@@ -86,6 +98,8 @@ pub(super) struct WorkerScratch {
     bcf: Option<BcfEncoders>,
     writer: BlockWriter,
     funnel: FunnelPartial,
+    /// Native BCF input buffers (doc_v4 O-4).
+    native: Option<NativeScratch>,
 }
 
 impl ChunkJob for FilterJob {
@@ -167,7 +181,157 @@ impl FilterJob {
                 mask_hits: vec![0; self.plan.mask.len()],
                 ..FunnelPartial::default()
             },
+            native: self.bcf_input.as_ref().map(|_| {
+                NativeScratch::new(
+                    self.plan.policies,
+                    self.n_samples_in,
+                    &self.int_keys,
+                    &self.float_keys,
+                )
+            }),
         }
+    }
+
+    /// The native BCF record path (doc_v4 O-4): the framed records arrive
+    /// decoded from the BCF side, so the pipeline decides on the site line
+    /// plus typed GT/FORMAT values and the full text is rendered only for
+    /// survivors.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Job`] for malformed records, policy rejections and
+    /// write failures.
+    pub(super) fn push_bcf_records(
+        &self,
+        records: &[&[u8]],
+        scratch: &mut WorkerScratch,
+    ) -> Result<(), EngineError> {
+        let dict = self
+            .bcf_input
+            .as_ref()
+            .expect("invariant: the native path needs the input dictionary");
+        for bytes in records {
+            // Take the native buffers out so the pipeline's scratch and the
+            // decode buffers are borrowed disjointly.
+            let mut native = scratch
+                .native
+                .take()
+                .expect("invariant: the native scratch exists with the dictionary");
+            let result = self.push_bcf_record(dict, bytes, scratch, &mut native);
+            scratch.native = Some(native);
+            result?;
+        }
+        Ok(())
+    }
+
+    /// The [`crate::bcf_input::BcfRecordFn`] entry point (doc_v4 O-4): one
+    /// chunk's framed records in, one chunk partial out.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::push_bcf_records`].
+    pub(super) fn run_bcf_records(
+        &self,
+        _chunk: &reed_io::chunk::ChunkBytes,
+        records: &[&[u8]],
+        scratch: &mut Option<WorkerScratch>,
+    ) -> Result<FilterPartial, EngineError> {
+        let scratch = scratch.get_or_insert_with(|| self.build_scratch());
+        scratch.funnel.reset(
+            self.plan.head.len(),
+            self.plan.tail.len(),
+            self.plan.mask.len(),
+        );
+        self.push_bcf_records(records, scratch)?;
+        let output = scratch.writer.finish_chunk().map_err(job_err)?;
+        Ok(FilterPartial {
+            output,
+            funnel: std::mem::take(&mut scratch.funnel),
+        })
+    }
+
+    fn push_bcf_record(
+        &self,
+        dict: &BcfDict,
+        bytes: &[u8],
+        scratch: &mut WorkerScratch,
+        native: &mut NativeScratch,
+    ) -> Result<(), EngineError> {
+        native.decode(
+            dict,
+            bytes,
+            &self.int_keys,
+            &self.float_keys,
+            self.n_samples_in,
+        )?;
+        let plan = &self.plan;
+        let opts = PipelineOptions {
+            scan_head_failures: false,
+            mask_all_samples: false,
+            require_contig: true,
+            tail_n_samples: Some(self.n_samples_out as u64),
+            counts: true,
+        };
+        let NativeScratch { site_line, full, codes, int_columns, float_columns, counters, .. } =
+            native;
+        // The survivor render buffer is moved out for the closure and put
+        // back afterwards so its capacity survives across records.
+        let full_slot: &mut Vec<u8> = full;
+        let mut full = std::mem::take(full_slot);
+        let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel, .. } =
+            scratch;
+        pipeline.process_scanned(
+            site_line,
+            plan,
+            &self.keep,
+            opts,
+            funnel,
+            NativeScan {
+                codes: &codes[..],
+                int_columns: &int_columns[..],
+                float_columns: &float_columns[..],
+                counters,
+            },
+            |view| {
+                // Survivor: render the full record, edit it, write it.
+                let rec = record_ref(bytes).map_err(EngineError::from)?;
+                full.clear();
+                render_record(&rec, dict, &mut full).map_err(EngineError::from)?;
+                let full_lr = LineRef::parse(&full)
+                    .ok_or_else(|| EngineError::job("rendered record has fewer than 9 columns"))?;
+                let site = view.site;
+                let counts = view.counts.expect("invariant: counts requested");
+                fill_info_set(counts, &plan.recompute, info_set);
+                let stale: Vec<&[u8]> = plan.stale_tags.iter().map(Vec::as_slice).collect();
+                let edit_plan = EditPlan {
+                    keep_samples: self.keep_mask.as_ref(),
+                    mask_gt: Some(view.masked),
+                    info_remove: &stale,
+                    info_set,
+                };
+                let gt_index = gt_subfield_index(full_lr.format_text());
+                edit_buf.clear();
+                edit_vcf_line(&full_lr, &edit_plan, gt_index, edit_buf).map_err(job_err)?;
+                view.funnel.n_output += 1;
+                let key = IndexKey {
+                    contig: site
+                        .contig
+                        .expect("invariant: parse_declared resolved the contig"),
+                    start1: view.pos1,
+                    ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
+                };
+                match bcf {
+                    None => writer.push_record(edit_buf, key).map_err(job_err),
+                    Some(encoders) => {
+                        bcf_buf.clear();
+                        encoders.encode(edit_buf, bcf_buf).map_err(job_err)?;
+                        writer.push_record(bcf_buf, key).map_err(job_err)
+                    }
+                }
+            },
+        )?;
+        *full_slot = full;
+        Ok(())
     }
 
     /// Runs the shared record pipeline and writes the survivors: head →
@@ -184,7 +348,8 @@ impl FilterJob {
             tail_n_samples: Some(self.n_samples_out as u64),
             counts: true,
         };
-        let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel } = scratch;
+        let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel, .. } =
+            scratch;
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let site = view.site;
             let counts = view.counts.expect("invariant: counts requested");
