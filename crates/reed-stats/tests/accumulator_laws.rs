@@ -85,6 +85,14 @@ fn observe(accs: &[StatAcc], kinds: &[StatKind], window_bp: u64) -> Vec<Obs> {
                     },
                 }
             }
+            StatAcc::FstGlobal(a) => {
+                let (n_sites, n_skipped) = a.site_tally();
+                Obs {
+                    ints: vec![n_sites, n_skipped],
+                    bins: vec![],
+                    value: a.value(),
+                }
+            }
             StatAcc::Pbs(a) => {
                 let (n_sites, n_skipped) = a.site_tally();
                 Obs {
@@ -154,6 +162,7 @@ fn kinds() -> Vec<StatKind> {
         StatKind::Fst { a: 0, b: 2, kind: FstKind::Hudson },
         StatKind::Fst { a: 0, b: 2, kind: FstKind::WeirCockerham84 },
         StatKind::Fst { a: 0, b: 2, kind: FstKind::Hudson },
+        StatKind::FstGlobal,
         StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::Yi2010 },
         StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::PbsN1 },
         StatKind::Sfs { group: 1, folded: false },

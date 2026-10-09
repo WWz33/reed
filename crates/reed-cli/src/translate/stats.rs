@@ -236,6 +236,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         theta,
         tajima_d,
         fst,
+        fst_global,
         pbs,
         pbs_normed,
         sfs,
@@ -461,15 +462,30 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         } else {
             reed::PbsKind::Yi2010
         };
+        // `--fst-global` replaces the pairwise matrix with one r-population
+        // WC84 value (docs/rounds/v5/05 §3.2); only WC84 has that form.
+        if fst_global {
+            if fst_kind == Some(reed::FstKind::Hudson) {
+                return Err("hudson Fst has no r-population (global) form; use wc84".into());
+            }
+            if group_names.len() == 2 {
+                eprintln!(
+                    "reed stats: note: two populations: --fst-global equals the pairwise wc84 value"
+                );
+            }
+        }
         let mut kinds = reed::pixy_kinds(
             group_names.len(),
             pi,
             dxy,
             theta,
             tajima_d,
-            fst_kind,
+            if fst_global { None } else { fst_kind },
             None,
         );
+        if fst_global {
+            kinds.push(reed::StatKind::FstGlobal);
+        }
         for &(a, b, c) in &pbs_triples {
             kinds.push(reed::StatKind::Pbs { a, b, c, kind: pbs_kind });
         }
@@ -510,7 +526,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         let levels = if sfs_only {
             Levels { window: false, contig: false, genome: true }
         } else {
-            Levels { window: true, contig: false, genome: false }
+            // Honor the user's --levels (the default stays window-only, so
+            // the pixy-layout files keep their historical shape).
+            Levels::parse(&levels)?
         };
         let request = StatsRequest {
             kinds: kinds.clone(),

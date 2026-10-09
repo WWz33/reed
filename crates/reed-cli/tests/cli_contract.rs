@@ -77,6 +77,30 @@ fn help_lists_the_renamed_flags_only() {
     assert!(stats.contains("--populations"), "the visible alias stays");
 }
 
+/// X4: `--sfs`/`--fst-global` are on the surface; `--fst-global` needs
+/// `--fst` (clap enforces it) and `--sfs` needs `--proj`.
+#[test]
+fn help_lists_the_new_statistics_flags() {
+    let stats = help(&["stats", "--help"]);
+    for flag in ["--sfs", "--proj", "--sfs-int", "--fst-global"] {
+        assert!(stats.contains(flag), "stats help lacks {flag}");
+    }
+
+    // `--fst-global` without `--fst`: clap's `requires` fails at parse time.
+    let out = run(&["stats", "x.vcf", "--fst-global"]);
+    assert!(!out.status.success(), "--fst-global alone must fail");
+
+    // `--sfs` without `--proj`: the translator names the missing flag.
+    let dir = temp_dir("sfs-proj");
+    let input = dir.join("in.vcf");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let out = run(&["stats", input.to_str().unwrap(), "--sfs", "-o", dir.join("p").to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--proj"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 01 F4-4: `index` needs a seekable file; stdin fails with that reason.
 #[test]
 fn index_rejects_stdin_with_a_clear_error() {

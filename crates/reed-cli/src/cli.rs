@@ -198,6 +198,10 @@ pub(crate) struct StatsCli {
     #[arg(long, value_name = "wc84|hudson", num_args = 0..=1,
           default_missing_value = "wc84")]
     pub fst: Option<String>,
+    /// Report the global (r-population) WC84 Fst instead of the pairwise
+    /// values: one value over all --pop populations (docs/rounds/v5/05 §3.2)
+    #[arg(long, requires = "fst")]
+    pub fst_global: bool,
     /// PBS for the named triple `A,B,C` (A is the branch of interest,
     /// Yi et al. 2010); repeatable
     #[arg(long, value_name = "A,B,C")]

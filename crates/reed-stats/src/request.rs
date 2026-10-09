@@ -8,7 +8,7 @@ use reed_core::count::SiteGroupCounts;
 use reed_core::CoreError;
 
 use crate::dxy::DxyAcc;
-use crate::fst::{FstAcc, FstKind};
+use crate::fst::{FstAcc, FstKind, WcMultiAcc};
 use crate::pi::PiAcc;
 use crate::pbs::{PbsAcc, PbsKind};
 use crate::sfs::SfsAcc;
@@ -47,6 +47,10 @@ pub enum StatKind {
         /// Which estimator's value to report.
         kind: FstKind,
     },
+    /// Global (r-population) WC84 Fst over every group (docs/rounds/v5/05
+    /// §3.2): one value, `Σa / (Σa + Σb + Σc)`. Only WC84 has a global
+    /// form; Hudson is a two-population quantity.
+    FstGlobal,
     /// Population branch statistic over one group triple (`a` is the branch
     /// of interest: `t_ab + t_ac − t_bc`).
     Pbs {
@@ -117,6 +121,7 @@ impl StatKind {
                 b
             )),
             Self::Fst { a, b, kind } => StatKey(format!("fst.{}.{a}.{b}", kind.id())),
+            Self::FstGlobal => StatKey("fst.wc84.global".to_string()),
             Self::Pbs { a, b, c, kind } => {
                 StatKey(format!("pbs.{}.{a}.{b}.{c}", kind.id()))
             }
@@ -177,6 +182,12 @@ impl StatKind {
                 distinct(&[a, b])?;
                 Ok(StatAcc::Fst(FstAcc::new(a, b)))
             }
+            Self::FstGlobal => {
+                if n_group.len() < 2 {
+                    return Err(CoreError::LengthMismatch { expected: 2, got: n_group.len() });
+                }
+                Ok(StatAcc::FstGlobal(WcMultiAcc::new((0..n_group.len()).collect())))
+            }
             Self::Pbs { a, b, c, .. } => {
                 distinct(&[a, b, c])?;
                 Ok(StatAcc::Pbs(PbsAcc::new(a, b, c)))
@@ -224,6 +235,8 @@ pub enum StatAcc {
     Pbs(PbsAcc),
     /// SFS accumulator.
     Sfs(SfsAcc),
+    /// Global (r-population) WC84 accumulator.
+    FstGlobal(WcMultiAcc),
     /// Watterson θ accumulator.
     Theta(ThetaAcc),
     /// Tajima's D accumulator.
@@ -244,6 +257,7 @@ impl StatAcc {
             Self::Pi(acc) => acc.push(row, all_variant),
             Self::Dxy(acc) => acc.push(row, all_variant),
             Self::Fst(acc) => acc.push(row),
+            Self::FstGlobal(acc) => acc.push(row),
             Self::Pbs(acc) => acc.push(row),
             Self::Sfs(acc) => acc.push(row),
             Self::Theta(acc) => acc.push(row),
@@ -267,6 +281,7 @@ impl StatAcc {
             (Self::Pi(a), Self::Pi(b)) => a.merge(b),
             (Self::Dxy(a), Self::Dxy(b)) => a.merge(b),
             (Self::Fst(a), Self::Fst(b)) => a.merge(b),
+            (Self::FstGlobal(a), Self::FstGlobal(b)) => a.merge(b),
             (Self::Pbs(a), Self::Pbs(b)) => a.merge(b),
             (Self::Sfs(a), Self::Sfs(b)) => a.merge(b),
             (Self::Theta(a), Self::Theta(b)) => a.merge(b),
@@ -290,6 +305,7 @@ impl StatAcc {
                 acc.value_accessible_bp(window_bp)
             }
             (Self::Fst(acc), StatKind::Fst { kind, .. }) => acc.value(*kind),
+            (Self::FstGlobal(acc), StatKind::FstGlobal) => acc.value(),
             (Self::Pbs(acc), StatKind::Pbs { kind, .. }) => acc.value(*kind),
             (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => acc.value_total(),
             (Self::Theta(acc), StatKind::ThetaW { per_bp: true, .. }) => {
@@ -350,6 +366,15 @@ impl StatAcc {
         }
     }
 
+    /// Global-Fst columns: `(value, no_snps)` (`PREFIX_fst_global.txt`).
+    #[must_use]
+    pub fn fst_global_columns(&self, kind: &StatKind) -> Option<(Option<f64>, u64)> {
+        match (self, kind) {
+            (Self::FstGlobal(acc), StatKind::FstGlobal) => Some((acc.value(), acc.site_tally().0)),
+            _ => None,
+        }
+    }
+
     /// pixy `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev,
     /// no_sites)`. The values are `None` where the denominator is undefined
     /// (pixy prints `NA` there); the site count is always present.
@@ -406,6 +431,7 @@ impl StatAcc {
             Self::Pi(_) => "pi",
             Self::Dxy(_) => "dxy",
             Self::Fst(_) => "fst",
+            Self::FstGlobal(_) => "fst",
             Self::Pbs(_) => "pbs",
             Self::Sfs(_) => "sfs",
             Self::Theta(_) => "theta",
@@ -419,6 +445,7 @@ fn kind_key_family(kind: &StatKind) -> &'static str {
         StatKind::Pi { .. } => "pi",
         StatKind::Dxy { .. } => "dxy",
         StatKind::Fst { .. } => "fst",
+        StatKind::FstGlobal => "fst",
         StatKind::Pbs { .. } => "pbs",
         StatKind::Sfs { .. } => "sfs",
         StatKind::ThetaW { .. } => "theta",

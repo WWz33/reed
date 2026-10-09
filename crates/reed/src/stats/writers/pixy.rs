@@ -70,6 +70,14 @@ pub fn write(
         ),
         None => String::new(),
     };
+    // Global (r-population) WC84 Fst: one row per window, `pops` = the
+    // comma-joined population names (docs/rounds/v5/05 §3.2).
+    let pops_cell = group_names.join(",");
+    let mut fst_global_rows = if kinds.iter().any(|k| matches!(k, StatKind::FstGlobal)) {
+        String::from("pops\tchromosome\twindow_pos_1\twindow_pos_2\tavg_wc_fst\tno_snps\n")
+    } else {
+        String::new()
+    };
     let variant_only = pixy.invariant == InvariantMode::VariantOnly;
     for row in &report.windows {
         for (kind, acc) in kinds.iter().zip(&row.accs) {
@@ -166,6 +174,20 @@ pub fn write(
                         row.contig, row.start1, row.end0
                     );
                 }
+                StatKind::FstGlobal => {
+                    let Some((value, no_snps)) = acc.fst_global_columns(kind) else {
+                        continue;
+                    };
+                    let cell = match value {
+                        Some(v) => format!("{v}"),
+                        None => "NA".to_string(),
+                    };
+                    let _ = writeln!(
+                        fst_global_rows,
+                        "{pops_cell}\t{}\t{}\t{}\t{cell}\t{no_snps}",
+                        row.contig, row.start1, row.end0
+                    );
+                }
                 StatKind::Pbs { a, b, c, .. } => {
                     let Some((value, no_snps, (f_ab, f_ac, f_bc))) = acc.pbs_columns(kind) else {
                         continue;
@@ -223,6 +245,11 @@ pub fn write(
     if kinds.iter().any(|k| matches!(k, StatKind::TajimaD { .. })) {
         let path = with_suffix(prefix, "_tajima_d.txt");
         std::fs::write(&path, tajima_rows)?;
+        written.push(path);
+    }
+    if kinds.iter().any(|k| matches!(k, StatKind::FstGlobal)) {
+        let path = with_suffix(prefix, "_fst_global.txt");
+        std::fs::write(&path, fst_global_rows)?;
         written.push(path);
     }
     let log = format!(
