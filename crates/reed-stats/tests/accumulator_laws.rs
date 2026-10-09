@@ -1,4 +1,4 @@
-//! Accumulator laws (`docs/architecture-spec.md` §8.4), proptest-locked for
+//! Accumulator laws (`docs/spec/architecture.md` §8.4), proptest-locked for
 //! every statistic family: identity, associativity and split-invariance —
 //! integer components exactly, float components within 4 ulp.
 

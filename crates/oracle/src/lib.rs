@@ -1,6 +1,6 @@
 //! `reed-core`: canonical population-genetics statistics.
 //!
-//! Design (see `reed/DESIGN.md`):
+//! Design (see `reed/docs/rounds/v1/design.md`):
 //!
 //! - L2: [`WindowBuffer`] materialises decoded genotypes for one window.
 //! - L3: estimators are sealed definitions (formula + denominator + missing-data

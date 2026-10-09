@@ -1,4 +1,4 @@
-//! Bounded reorder buffer (`docs/architecture-spec.md` §7.4).
+//! Bounded reorder buffer (`docs/spec/architecture.md` §7.4).
 //!
 //! In-flight chunk ids form a contiguous window `[expected, expected +
 //! capacity)`, so a fixed ring indexed by `id % capacity` suffices — the

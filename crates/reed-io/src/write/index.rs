@@ -1,4 +1,4 @@
-//! Index writing (`doc_v2/03-architecture.md` §5): CSI (default, min_shift
+//! Index writing (`docs/rounds/v2/03-architecture.md` §5): CSI (default, min_shift
 //! 14 / depth 6 so every VCF-legal position is covered) or TBI (positions
 //! ≥ 2^29 are refused).
 

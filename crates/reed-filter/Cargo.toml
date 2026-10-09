@@ -1,6 +1,6 @@
 [package]
 name = "reed-filter"
-description = "Streaming hard-filter engine for reed (policy layer over reed-io transport; fidelity-preserving; see docs/filter-architecture.md)."
+description = "Streaming hard-filter engine for reed (policy layer over reed-io transport; fidelity-preserving; see docs/spec/filter.md)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

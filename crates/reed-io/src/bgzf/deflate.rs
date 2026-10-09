@@ -1,4 +1,4 @@
-//! libdeflate-based BGZF block compression (`docs/architecture-spec.md`
+//! libdeflate-based BGZF block compression (`docs/spec/architecture.md`
 //! §6.6): one call produces one complete BGZF member.
 
 // Casts in this file are bounded by construction: BGZF blocks are at most 65,536 bytes by construction.

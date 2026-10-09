@@ -1,4 +1,4 @@
-//! Site identity and classification (`docs/architecture-spec.md` §5.7).
+//! Site identity and classification (`docs/spec/architecture.md` §5.7).
 
 use bitflags::bitflags;
 

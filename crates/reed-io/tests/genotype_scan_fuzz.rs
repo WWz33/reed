@@ -1,5 +1,5 @@
 //! Randomized robustness test for the unified decoder
-//! (`doc_v2/03-architecture.md` §3.4: "fuzz 目标改为它").
+//! (`docs/rounds/v2/03-architecture.md` §3.4: "fuzz 目标改为它").
 //!
 //! The scanner must never panic on adversarial sample regions: every input
 //! either decodes or returns an error. Valid-but-unusual inputs (multi-digit

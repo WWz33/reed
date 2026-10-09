@@ -1,4 +1,4 @@
-//! Named population groups over sample masks (`docs/architecture-spec.md` §5.5).
+//! Named population groups over sample masks (`docs/spec/architecture.md` §5.5).
 //!
 //! Supersedes the legacy `PopulationView` (which required a complete,
 //! non-overlapping partition): groups here are named, may overlap (e.g. an

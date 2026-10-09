@@ -1,4 +1,4 @@
-//! The per-record pipeline (`doc_v2/03-architecture.md` §8): **the single
+//! The per-record pipeline (`docs/rounds/v2/03-architecture.md` §8): **the single
 //! implementation of "head → decode → mask → count → tail"**.
 //!
 //! Both pass strategies call [`RecordPipeline::process`]; they differ only in

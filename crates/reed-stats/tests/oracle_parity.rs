@@ -1,6 +1,6 @@
 //! Oracle parity (M4 acceptance gate): the reed-stats accumulators against
 //! the frozen v0.2 estimator loop on random windows — integer components
-//! exact, floats within 1e-12 (`docs/architecture-spec.md` milestone M4).
+//! exact, floats within 1e-12 (`docs/spec/architecture.md` milestone M4).
 
 use reed_core::count::SiteGroupCounts;
 use reed_oracle::estimators::dxy::{dxy, DxyEstimator};

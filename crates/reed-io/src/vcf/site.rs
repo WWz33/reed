@@ -1,4 +1,4 @@
-//! Site-level record view (`doc_v2/03-architecture.md` §3.2): CHROM resolved
+//! Site-level record view (`docs/rounds/v2/03-architecture.md` §3.2): CHROM resolved
 //! through a contig table with a last-hit cache, POS, REF/ALT, QUAL, FILTER
 //! and zero-allocation INFO lookups.
 //!

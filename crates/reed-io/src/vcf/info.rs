@@ -1,4 +1,4 @@
-//! INFO fragment iteration (`docs/architecture-spec.md` §6.4).
+//! INFO fragment iteration (`docs/spec/architecture.md` §6.4).
 //!
 //! Typed access by `TagId` lands with the header tag dictionary (M5 filter
 //! head predicates); for now this is the zero-copy fragment view.

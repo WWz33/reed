@@ -1,5 +1,5 @@
 //! `FilterSpec::to_args`: the inverse of the CLI translation
-//! (`doc_v2/03-architecture.md` §8, `spec/render.rs`).
+//! (`docs/rounds/v2/03-architecture.md` §8, `spec/render.rs`).
 //!
 //! Round trip: `to_args()` renders a spec as the flag vector that
 //! `reed-cli`'s `spec_from_flags` parses back into the same spec. Two spec

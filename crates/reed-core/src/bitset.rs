@@ -1,4 +1,4 @@
-//! Fixed-length bit set over `u64` words (`docs/architecture-spec.md` §5.3).
+//! Fixed-length bit set over `u64` words (`docs/spec/architecture.md` §5.3).
 //!
 //! Supersedes the legacy [`crate::bits::Bits`] with word-level operations so
 //! counting kernels can combine masks and planes without per-bit loops.

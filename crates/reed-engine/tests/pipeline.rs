@@ -1,4 +1,4 @@
-//! Engine acceptance tests (`docs/architecture-spec.md` §19 M3): ordered
+//! Engine acceptance tests (`docs/spec/architecture.md` §19 M3): ordered
 //! reduction under arbitrary worker completion order, panic containment,
 //! abort, memory-budget enforcement, seam chain-stitching, and thread-count
 //! invariance.

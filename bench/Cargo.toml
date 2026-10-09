@@ -1,5 +1,5 @@
 [workspace]
-members = ["hts", "noo"]
+members = ["suites/vs-htslib", "suites/vs-noodles"]
 resolver = "2"
 
 [workspace.package]

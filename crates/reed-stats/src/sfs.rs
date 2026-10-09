@@ -1,5 +1,5 @@
 //! Site frequency spectrum over complete-case sites
-//! (`docs/architecture-spec.md` §9.4, the oracle's `CompleteCase` semantics;
+//! (`docs/spec/architecture.md` §9.4, the oracle's `CompleteCase` semantics;
 //! the projected estimator is M7).
 
 // Casts in this file are bounded by construction: Sample counts and SFS bins fit the accumulator dimensions.

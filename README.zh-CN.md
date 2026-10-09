@@ -17,7 +17,7 @@
 | `reed index` | CSI（默认）或 TBI | `bcftools index` |
 
 参数以 `reed <命令> --help` 为准；完整规范见合并版 CLI 文档
-（`doc_v5/02-cli.md`，搬迁后为 `docs/spec/cli.md`）。
+（`docs/rounds/v5/02-cli.md`，搬迁后为 `docs/spec/cli.md`）。
 
 ```bash
 # 全位点输入的窗口统计，56 线程
@@ -63,7 +63,7 @@ ci/       漂移守卫与 CI 入口
 ```bash
 cargo test --release --workspace
 cargo build --release --workspace --all-targets
-bash scripts/check-doc-drift.sh
+bash ci/check-doc-drift.sh
 ```
 
 ## 许可

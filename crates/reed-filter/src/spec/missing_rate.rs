@@ -1,4 +1,4 @@
-//! The missing-rate threshold type (`doc_v4/02-cli-semantics.md` 回退版 §1,
+//! The missing-rate threshold type (`docs/rounds/v4/02-cli-semantics.md` 回退版 §1,
 //! §4).
 //!
 //! `--geno X` / `--mind X` are upper bounds on the **missing** fraction

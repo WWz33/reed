@@ -1,4 +1,4 @@
-//! Sample table and sample masks (`docs/architecture-spec.md` §5.3).
+//! Sample table and sample masks (`docs/spec/architecture.md` §5.3).
 
 use crate::bitset::Bitset;
 use crate::error::CoreError;
@@ -58,7 +58,7 @@ impl SampleTable {
 /// Which samples are selected, indexed by header sample order.
 ///
 /// The length always equals the sample count: there is no implicit
-/// "shorter mask keeps the rest" default (`docs/architecture-spec.md` §5.3,
+/// "shorter mask keeps the rest" default (`docs/spec/architecture.md` §5.3,
 /// fixing legacy issue A13). The word "keep" is reserved for sample-level
 /// retention; genotype-level missingness uses "mask".
 #[derive(Clone, Debug, PartialEq, Eq)]

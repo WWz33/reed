@@ -1,4 +1,4 @@
-//! The sketch path's mid stage (`doc_v2/03-architecture.md` §8, §11.4):
+//! The sketch path's mid stage (`docs/rounds/v2/03-architecture.md` §8, §11.4):
 //! per-chunk sketches → per-site counts (keep ∧ planes), tail rules, mask
 //! attribution and the survivor's emit data.
 

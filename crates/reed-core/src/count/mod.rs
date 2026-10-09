@@ -1,4 +1,4 @@
-//! Per-site, per-group integer counts (`docs/architecture-spec.md` §5.6).
+//! Per-site, per-group integer counts (`docs/spec/architecture.md` §5.6).
 //!
 //! [`SiteGroupCounts`] is the single shared input of every statistic: π,
 //! dxy, Fst, PBS, SFS, θ, Tajima's D, f-statistics and HWE all derive from
@@ -57,7 +57,7 @@ impl SiteGroupCounts {
 
     /// Adds one decoded genotype: the [`GtCode`](crate::genotype::GtCode)
     /// twin of [`count_site_group`] for the consumers that decode codes
-    /// directly (doc_v2/03 §3.3).
+    /// directly (docs/rounds/v2/03 §3.3).
     pub fn add_code(&mut self, code: crate::genotype::GtCode) {
         let (s0, s1) = (code.slot_state(0), code.slot_state(1));
         let alt = u32::from(s0 == crate::genotype::STATE_ALT) + u32::from(s1 == crate::genotype::STATE_ALT);

@@ -1,4 +1,4 @@
-//! Format detection by magic bytes (`docs/architecture-spec.md` §6.1).
+//! Format detection by magic bytes (`docs/spec/architecture.md` §6.1).
 //!
 //! Extension names are only for naming outputs; the bytes decide how to
 //! read. The caller hands over the first BGZF/gzip block's raw bytes and,

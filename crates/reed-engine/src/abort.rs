@@ -1,4 +1,4 @@
-//! Abortion and first-error capture (`docs/architecture-spec.md` §7.5).
+//! Abortion and first-error capture (`docs/spec/architecture.md` §7.5).
 //!
 //! One close-on-drop channel: recording the first error triggers abort, and
 //! every blocking point in the engine selects on the abort signal, so a

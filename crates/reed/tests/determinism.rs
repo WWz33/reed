@@ -1,4 +1,4 @@
-//! Determinism gate (`docs/architecture-spec.md` §19 M3): the reports +
+//! Determinism gate (`docs/spec/architecture.md` §19 M3): the reports +
 //! summary pass over the same BGZF input must produce byte-identical output
 //! for every thread count (§7.6 rule 6).
 

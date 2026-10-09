@@ -1,4 +1,4 @@
-//! Binned window accumulation (`docs/architecture-spec.md` §8.5): a `Bp`
+//! Binned window accumulation (`docs/spec/architecture.md` §8.5): a `Bp`
 //! grid is cut into bins of width `w = gcd(size, step)`, keyed by the
 //! *absolute* bin index `pos0 / w` so chunks accumulate independently
 //! without anchor negotiation. Each site is pushed into exactly one bin's

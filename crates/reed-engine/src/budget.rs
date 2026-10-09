@@ -1,4 +1,4 @@
-//! Resource budgets (`docs/architecture-spec.md` §7.3, §7.7).
+//! Resource budgets (`docs/spec/architecture.md` §7.3, §7.7).
 
 use std::path::Path;
 

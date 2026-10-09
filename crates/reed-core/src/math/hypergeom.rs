@@ -1,4 +1,4 @@
-//! Hypergeometric projection weights for the SFS (`docs/architecture-spec.md`
+//! Hypergeometric projection weights for the SFS (`docs/spec/architecture.md`
 //! §9.4).
 //!
 //! Projects the allele count of a site with `m` called alleles onto a fixed

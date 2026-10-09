@@ -1,4 +1,4 @@
-//! The statistics drivers (`doc_v2/03-architecture.md` §8): the chunk-parallel
+//! The statistics drivers (`docs/rounds/v2/03-architecture.md` §8): the chunk-parallel
 //! job plus the output writers (pixy layout, plink2/vcftools reports, the
 //! bcftools-stats QC summary).
 //!

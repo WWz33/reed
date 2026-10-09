@@ -1,8 +1,8 @@
-//! Neumaier compensated summation (`docs/architecture-spec.md` §9.10).
+//! Neumaier compensated summation (`docs/spec/architecture.md` §9.10).
 //!
 //! All floating-point accumulation in statistics goes through this type so
 //! that merging partial sums stays deterministic to the last bit regardless
-//! of chunk boundaries (`docs/architecture-spec.md` §7.6).
+//! of chunk boundaries (`docs/spec/architecture.md` §7.6).
 
 /// Neumaier (improved Kahan) compensated sum.
 ///

@@ -1,4 +1,4 @@
-//! Worker-local BGZF block writer (`doc_v2/03-architecture.md` §5).
+//! Worker-local BGZF block writer (`docs/rounds/v2/03-architecture.md` §5).
 //!
 //! Block boundaries are independent of record boundaries, exactly like
 //! htslib: records are appended to a pending buffer and cut whenever it

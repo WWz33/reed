@@ -1,4 +1,4 @@
-//! Genotype bit planes (`docs/architecture-spec.md` §5.4).
+//! Genotype bit planes (`docs/spec/architecture.md` §5.4).
 //!
 //! One diploid genotype is 4 bits of state, stored as four per-sample planes:
 //! `slot0_alt`, `slot0_miss`, `slot1_alt`, `slot1_miss` (plus an optional
@@ -166,7 +166,7 @@ impl PlaneBlock {
     }
 
     /// Writes one record's codes (one per sample, in sample order) into the
-    /// planes of `site` (`docs/architecture-spec.md` §3.3: the one linear
+    /// planes of `site` (`docs/spec/architecture.md` §3.3: the one linear
     /// conversion from codes to bit planes).
     ///
     /// # Panics

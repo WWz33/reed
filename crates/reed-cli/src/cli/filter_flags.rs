@@ -49,7 +49,7 @@ pub(crate) fn unsupported_stats_mind(_text: &str) -> Result<String, String> {
     )
 }
 
-/// Region selection (`doc_v2/02-cli.md` §2): indexed and streamed regions.
+/// Region selection (`docs/rounds/v2/02-cli.md` §2): indexed and streamed regions.
 #[derive(Args, Clone, Debug, Default)]
 pub(crate) struct RegionArgs {
     /// Regions to keep, comma-separated (`Chr01`, `Chr01:100-200`);
@@ -67,7 +67,7 @@ pub(crate) struct RegionArgs {
     pub targets_file: Option<String>,
 }
 
-/// Sample selection (`doc_v2/02-cli.md` §3): keep and remove lists.
+/// Sample selection (`docs/rounds/v2/02-cli.md` §3): keep and remove lists.
 #[derive(Args, Clone, Debug, Default)]
 pub(crate) struct SampleArgs {
     /// Samples to keep: comma-separated names; `^` prefix excludes

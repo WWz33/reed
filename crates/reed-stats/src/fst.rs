@@ -1,6 +1,6 @@
 //! Between-group Fst: Hudson (1992) as Bhatia et al. 2013's ratio of sums
 //! and Weir & Cockerham (1984) variance components
-//! (`doc_v2/04-algorithms.md` §3). The components follow scikit-allel, which
+//! (`docs/rounds/v2/04-algorithms.md` §3). The components follow scikit-allel, which
 //! pixy calls, and are verified against pixy 2.2.4 in `gold/popgen`. Nei 1986
 //! is not implemented (04 §1).
 

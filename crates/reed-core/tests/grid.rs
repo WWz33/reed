@@ -1,5 +1,5 @@
 //! Grid integration properties: windows and bins agree with each other and
-//! with the legacy anchoring (`docs/architecture-spec.md` §19 M1, grid half).
+//! with the legacy anchoring (`docs/spec/architecture.md` §19 M1, grid half).
 
 use proptest::prelude::*;
 

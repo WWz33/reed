@@ -1,4 +1,4 @@
-//! The single-pass strategy (`doc_v2/03-architecture.md` §8): one chunk
+//! The single-pass strategy (`docs/rounds/v2/03-architecture.md` §8): one chunk
 //! pipeline that runs the shared record pipeline per line and edits+writes
 //! the survivors through a worker-local [`BlockWriter`].
 

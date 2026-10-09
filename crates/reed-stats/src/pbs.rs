@@ -1,5 +1,5 @@
 //! Population branch statistic (PBS) among three groups
-//! (`docs/architecture-spec.md` §9.3): three Hudson pairs, window Fst
+//! (`docs/spec/architecture.md` §9.3): three Hudson pairs, window Fst
 //! clipped to allel's `[0, 0.99999]` before the log transform.
 
 use reed_core::count::SiteGroupCounts;

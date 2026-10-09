@@ -1,5 +1,5 @@
 //! BGZF block primitives: header parsing, libdeflate inflate/deflate
-//! (`docs/architecture-spec.md` §6.2, §6.6).
+//! (`docs/spec/architecture.md` §6.2, §6.6).
 
 pub mod block;
 pub mod deflate;

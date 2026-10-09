@@ -1,7 +1,7 @@
 //! Streaming hard-filter engine for reed (policy layer; transport and I/O
 //! live in reed-io).
 //!
-//! Architecture: `docs/filter-architecture.md`. Gold standard and parity gate: `gold/`.
+//! Architecture: `docs/spec/filter.md`. Gold standard and parity gate: `gold/`.
 //!
 //! Layers:
 //! - [`spec`]: the sealed filter spec (value type; `compat` mirrors the gold pipeline config)

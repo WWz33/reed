@@ -1,6 +1,6 @@
 [package]
 name = "reed-oracle"
-description = "Frozen reed-core 0.2 implementation, kept as a differential-testing oracle during the architecture migration (docs/architecture-spec.md §16.2). Never publish."
+description = "Frozen reed-core 0.2 implementation, kept as a differential-testing oracle during the architecture migration (docs/spec/architecture.md §16.2). Never publish."
 version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"

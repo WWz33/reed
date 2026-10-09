@@ -131,7 +131,7 @@ impl SketchFragment {
 }
 
 /// Post-mask per-site counts derived from the sketch planes
-/// (`docs/architecture-spec.md` §11.4 mid stage). Identical by
+/// (`docs/spec/architecture.md` §11.4 mid stage). Identical by
 /// construction to a SinglePass recount over `keep ∧ ¬mask` samples.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SketchCounts {

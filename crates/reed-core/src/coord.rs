@@ -1,4 +1,4 @@
-//! Coordinates (`docs/architecture-spec.md` §5.2).
+//! Coordinates (`docs/spec/architecture.md` §5.2).
 //!
 //! Internal computation uses 0-based half-open intervals ([`Pos0`],
 //! [`Interval0`]); VCF text, user regions, error messages and TSV output use

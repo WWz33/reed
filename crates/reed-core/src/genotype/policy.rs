@@ -1,4 +1,4 @@
-//! Explicit input policies (`docs/architecture-spec.md` §5.4).
+//! Explicit input policies (`docs/spec/architecture.md` §5.4).
 //!
 //! Every policy exists so that reed never silently drops, keeps or rewrites
 //! input: an unsupported genotype either errors (the conservative default)

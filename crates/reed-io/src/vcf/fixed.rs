@@ -1,4 +1,4 @@
-//! Fixed-column fast parsers (`docs/architecture-spec.md` §6.4): POS is a
+//! Fixed-column fast parsers (`docs/spec/architecture.md` §6.4): POS is a
 //! hand-written decimal; QUAL uses std float parsing; FILTER is a byte
 //! comparison.
 

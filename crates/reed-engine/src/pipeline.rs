@@ -1,4 +1,4 @@
-//! The chunk pipeline skeleton (`docs/architecture-spec.md` §7.1–§7.6):
+//! The chunk pipeline skeleton (`docs/spec/architecture.md` §7.1–§7.6):
 //! reader → bounded chunk channel (ticket window) → worker pool (fused
 //! inflate + job) → ordered reducer with seam chain-stitching.
 //!
@@ -41,7 +41,7 @@ pub struct ChunkOutput<P> {
     pub tail: Option<Vec<u8>>,
 }
 
-/// A fused chunk computation (`docs/architecture-spec.md` §7.1).
+/// A fused chunk computation (`docs/spec/architecture.md` §7.1).
 ///
 /// `run_chunk` receives the chunk's complete-record bytes (head fragment
 /// excluded); `run_seam` receives one chain-stitched seam record. Partials
@@ -128,7 +128,7 @@ pub struct RunReport {
 }
 
 /// Runs the pipeline: source → workers → ordered sink, honoring budgets and
-/// abort (`docs/architecture-spec.md` §7.1).
+/// abort (`docs/spec/architecture.md` §7.1).
 ///
 /// Determinism contract (§7.6): chunk boundaries come from the input only;
 /// partials merge strictly in chunk order; seam records are stitched in

@@ -1,5 +1,5 @@
 //! M5 acceptance tests: the three strategy/shape gates from
-//! `docs/architecture-spec.md` §11.4 — SinglePass ≡ TwoPassReparse byte
+//! `docs/spec/architecture.md` §11.4 — SinglePass ≡ TwoPassReparse byte
 //! equality, spec validation at compile time, and compat ≡ TOML.
 
 use std::io::Write;

@@ -1,5 +1,5 @@
 //! Field plans: which columns a pass needs decoded
-//! (`docs/architecture-spec.md` §6.3). Columns outside the plan are never
+//! (`docs/spec/architecture.md` §6.3). Columns outside the plan are never
 //! parsed — the head predicates of a filter never touch the sample region.
 
 use bitflags::bitflags;

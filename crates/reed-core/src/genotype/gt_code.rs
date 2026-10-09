@@ -1,5 +1,5 @@
 //! [`GtCode`]: one byte per sample, the single genotype representation every
-//! consumer decodes to (`docs/architecture-spec.md` §3.3 of doc_v2/03).
+//! consumer decodes to (`docs/spec/architecture.md` §3.3 of docs/rounds/v2/03).
 //!
 //! Layout: the low four bits are `slot0_state | slot1_state << 2` with
 //! 0 = REF, 1 = ALT, 2 = missing (9 of the 16 states occur); bit 4 is the

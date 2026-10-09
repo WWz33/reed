@@ -1,4 +1,4 @@
-//! The run report (`doc_v2/03-architecture.md` §8, §11.5): funnel stages and
+//! The run report (`docs/rounds/v2/03-architecture.md` §8, §11.5): funnel stages and
 //! mask attribution. Printing lives in the CLI (doc_v4 03 §3.3).
 
 use reed_filter::funnel::{FunnelPartial, FunnelStage, MaskedBy};

@@ -1,5 +1,5 @@
 //! `reed-engine` (L2): the parallel execution base
-//! (`docs/architecture-spec.md` §7). Policy crates never touch threads; the
+//! (`docs/spec/architecture.md` §7). Policy crates never touch threads; the
 //! facade wraps their pure logic into [`pipeline::ChunkJob`] and
 //! [`pipeline::OrderedSink`] and calls [`pipeline::run`].
 

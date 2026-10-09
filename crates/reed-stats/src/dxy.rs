@@ -1,4 +1,4 @@
-//! Between-group absolute divergence dxy (`docs/architecture-spec.md` §9.1).
+//! Between-group absolute divergence dxy (`docs/spec/architecture.md` §9.1).
 
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::sum::NeumaierSum;

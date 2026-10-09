@@ -8,7 +8,7 @@
 pub const BGZF_HEADER_LEN: usize = 18;
 
 /// Maximum uncompressed data per BGZF block, matching bgzip
-/// (`docs/architecture-spec.md` §6.6).
+/// (`docs/spec/architecture.md` §6.6).
 pub const BGZF_MAX_BLOCK_DATA: usize = 65_280;
 
 /// Safe upper bound for inflating one block (htslib uses 64 KiB buffers).

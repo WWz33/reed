@@ -28,7 +28,7 @@ pub enum InfoValueOut {
     Float(f32),
 }
 
-/// What to change on one line (`docs/architecture-spec.md` §6.7).
+/// What to change on one line (`docs/spec/architecture.md` §6.7).
 #[derive(Default)]
 pub struct EditPlan<'a> {
     /// `None` = keep every sample column.

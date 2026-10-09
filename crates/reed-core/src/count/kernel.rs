@@ -1,4 +1,4 @@
-//! Popcount counting kernel (`docs/architecture-spec.md` §5.6).
+//! Popcount counting kernel (`docs/spec/architecture.md` §5.6).
 //!
 //! Computes all genotype/allele counts of one (site, group) pair from the bit
 //! planes with AND/XOR/NOT plus population counts — no per-sample loop.

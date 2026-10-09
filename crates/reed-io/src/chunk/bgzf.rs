@@ -1,4 +1,4 @@
-//! BGZF chunk reader: the serial reader of BAPP (`docs/architecture-spec.md`
+//! BGZF chunk reader: the serial reader of BAPP (`docs/spec/architecture.md`
 //! §6.2). It only parses 18-byte block headers — no inflation — and cuts
 //! chunks at block boundaries once the compressed target is reached.
 

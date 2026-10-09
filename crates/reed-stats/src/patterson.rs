@@ -1,4 +1,4 @@
-//! Patterson f-statistics (`docs/architecture-spec.md` §9.5): the
+//! Patterson f-statistics (`docs/spec/architecture.md` §9.5): the
 //! Patterson (2012) unbiased estimators as implemented by scikit-allel's
 //! `admixture.py` (MIT), in `Corrected` and `Naive` sealed definitions.
 //! All accumulators carry per-site (numerator, denominator) sums so the

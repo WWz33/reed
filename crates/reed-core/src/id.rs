@@ -1,4 +1,4 @@
-//! Strong identifier newtypes (`docs/architecture-spec.md` §5.1).
+//! Strong identifier newtypes (`docs/spec/architecture.md` §5.1).
 //!
 //! Every identifier is a dense index into a table that lives elsewhere
 //! (`ContigTable`, `SampleTable`, `GroupTable`, the header tag dictionary, the

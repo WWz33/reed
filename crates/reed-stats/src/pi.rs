@@ -1,4 +1,4 @@
-//! Nucleotide diversity π (`docs/architecture-spec.md` §9.1), the exact
+//! Nucleotide diversity π (`docs/spec/architecture.md` §9.1), the exact
 //! accumulators behind the oracle's `estimators::pi`.
 
 use reed_core::count::SiteGroupCounts;

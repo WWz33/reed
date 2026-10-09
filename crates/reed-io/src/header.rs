@@ -1,5 +1,5 @@
 //! VCF header reading: the header text is parsed by noodles (per
-//! `docs/architecture-spec.md` §6.4), and [`HeaderFacts`] exposes what the
+//! `docs/spec/architecture.md` §6.4), and [`HeaderFacts`] exposes what the
 //! field plans and the output layer need.
 
 use crate::error::IoError;

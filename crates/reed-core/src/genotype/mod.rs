@@ -2,7 +2,7 @@
 //!
 //! All consumers (statistics, filtering, QC) share this one decoder so that
 //! half calls, haploid genotypes and multi-allelic sites mean the same thing
-//! everywhere (`docs/architecture-spec.md` §5.4, fixing legacy issue A6).
+//! everywhere (`docs/spec/architecture.md` §5.4, fixing legacy issue A6).
 //! [`GtCode::from_alleles`] is the only place the policies execute;
 //! [`write_genotype`] is the plane-writing adapter on top of it.
 

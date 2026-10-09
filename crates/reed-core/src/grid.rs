@@ -1,4 +1,4 @@
-//! Window grids and binning (`docs/architecture-spec.md` §5.9, §8.5).
+//! Window grids and binning (`docs/spec/architecture.md` §5.9, §8.5).
 //!
 //! `Bp` windows keep the legacy anchoring exactly: the first window starts at
 //! `(first_pos / step) · step`, windows advance by `step`, the last window
@@ -213,7 +213,7 @@ impl RegionSet {
 }
 
 /// Accessibility mask: the callable/accessible regions of a genome
-/// (`DESIGN.md` §12.1); makes `AccessibleBp` denominators use covered bp.
+/// (`docs/rounds/v1/design.md` §12.1); makes `AccessibleBp` denominators use covered bp.
 #[derive(Clone, Debug, Default)]
 pub struct AccessibilityMask(pub Arc<RegionSet>);
 

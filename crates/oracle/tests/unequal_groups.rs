@@ -2,7 +2,7 @@
 //! data** — the regime where per-site normalisation (allel semantics) and
 //! pooled ratios diverge. Reference values generated with scikit-allel
 //! 1.3.13 (`default_rng(42)` / `default_rng(7)`, scripts preserved in the
-//! DESIGN.md §12 workflow); embedded verbatim.
+//! docs/rounds/v1/design.md §12 workflow); embedded verbatim.
 //!
 //! These tests were added after a three-agent audit caught the original
 //! Hudson/WC84 implementations agreeing with allel only in the degenerate

@@ -1,4 +1,4 @@
-//! Statistics requests (`docs/architecture-spec.md` §8.1–§8.2): the sealed
+//! Statistics requests (`docs/spec/architecture.md` §8.1–§8.2): the sealed
 //! set of `(statistic, estimator, groups)` triples and the matching sealed
 //! accumulator union — static dispatch, no `dyn`. [`build_accs`] validates
 //! every request up front (group bounds, distinctness, chromosome counts),

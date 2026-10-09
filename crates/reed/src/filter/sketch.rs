@@ -1,4 +1,4 @@
-//! The sketch path's pass0 (`doc_v2/03-architecture.md` §8, §11.4):
+//! The sketch path's pass0 (`docs/rounds/v2/03-architecture.md` §8, §11.4):
 //! head rules → per-sample GT planes + per-rule mask bitmaps (head
 //! survivors) + per-sample post-mask called-allele counts over head
 //! survivors (`--mind`'s vcftools semantics, doc_v4 02 回退版 §3.2).

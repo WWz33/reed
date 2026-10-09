@@ -1,4 +1,4 @@
-//! Stage metrics (`docs/architecture-spec.md` §7.10): minimal M3 form —
+//! Stage metrics (`docs/spec/architecture.md` §7.10): minimal M3 form —
 //! aggregate counters and timings, enough for the §17.3 baseline log.
 
 use std::time::Duration;

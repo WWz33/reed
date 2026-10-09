@@ -1,4 +1,4 @@
-//! `run_stats`: the L4 statistics driver (`docs/architecture-spec.md` §8).
+//! `run_stats`: the L4 statistics driver (`docs/spec/architecture.md` §8).
 //! Chunk workers count genotypes straight from the VCF text into per-bin
 //! additive accumulators ([`reed_stats::window::ContigBins`]); the ordered
 //! sink merges chunk partials in input order, emits each window as soon as
@@ -968,7 +968,7 @@ impl StatsSink {
     }
 }
 
-/// Runs windowed statistics over a BGZF VCF (`docs/architecture-spec.md`
+/// Runs windowed statistics over a BGZF VCF (`docs/spec/architecture.md`
 /// milestone M4: the full 3-population statistic set).
 ///
 /// # Errors

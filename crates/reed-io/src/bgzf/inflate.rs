@@ -1,5 +1,5 @@
 //! libdeflate-based BGZF block decompression with worker-local reuse
-//! (`docs/architecture-spec.md` §6.2).
+//! (`docs/spec/architecture.md` §6.2).
 
 use crate::bgzf::block::{parse_block_size, BGZF_INFLATE_MAX};
 use crate::error::IoError;

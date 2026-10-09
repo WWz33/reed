@@ -1,4 +1,4 @@
-//! [`GenotypeScanner`]: the one record decoder (`doc_v2/03-architecture.md`
+//! [`GenotypeScanner`]: the one record decoder (`docs/rounds/v2/03-architecture.md`
 //! §3.4). One pass over the sample region produces a [`GtCode`] per sample
 //! plus the planned integer/float FORMAT columns; the genotype policies
 //! execute here and only here, and every buffer is reused across records

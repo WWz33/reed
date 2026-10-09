@@ -1,5 +1,5 @@
 //! `reed-stats` (L3): population-genetics statistics as additive
-//! accumulators over per-site group counts (`docs/architecture-spec.md`
+//! accumulators over per-site group counts (`docs/spec/architecture.md`
 //! §8–§9). Every estimator is a sealed definition: the accumulator carries
 //! its formula, denominator and missing-data semantics, and `merge` is
 //! component-wise addition (exact integers, [`reed_core::math::sum::NeumaierSum`]

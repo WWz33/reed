@@ -1,4 +1,4 @@
-//! The sketch path's pass1 emit (`doc_v2/03-architecture.md` §8, §11.4):
+//! The sketch path's pass1 emit (`docs/rounds/v2/03-architecture.md` §8, §11.4):
 //! re-inflate the chunk, skip head-failed and tail-failed records with a
 //! newline scan, and edit+compress survivors from the mid-stage decisions.
 

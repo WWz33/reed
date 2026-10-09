@@ -1,4 +1,4 @@
-//! Engine errors (`doc_v2/03-architecture.md` §4.4): typed, with the original
+//! Engine errors (`docs/rounds/v2/03-architecture.md` §4.4): typed, with the original
 //! error preserved so the `source` chain survives to the caller.
 
 /// Errors from the parallel execution engine.

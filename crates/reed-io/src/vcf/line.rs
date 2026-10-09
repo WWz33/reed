@@ -1,5 +1,5 @@
 //! [`LineRef`]: a borrowed VCF record line with the byte offsets of its
-//! fixed columns (`docs/architecture-spec.md` §6.7). No allocation, no
+//! fixed columns (`docs/spec/architecture.md` §6.7). No allocation, no
 //! parsing — offsets only; the field parsers live in [`super::fixed`].
 
 /// Byte-offset view of one complete VCF record line (terminating `\n`

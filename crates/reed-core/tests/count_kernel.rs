@@ -1,7 +1,7 @@
 //! M1 acceptance: the bit-plane counting kernel must reproduce the legacy
 //! `WindowBuffer::allele_counts` / `genotype_counts` exactly, and the
 //! dispatched (possibly AVX-512) kernel must equal the scalar canonical path
-//! (`docs/architecture-spec.md` §19 M1).
+//! (`docs/spec/architecture.md` §19 M1).
 
 use proptest::prelude::*;
 

@@ -1,4 +1,4 @@
-//! Transport-layer errors with locus context (`docs/architecture-spec.md` §6,
+//! Transport-layer errors with locus context (`docs/spec/architecture.md` §6,
 //! §15). Supersedes the legacy [`crate::ReadError`] once the old window path
 //! retires.
 

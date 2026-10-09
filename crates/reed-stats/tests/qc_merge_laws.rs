@@ -1,4 +1,4 @@
-//! Accumulator laws for every reed-qc accumulator (`docs/architecture-spec.md`
+//! Accumulator laws for every reed-qc accumulator (`docs/spec/architecture.md`
 //! §8.4): identity, associativity, split invariance.
 
 use proptest::prelude::*;

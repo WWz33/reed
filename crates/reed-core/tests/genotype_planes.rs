@@ -1,6 +1,6 @@
 //! Plane-block decode invariants: the shared decoder never produces an
 //! illegal plane state, whatever the genotype mix
-//! (`docs/architecture-spec.md` §19 M1, planes half).
+//! (`docs/spec/architecture.md` §19 M1, planes half).
 
 use proptest::prelude::*;
 

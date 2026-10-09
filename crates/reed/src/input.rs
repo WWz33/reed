@@ -1,4 +1,4 @@
-//! Unified input entry (`doc_v2/03-architecture.md` §6): one open yields
+//! Unified input entry (`docs/rounds/v2/03-architecture.md` §6): one open yields
 //! the chunk source *and* the header — there is no second header-only
 //! reopen. `-` (or `None`) reads stdin.
 //!

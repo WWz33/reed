@@ -1,4 +1,4 @@
-//! Reducer-side ordered output (`doc_v2/03-architecture.md` §5).
+//! Reducer-side ordered output (`docs/rounds/v2/03-architecture.md` §5).
 //!
 //! Appends worker blocks in chunk order, tracks the compressed offset, turns
 //! each record's block-local anchor into a virtual offset, and feeds the

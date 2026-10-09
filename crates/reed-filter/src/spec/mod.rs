@@ -57,7 +57,7 @@ pub struct FilterSpec {
 
 impl FilterSpec {
     /// Whether multiallelic inputs may survive into the output
-    /// (`docs/architecture-spec.md` §11.6: `multiallelic != "reject"` or
+    /// (`docs/spec/architecture.md` §11.6: `multiallelic != "reject"` or
     /// `max_alt_alleles > 1`). When false, the filter's plan gates records
     /// with more than one ALT ([`crate::plan::HeadRule::BiallelicGate`]),
     /// and the recomputed `AC`/`MAF`/`HWE` values stay per-record valid.

@@ -1,4 +1,4 @@
-//! Block-aligned parallel parsing inputs (`docs/architecture-spec.md` §6.2).
+//! Block-aligned parallel parsing inputs (`docs/spec/architecture.md` §6.2).
 //!
 //! A chunk is a run of consecutive BGZF blocks cut at a block boundary once
 //! its compressed size reaches [`CHUNK_TARGET_COMPRESSED`]. Chunk boundaries
@@ -21,7 +21,7 @@ use crate::error::IoError;
 /// Compressed-byte target per chunk. `// determinism-relevant`: changing it
 /// changes chunk boundaries, so output could shift at the last float digit;
 /// bump the version and record an ADR before touching it
-/// (`docs/architecture-spec.md` §6.2).
+/// (`docs/spec/architecture.md` §6.2).
 pub const CHUNK_TARGET_COMPRESSED: u64 = 1 << 20; // 1 MiB
 
 /// A chunk's compressed bytes. Owned when read from a stream; a range of a
@@ -245,7 +245,7 @@ fn tail_range(text: &[u8]) -> Option<Range<usize>> {
     }
 }
 
-/// The chunk stream the engine consumes (`docs/architecture-spec.md` §7.1).
+/// The chunk stream the engine consumes (`docs/spec/architecture.md` §7.1).
 pub trait ChunkSource: Send {
     /// The next chunk, or `None` at end of stream.
     ///

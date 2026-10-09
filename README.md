@@ -20,8 +20,7 @@ BCF codecs.
 | `reed index` | CSI (default) or TBI | `bcftools index` |
 
 `reed <command> --help` is authoritative for the flags; the full parameter
-specification is the merged CLI document (`doc_v5/02-cli.md`, moving to
-`docs/spec/cli.md`).
+specification is `docs/spec/cli.md` (the merged CLI document).
 
 ```bash
 # windowed statistics over an all-sites input, 56 threads
@@ -97,7 +96,7 @@ ci/        drift guards and the CI entry point
 ```bash
 cargo test --release --workspace
 cargo build --release --workspace --all-targets
-bash scripts/check-doc-drift.sh
+bash ci/check-doc-drift.sh
 ```
 
 ## License

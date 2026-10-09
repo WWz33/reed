@@ -1,6 +1,6 @@
 //! Differential test: the unified [`GenotypeScanner`] must agree with a
 //! noodles-based reference decode on the edge-case fixture
-//! (`doc_v2/03-architecture.md` §3.4: the scanner is the one decoder, and
+//! (`docs/rounds/v2/03-architecture.md` §3.4: the scanner is the one decoder, and
 //! this test pins it).
 //!
 //! Semantic scope: the reference treats haploid calls as half calls and

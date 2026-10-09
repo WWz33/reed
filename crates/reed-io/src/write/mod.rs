@@ -1,4 +1,4 @@
-//! Output layer (`doc_v2/03-architecture.md` §5): the worker-local
+//! Output layer (`docs/rounds/v2/03-architecture.md` §5): the worker-local
 //! [`BlockWriter`], the reducer-side [`OrderedOutput`] and the index writer,
 //! shared by every command that emits VCF/BGZF.
 

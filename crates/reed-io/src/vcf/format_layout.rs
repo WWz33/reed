@@ -1,4 +1,4 @@
-//! FORMAT-string layout cache (`doc_v2/03-architecture.md` §3.2): maps a
+//! FORMAT-string layout cache (`docs/rounds/v2/03-architecture.md` §3.2): maps a
 //! FORMAT string to the subfield index of GT and of every planned field,
 //! plus the last subfield any consumer reads.
 //!

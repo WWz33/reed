@@ -1,6 +1,6 @@
 //! Hardy-Weinberg exact test (Wigginton et al. 2005) and the mid-p variant
 //! (Graffelman & Moreno 2013), with a bounded memo shared by the filter and
-//! QC consumers (`docs/architecture-spec.md` §9.6).
+//! QC consumers (`docs/spec/architecture.md` §9.6).
 //!
 //! Given `n` called diploid genotypes and `mac` minor-allele copies, the
 //! conditional probability of observing `nh` heterozygotes under random
@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-/// Memo capacity (`docs/architecture-spec.md` §13.8).
+/// Memo capacity (`docs/spec/architecture.md` §13.8).
 pub const HWE_MEMO_CAPACITY: usize = 8192;
 
 /// Normalized conditional probabilities of every valid het count, ascending

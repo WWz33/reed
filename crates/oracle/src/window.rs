@@ -1,6 +1,6 @@
 //! The window buffer: L2 materialisation of decoded genotypes.
 //!
-//! Rules encoded here (see `reed/DESIGN.md`):
+//! Rules encoded here (see `reed/docs/rounds/v1/design.md`):
 //!
 //! - `contig_len` is a first-class requirement; zero is a construction error.
 //! - v0.1 is diploid and biallelic: any allele index above 1 is rejected, never
