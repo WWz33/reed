@@ -76,7 +76,23 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | reports 两族 ≤ 3.2 s（W2 门） | **未达标（已登记）** | 实测 3.58–3.65 s（负载 18.5；CPU 181 s，wall 下限 ≈ 181/54 = 3.35 s）——瓶颈已从 reader 变成 CPU：QC summary 用**自己的扫描器**再解一遍 GT（策略与 reports 相同但带 `tracking_alleles`）。下一步：让 reports job 在 `--summary` 时用带 tracking 的扫描器，并把 QC 的累加部分拆成消费 `ScanOutput` 的入口（预计省 ~25–30 CPU-s，可望 ≤3.2 s）。旧两遍实现为 5.35 s / 232 s CPU，本轮已 −22% CPU |
 | `unsafe_code` 策略 | **一处例外（已登记）** | `MmapChunkSource::open` 的 `Mmap::map` 需要 `unsafe`；契约写在调用点，回退路径保证非普通文件不受影响。其余 crate 仍为 `deny` |
 | `sample.mind` 的形态 | 偏差（已登记，02 回退版 §5.3 接受） | 现实现没有样本级漏斗条目（报告只有 head/tail/mask 的**记录**计数），故 `sample.mind` 不是 `FilterReport.funnel` 的元素，而是报告新增的 `sample_rule: {rule, threshold, n_dropped}`（常量在 `reed-filter/src/funnel.rs`）；`after_mask.missing` 作为 tail 漏斗 id |
-| W4–W6 | 待做 | 见 `06-roadmap.md` |
+| W4（O-4，BCF 原生过滤输入） | **未做** | 需要把 `RecordPipeline` 的输入从「文本行」变成「`SiteView` + `ScanOutput`」：BCF 解码器直接产出这两样，跳过 `render_record` 的整行渲染。阻塞点是 `eval_head` 与表达式求值全是 `LineRef` 字节切片接口（INFO 按文本取值），要原生输入就得先抽象出 site/INFO 取值 trait 并让 BCF 侧实现（doc_v4 03 A4-1「不强求 trait」在此被推翻）。改动面：`record_pipeline`、`eval/head`、`expr`、`bcf_input`，且要保证正文 md5 不变。最小可行的过渡：先做「选择性渲染」（只渲染计划读到的 INFO 标签 + GT/DP/GQ 列），再逐步去掉渲染 |
+| W5（统计接入：SFS → `--fst-pops` → f 统计 → LD） | **未做** | 累加器都已存在且 `#[doc(hidden)]`（`ProjectedSfsAcc`/`JointSfsAcc`/`WcMultiAcc`/`LdDecayAcc`/`F2Acc`…），缺 CLI 出口、请求种类、写出格式与 `gold/popgen` 对拍脚本（easySFS、plink2 LD、scikit-allel f 统计）；每项都要「逐位/逐行对拍通过后才去掉 `#[doc(hidden)]`」，属功能开发 |
+| W6（多等位逐等位重算） | **未做** | 现状是**显式拒绝**（默认双等位门；显式允许多等位且需 AC/MAF/HWE 重算时报错），不会静默写错；实现需要 `fill_tags` 按 Number=A 输出逐 ALT 向量（MAF 取第二常见等位）并与 `bcftools +fill-tags` 在多等位 fixture 上逐字节对拍 |
+
+## 最终验证（2026-10-09，W0–W3 全部落地之后）
+
+| 检查 | 结果 |
+|---|---|
+| `cargo test --release --workspace` | **361 通过 / 0 失败** |
+| `cargo build --release --workspace --all-targets` | **0 警告** |
+| `cargo clippy --release --workspace --all-targets` | 0 error（pedantic 提示沿用 doc_v3 C7 的豁免政策） |
+| `bash scripts/check-doc-drift.sh` | 全部 ok（C3 无 noodles、无 `reed-qc`、无版本后缀类型、`--geno/--mind` 存在、`--max-missing` 只在报错文本、index 拒绝 stdin、`Verbosity` 单一实现） |
+| gold 全量（W0b + mmap reader 之后重跑） | 正文 md5 `7aedc59ac798729a2674e6e7ef19adfc` 不变；`##reed_filterCommand` 含 `--geno 0.1`；`check_parity.py` 对 `out/full/gold.vcf.gz` **PASS**（1,768,759 位点，jaccard 1.0，基因型不一致 0） |
+| 子集数字门 | `--min-dp 5 --min-gq 20 --geno 0.1` → 263,420、`--geno 0.2` → 381,672（== 三家基线） |
+| 参考工具对拍 | `e2e_missing_boundary`：plink2 `--geno X` 与 vcftools `--max-missing (1−X)`（精确十进制换算）在 N=10/7、含/不含半调用、含重复小数边界上与 reed 一致；样本级 == plink2 `--vcf-min-gq 20 --mind 0.1` |
+| 跨格式/跨 reader 一致 | stats 五统计 VCF 与 BCF 的 5 个输出文件逐字节相同；mmap 与流式 reader 的 10 个 stats 输出、CSI sha256（`7048abbd…`）、gold 正文全部相同 |
+| 性能（见 `bench/e2e/results.tsv`，每行带负载与中位数） | stats 五统计：VCF 2.44 → **1.71 s**、BCF 2.57 → **1.47 s**（reader 2.2 → 0.35 s，mmap）；reports 两族 5.35 → **3.58 s**（CPU 232 → 181 s，门 ≤3.2 s 未达，见上表）；边过滤 `--pi` 3.4 → **2.99 s**（门 ≤3.0 s 达标）；filter gold `-Oz6` 8.8 → 8.75 s（不回退） |
 
 ## 基准（2026-10-09 复审基线，56 线程，负载 0.3，热缓存）
 
