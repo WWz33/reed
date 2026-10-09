@@ -72,12 +72,186 @@ Patterson et al. 2012 的定义，逐位点用等位频率（含缺失时按已�
 
 输出 `PREFIX.fstats`：`stat pops estimate se z n_blocks n_snps`，一行一个检验。对拍：`gold/popgen/compare_fstats.py` 对 scikit-allel `average_patterson_f3/d`（`blen` 对应块大小）与 `patterson_f2`；门：fixture `fstats.vcf` 逐值 1e-12，全量三群体 1e-9。
 
-### 3.4 LD：`--ld-decay [MAX_BP]`、`--indep-pairwise W S R2`
+### 3.4 LD：`--indep-pairwise W[kb] [S] R2`（过滤规则，裁决 2026-10-10）与 `--ld-decay [MAX_BP]`（stats）
 
-- `--ld-decay`：对距离 ≤ MAX_BP（默认 `100k`）的位点对计算 r²（unphased，plink2 `--r2-unphased` 的基因型相关），按距离分箱（默认 1 kb）输出 `PREFIX.ld.decay`：`bin_start bin_end n_pairs mean_r2`；`--ld-pairs` 另写逐对 `PREFIX.ld`（plink2 `.vcor` 列：`CHROM_A POS_A ID_A CHROM_B POS_B ID_B UNPHASED_R2`）。
-- `--indep-pairwise W S R2`：plink2 的变体修剪，W 窗口（位点数或 `kb`）、S 步长、R2 阈值；输出 `PREFIX.prune.in`、`PREFIX.prune.out`。
-- **架构**：距离受限的逐对统计可流式：worker 对 chunk 内的对直接算，跨 chunk 的对由"尾窗携带"（每 chunk 末尾 MAX_BP 内的位点随 partial 上交，reducer 补算跨界对）；`--indep-pairwise` 有顺序依赖，按 contig 串行、contig 之间并行（`LdPruner`）。
-- 对拍：`run_plink2_ld.sh` 对 fixture `ld.vcf`：r² 逐对 1e-9；prune 集合相同。
+#### 3.4.1 `--indep-pairwise`：一条命令出剪枝后的 VCF
+
+用户裁决：不照搬 plink 的 `.prune.in / .prune.out` 两段式，但"第一步选位点"要的就是 plink2 的那个算法。因此：
+
+- **归属**：`SiteFilterArgs` 的位点规则（filter 与 stats 共用）。`reed filter … --indep-pairwise 50 5 0.2 -Oz -o pruned.vcf.gz` 直接输出剪枝后的文件；`reed stats … --indep-pairwise …` 只在剪枝后的位点上统计。
+- **清单**：`--prune-list PREFIX` 可选，写 `PREFIX.prune.in` / `PREFIX.prune.out`（plink2 格式：ID 一行一个；ID 为 `.` 用 `chrom_pos`）。
+- **阶段**：02 §6 第 6b 步——`--mind`、`--geno/--maf/--mac/--hwe` 与依赖基因型的 `-i/-e` 之后、INFO 更新之前；只看存活位点、掩码后的基因型（plink2 同序：导入期 `--vcf-min-gq` 等先掩码，`--maf/--geno` 先于剪枝）。
+- **漏斗 id**：`after_mask.ld_prune`。
+
+**算法 = plink2 `--indep-pairwise`（`plink2_ld.cc` `IndepPairwiseThread`、`LdPruneNextWindow`，2026-10-10 源码核实）：**
+
+1. 参数：`W` 个位点，或 `W kb` 按 bp；`S` 步长（位点数）。plink2 2.0：`S` 缺省 1，`kb` 窗口时**必须**为 1（`plink2_help.cc:1204`）。reed 相同：`--indep-pairwise W[kb] [S] R2`，`S` 缺省 1，kb 窗口给 `S ≠ 1` 报错。按 contig 独立（plink2 的 subcontig）；reed 无性别信息，X/Y 不特殊处理，文档写明。
+2. 每个位点进入窗口时：基因型按**主等位**计数编码 −1/0/+1（`FillVaggs`：`sum = ref2 − alt2`，`ssq = hom_ct`，`nm = 已调用数`）；窗口内**单态**位点（`FillVaggs` 返回真）立即剪掉。
+3. 窗口内每一对（plink2 默认从窗口尾向前扫，"nearest new pairs first"；PLINK 1.x 顺序不做）：只在**两位点都已调用**的样本上求 `n`、`Σx`、`Σy`、`Σx²`、`Σy²`、`Σxy`（`ComputeIndepPairwiseR2Components` 的三种情形），`cov = n·Σxy − Σx·Σy`，`var_i = n·Σx_i² − (Σx_i)²`，判定 **`cov² > R2 · var1 · var2`**（严格大于：零共同观测的对不剪）。
+4. **剪谁**：比较两位点的主等位频率 `maj`（全样本、导入后，plink2 `--freq` 口径；`--pop` 不参与）：`maj_first ≤ maj_second · (1 + ε)` 时剪**后者**（位置靠后的），否则剪前者。等价说法：**次等位频率更低的被剪，平局剪靠后的**（ε = plink2 的 `kSmallEpsilon`）。`--indep-preferred` 不做。
+5. 推进：位点窗 `start += S`；bp 窗"start 至少前进到 end 能前进一个位点"；被剪位点不再进入后续窗口；每窗完成后清当前窗的剪除标记。
+6. 产物：被剪集合 → reed pass0 的"保留位图"。
+
+**架构（reed）**：有顺序依赖 → 两遍，复用 `--mind` 的 pass0 / sketch 机制。pass0：workers 并行解码每个位点的 2 位基因型向量与主等位频率（走 cohort 通道，不渲染文本），reducer 按 chunk 顺序喂给**每 contig 一个** `LdPruner`（contig 之间并行、contig 内串行）；窗口只需 W 个位点的向量常驻（348 样本 → 每位点 2 × 6 个 u64），不整 contig 常驻。pass1 = 现有发射路径按位图筛。与 `--mind` 同时给出时同一 pass0：先样本位图，再剪枝。`LdPruner`（纯数值）留在 `reed-stats/src/ld.rs`，pass0 驱动在 `reed/src/filter/ld_prune.rs`（门面有权同时接 filter 与 stats 层）。
+
+**代码示意**（非最终代码；类型名取现有的 `ChunkJob`/`OrderedSink`（`reed-engine/src/pipeline.rs:49,100`）、`LdPruner::push(site, pos0, planes)`（`reed-stats/src/ld.rs:227`）、`SitePlanes` 的 4 个位平面；`MissingJob`/`SumSink`（`reed/src/filter/reduce.rs`）是同一模子的样本级版本，照抄其骨架）：
+
+```rust
+// reed/src/filter/ld_prune.rs —— pass0：只产出"保留位图"，不写任何记录。
+
+/// worker 交给 reducer 的最小单元：一个通过了 02 §6 第 1–6 步的位点。
+pub(super) struct PruneSite {
+    ordinal_in_chunk: u32,          // chunk 内的存活序号；reducer 加基址得全局序号
+    contig: ContigId,
+    pos0: u64,
+    planes: [Box<[u64]>; 4],        // 掩码后的位平面（与 sketch 的布局相同）
+    maj_freq: f64,                  // 主等位频率：由平面 popcount 得 alt/called，全样本口径（plink2 --freq）
+}
+
+#[derive(Default)]
+pub(super) struct LdPrunePartial {
+    sites: Vec<PruneSite>,
+    n_survivors: u32,               // 本 chunk 存活位点数 = 下一 chunk 的基址增量
+}
+
+impl ChunkJob for LdPruneJob {
+    type Partial = LdPrunePartial;
+    type Scratch = PipelineScratch;
+    fn run_chunk(&self, chunk: &ChunkBytes, scratch: &mut Self::Scratch, out: &mut Self::Partial)
+        -> Result<(), EngineError>
+    {
+        for record in self.framing.records(chunk) {
+            // 与 pass1 完全相同的 head → mask → count → tail 判定，保证两遍看到同一存活序列
+            let Some(scan) = self.pipeline.survivor_planes(record, scratch)? else { continue };
+            out.sites.push(PruneSite {
+                ordinal_in_chunk: out.n_survivors,
+                contig: scan.contig, pos0: scan.pos0,
+                planes: scan.planes_after_mask(),
+                maj_freq: scan.major_allele_freq(),
+            });
+            out.n_survivors += 1;
+        }
+        Ok(())
+    }
+    // run_seam：接缝记录与 pass1 同样处理（同一函数），否则两遍的序号错位
+}
+
+/// reducer：按 chunk 顺序接收；每个 contig 一条串行流，交给各自的线程跑 LdPruner（contig 之间并行）。
+pub(super) struct LdPruneSink {
+    base: u64,                                   // 已接收的全局存活序号基址
+    current: Option<(ContigId, Sender<PruneSite>)>,
+    workers: Vec<JoinHandle<(ContigId, Vec<u64>)>>,   // 每 contig 一个：返回该 contig 的保留序号列表
+    cfg: PruneConfig,                            // threshold, LdWindow::{Sites(w)|Bp(w)}, step
+}
+
+impl OrderedSink<LdPrunePartial> for LdPruneSink {
+    fn accept(&mut self, _id: ChunkId, p: &mut LdPrunePartial) -> Result<(), EngineError> {
+        for mut s in p.sites.drain(..) {
+            let ordinal = self.base + u64::from(s.ordinal_in_chunk);
+            if self.current.as_ref().map(|(c, _)| *c) != Some(s.contig) {
+                self.spawn_contig(s.contig);       // 换 contig：关闭旧 sender（线程自然收尾），开新线程
+            }
+            s.ordinal_in_chunk = 0;                // 线程端只认全局序号
+            self.current.as_ref().unwrap().1.send((ordinal, s)).map_err(|_| EngineError::Internal)?;
+        }
+        self.base += u64::from(p.n_survivors);
+        Ok(())
+    }
+    fn finish(mut self) -> Result<u64, EngineError> {
+        self.current.take();                        // 关最后一个 sender
+        let mut keep = KeepBitmap::new(self.base);  // 全局位点序号 → 保留
+        for w in self.workers { let (_, kept) = w.join()?; for o in kept { keep.set(o); } }
+        self.report.n_pruned = self.base - keep.count();   // 漏斗 after_mask.ld_prune
+        Ok(keep.count())
+    }
+}
+
+/// 每 contig 线程：严格按到达顺序喂 LdPruner；窗口语义、剪谁、单态剔除全在 LdPruner 里（照 plink2，见上文算法 1–5）。
+fn contig_pruner(rx: Receiver<(u64, PruneSite)>, cfg: PruneConfig, n_samples: usize) -> Vec<u64> {
+    let mut pruner = LdPruner::new(cfg.threshold, cfg.window, cfg.step, cfg.w, n_samples);
+    for (ordinal, s) in rx {                       // rx 关闭 = contig 结束
+        let planes = [&s.planes[0][..], &s.planes[1][..], &s.planes[2][..], &s.planes[3][..]];
+        pruner.push(ordinal as usize, s.pos0, planes);   // 现有 API；需补 maj_freq 入参以实现"剪 MAF 低者"
+    }
+    pruner.finish()                                // 需新增：推进到 contig 末尾，返回最终保留的全局序号
+        .into_iter().map(|o| o as u64).collect()
+}
+```
+
+要点：① 两遍必须用**同一个** `RecordPipeline` 判定函数产生存活序列，位图按"存活序号"索引，不按文件偏移；② `LdPruner` 现有签名缺主等位频率与 `finish()`，补这两处即可，其余照 plink2 规则实现在它内部；③ pass1 = 现有 `sketch_then_emit`/`two_pass_reparse` 的发射路径多一条 tail 规则 `after_mask.ld_prune`：`keep.get(ordinal)`；④ `--prune-list` 在 pass1 发射时顺手写两个清单（存活且保留 → `.prune.in`，存活但被剪 → `.prune.out`），不需要第三遍。
+
+**对拍**：`gold/popgen/run_plink2_ld.sh`：fixture `ld.vcf` 与全量子集 Chr01 上 `plink2 --vcf … --indep-pairwise 50 5 0.2 --out x` 的 `x.prune.in` 与 reed `--prune-list` 的 `.prune.in` **逐 ID 相同**；再以 `--maf 0.05 --geno 0.1 --indep-pairwise 50 5 0.2`（plink2 同参数）验证顺序；两种窗口单位（`50` 与 `50kb`）各一例。门：集合差异为 0。剪枝后 VCF 的正文 = 用该清单 `--extract` 得到的正文（同一命令内自洽）。
+
+#### 3.4.2 `--ld-decay [MAX_BP]`、`--ld-pairs`（stats）
+
+对距离 ≤ MAX_BP（默认 `100k`）的位点对计算 r²（unphased，plink2 `--r2-unphased` 的基因型相关，缺失按两位点都已调用的样本），按距离分箱（默认 1 kb）输出 `PREFIX.ld.decay`：`bin_start bin_end n_pairs mean_r2`；`--ld-pairs` 另写逐对 `PREFIX.ld`（plink2 `.vcor` 列：`CHROM_A POS_A ID_A CHROM_B POS_B ID_B UNPHASED_R2`）。架构：距离受限的逐对统计可流式——worker 对 chunk 内的对直接算，跨 chunk 的对由"尾窗携带"（每 chunk 末尾 MAX_BP 内的位点随 partial 上交，reducer 补算跨界对）。对拍：plink2 `--r2-unphased --ld-window-kb` 在 `ld.vcf` 上逐对 1e-9。
+
+**代码示意**（非最终代码；`pair_sums(x, y, n_samples).r2()` 与 `LdDecayAcc::{push, merge}` 是 `reed-stats/src/ld.rs` 的现有 API）：
+
+```rust
+/// 携带的位点：只在 chunk 边界附近才需要，数量 ≤ MAX_BP 内的位点数。
+#[derive(Clone)]
+struct SiteVec { contig: ContigId, pos0: u64, planes: [Box<[u64]>; 4] }
+
+#[derive(Default)]
+pub struct LdDecayPartial {
+    acc: LdDecayAcc,          // chunk 内部、距离 ≤ MAX_BP 的对
+    head: Vec<SiteVec>,       // 距本 chunk 首个位点 ≤ MAX_BP 的位点：供上一 chunk 的尾窗配对
+    tail: Vec<SiteVec>,       // 距本 chunk 末位点 ≤ MAX_BP 的位点：留给下一 chunk
+    pairs: Vec<PairRow>,      // --ld-pairs 时的逐对行（chunk 内）；跨界对由 reducer 追加
+}
+
+// worker：一个按距离滑动的 ring buffer，和 pass1 完全相同的存活判定。
+fn run_chunk(&self, chunk: &ChunkBytes, scratch: &mut Scratch, out: &mut LdDecayPartial) -> Result<(), EngineError> {
+    let mut ring: VecDeque<SiteVec> = VecDeque::new();
+    let mut first_pos0: Option<(ContigId, u64)> = None;
+    for record in self.framing.records(chunk) {
+        let Some(site) = self.pipeline.survivor_planes(record, scratch)?.map(SiteVec::from) else { continue };
+        while ring.front().is_some_and(|f| f.contig != site.contig || site.pos0 - f.pos0 > self.max_bp) {
+            ring.pop_front();
+        }
+        for prev in &ring {
+            if let Some(r2) = pair_sums(prev.planes_ref(), site.planes_ref(), self.n_samples).r2() {
+                out.acc.push(site.pos0 - prev.pos0, r2);
+                if self.want_pairs { out.pairs.push(PairRow::new(prev, &site, r2)); }
+            }
+        }
+        let first = *first_pos0.get_or_insert((site.contig, site.pos0));
+        if first.0 == site.contig && site.pos0 - first.1 <= self.max_bp { out.head.push(site.clone()); }
+        ring.push_back(site);
+    }
+    out.tail = ring.into_iter().collect();        // 末尾 MAX_BP 内的位点，按位置有序
+    Ok(())
+}
+
+// reducer：跨界对 = 上一 chunk 的 tail × 本 chunk 的 head（同 contig、距离 ≤ MAX_BP），然后换届。
+impl OrderedSink<LdDecayPartial> for LdDecaySink {
+    fn accept(&mut self, _id: ChunkId, p: &mut LdDecayPartial) -> Result<(), EngineError> {
+        for a in &self.carry {
+            for b in &p.head {
+                if a.contig != b.contig { continue; }
+                let d = b.pos0 - a.pos0;                       // head 在 tail 之后，d ≥ 0
+                if d > self.max_bp { break; }                  // head 按位置有序，可提前退出
+                if let Some(r2) = pair_sums(a.planes_ref(), b.planes_ref(), self.n_samples).r2() {
+                    self.total.push(d, r2);
+                    if self.want_pairs { self.pairs_out.write(PairRow::new(a, b, r2))?; }
+                }
+            }
+        }
+        self.total.merge(&p.acc);
+        self.pairs_out.write_all(p.pairs.drain(..))?;          // chunk 内的对按序追加
+        self.carry = std::mem::take(&mut p.tail);
+        Ok(())
+    }
+    fn finish(self) -> Result<u64, EngineError> { self.writers.write_decay(&self.total) }
+}
+```
+
+要点：① head/tail 的"≤ MAX_BP"都以**本 chunk 的首/末存活位点**为基准，这已足够覆盖所有跨界对（离本 chunk 首位点超过 MAX_BP 的位点离上一 chunk 任何位点都更远）；② 接缝记录归属哪个 chunk由 `run_seam` 决定，head/tail 按归属后的序列构造，否则会重复或漏掉一对；③ `--ld-pairs` 的逐对行要按位置有序写出，所以 chunk 内的行在 reducer 里追加、跨界对插在前面，顺序即"上一 chunk 的所有行 → 跨界行 → 本 chunk 的行"；④ 内存：carry 只有 MAX_BP 内的位点，与 contig 长度无关（04 §3 P5-5 的门）。
+
+#### 3.4.3 对在途 X4.4 代码的处置
+
+2026-10-10 00:59 之后的工作树把 `--ld-decay`、`--ld-pairs`、`--indep-pairwise` 都放在 `reed stats`（`cli.rs` stats 块）并以清单为剪枝产物。处置：`--ld-decay / --ld-pairs` 保留不动；`--indep-pairwise` 移到共用的 `SiteFilterArgs`，按 3.4.1 实现 pass0 位图 + pass1 发射，`--prune-list PREFIX` 写清单；stats 路径 = 位图筛位点后统计。`LdPruner` 的数值部分可原样复用。
 
 ---
 
@@ -88,6 +262,62 @@ Patterson et al. 2012 的定义，逐位点用等位频率（含缺失时按已�
 - `--maf/--mac`：多等位时次等位 = 第二常见等位（同上口径）；`--geno` 不变。
 - stats：π/dxy 的多等位推广已在累加器（`comps − Σ_a C(k_a,2)`）；θ 的突变数 `Σ(等位数−1)`。
 - 对拍：`multiallelic.vcf` 上 `--fill-tags AC,AN,AF,MAF,HWE,NS` 与 `bcftools +fill-tags` 逐字节一致；全量 indel 集抽样 1,000 条逐字节一致。门：默认双等位门行为不变（gold md5 不变）。
+
+**代码示意**（非最终代码；`ScanOutput::alleles` 是解码层已保留的原始等位下标，`SampleMask` 是现有的保留样本位图；落点 `reed-filter/src/spec/recompute.rs` 与 `eval/edit_plan.rs`）：
+
+```rust
+/// 多等位位点的逐等位计数（INFO Number=A 的输入）。
+pub struct AlleleTally {
+    pub an: u32,            // 已调用等位数（半调用计 1）
+    pub ac: Vec<u32>,       // 每个 ALT 的计数，长度 = n_alt
+    pub ns: u32,            // 至少一条染色体已调用的样本数
+    pub n_samples: u32,     // 保留样本数（F_MISSING 的分母）
+}
+
+pub fn tally_alleles(scan: &ScanOutput, n_alt: usize, keep: &SampleMask) -> AlleleTally {
+    let mut t = AlleleTally { an: 0, ac: vec![0; n_alt], ns: 0, n_samples: keep.count() };
+    for (sample, gt) in scan.alleles.iter().enumerate() {      // gt: [Option<u8>; 2]，掩码后为 [None, None]
+        if !keep.contains(sample) { continue; }
+        let mut called = false;
+        for a in gt.iter().flatten() {
+            called = true;
+            t.an += 1;
+            if *a > 0 { t.ac[usize::from(*a) - 1] += 1; }      // 0 = REF 不进 ac
+        }
+        if called { t.ns += 1; }
+    }
+    t
+}
+
+/// bcftools +fill-tags 口径的输出值；双等位时与现有路径逐字节相同（这是门）。
+pub fn fill_tag_values(t: &AlleleTally, n_alt: usize, het_hom: Option<(u32, u32, u32)>) -> Vec<(&'static str, InfoValue)> {
+    let af: Vec<f32> = t.ac.iter().map(|&c| if t.an == 0 { 0.0 } else { c as f32 / t.an as f32 }).collect();
+    // MAF：把 REF 也放进来排序，取第二常见等位的频率（bcftools 的定义）
+    let mut freqs: Vec<f32> = std::iter::once((t.an - t.ac.iter().sum::<u32>()) as f32 / t.an.max(1) as f32)
+        .chain(af.iter().copied()).collect();
+    freqs.sort_by(|a, b| b.total_cmp(a));
+    let maf = freqs.get(1).copied().unwrap_or(0.0);
+    let mut out = vec![
+        ("AC", InfoValue::Ints(t.ac.iter().map(|&c| i64::from(c)).collect())),   // Number=A
+        ("AN", InfoValue::Int(i64::from(t.an))),
+        ("AF", InfoValue::Floats(af)),                                              // Number=A
+        ("NS", InfoValue::Int(i64::from(t.ns))),
+        ("MAF", InfoValue::Float(maf)),
+        ("F_MISSING", InfoValue::Float(1.0 - t.ns as f32 / t.n_samples as f32)),
+    ];
+    // HWE 只对双等位位点定义；多等位写 "."（bcftools 同）
+    out.push(("HWE", match (n_alt, het_hom) {
+        (1, Some((hom_ref, het, hom_alt))) => InfoValue::Float(hwe_exact_p(hom_ref, het, hom_alt)),
+        _ => InfoValue::Missing,
+    }));
+    out
+}
+
+// --maf / --mac 在多等位位点上的"次等位"同样取第二常见等位（含 REF）：
+// minor_count = 按计数降序排列的 [an−Σac, ac…] 的第 2 项；双等位时退化为 min(ac, an−ac)，与现有 tail 规则一致。
+```
+
+要点：① 双等位位点必须与现有路径逐字节相同（浮点格式、字段顺序、`Number=A` 的单元素向量仍写成标量形式与 bcftools 一致）；② `tally_alleles` 走的是 `ScanOutput` 已有的下标，不需要第二次解析；③ 默认双等位门（`-M 2`）不变，本改动只在用户显式放开多等位时生效。
 
 ---
 

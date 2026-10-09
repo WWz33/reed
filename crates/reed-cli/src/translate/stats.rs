@@ -243,6 +243,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         dstat,
         f4_ratio,
         block_size,
+        ld_decay,
+        ld_pairs,
+        indep_pairwise,
         pbs,
         pbs_normed,
         sfs,
@@ -416,8 +419,15 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     // windowed statistic) treats every sample as one population.
     let fstats_requested =
         !f2.is_empty() || !f3.is_empty() || !f4.is_empty() || !dstat.is_empty() || !f4_ratio.is_empty();
-    let windowed =
-        pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() || fstats_requested;
+    let windowed = pi
+        || dxy
+        || theta
+        || tajima_d
+        || fst.is_some()
+        || !pbs.is_empty()
+        || fstats_requested
+        || ld_decay.is_some()
+        || !indep_pairwise.is_empty();
     let (gt_groups, group_names) = match &pop {
         Some(groups) => assign_groups(Path::new(groups), &sample_names, force_samples)?,
         None if sfs.is_some() && !windowed => {
@@ -446,7 +456,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         let step = if step == 0 { size } else { step };
         // A bare `--sfs` has no window denominators, so the all-sites check
         // does not apply (05 §3.1 accepts variant-only input).
-        let invariant = if variant_only || (sfs.is_some() && !windowed) || fstats_requested {
+        let ld_requested = ld_decay.is_some() || !indep_pairwise.is_empty();
+        let invariant = if variant_only
+            || (sfs.is_some() && !windowed)
+            || fstats_requested
+            || ld_requested
+        {
             reed::InvariantMode::VariantOnly
         } else if bypass_invariant_check {
             eprintln!(
@@ -538,6 +553,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             block_size,
             &group_names,
         )?;
+        // LD: `--ld-decay` / `--indep-pairwise` (docs/rounds/v5/05 §3.4).
+        let ld_request = build_ld_request(
+            ld_decay.as_deref(),
+            ld_pairs,
+            &indep_pairwise.join(" "),
+        )?;
         // The SFS is genome-wide: with no windowed kind, skip the window
         // grid entirely (genome level only) and give it a nominal size.
         let sfs_only = kinds.is_empty() && fstats_request.is_none();
@@ -560,6 +581,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             filter: filter.clone(),
             sfs: sfs_request,
             fstats: fstats_request,
+            ld: ld_request,
             gt_groups,
             window_size: size,
             step,
@@ -577,6 +599,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         };
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
+        if let Some(ld_report) = &report.ld {
+            files.extend(reed::ld::write_ld(Path::new(&prefix), ld_report)?);
+        }
         if let Some(fstats_report) = &report.fstats {
             files.extend(reed::fstats::write_fstats(
                 Path::new(&prefix),
@@ -638,6 +663,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         filter,
         sfs: None,
         fstats: None,
+        ld: None,
         gt_groups,
         window_size: size,
         step: if step == 0 { size } else { step },
@@ -743,6 +769,60 @@ fn build_fstats_request(
     }
     let block_bp = block_size.unwrap_or(5_000_000);
     Ok(Some(reed::FStatsRequest { tests, block_bp }))
+}
+
+/// Builds the LD request from `--ld-decay [MAX]`, `--ld-pairs` and
+/// `--indep-pairwise W S R2` (docs/rounds/v5/05-algorithms.md §3.4).
+fn build_ld_request(
+    ld_decay: Option<&str>,
+    ld_pairs: bool,
+    indep_pairwise: &str,
+) -> Result<Option<reed::LdRequest>, Box<dyn std::error::Error + Send + Sync>> {
+    let indep_pairwise = (!indep_pairwise.is_empty()).then_some(indep_pairwise);
+    if ld_decay.is_none() && indep_pairwise.is_none() {
+        return Ok(None);
+    }
+    let decay_max_bp = match ld_decay {
+        None => None,
+        Some("") => Some(100_000),
+        Some(text) => Some(crate::units::parse_size(text)?),
+    };
+    let prune = match indep_pairwise {
+        None => None,
+        Some(text) => {
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() != 3 {
+                return Err(format!(
+                    "--indep-pairwise expects W S R2 (e.g. `50 5 0.2`), got {text:?}"
+                )
+                .into());
+            }
+            let (window, kb) = if let Some(kb) = parts[0].strip_suffix("kb") {
+                (crate::units::parse_size(kb)?, true)
+            } else {
+                (crate::units::parse_size(parts[0])?, false)
+            };
+            let step: usize = parts[1]
+                .parse()
+                .map_err(|_| format!("invalid --indep-pairwise step {:?}", parts[1]))?;
+            let r2: f64 = parts[2]
+                .parse()
+                .map_err(|_| format!("invalid --indep-pairwise r2 {:?}", parts[2]))?;
+            if kb && step != 1 {
+                return Err("--indep-pairwise with a kb window requires step 1".into());
+            }
+            let window = if kb { reed::LdWindow::Bp(window) } else {
+                reed::LdWindow::Variants(usize::try_from(window).unwrap_or(usize::MAX))
+            };
+            Some(reed::LdPruneRequest { window, step, r2 })
+        }
+    };
+    Ok(Some(reed::LdRequest {
+        decay_max_bp,
+        decay_bin_bp: 1000,
+        prune,
+        pairs: ld_pairs,
+    }))
 }
 
 /// Splits one f-statistic value into its role groups (semicolon-separated),

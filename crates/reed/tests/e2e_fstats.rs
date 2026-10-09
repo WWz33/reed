@@ -43,6 +43,7 @@ fn request(tests: Vec<FStatTest>, block_bp: u64) -> StatsRequest {
         filter: None,
         sfs: None,
         fstats: Some(FStatsRequest { tests, block_bp }),
+        ld: None,
     }
 }
 

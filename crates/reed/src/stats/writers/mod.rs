@@ -3,6 +3,7 @@
 
 pub mod pixy;
 pub mod fstats;
+pub mod ld;
 pub mod reports;
 pub mod sfs;
 pub mod summary;

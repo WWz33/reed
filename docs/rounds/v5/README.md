@@ -10,6 +10,8 @@
 2. 多群体 Fst：`--fst [wc84|hudson]` 不变，新增**布尔开关 `--fst-global`**（三个群体以上时算合并而非成对；默认成对）；`--fst-pops` 作废。→ 待实现（05 §3.2）。
 3. 目录树：只针对 `reed-rs/`；按 06 的树改。→ 待执行（X2）。
 4. 不为语义统一而改短名字；语义缺口用条文补。→ 写进 02 §0。
+5. 不做 `reed-py`，`reed-cli` 是唯一前端；项目定调为前后端形态。→ 08 §6。
+6. **LD 剪枝不照搬 plink 的两段式**（2026-10-10）：`--indep-pairwise` 是 `reed filter` 的位点规则（stats 共用），一条命令直接输出剪枝后的 VCF；`.prune.in/.prune.out` 只是 `--prune-list PREFIX` 的可选副产品；位点选择算法照 plink2 并逐 ID 对拍。→ 02 §3.4、05 §3.4、X4.4。
 
 ## 文件
 
@@ -43,7 +45,7 @@
 | 在途 W5 代码的处置（X0） | 按 05 §3.1 改成 genome-wide 路径后再提交，期间 `git stash` 让主干可测 | 直接提交现有窗口式 `StatKind::ProjectedSfs` 并补 match 臂（会留下"分窗谱"这个无意义形态） |
 | `--sfs` 的默认 | unfolded（REF 为祖先态，与 easySFS `--unfolded` 同）；写浮点，`--sfs-int` 可取整 | 默认 folded（easySFS 的默认） |
 | f 统计参数语法 | `--f3 C;A,B`、`--f4 A,B;C,D`（分号分角色组） | 全逗号 `--f3 C,A,B`（靠位置记角色） |
-| LD 的默认 | `--ld-decay` 默认 `100k`、1 kb 分箱；`--indep-pairwise` 照 plink2 三参数 | 只做 `--indep-pairwise`，`--ld-decay` 后置 |
+| LD 的默认 | **已裁决**：`--indep-pairwise W[kb] [S] R2` 是过滤规则，一条命令出剪枝后 VCF，`S` 缺省 1（plink2 2.0 语义）；`--ld-decay` 默认 `100k`、1 kb 分箱留在 stats | —（05 §3.4） |
 | 边过滤 `--pi` 的门 | 改为 CPU 口径 ≤ 130 s（wall 作参考） | 维持 wall ≤ 3.0 s 并继续优化 |
 | 目录搬迁时机（X2） | 与 X1 合成一个"卫生"PR，在 X4 之前 | X4 之后 |
 | 项目定位（08） | **已定调：前后端形态**（08 §6）——后端 = `reed` 门面 + 下层 crate，前端 = `reed-cli`（唯一前端），契约 = 02 的参数语法与输出格式；不发布 crate；前端只依赖门面、后端不打 stderr、门面只 `pub use` 三条规则进守卫 | —（`reed-py` 已裁决不做，08 §6.5） |

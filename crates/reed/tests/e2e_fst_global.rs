@@ -47,6 +47,7 @@ fn request(window: u64, levels: Levels) -> StatsRequest {
         filter: None,
         sfs: None,
         fstats: None,
+        ld: None,
     }
 }
 

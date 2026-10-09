@@ -175,64 +175,105 @@ impl LdDecayAcc {
     }
 }
 
+/// The pruning window (plink2 `--indep-pairwise`): a variant count, or a
+/// span in bp (`W kb`; plink2 then requires step 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LdWindow {
+    /// Look back this many kept variants.
+    Variants(usize),
+    /// Look back this many bp.
+    Bp(u64),
+}
+
 /// Ordered-carry LD pruning (plink2 semantics): sites are consumed in
 /// order; a site is KEPT when its r² with every already-kept site within
-/// `max_sites` is strictly below `threshold`; otherwise it is pruned.
+/// the window is strictly below `threshold`; otherwise it is pruned.
+///
+/// `step` follows plink2: only every `step`-th variant is a pruning
+/// candidate; the rest are kept unconditionally (they still enter the kept
+/// ring, so later candidates are tested against them).
 #[derive(Clone, Debug)]
 pub struct LdPruner {
     threshold: f64,
-    max_sites: usize,
-    /// The ring of kept sites' (site, planes) — bounded by max_sites.
-    kept: std::collections::VecDeque<(usize, Vec<u64>)>,
+    window: LdWindow,
+    step: usize,
+    /// The ring of kept sites' (site, pos0, planes) — bounded by the window.
+    kept: std::collections::VecDeque<(usize, u64, Vec<u64>)>,
     /// Per kept site: the four planes (W words each, flattened).
     w: usize,
     n_samples: usize,
+    /// Sites consumed so far (the candidate test is `seen % step == 0`).
+    seen: usize,
 }
 
 impl LdPruner {
-    /// A pruner at `threshold` (r²) looking back `max_sites` kept sites.
+    /// A pruner at `threshold` (r²) over `window`, testing every `step`-th
+    /// variant (`step` is read as 1 when 0).
     #[must_use]
-    pub fn new(threshold: f64, max_sites: usize, w: usize, n_samples: usize) -> Self {
+    pub fn new(threshold: f64, window: LdWindow, step: usize, w: usize, n_samples: usize) -> Self {
         Self {
             threshold,
-            max_sites,
+            window,
+            step: step.max(1),
             kept: std::collections::VecDeque::new(),
             w,
             n_samples,
+            seen: 0,
         }
     }
 
     /// Whether this site is kept given its four planes; absorbs it into
     /// the kept set when it is.
-    pub fn push(&mut self, site: usize, planes: [&[u64]; 4]) -> bool {
-        for (kept_site, kept_planes) in &self.kept {
-            let kp: [&[u64]; 4] = [
-                &kept_planes[0..self.w],
-                &kept_planes[self.w..2 * self.w],
-                &kept_planes[2 * self.w..3 * self.w],
-                &kept_planes[3 * self.w..4 * self.w],
-            ];
-            if let Some(r2) = pair_sums(planes, kp, self.n_samples).r2()
-                && r2 >= self.threshold
-            {
-                return false;
+    pub fn push(&mut self, site: usize, pos0: u64, planes: [&[u64]; 4]) -> bool {
+        let candidate = self.seen % self.step == 0;
+        self.seen += 1;
+        if candidate {
+            for (_, _, kept_planes) in &self.kept {
+                let kp: [&[u64]; 4] = [
+                    &kept_planes[0..self.w],
+                    &kept_planes[self.w..2 * self.w],
+                    &kept_planes[2 * self.w..3 * self.w],
+                    &kept_planes[3 * self.w..4 * self.w],
+                ];
+                if let Some(r2) = pair_sums(planes, kp, self.n_samples).r2()
+                    && r2 >= self.threshold
+                {
+                    return false;
+                }
             }
-            let _ = kept_site;
         }
         let mut flat = Vec::with_capacity(4 * self.w);
         for p in planes {
             flat.extend_from_slice(p);
         }
-        self.kept.push_back((site, flat));
-        if self.kept.len() > self.max_sites {
-            self.kept.pop_front();
-        }
+        self.kept.push_back((site, pos0, flat));
+        self.evict(pos0);
         true
+    }
+
+    /// Drops kept sites that fell out of the window.
+    fn evict(&mut self, pos0: u64) {
+        match self.window {
+            LdWindow::Variants(max) => {
+                while self.kept.len() > max {
+                    self.kept.pop_front();
+                }
+            }
+            LdWindow::Bp(bp) => {
+                while let Some((_, kept_pos, _)) = self.kept.front() {
+                    if *kept_pos + bp < pos0 {
+                        self.kept.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /// The kept site indices in consumption order.
     #[must_use]
     pub fn kept_sites(&self) -> Vec<usize> {
-        self.kept.iter().map(|(s, _)| *s).collect()
+        self.kept.iter().map(|(s, _, _)| *s).collect()
     }
 }

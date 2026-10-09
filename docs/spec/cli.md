@@ -95,8 +95,17 @@
 | `--maf X` / `--max-maf X` | `min(ac, an−ac)/an ≥ X` / `≤ X` | 次等位 / 已调用等位 |
 | `--mac C` / `--max-mac C` | `min(ac, an−ac) ≥ C` / `≤ C` | 次等位计数 |
 | `--hwe P [midp]` | 精确检验 `p ≥ P`；`midp` 用 mid-p | 双等位位点 |
+| **`--indep-pairwise W[kb] [S] R2`**（裁决 2026-10-10） | LD 剪枝：按 plink2 的算法选出保留位点，**本命令直接输出剪枝后的 VCF/BCF**；位点清单只是 `--prune-list PREFIX` 的可选副产品 | 掩码后的基因型；r² 只取两位点都已调用的样本（05 §3.4） |
 
 `-q/-Q` 与 `--maf` 的区别写在 `--help`：前者"非参考等位频率、优先用 INFO"，后者"次等位频率、总是按基因型重算"。
+
+**LD 剪枝不照搬 plink 的两段式**（用户裁决 2026-10-10："不喜欢 prune.in / prune.out 两段式命令，但第一步选位点我需要"）：
+
+- `reed filter in.vcf.gz --indep-pairwise 50 5 0.2 -Oz -o pruned.vcf.gz` 一条命令完成"选位点 + 提取"；plink2 要 `--indep-pairwise` 再 `--extract plink.prune.in` 两次运行。
+- `--prune-list PREFIX`（可选）写 `PREFIX.prune.in` 与 `PREFIX.prune.out`：plink2 格式，变体 ID 一行一个，ID 为 `.` 时用 `chrom_pos`（与报告模式相同的规则），可直接喂给 plink2 / bcftools。不给就不写。
+- `reed stats … --indep-pairwise W S R2` 同样可用：统计只在剪枝后的位点上算（边过滤边统计的一种）。
+- 反向（拿别处产出的 ID 清单筛位点）是 `--extract FILE`（plink2 拼写），与 `--sites-file`（位置清单）一起归 X6。
+- 它是**有顺序依赖的全局位点规则**，走两遍 / sketch 策略（pass0 按 contig 算保留位图，pass1 发射）；漏斗 id `after_mask.ld_prune`。算法、窗口语义、缺失处理、对拍门见 05 §3.4。
 
 ### 3.5 INFO 更新（仅 `reed filter`）
 
@@ -152,6 +161,7 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 | 4 | 掩码：`--min-dp/--max-dp/--min-gq`、`--set-gts .` + `FMT/` 表达式 |
 | 5 | `--mind` |
 | 6 | `--geno`、`--hwe`、`--maf/--max-maf/--mac/--max-mac`、依赖基因型的 `-i/-e` |
+| 6b | `--indep-pairwise`：有顺序依赖的全局位点规则，只看通过第 1–6 步的位点与掩码后的基因型（plink2 的顺序：`--mind/--geno/--maf` 之后）；pass0 算保留位图，pass1 发射 |
 | 7 | INFO 更新：`-x` → AC/AN 自动更新 → `--fill-tags` |
 | 8 | 输出 |
 
@@ -187,7 +197,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 | `--freq` / `--hardy [midp]` / `--het` / `--missing` | 逐位点频率 / HWE 与杂合度 / 个体 F / 缺失率 | Wigginton 2005；Graffelman 2013 | 已对拍 plink2 |
 | `--depth` | 逐样本、逐位点平均深度 | — | 已对拍 vcftools |
 | `--summary` | bcftools stats 格式 QC 汇总 | — | 已对拍 |
-| **`--f2/--f3/--f4/--dstat/--f4-ratio`**、**`--ld-decay`、`--indep-pairwise`** | f 统计（block jackknife）、LD | Patterson 2012；Purcell 2007 | **【待实现】**（05 §3.3–3.4） |
+| **`--f2/--f3/--f4/--dstat/--f4-ratio`**、**`--ld-decay [MAX_BP]` / `--ld-pairs`** | f 统计（block jackknife）、LD 衰减 | Patterson 2012；Purcell 2007 | f 统计 X4.3 已落地；LD 衰减见 05 §3.4.2。`--indep-pairwise` **不是** stats 独有的统计量，它是 §3.4 的过滤规则，stats 里的含义是"只在剪枝后位点上统计" |
 
 `--fst-global` 的规则：没有 `--fst` 时报错；与 `hudson` 组合报错（Hudson 没有 r 群体形式）；两个群体时值等于成对 wc84，只提示不报错；输出单独的 `PREFIX_fst_global.txt`。`--fst-pops` **作废**（doc_v2 02 §5.2 那一行由本表取代）。
 
@@ -219,7 +229,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 | freq / hardy / het / missing | `PREFIX.afreq .hardy .het .smiss .vmiss` | plink2 列布局 |
 | depth | `PREFIX.idepth`、`PREFIX.ldepth.mean` | vcftools 列布局 |
 | summary | `PREFIX.stats` | bcftools stats 文本 |
-| f 统计 / LD | `PREFIX.fstats`、`PREFIX.ld`、`PREFIX.prune.in/.out` | 05 §3.3–3.4【待实现】 |
+| f 统计 / LD | `PREFIX.fstats`、`PREFIX.ld.decay`、`PREFIX.ld`（`--ld-pairs`） | 05 §3.3–3.4。剪枝清单 `.prune.in/.prune.out` 不是 stats 的输出，只由 `--prune-list PREFIX` 产生（filter 与 stats 都可给） |
 | 日志 | `PREFIX.log` | 命令、版本、每个统计量的方法与文献、过滤漏斗、计数器 |
 
 ### 7.5 例子
@@ -262,3 +272,4 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out        # 【待
 | D-4 | `reed qc` 隐藏子命令仍在 | 路线 X1（03 C-2） |
 | D-5 | `--fst-pops` 仍出现在 `reed-stats/src/lib.rs:47` 注释与 doc_v2 02 §5.2 | 路线 X4 随 `--fst-global` 清理 |
 | D-6 | Fst 列名文档写 `avg_wc84_fst`、代码写 `avg_wc_fst` | 本文以代码（pixy 拼写）为准 |
+| D-7 | 在途 X4.4 把 `--indep-pairwise` 放在 `reed stats` 并以 `.prune.in/.out` 为产物（照 05 §3.4 旧文） | 2026-10-10 裁决改为 §3.4 的过滤规则 + 一条命令出剪枝后 VCF；`--ld-decay/--ld-pairs` 留在 stats 不变（05 §3.4.3） |

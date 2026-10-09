@@ -2,7 +2,7 @@
 //! f64 Pearson correlation (the reference), hand-computed cases, decay
 //! binning, and ordered-carry pruning semantics.
 
-use reed_stats::ld::{LdDecayAcc, LdPruner, pair_sums};
+use reed_stats::ld::{LdDecayAcc, LdPruner, LdWindow, pair_sums};
 
 /// Builds a site's four planes from per-sample genotypes
 /// (`(slot0, slot1)` with `None` = missing).
@@ -219,10 +219,10 @@ fn ordered_carry_pruning_keeps_first_of_high_ld() {
     ];
     let g = gts(&spec);
     let p = planes(&g);
-    let mut pruner = LdPruner::new(0.8, 10, p[0].len(), g.len());
-    assert!(pruner.push(0, p));
-    assert!(!pruner.push(1, p), "identical site → pruned");
-    assert!(!pruner.push(2, p));
+    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(10), 1, p[0].len(), g.len());
+    assert!(pruner.push(0, 0, p));
+    assert!(!pruner.push(1, 10, p), "identical site → pruned");
+    assert!(!pruner.push(2, 20, p));
     assert_eq!(pruner.kept_sites(), vec![0]);
 }
 
@@ -234,19 +234,19 @@ fn pruner_window_forgets_beyond_max_sites() {
     let spec = vec![(b'0', b'1'), (b'1', b'0'), (b'0', b'0'), (b'1', b'1')];
     let g = gts(&spec);
     let p = planes(&g);
-    let mut pruner = LdPruner::new(0.8, 1, p[0].len(), g.len());
-    assert!(pruner.push(0, p));
-    assert!(!pruner.push(1, p));
-    assert!(!pruner.push(2, p));
+    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(1), 1, p[0].len(), g.len());
+    assert!(pruner.push(0, 0, p));
+    assert!(!pruner.push(1, 10, p));
+    assert!(!pruner.push(2, 20, p));
 
     // A constant site (zero variance → no r²) is kept and, with
     // max_sites = 1, EVICTS site 0 from the ring: the window holds only
     // the most recent kept site.
     let constant = gts(&[(b'0', b'0'), (b'0', b'0'), (b'0', b'0'), (b'0', b'0')]);
     let q = planes(&constant);
-    assert!(pruner.push(3, q), "constant site: zero variance → no r² → kept");
+    assert!(pruner.push(3, 30, q), "constant site: zero variance → no r² → kept");
     assert_eq!(pruner.kept_sites(), vec![3]);
     // The next constant site also never prunes (zero variance → no r²).
-    assert!(pruner.push(4, q));
+    assert!(pruner.push(4, 40, q));
     assert_eq!(pruner.kept_sites(), vec![4]);
 }

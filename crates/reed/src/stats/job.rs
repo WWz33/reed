@@ -37,7 +37,9 @@ use reed_io::vcf::line::LineRef;
 pub use reed_stats::fst::FstKind;
 pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey};
+use reed_core::genotype::PlaneBlock;
 use reed_stats::jackknife::BpBlockJackknife;
+use reed_stats::ld::{LdDecayAcc, LdPruner, LdWindow};
 use reed_stats::patterson::{
     f2_site, f3_site, f4_site, PattersonKind,
 };
@@ -252,6 +254,106 @@ pub struct StatsRequest {
     /// Patterson f-statistics, genome-wide with a block jackknife
     /// (docs/rounds/v5/05-algorithms.md §3.3); `None` = not requested.
     pub fstats: Option<FStatsRequest>,
+    /// LD: `--ld-decay` / `--indep-pairwise`
+    /// (docs/rounds/v5/05-algorithms.md §3.4); `None` = not requested.
+    pub ld: Option<LdRequest>,
+}
+
+/// An LD request (docs/rounds/v5/05-algorithms.md §3.4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LdRequest {
+    /// `--ld-decay MAX_BP`: pairwise r² within this span, binned by
+    /// `decay_bin_bp`. `None` = no decay table.
+    pub decay_max_bp: Option<u64>,
+    /// Decay bin width in bp (default 1000).
+    pub decay_bin_bp: u64,
+    /// `--indep-pairwise W S R2`: the pruning window.
+    pub prune: Option<LdPruneRequest>,
+    /// Write the per-pair table (`--ld-pairs`).
+    pub pairs: bool,
+}
+
+/// The `--indep-pairwise W S R2` triple.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LdPruneRequest {
+    /// Window: variant count, or bp (`kb` spelling).
+    pub window: LdWindow,
+    /// Step in variants.
+    pub step: usize,
+    /// r² threshold.
+    pub r2: f64,
+}
+
+/// The LD output.
+#[derive(Clone, Debug, Default)]
+pub struct LdReport {
+    /// Decay bins: `(bin_start_bp, bin_end_bp, n_pairs, mean_r2)`.
+    pub decay: Vec<(u64, u64, u64, Option<f64>)>,
+    /// Per-pair rows: `(contig, pos1_a, pos1_b, r2)`.
+    pub pairs: Vec<(String, u64, u64, f64)>,
+    /// Kept site keys from `--indep-pairwise`.
+    pub prune_in: Vec<(String, u64)>,
+    /// Pruned site keys.
+    pub prune_out: Vec<(String, u64)>,
+}
+
+/// The validated LD plan shared by the job and the sink.
+#[derive(Clone, Debug)]
+struct LdPlan {
+    decay_max_bp: Option<u64>,
+    decay_bin_bp: u64,
+    prune: Option<LdPruneRequest>,
+    pairs: bool,
+}
+
+impl LdPlan {
+    /// The widest bp window the tail must span (decay or the pruning window).
+    fn window_bp(&self) -> Option<u64> {
+        let prune_bp = match self.prune.map(|p| p.window) {
+            Some(LdWindow::Bp(bp)) => Some(bp),
+            _ => None,
+        };
+        match (self.decay_max_bp, prune_bp) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
+    }
+
+    /// Decay bin edges: `[0, bin), [bin, 2·bin), …` up to `decay_max_bp`.
+    fn decay_edges(&self) -> Vec<u64> {
+        let bin = self.decay_bin_bp.max(1);
+        let max = self.decay_max_bp.unwrap_or(bin);
+        let mut edges = Vec::new();
+        let mut e = 0;
+        while e < max {
+            edges.push(e);
+            e += bin;
+        }
+        edges
+    }
+}
+
+/// Per-chunk LD partials: the decay accumulator, the pair rows, and the two
+/// site windows a chunk boundary needs.
+///
+/// A pair spanning a boundary has its earlier site in the previous chunk's
+/// *tail* (the last `max_bp` sites) and its later site in this chunk's
+/// *head* (the first `max_bp` sites). The worker computes the pairs inside
+/// one chunk; the sink completes the boundary ones from these windows.
+#[derive(Clone, Debug)]
+struct LdPartial {
+    /// The chunk's first sites, up to `max_bp` past the first position.
+    head: Vec<(Vec<u8>, u64, Vec<u64>)>,
+    /// The chunk's last sites, up to `max_bp` before the last position.
+    tail: Vec<(Vec<u8>, u64, Vec<u64>)>,
+    /// Every site of the chunk, in order (only filled when pruning runs).
+    all_sites: Vec<(Vec<u8>, u64, Vec<u64>)>,
+    /// Decay sums for pairs with both sites inside this chunk.
+    decay: Option<LdDecayAcc>,
+    /// Pairs written (`--ld-pairs`) with both sites inside this chunk.
+    pairs: Vec<(Vec<u8>, u64, u64, f64)>,
 }
 
 /// A projected site-frequency-spectrum request (docs/rounds/v5/05-algorithms.md
@@ -562,6 +664,8 @@ pub struct StatsReport {
     pub sfs: Option<SfsReport>,
     /// The Patterson f-statistics when [`StatsRequest::fstats`] was set.
     pub fstats: Option<FStatsReport>,
+    /// The LD tables when [`StatsRequest::ld`] was set.
+    pub ld: Option<LdReport>,
     /// Chunks processed.
     pub n_chunks: u64,
     /// The engine's stage metrics (doc_v4 03 A4-5): reader/reducer/chain
@@ -634,6 +738,8 @@ pub struct StatsPartial {
     sfs: Option<SfsPartial>,
     /// Genome-wide Patterson f-statistics.
     fstats: Option<FStatsPartial>,
+    /// LD partials.
+    ld: Option<LdPartial>,
 }
 
 /// The chunk job: line → `LineRef` → GT tallies → group count row → the
@@ -658,6 +764,8 @@ pub struct StatsJob {
     sfs: Option<SfsPlan>,
     /// The genome-wide f-statistics plan; `None` = not requested.
     fstats: Option<FStatsPlan>,
+    /// The LD plan; `None` = not requested.
+    ld: Option<LdPlan>,
 }
 
 /// The BCF fast path's shared state: the dictionaries, the FORMAT index of
@@ -666,6 +774,26 @@ struct BcfNative {
     dict: Arc<BcfDict>,
     gt_key: Option<u32>,
     table: reed_io::bcf::GtTable,
+}
+
+/// Worker-local LD state: the current contig, the planes still inside the
+/// window, and the reusable one-site plane block.
+#[derive(Default)]
+pub struct LdScratch {
+    contig: Vec<u8>,
+    carry: Vec<(u64, Vec<u64>)>,
+    planes: Option<PlaneBlock>,
+    w: usize,
+}
+
+impl LdScratch {
+    fn reset(&mut self, contig: &[u8], w: usize) {
+        if self.contig != contig {
+            self.contig = contig.to_vec();
+            self.carry.clear();
+        }
+        self.w = w;
+    }
 }
 
 /// Worker scratch: the group count row, the shared record decoder and its
@@ -679,6 +807,8 @@ pub struct StatsScratch {
     codes: Vec<GtCode>,
     /// Per-group projection-weight memos for the SFS path.
     sfs_caches: Vec<ProjectionCache>,
+    /// Worker-local LD state.
+    ld: LdScratch,
 }
 
 /// The statistics decode policies: haploid calls are half calls and ALT
@@ -705,6 +835,9 @@ impl ChunkJob for StatsJob {
         let mut partial = StatsPartial::default();
         let mut current: Option<SegmentPartial> = None;
         self.reset_row(scratch);
+        // The LD carry is per chunk: cross-chunk pairs belong to the sink
+        // (its head x carried-tail pass), so a chunk never pairs twice.
+        scratch.ld.carry.clear();
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
@@ -726,6 +859,7 @@ impl ChunkJob for StatsJob {
         let mut partial = StatsPartial::default();
         let mut current: Option<SegmentPartial> = None;
         self.reset_row(scratch);
+        scratch.ld.carry.clear();
         self.push_line(line, &mut current, &mut partial, scratch)?;
         if let Some(segment) = current.take() {
             partial.segments.push(segment);
@@ -819,6 +953,7 @@ impl StatsJob {
         sfs_caches: &mut Vec<ProjectionCache>,
         current: &mut Option<SegmentPartial>,
         partial: &mut StatsPartial,
+        ld_scratch: &mut LdScratch,
     ) -> Result<(), EngineError> {
         for counts in row.iter_mut() {
             *counts = SiteGroupCounts::default();
@@ -849,8 +984,96 @@ impl StatsJob {
         }
         self.push_sfs(row, partial, sfs_caches);
         self.push_fstats(&segment.contig.clone(), pos0, row, partial);
+        self.push_ld(pos0, codes, partial, ld_scratch);
         partial.n_records += 1;
         Ok(())
+    }
+
+    /// Feeds the LD path for one site (docs/rounds/v5/05-algorithms.md
+    /// §3.4): pairs against the carried tail, then the site joins the tail.
+    fn push_ld(
+        &self,
+        pos0: u64,
+        codes: &[GtCode],
+        partial: &mut StatsPartial,
+        ld: &mut LdScratch,
+    ) {
+        let Some(plan) = &self.ld else { return };
+        let contig = &ld.contig;
+        let window_bp = plan.window_bp();
+        // The site's four planes (one-site block, reused).
+        let block = ld
+            .planes
+            .get_or_insert_with(|| PlaneBlock::new(1, self.n_samples, false));
+        block.push_codes(0, codes);
+        let site = block.site_planes(0);
+        let planes: [&[u64]; 4] =
+            [site.slot0_alt, site.slot0_miss, site.slot1_alt, site.slot1_miss];
+
+        let ld_partial = partial.ld.get_or_insert_with(|| LdPartial {
+            head: Vec::new(),
+            tail: Vec::new(),
+            all_sites: Vec::new(),
+            decay: plan.decay_max_bp.map(|_| LdDecayAcc::new(plan.decay_edges())),
+            pairs: Vec::new(),
+        });
+        // In-chunk pairs come from the worker-local carry. Cross-chunk
+        // pairs are completed at the sink from the carried tail, so a chunk
+        // boundary never changes the result set.
+        for (carry_pos0, carry_flat) in &ld.carry {
+            let dist = pos0.saturating_sub(*carry_pos0);
+            if let Some(max) = plan.decay_max_bp
+                && dist <= max
+            {
+                let kp: [&[u64]; 4] = [
+                    &carry_flat[0..ld.w],
+                    &carry_flat[ld.w..2 * ld.w],
+                    &carry_flat[2 * ld.w..3 * ld.w],
+                    &carry_flat[3 * ld.w..4 * ld.w],
+                ];
+                if let Some(r2) = reed_stats::ld::pair_sums(planes, kp, self.n_samples).r2() {
+                    if let Some(decay) = &mut ld_partial.decay {
+                        decay.push(dist, r2);
+                    }
+                    if plan.pairs {
+                        ld_partial.pairs.push((
+                            contig.clone(),
+                            *carry_pos0 + 1,
+                            pos0 + 1,
+                            r2,
+                        ));
+                    }
+                }
+            }
+        }
+        // This site joins both the worker carry and the chunk tail.
+        let mut flat = Vec::with_capacity(4 * ld.w);
+        for p in planes {
+            flat.extend_from_slice(p);
+        }
+        ld.carry.push((pos0, flat.clone()));
+        if let Some(max) = window_bp {
+            ld.carry.retain(|(p, _)| pos0.saturating_sub(*p) <= max);
+        }
+        ld_partial.tail.push((contig.clone(), pos0, flat.clone()));
+        if let Some(max) = window_bp {
+            ld_partial.tail.retain(|(_, p, _)| pos0.saturating_sub(*p) <= max);
+        }
+        // The head is the chunk's first `max_bp`; once the chunk runs past
+        // that, no later site joins it.
+        match ld_partial.head.last() {
+            Some((head_contig, head_pos, _)) => {
+                let within = head_contig == contig
+                    && window_bp.is_none_or(|max| pos0.saturating_sub(*head_pos) <= max);
+                if within {
+                    ld_partial.head.push((contig.clone(), pos0, flat.clone()));
+                }
+            }
+            None => ld_partial.head.push((contig.clone(), pos0, flat.clone())),
+        }
+        if plan.prune.is_some() {
+            ld_partial.all_sites.push((contig.clone(), pos0, flat));
+        }
     }
 
     /// Feeds the genome-wide f-statistics for one site (docs/rounds/v5/05
@@ -924,7 +1147,8 @@ impl StatsJob {
         else {
             return Ok(());
         };
-        let StatsScratch { row, scanner, counters, sfs_caches, .. } = scratch;
+        let StatsScratch { row, scanner, counters, sfs_caches, ld, .. } = scratch;
+        ld.reset(site.contig_name, self.n_samples.div_ceil(64));
         *counters = PolicyCounters::default();
         let n_samples = self.n_samples;
         let scanner = scanner
@@ -932,7 +1156,7 @@ impl StatsJob {
         let out = scanner
             .scan(&lr, &site, counters)
             .map_err(EngineError::from)?;
-        self.push_row(pos0, out.codes, row, sfs_caches, current, partial)
+        self.push_row(pos0, out.codes, row, sfs_caches, current, partial, ld)
     }
 
     /// The record sink for a filtering wrapper (doc_v4 O-2): the wrapper
@@ -974,6 +1198,7 @@ impl StatsJob {
                 &mut scratch.sfs_caches,
                 &mut current,
                 &mut partial,
+                &mut scratch.ld,
             )?;
         }
         if let Some(segment) = current.take() {
@@ -1058,6 +1283,7 @@ impl StatsJob {
             &mut scratch.sfs_caches,
             current,
             partial,
+            &mut scratch.ld,
         )
     }
 }
@@ -1070,6 +1296,11 @@ struct SinkOutput {
     sfs: Option<SfsPartial>,
     /// Genome-wide f-statistics.
     fstats: Option<FStatsPartial>,
+    /// LD partials.
+    ld: Option<LdPartial>,
+    /// Prune keys from `--indep-pairwise`.
+    ld_prune_in: Vec<(Vec<u8>, u64)>,
+    ld_prune_out: Vec<(Vec<u8>, u64)>,
     n_invariant_sites: u64,
     n_no_alt_records: u64,
     n_windows: u64,
@@ -1122,6 +1353,22 @@ struct StatsSink {
     sfs: Option<SfsPartial>,
     /// Merged genome-wide f-statistics.
     fstats: Option<FStatsPartial>,
+    /// Merged LD partial (decay sums and pair rows).
+    ld_partial: Option<LdPartial>,
+    /// The carried tail planes across chunk boundaries.
+    ld_tail: Vec<(Vec<u8>, u64, Vec<u64>)>,
+    /// The pruning state (candidates are the sites in order).
+    ld_pruner: Option<LdPruner>,
+    /// Kept / pruned keys (`(contig, pos1)`) in consumption order.
+    ld_prune_in: Vec<(Vec<u8>, u64)>,
+    ld_prune_out: Vec<(Vec<u8>, u64)>,
+    /// The previous site's key, for the pruner's site index.
+    ld_site_index: usize,
+    /// The LD plan (the sink needs the window for the tail and the prune).
+    ld: Option<LdPlan>,
+    /// LD plane width in words and the sample count (the sink's pair math).
+    ld_w: usize,
+    ld_n_samples: usize,
     genome_span: u64,
     rows: String,
     n_windows: u64,
@@ -1147,6 +1394,110 @@ impl OrderedSink<StatsPartial> for StatsSink {
                 Some(dst) => dst.merge(src),
                 None => self.fstats = Some(src.clone()),
             }
+        }
+        if let (Some(plan), Some(src)) = (&self.ld, &partial.ld) {
+            // Cross-chunk pairs: this chunk's HEAD sites against the tail
+            // carried from earlier chunks (never the same chunk twice).
+            for (contig, pos0, flat) in &src.head {
+                for (tail_contig, tail_pos0, tail_flat) in &self.ld_tail {
+                    if tail_contig != contig {
+                        continue;
+                    }
+                    let dist = pos0.saturating_sub(*tail_pos0);
+                    if let Some(max) = plan.decay_max_bp
+                        && dist <= max
+                    {
+                        let w = self.ld_w;
+                        let a: [&[u64]; 4] = [
+                            &flat[0..w],
+                            &flat[w..2 * w],
+                            &flat[2 * w..3 * w],
+                            &flat[3 * w..4 * w],
+                        ];
+                        let b: [&[u64]; 4] = [
+                            &tail_flat[0..w],
+                            &tail_flat[w..2 * w],
+                            &tail_flat[2 * w..3 * w],
+                            &tail_flat[3 * w..4 * w],
+                        ];
+                        if let Some(r2) = reed_stats::ld::pair_sums(a, b, self.ld_n_samples).r2() {
+                            let entry = self
+                                .ld_partial
+                                .get_or_insert_with(|| LdPartial {
+                                    head: Vec::new(),
+                                    tail: Vec::new(),
+                                    all_sites: Vec::new(),
+                                    decay: Some(LdDecayAcc::new(plan.decay_edges())),
+                                    pairs: Vec::new(),
+                                });
+                            if let Some(decay) = &mut entry.decay {
+                                decay.push(dist, r2);
+                            }
+                            if plan.pairs {
+                                entry.pairs.push((
+                                    contig.clone(),
+                                    *tail_pos0 + 1,
+                                    pos0 + 1,
+                                    r2,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            // Merge the chunk's own decay sums and pair rows.
+            let entry = self.ld_partial.get_or_insert_with(|| LdPartial {
+                head: Vec::new(),
+                tail: Vec::new(),
+                all_sites: Vec::new(),
+                decay: None,
+                pairs: Vec::new(),
+            });
+            if let Some(src_decay) = &src.decay {
+                match &mut entry.decay {
+                    Some(dst) => dst.merge(src_decay),
+                    None => entry.decay = Some(src_decay.clone()),
+                }
+            }
+            entry.pairs.extend(src.pairs.iter().cloned());
+            // Pruning: candidates in site order, on the sink thread (the
+            // pruning is order-dependent, so it cannot run per chunk). The
+            // full site list is carried when pruning is requested.
+            if let Some(prune) = plan.prune {
+                if self.ld_pruner.is_none() {
+                    self.ld_pruner = Some(LdPruner::new(
+                        prune.r2,
+                        prune.window,
+                        prune.step,
+                        self.ld_w,
+                        self.ld_n_samples,
+                    ));
+                }
+                let pruner = self.ld_pruner.as_mut().expect("invariant: just set");
+                for (contig, pos0, flat) in &src.all_sites {
+                    let w = self.ld_w;
+                    let planes: [&[u64]; 4] = [
+                        &flat[0..w],
+                        &flat[w..2 * w],
+                        &flat[2 * w..3 * w],
+                        &flat[3 * w..4 * w],
+                    ];
+                    let kept = pruner.push(self.ld_site_index, *pos0, planes);
+                    self.ld_site_index += 1;
+                    let key = (contig.clone(), *pos0 + 1);
+                    if kept {
+                        self.ld_prune_in.push(key);
+                    } else {
+                        self.ld_prune_out.push(key);
+                    }
+                }
+            }
+            // Carry this chunk's tail forward, evicting out-of-window sites.
+            if let Some(max) = plan.window_bp() {
+                let last = src.tail.last().map(|(_, p, _)| *p).unwrap_or(0);
+                self.ld_tail.retain(|(c, p, _)| c != &src.tail.last().map(|(c, _, _)| c.clone()).unwrap_or_default() || last.saturating_sub(*p) <= max);
+            }
+            self.ld_tail.extend(src.tail.iter().cloned());
         }
         for mut segment in std::mem::take(&mut partial.segments) {
             let mut current = match self.current.take() {
@@ -1206,6 +1557,9 @@ impl OrderedSink<StatsPartial> for StatsSink {
             .out
             .lock()
             .expect("invariant: stats slot not poisoned") = Some(SinkOutput {
+            ld: self.ld_partial.take(),
+            ld_prune_in: std::mem::take(&mut self.ld_prune_in),
+            ld_prune_out: std::mem::take(&mut self.ld_prune_out),
             rows: self.rows,
             windows: std::mem::take(&mut self.windows),
             sfs: self.sfs.take(),
@@ -1431,6 +1785,12 @@ pub fn run_stats_opened(
             })
         }
     };
+    let ld_plan = request.ld.as_ref().map(|ld| LdPlan {
+        decay_max_bp: ld.decay_max_bp,
+        decay_bin_bp: ld.decay_bin_bp.max(1),
+        prune: ld.prune,
+        pairs: ld.pairs,
+    });
     let sfs_plan = match &request.sfs {
         None => None,
         Some(sfs) => {
@@ -1524,11 +1884,21 @@ pub fn run_stats_opened(
         }),
         sfs: sfs_plan,
         fstats: fstats_plan,
+        ld: ld_plan.clone(),
     };
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
         sfs: None,
         fstats: None,
+        ld_partial: None,
+        ld_tail: Vec::new(),
+        ld_pruner: None,
+        ld_prune_in: Vec::new(),
+        ld_prune_out: Vec::new(),
+        ld_site_index: 0,
+        ld: ld_plan,
+        ld_w: header.n_samples().div_ceil(64),
+        ld_n_samples: header.n_samples(),
         size: request.window_size,
         step: request.step,
         width: binning.width(),
@@ -1602,6 +1972,42 @@ pub fn run_stats_opened(
     Ok(StatsReport {
         tsv,
         windows: output.windows,
+        ld: output.ld.map(|partial| {
+            let decay = partial.decay.as_ref().map_or_else(Vec::new, |acc| {
+                let means = acc.mean_r2();
+                let counts = acc.counts().to_vec();
+                let bin = request.ld.as_ref().map_or(1000, |l| l.decay_bin_bp.max(1));
+                counts
+                    .iter()
+                    .zip(&means)
+                    .enumerate()
+                    .map(|(i, (&n, m))| {
+                        let start = (i as u64) * bin;
+                        (start, start + bin, n, *m)
+                    })
+                    .collect()
+            });
+            LdReport {
+                decay,
+                pairs: partial
+                    .pairs
+                    .iter()
+                    .map(|(c, a, b, r2)| {
+                        (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2)
+                    })
+                    .collect(),
+                prune_in: output
+                    .ld_prune_in
+                    .iter()
+                    .map(|(c, p)| (String::from_utf8_lossy(c).into_owned(), *p))
+                    .collect(),
+                prune_out: output
+                    .ld_prune_out
+                    .iter()
+                    .map(|(c, p)| (String::from_utf8_lossy(c).into_owned(), *p))
+                    .collect(),
+            }
+        }),
         sfs: output.sfs.as_ref().map(|partial| SfsReport {
             spectra: partial.per_group.iter().map(ProjectedSfsAcc::spectrum).collect(),
             projections: partial.per_group.iter().map(ProjectedSfsAcc::n).collect(),

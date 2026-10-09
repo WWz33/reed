@@ -5,6 +5,14 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::units::parse_size;
 
+/// `--ld-decay` accepts a bare flag (the default span) or a size.
+fn parse_optional_size(text: &str) -> Result<String, String> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    parse_size(text).map(|_| text.to_string())
+}
+
 /// The shared `<INPUT>` help text (doc_v4 03-architecture.md §3.6): one
 /// constant for `filter` and `stats` so the accepted formats cannot drift
 /// (01 F4-13). `index` states its file-only restriction separately.
@@ -247,6 +255,17 @@ pub(crate) struct StatsCli {
     /// Block-jackknife block size in bp for the f-statistics (default 5M)
     #[arg(long = "block-size", value_name = "SIZE", value_parser = crate::units::parse_size)]
     pub block_size: Option<u64>,
+    /// LD decay: pairwise r² within MAX_BP (default 100k), 1 kb bins
+    #[arg(long = "ld-decay", value_name = "MAX_BP", num_args = 0..=1,
+          default_missing_value = "", value_parser = parse_optional_size)]
+    pub ld_decay: Option<String>,
+    /// Also write the per-pair LD table (PREFIX.ld)
+    #[arg(long = "ld-pairs")]
+    pub ld_pairs: bool,
+    /// LD pruning, plink2 semantics: W S R2 (W variants or `W kb`)
+    #[arg(long = "indep-pairwise", value_name = "W S R2", num_args = 1..=3,
+          value_delimiter = ' ')]
+    pub indep_pairwise: Vec<String>,
     /// Projected site-frequency spectrum, genome-wide (docs/rounds/v5/05
     /// §3.1): writes PREFIX_sfs/dadi and PREFIX_sfs/fastsimcoal2; needs
     /// --proj. Default unfolded (REF = ancestral); `--sfs folded` folds it
