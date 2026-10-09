@@ -72,6 +72,8 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 | CLI | `--sfs [folded] --proj N[,N…]`（默认 unfolded；单值广播到各群体）、`--sfs-int`；无 `--pop` 时全体样本为一个群体（名为 `all`）；裸 `--sfs`（无窗口统计）不触发 all-sites 检查，levels 自动 genome-only | `a49d318` | `e2e_sfs`；手工：`reed stats gold/fixtures/sfs.vcf --pop … --sfs --proj 6` |
 | 对拍 | `gold/popgen/run_easysfs.sh` + `compare_sfs.py`（rtol 1e-6，取整前） | `a49d318` | fixture：unfolded 7 bins 最大相对差 **1.04e-15**、folded **4.36e-16**；子集全量级（Chr01-03 × clean.3pop.txt 三群体，各投影到 2·min(n_i)=214）见下 |
 
+**子集全量级数字**（Chr01-03 × clean.3pop.txt 三群体，各投影到 214）：unfolded pop1 **0.0**、pop2 5.707e-11、pop3 9.310e-12；folded pop1 **0.0**（门 rtol 1e-6）。folded 的 pop2/pop3 因 easySFS 的二维谱耗时而未跑完（其 pop1 已零差异，unfolded 三群体全部通过）。
+
 **偏差**：`--sfs-int` 与 easySFS `--dtype int` 在“恰为半整数”的分箱可差 1（easySFS 的浮点噪声把精确 1.5 落成 1.499999999999999 → 取整 1；reed 的补偿求和得 1.5 → 取整 2）。规范里的 `1 3 3 2 1 1 0` 即此例；对拍以“取整前”的浮点 rtol 1e-6 为准（05 §3.1 的措辞“取整前”）。两群体（二维联合谱）与 `--sfs-int` 的半整数取整规则留待后续。
 
 ### X4.2 合并（r 群体）Fst：`--fst-global`（05 §3.2）
