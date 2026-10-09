@@ -237,6 +237,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         tajima_d,
         fst,
         fst_global,
+        f2,
+        f3,
+        f4,
+        dstat,
+        f4_ratio,
+        block_size,
         pbs,
         pbs_normed,
         sfs,
@@ -408,7 +414,10 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
 
     // Windowed statistics need the populations file; a bare `--sfs` (no
     // windowed statistic) treats every sample as one population.
-    let windowed = pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty();
+    let fstats_requested =
+        !f2.is_empty() || !f3.is_empty() || !f4.is_empty() || !dstat.is_empty() || !f4_ratio.is_empty();
+    let windowed =
+        pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() || fstats_requested;
     let (gt_groups, group_names) = match &pop {
         Some(groups) => assign_groups(Path::new(groups), &sample_names, force_samples)?,
         None if sfs.is_some() && !windowed => {
@@ -437,7 +446,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         let step = if step == 0 { size } else { step };
         // A bare `--sfs` has no window denominators, so the all-sites check
         // does not apply (05 §3.1 accepts variant-only input).
-        let invariant = if variant_only || (sfs.is_some() && !windowed) {
+        let invariant = if variant_only || (sfs.is_some() && !windowed) || fstats_requested {
             reed::InvariantMode::VariantOnly
         } else if bypass_invariant_check {
             eprintln!(
@@ -518,9 +527,21 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
                 Some(reed::SfsRequest { projections: values, folded: mode == "folded" })
             }
         };
+        // Patterson f-statistics (docs/rounds/v5/05-algorithms.md §3.3):
+        // genome-wide, one row per test, block-jackknife SE.
+        let fstats_request = build_fstats_request(
+            &f2,
+            &f3,
+            &f4,
+            &dstat,
+            &f4_ratio,
+            block_size,
+            &group_names,
+        )?;
         // The SFS is genome-wide: with no windowed kind, skip the window
         // grid entirely (genome level only) and give it a nominal size.
-        let sfs_only = kinds.is_empty();
+        let sfs_only = kinds.is_empty() && fstats_request.is_none();
+        let _ = windowed;
         let size = if size == 0 && sfs_only { 1000 } else { size };
         let step = if step == 0 { size } else { step };
         let levels = if sfs_only {
@@ -538,6 +559,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             keep_samples: keep_samples.clone(),
             filter: filter.clone(),
             sfs: sfs_request,
+            fstats: fstats_request,
             gt_groups,
             window_size: size,
             step,
@@ -555,6 +577,13 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         };
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
+        if let Some(fstats_report) = &report.fstats {
+            files.extend(reed::fstats::write_fstats(
+                Path::new(&prefix),
+                &group_names,
+                fstats_report,
+            )?);
+        }
         if let Some(sfs_report) = &report.sfs {
             files.extend(reed::sfs::write_projected_sfs(
                 Path::new(&prefix),
@@ -608,6 +637,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         keep_samples,
         filter,
         sfs: None,
+        fstats: None,
         gt_groups,
         window_size: size,
         step: if step == 0 { size } else { step },
@@ -644,6 +674,105 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         None => print!("{}", report.tsv),
     }
     Ok(())
+}
+
+/// Builds the f-statistics request from the `--f2/--f3/--f4/--dstat/
+/// --f4-ratio` values (docs/rounds/v5/05-algorithms.md §3.3). Each value is
+/// a semicolon-separated list of role groups; each role group is a
+/// comma-separated population list.
+fn build_fstats_request(
+    f2: &[String],
+    f3: &[String],
+    f4: &[String],
+    dstat: &[String],
+    f4_ratio: &[String],
+    block_size: Option<u64>,
+    group_names: &[String],
+) -> Result<Option<reed::FStatsRequest>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut tests = Vec::new();
+    let index = |name: &str| -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        group_names
+            .iter()
+            .position(|g| g == name)
+            .ok_or_else(|| format!("population {name:?} is not in the populations file").into())
+    };
+    for spec in f2 {
+        let parts = split_roles(spec, 2, "--f2")?;
+        tests.push(reed::FStatTest::F2 { a: index(&parts[0])?, b: index(&parts[1])? });
+    }
+    for spec in f3 {
+        let parts = split_roles(spec, 3, "--f3")?;
+        tests.push(reed::FStatTest::F3 {
+            c: index(&parts[0])?,
+            a: index(&parts[1])?,
+            b: index(&parts[2])?,
+        });
+    }
+    for spec in f4 {
+        let parts = split_roles(spec, 4, "--f4")?;
+        tests.push(reed::FStatTest::F4 {
+            a: index(&parts[0])?,
+            b: index(&parts[1])?,
+            c: index(&parts[2])?,
+            d: index(&parts[3])?,
+        });
+    }
+    for spec in dstat {
+        let parts = split_roles(spec, 4, "--dstat")?;
+        tests.push(reed::FStatTest::Dstat {
+            a: index(&parts[0])?,
+            b: index(&parts[1])?,
+            c: index(&parts[2])?,
+            d: index(&parts[3])?,
+        });
+    }
+    for spec in f4_ratio {
+        let parts = split_roles(spec, 3, "--f4-ratio")?;
+        // A,B;C,D;X → f4(A, O; X, C) / f4(A, O; B, C) with O = the outgroup
+        // written last in the spec's first role group.
+        tests.push(reed::FStatTest::F4Ratio {
+            o: index(&parts[1])?,
+            a: index(&parts[0])?,
+            x: index(&parts[2])?,
+            b: index(&parts[0])?,
+            c: index(&parts[1])?,
+        });
+    }
+    if tests.is_empty() {
+        return Ok(None);
+    }
+    let block_bp = block_size.unwrap_or(5_000_000);
+    Ok(Some(reed::FStatsRequest { tests, block_bp }))
+}
+
+/// Splits one f-statistic value into its role groups (semicolon-separated),
+/// each naming one population; `--f3 C;A,B` and `--f3 C;A;B` both work.
+fn split_roles(
+    spec: &str,
+    roles: usize,
+    flag: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let groups: Vec<String> = spec
+        .split(';')
+        .map(|g| g.trim().to_string())
+        .filter(|g| !g.is_empty())
+        .collect();
+    // Each role group is one population for f2/f3/f4/dstat (the comma form
+    // names the populations in order), so flatten and count.
+    let names: Vec<String> = groups.iter().flat_map(|g| g.split(',')).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    if names.len() != roles {
+        return Err(format!(
+            "{flag} expects {roles} population(s) (e.g. `{}`), got {} in {spec:?}",
+            match roles {
+                2 => "A,B",
+                3 => "C;A,B",
+                _ => "A,B;C,D",
+            },
+            names.len()
+        )
+        .into());
+    }
+    Ok(names)
 }
 
 #[cfg(test)]

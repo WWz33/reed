@@ -229,6 +229,24 @@ pub(crate) struct StatsCli {
     /// Report PBSn1 (Malaspinas et al. 2016) instead of the raw PBS
     #[arg(long)]
     pub pbs_normed: bool,
+    /// Patterson f2(A, B); repeatable
+    #[arg(long, value_name = "A,B")]
+    pub f2: Vec<String>,
+    /// Patterson f3(C; A, B); repeatable
+    #[arg(long, value_name = "C;A,B")]
+    pub f3: Vec<String>,
+    /// Patterson f4(A, B; C, D); repeatable
+    #[arg(long, value_name = "A,B;C,D")]
+    pub f4: Vec<String>,
+    /// Patterson's D(A, B; C, D); repeatable
+    #[arg(long, value_name = "A,B;C,D")]
+    pub dstat: Vec<String>,
+    /// f4-ratio A,B;C,D;X (admixtools alpha estimate); repeatable
+    #[arg(long = "f4-ratio", value_name = "A,B;C,D;X")]
+    pub f4_ratio: Vec<String>,
+    /// Block-jackknife block size in bp for the f-statistics (default 5M)
+    #[arg(long = "block-size", value_name = "SIZE", value_parser = crate::units::parse_size)]
+    pub block_size: Option<u64>,
     /// Projected site-frequency spectrum, genome-wide (docs/rounds/v5/05
     /// §3.1): writes PREFIX_sfs/dadi and PREFIX_sfs/fastsimcoal2; needs
     /// --proj. Default unfolded (REF = ancestral); `--sfs folded` folds it

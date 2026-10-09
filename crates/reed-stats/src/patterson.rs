@@ -37,6 +37,102 @@ impl PattersonKind {
     }
 }
 
+/// Per-site f2(A, B) (Patterson 2012; allel `patterson_f2`): the unbiased
+/// `(pA−pB)² − ĥA/anA − ĥB/anB`, or the raw moment for `Naive`. `None`
+/// when the site is skipped (anA or anB zero; corrected also needs both ≥ 2).
+#[must_use]
+pub fn f2_site(
+    row: &[SiteGroupCounts],
+    a: usize,
+    b: usize,
+    kind: PattersonKind,
+) -> Option<f64> {
+    let (g1, g2) = (&row[a], &row[b]);
+    let an1 = u64::from(g1.n_ref_alleles + g1.n_alt_alleles);
+    let an2 = u64::from(g2.n_ref_alleles + g2.n_alt_alleles);
+    let corrected = kind == PattersonKind::Corrected;
+    if corrected && (an1 < 2 || an2 < 2) {
+        return None;
+    }
+    if an1 == 0 || an2 == 0 {
+        return None;
+    }
+    let p1 = f64::from(g1.n_alt_alleles) / an1 as f64;
+    let p2 = f64::from(g2.n_alt_alleles) / an2 as f64;
+    let mut v = (p1 - p2) * (p1 - p2);
+    if corrected {
+        v -= f64::from(g1.n_ref_alleles) * f64::from(g1.n_alt_alleles)
+            / (an1 as f64 * an1 as f64 * (an1 - 1) as f64);
+        v -= f64::from(g2.n_ref_alleles) * f64::from(g2.n_alt_alleles)
+            / (an2 as f64 * an2 as f64 * (an2 - 1) as f64);
+    }
+    Some(v)
+}
+
+/// Per-site f3(C; A, B): `(T, B)` — the un-normalized estimate and the
+/// heterozygosity term the normalized f3* divides by (allel
+/// `patterson_f3`). `None` when the site is skipped.
+#[must_use]
+pub fn f3_site(
+    row: &[SiteGroupCounts],
+    c: usize,
+    a: usize,
+    b: usize,
+    kind: PattersonKind,
+) -> Option<(f64, f64)> {
+    let (gc, ga, gb) = (&row[c], &row[a], &row[b]);
+    let anc = u64::from(gc.n_ref_alleles + gc.n_alt_alleles);
+    let ana = u64::from(ga.n_ref_alleles + ga.n_alt_alleles);
+    let anb = u64::from(gb.n_ref_alleles + gb.n_alt_alleles);
+    let corrected = kind == PattersonKind::Corrected;
+    if corrected && anc < 2 {
+        return None;
+    }
+    if anc == 0 || ana == 0 || anb == 0 {
+        return None;
+    }
+    let pc = f64::from(gc.n_alt_alleles) / anc as f64;
+    let pa = f64::from(ga.n_alt_alleles) / ana as f64;
+    let pb = f64::from(gb.n_alt_alleles) / anb as f64;
+    let mut t = (pc - pa) * (pc - pb);
+    let h_hat = f64::from(gc.n_ref_alleles) * f64::from(gc.n_alt_alleles)
+        / (anc as f64 * (anc as f64 - 1.0));
+    if corrected {
+        t -= h_hat / anc as f64;
+    }
+    Some((t, 2.0 * h_hat))
+}
+
+/// Per-site f4(A, B; C, D): `(num, den)` — `num = (pA−pB)(pC−pD)` and the
+/// D-denominator `(pA+pB−2pApB)(pC+pD−2pCpD)` (allel `patterson_d`). `None`
+/// when any of the four populations has no called allele.
+#[must_use]
+pub fn f4_site(
+    row: &[SiteGroupCounts],
+    a: usize,
+    b: usize,
+    c: usize,
+    d: usize,
+) -> Option<(f64, f64)> {
+    let g = [&row[a], &row[b], &row[c], &row[d]];
+    let mut an = [0_u64; 4];
+    for (i, gi) in g.iter().enumerate() {
+        an[i] = u64::from(gi.n_ref_alleles + gi.n_alt_alleles);
+        if an[i] == 0 {
+            return None;
+        }
+    }
+    let p = [
+        f64::from(g[0].n_alt_alleles) / an[0] as f64,
+        f64::from(g[1].n_alt_alleles) / an[1] as f64,
+        f64::from(g[2].n_alt_alleles) / an[2] as f64,
+        f64::from(g[3].n_alt_alleles) / an[3] as f64,
+    ];
+    let num = (p[0] - p[1]) * (p[2] - p[3]);
+    let den = (p[0] + p[1] - 2.0 * p[0] * p[1]) * (p[2] + p[3] - 2.0 * p[2] * p[3]);
+    Some((num, den))
+}
+
 /// f2(A, B) between two groups.
 #[derive(Clone, Debug)]
 pub struct F2Acc {
@@ -64,28 +160,14 @@ impl F2Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let (g1, g2) = (&row[self.a], &row[self.b]);
-        let an1 = u64::from(g1.n_ref_alleles + g1.n_alt_alleles);
-        let an2 = u64::from(g2.n_ref_alleles + g2.n_alt_alleles);
-        if self.corrected && (an1 < 2 || an2 < 2) {
-            self.n_skipped += 1;
-            return;
+        let kind = if self.corrected { PattersonKind::Corrected } else { PattersonKind::Naive };
+        match f2_site(row, self.a, self.b, kind) {
+            Some(v) => {
+                self.sum.add(v);
+                self.n_sites += 1;
+            }
+            None => self.n_skipped += 1,
         }
-        if an1 == 0 || an2 == 0 {
-            self.n_skipped += 1;
-            return;
-        }
-        let p1 = f64::from(g1.n_alt_alleles) / an1 as f64;
-        let p2 = f64::from(g2.n_alt_alleles) / an2 as f64;
-        let mut v = (p1 - p2) * (p1 - p2);
-        if self.corrected {
-            v -= f64::from(g1.n_ref_alleles) * f64::from(g1.n_alt_alleles)
-                / (an1 as f64 * an1 as f64 * (an1 - 1) as f64);
-            v -= f64::from(g2.n_ref_alleles) * f64::from(g2.n_alt_alleles)
-                / (an2 as f64 * an2 as f64 * (an2 - 1) as f64);
-        }
-        self.sum.add(v);
-        self.n_sites += 1;
     }
 
     /// Component-wise merge.
@@ -140,32 +222,15 @@ impl F3Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let (gc, ga, gb) = (&row[self.c], &row[self.a], &row[self.b]);
-        let anc = u64::from(gc.n_ref_alleles + gc.n_alt_alleles);
-        let ana = u64::from(ga.n_ref_alleles + ga.n_alt_alleles);
-        let anb = u64::from(gb.n_ref_alleles + gb.n_alt_alleles);
-        if self.corrected && anc < 2 {
-            self.n_skipped += 1;
-            return;
+        let kind = if self.corrected { PattersonKind::Corrected } else { PattersonKind::Naive };
+        match f3_site(row, self.c, self.a, self.b, kind) {
+            Some((t, b_term)) => {
+                self.t.add(t);
+                self.b_sum.add(b_term);
+                self.n_sites += 1;
+            }
+            None => self.n_skipped += 1,
         }
-        if anc == 0 || ana == 0 || anb == 0 {
-            self.n_skipped += 1;
-            return;
-        }
-        let pc = f64::from(gc.n_alt_alleles) / anc as f64;
-        let pa = f64::from(ga.n_alt_alleles) / ana as f64;
-        let pb = f64::from(gb.n_alt_alleles) / anb as f64;
-        let mut t = (pc - pa) * (pc - pb);
-        // ĥC = ac0·ac1/(anC·(anC−1)) — allel's unbiased heterozygosity.
-        let h_hat = f64::from(gc.n_ref_alleles) * f64::from(gc.n_alt_alleles)
-            / (anc as f64 * (anc as f64 - 1.0));
-        if self.corrected {
-            t -= h_hat / anc as f64;
-        }
-        let b_term = 2.0 * h_hat;
-        self.t.add(t);
-        self.b_sum.add(b_term);
-        self.n_sites += 1;
     }
 
     /// Component-wise merge.
@@ -234,28 +299,14 @@ impl F4Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let (g1, g2, g3, g4) = (&row[self.a], &row[self.b], &row[self.c], &row[self.d]);
-        let an = [
-            u64::from(g1.n_ref_alleles + g1.n_alt_alleles),
-            u64::from(g2.n_ref_alleles + g2.n_alt_alleles),
-            u64::from(g3.n_ref_alleles + g3.n_alt_alleles),
-            u64::from(g4.n_ref_alleles + g4.n_alt_alleles),
-        ];
-        if an.contains(&0) {
-            self.n_skipped += 1;
-            return;
+        match f4_site(row, self.a, self.b, self.c, self.d) {
+            Some((num, den)) => {
+                self.num.add(num);
+                self.den.add(den);
+                self.n_sites += 1;
+            }
+            None => self.n_skipped += 1,
         }
-        let p = [
-            f64::from(g1.n_alt_alleles) / an[0] as f64,
-            f64::from(g2.n_alt_alleles) / an[1] as f64,
-            f64::from(g3.n_alt_alleles) / an[2] as f64,
-            f64::from(g4.n_alt_alleles) / an[3] as f64,
-        ];
-        let num = (p[0] - p[1]) * (p[2] - p[3]);
-        let den = (p[0] + p[1] - 2.0 * p[0] * p[1]) * (p[2] + p[3] - 2.0 * p[2] * p[3]);
-        self.num.add(num);
-        self.den.add(den);
-        self.n_sites += 1;
     }
 
     /// Component-wise merge.

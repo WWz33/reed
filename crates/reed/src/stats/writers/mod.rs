@@ -2,6 +2,7 @@
 //! family.
 
 pub mod pixy;
+pub mod fstats;
 pub mod reports;
 pub mod sfs;
 pub mod summary;

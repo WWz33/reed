@@ -51,7 +51,7 @@ pub use fst::{FstMatrixAcc, WcMultiAcc};
 #[doc(hidden)]
 pub use individual::JointSfsAcc;
 #[doc(hidden)]
-pub use jackknife::{BlockJackknife, BlockPartial};
+pub use jackknife::{BlockJackknife, BlockPartial, BpBlockJackknife};
 #[doc(hidden)]
 pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
 #[doc(hidden)]

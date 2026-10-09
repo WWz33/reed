@@ -142,6 +142,111 @@ impl BlockJackknife {
     }
 }
 
+/// A bp-blocked jackknife (docs/rounds/v5/05-algorithms.md §3.3): blocks are
+/// fixed genomic spans (`--block-size`, default 5M bp) rather than fixed
+/// site counts, which is what admixtools/Patterson block on for real data.
+/// Sites arrive in coordinate order; the accumulator keys blocks by
+/// `(contig, pos0 / block_bp)` so the partition is independent of the chunk
+/// partition and thread count.
+#[derive(Clone, Debug)]
+pub struct BpBlockJackknife {
+    block_bp: u64,
+    /// Sealed blocks in key order: `((contig, block), Σnum, Σden, n_sites)`.
+    blocks: std::collections::BTreeMap<(Vec<u8>, u64), (NeumaierSum, NeumaierSum, u64)>,
+    total: (NeumaierSum, NeumaierSum),
+    n_sites: u64,
+}
+
+impl BpBlockJackknife {
+    /// A jackknife over blocks of `block_bp` base pairs (`0` is read as 1).
+    #[must_use]
+    pub fn new(block_bp: u64) -> Self {
+        Self {
+            block_bp: block_bp.max(1),
+            blocks: std::collections::BTreeMap::new(),
+            total: (NeumaierSum::new(), NeumaierSum::new()),
+            n_sites: 0,
+        }
+    }
+
+    /// Absorbs one site at `(contig, pos0)`.
+    pub fn push(&mut self, contig: &[u8], pos0: u64, num: f64, den: f64) {
+        let key = (contig.to_vec(), pos0 / self.block_bp);
+        self.total.0.add(num);
+        self.total.1.add(den);
+        self.n_sites += 1;
+        let entry = self.blocks.entry(key).or_insert_with(|| {
+            (NeumaierSum::new(), NeumaierSum::new(), 0)
+        });
+        entry.0.add(num);
+        entry.1.add(den);
+        entry.2 += 1;
+    }
+
+    /// The point estimate Σnum / Σden.
+    #[must_use]
+    pub fn estimate(&self) -> Option<f64> {
+        let den = self.total.1.value();
+        (self.n_sites > 0 && den != 0.0).then(|| self.total.0.value() / den)
+    }
+
+    /// The delete-one-block jackknife: `(estimate, se, n_blocks)`.
+    #[must_use]
+    pub fn jackknife(&self) -> Option<(f64, f64, usize)> {
+        if self.blocks.len() < 2 {
+            return None;
+        }
+        let total_num = self.total.0.value();
+        let total_den = self.total.1.value();
+        if total_den == 0.0 {
+            return None;
+        }
+        let mut vj = Vec::with_capacity(self.blocks.len());
+        for (num_b, den_b, _) in self.blocks.values() {
+            let num = total_num - num_b.value();
+            let den = total_den - den_b.value();
+            if den != 0.0 {
+                vj.push(num / den);
+            }
+        }
+        if vj.len() < 2 {
+            return None;
+        }
+        let n = vj.len() as f64;
+        let mean = vj.iter().sum::<f64>() / n;
+        let sv = ((n - 1.0) / n) * vj.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>();
+        Some((total_num / total_den, sv.sqrt(), vj.len()))
+    }
+
+    /// Number of blocks seen.
+    #[must_use]
+    pub fn n_blocks(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// Contributing site count.
+    #[must_use]
+    pub const fn n_sites(&self) -> u64 {
+        self.n_sites
+    }
+
+    /// Merges another partial (blocks keyed by `(contig, block)` add).
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(self.block_bp, other.block_bp, "invariant: same block size");
+        for (key, (num, den, n)) in &other.blocks {
+            let entry = self.blocks.entry(key.clone()).or_insert_with(|| {
+                (NeumaierSum::new(), NeumaierSum::new(), 0)
+            });
+            entry.0.merge(num);
+            entry.1.merge(den);
+            entry.2 += n;
+        }
+        self.total.0.merge(&other.total.0);
+        self.total.1.merge(&other.total.1);
+        self.n_sites += other.n_sites;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

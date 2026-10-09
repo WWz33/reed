@@ -61,6 +61,7 @@ fn request(folded: bool) -> StatsRequest {
         keep_samples: None,
         filter: None,
         sfs: Some(SfsRequest { projections: vec![6], folded }),
+        fstats: None,
     }
 }
 

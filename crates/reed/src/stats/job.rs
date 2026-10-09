@@ -37,6 +37,10 @@ use reed_io::vcf::line::LineRef;
 pub use reed_stats::fst::FstKind;
 pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey};
+use reed_stats::jackknife::BpBlockJackknife;
+use reed_stats::patterson::{
+    f2_site, f3_site, f4_site, PattersonKind,
+};
 use reed_stats::sfs::{ProjectedSfsAcc, ProjectionCache};
 pub use reed_stats::request::StatKind;
 use reed_stats::window::{BpBinning, ContigBins};
@@ -245,6 +249,9 @@ pub struct StatsRequest {
     /// Projected SFS, genome-wide (docs/rounds/v5/05-algorithms.md §3.1);
     /// `None` = not requested. Not a window statistic.
     pub sfs: Option<SfsRequest>,
+    /// Patterson f-statistics, genome-wide with a block jackknife
+    /// (docs/rounds/v5/05-algorithms.md §3.3); `None` = not requested.
+    pub fstats: Option<FStatsRequest>,
 }
 
 /// A projected site-frequency-spectrum request (docs/rounds/v5/05-algorithms.md
@@ -271,6 +278,238 @@ pub struct SfsReport {
     pub n_sites: Vec<u64>,
     /// Per group: sites skipped for `m < n`.
     pub n_skipped_m_lt_n: Vec<u64>,
+}
+
+/// One Patterson f-statistic test (docs/rounds/v5/05-algorithms.md §3.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FStatTest {
+    /// `f2(A, B)`.
+    F2 {
+        /// First group.
+        a: usize,
+        /// Second group.
+        b: usize,
+    },
+    /// `f3(C; A, B)`.
+    F3 {
+        /// Test population (the branch of interest).
+        c: usize,
+        /// First source.
+        a: usize,
+        /// Second source.
+        b: usize,
+    },
+    /// `f4(A, B; C, D)`.
+    F4 {
+        /// First group.
+        a: usize,
+        /// Second group.
+        b: usize,
+        /// Third group.
+        c: usize,
+        /// Fourth group.
+        d: usize,
+    },
+    /// `D(A, B; C, D)` (the normalized f4).
+    Dstat {
+        /// First group.
+        a: usize,
+        /// Second group.
+        b: usize,
+        /// Third group.
+        c: usize,
+        /// Fourth group.
+        d: usize,
+    },
+    /// `f4-ratio = f4(A, O; X, C) / f4(A, O; B, C)`.
+    F4Ratio {
+        /// Outgroup O.
+        o: usize,
+        /// Sister A.
+        a: usize,
+        /// Test X.
+        x: usize,
+        /// Reference B.
+        b: usize,
+        /// Outgroup-side C.
+        c: usize,
+    },
+}
+
+impl FStatTest {
+    /// The stable statistic id (`f2`, `f3`, `f4`, `dstat`, `f4ratio`).
+    #[must_use]
+    pub const fn id(&self) -> &'static str {
+        match self {
+            Self::F2 { .. } => "f2",
+            Self::F3 { .. } => "f3",
+            Self::F4 { .. } => "f4",
+            Self::Dstat { .. } => "dstat",
+            Self::F4Ratio { .. } => "f4ratio",
+        }
+    }
+
+    /// The populations in the order the output file prints them.
+    #[must_use]
+    pub fn pops(&self) -> Vec<usize> {
+        match *self {
+            Self::F2 { a, b } => vec![a, b],
+            Self::F3 { c, a, b } => vec![c, a, b],
+            Self::F4 { a, b, c, d } | Self::Dstat { a, b, c, d } => vec![a, b, c, d],
+            Self::F4Ratio { o, a, x, b, c } => vec![a, o, x, b, c],
+        }
+    }
+}
+
+/// A Patterson f-statistics request: the tests plus the block-jackknife
+/// block size in bp (default 5M).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FStatsRequest {
+    /// Tests, in output order.
+    pub tests: Vec<FStatTest>,
+    /// Block size in bp for the delete-one-block jackknife.
+    pub block_bp: u64,
+}
+
+/// One test's result.
+#[derive(Clone, Debug)]
+pub struct FStatRow {
+    /// The test.
+    pub test: FStatTest,
+    /// The point estimate (ratio of sums for f3*/D/f4-ratio).
+    pub estimate: f64,
+    /// Block-jackknife standard error.
+    pub se: f64,
+    /// `estimate / se`.
+    pub z: f64,
+    /// Blocks contributing.
+    pub n_blocks: usize,
+    /// Sites contributing.
+    pub n_sites: u64,
+}
+
+/// The f-statistics report.
+#[derive(Clone, Debug)]
+pub struct FStatsReport {
+    /// One row per test, in request order.
+    pub rows: Vec<FStatRow>,
+}
+
+/// Per-test accumulator state: the per-site sums and the bp jackknife.
+#[derive(Clone, Debug)]
+struct FStatAcc {
+    test: FStatTest,
+    /// Σnum, Σden (the jackknife's inputs).
+    num: reed_core::math::sum::NeumaierSum,
+    den: reed_core::math::sum::NeumaierSum,
+    n_sites: u64,
+    jk: BpBlockJackknife,
+}
+
+impl FStatAcc {
+    fn new(test: FStatTest, block_bp: u64) -> Self {
+        Self {
+            test,
+            num: reed_core::math::sum::NeumaierSum::new(),
+            den: reed_core::math::sum::NeumaierSum::new(),
+            n_sites: 0,
+            jk: BpBlockJackknife::new(block_bp),
+        }
+    }
+
+    /// The per-site `(num, den)` pair of this test at one site; `None` when
+    /// the site is skipped. `den` is 1 for the additive statistics, so the
+    /// ratio path and the sum path share one accumulator.
+    fn site(&self, row: &[SiteGroupCounts]) -> Option<(f64, f64)> {
+        match self.test {
+            FStatTest::F2 { a, b } => Some((f2_site(row, a, b, PattersonKind::Corrected)?, 1.0)),
+            // The raw Patterson f3 = ΣT (docs/rounds/v5/05 §3.3).
+            FStatTest::F3 { c, a, b } => {
+                Some((f3_site(row, c, a, b, PattersonKind::Corrected)?.0, 1.0))
+            }
+            FStatTest::F4 { a, b, c, d } => Some((f4_site(row, a, b, c, d)?.0, 1.0)),
+            FStatTest::Dstat { a, b, c, d } => Some(f4_site(row, a, b, c, d)?),
+            // f4-ratio = Σf4(A,O;X,C) / Σf4(A,O;B,C): the denominator f4's
+            // numerator sum, exactly like Dstat's but with the other f4.
+            FStatTest::F4Ratio { o, a, x, b, c } => {
+                let (num_n, _) = f4_site(row, a, o, x, c)?;
+                let (num_d, _) = f4_site(row, a, o, b, c)?;
+                Some((num_n, num_d))
+            }
+        }
+    }
+
+    fn push(&mut self, contig: &[u8], pos0: u64, row: &[SiteGroupCounts]) {
+        let Some((num, den)) = self.site(row) else { return };
+        self.num.add(num);
+        self.den.add(den);
+        self.n_sites += 1;
+        self.jk.push(contig, pos0, num, den);
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.num.merge(&other.num);
+        self.den.merge(&other.den);
+        self.n_sites += other.n_sites;
+        self.jk.merge(&other.jk);
+    }
+
+    fn row(&self) -> Option<FStatRow> {
+        // Additive statistics (f2/f3/f4) report Σnum, with the jackknife
+        // deleting one block from that same sum; the ratios (D, f4-ratio)
+        // report Σnum/Σden over the pair.
+        let (estimate, _se) = match self.test {
+            FStatTest::Dstat { .. } | FStatTest::F4Ratio { .. } => {
+                let den = self.den.value();
+                if den == 0.0 {
+                    return None;
+                }
+                (self.num.value() / den, f64::NAN)
+            }
+            _ => (self.num.value(), f64::NAN),
+        };
+        let (est_jk, se_jk, n_blocks) = self.jk.jackknife().unwrap_or((estimate, f64::NAN, 0));
+        let z = if se_jk.is_finite() && se_jk > 0.0 { est_jk / se_jk } else { f64::NAN };
+        Some(FStatRow {
+            test: self.test.clone(),
+            estimate,
+            se: se_jk,
+            z,
+            n_blocks,
+            n_sites: self.n_sites,
+        })
+    }
+}
+
+/// The validated f-statistics plan shared by the job and the sink.
+#[derive(Clone, Debug)]
+struct FStatsPlan {
+    tests: Arc<[FStatTest]>,
+    block_bp: u64,
+}
+
+/// Per-chunk f-statistics partials.
+#[derive(Clone, Debug)]
+struct FStatsPartial {
+    per_test: Vec<FStatAcc>,
+}
+
+impl FStatsPartial {
+    fn new(plan: &FStatsPlan) -> Self {
+        Self {
+            per_test: plan
+                .tests
+                .iter()
+                .map(|test| FStatAcc::new(test.clone(), plan.block_bp))
+                .collect(),
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for (dst, src) in self.per_test.iter_mut().zip(&other.per_test) {
+            dst.merge(src);
+        }
+    }
 }
 
 /// The validated SFS plan shared by the job and the sink.
@@ -321,6 +560,8 @@ pub struct StatsReport {
     pub n_multiallelic_skipped: u64,
     /// The projected spectra when [`StatsRequest::sfs`] was set.
     pub sfs: Option<SfsReport>,
+    /// The Patterson f-statistics when [`StatsRequest::fstats`] was set.
+    pub fstats: Option<FStatsReport>,
     /// Chunks processed.
     pub n_chunks: u64,
     /// The engine's stage metrics (doc_v4 03 A4-5): reader/reducer/chain
@@ -391,6 +632,8 @@ pub struct StatsPartial {
     n_no_alt_records: u64,
     /// Genome-wide projected spectra (docs/rounds/v5/05-algorithms.md §3.1).
     sfs: Option<SfsPartial>,
+    /// Genome-wide Patterson f-statistics.
+    fstats: Option<FStatsPartial>,
 }
 
 /// The chunk job: line → `LineRef` → GT tallies → group count row → the
@@ -413,6 +656,8 @@ pub struct StatsJob {
     bcf: Option<BcfNative>,
     /// The genome-wide projected-SFS plan; `None` = not requested.
     sfs: Option<SfsPlan>,
+    /// The genome-wide f-statistics plan; `None` = not requested.
+    fstats: Option<FStatsPlan>,
 }
 
 /// The BCF fast path's shared state: the dictionaries, the FORMAT index of
@@ -603,8 +848,27 @@ impl StatsJob {
             partial.n_invariant_sites += 1;
         }
         self.push_sfs(row, partial, sfs_caches);
+        self.push_fstats(&segment.contig.clone(), pos0, row, partial);
         partial.n_records += 1;
         Ok(())
+    }
+
+    /// Feeds the genome-wide f-statistics for one site (docs/rounds/v5/05
+    /// §3.3). The segment's contig names the jackknife block key.
+    fn push_fstats(
+        &self,
+        contig: &[u8],
+        pos0: u64,
+        row: &[SiteGroupCounts],
+        partial: &mut StatsPartial,
+    ) {
+        let Some(plan) = &self.fstats else { return };
+        let stats = partial
+            .fstats
+            .get_or_insert_with(|| FStatsPartial::new(plan));
+        for acc in &mut stats.per_test {
+            acc.push(contig, pos0, row);
+        }
     }
 
     /// Feeds the genome-wide projected spectra for one site (docs/rounds/v5/
@@ -804,6 +1068,8 @@ struct SinkOutput {
     windows: Vec<WindowRow>,
     /// Genome-wide projected spectra.
     sfs: Option<SfsPartial>,
+    /// Genome-wide f-statistics.
+    fstats: Option<FStatsPartial>,
     n_invariant_sites: u64,
     n_no_alt_records: u64,
     n_windows: u64,
@@ -854,6 +1120,8 @@ struct StatsSink {
     genome_totals: Vec<StatAcc>,
     /// Merged genome-wide projected spectra.
     sfs: Option<SfsPartial>,
+    /// Merged genome-wide f-statistics.
+    fstats: Option<FStatsPartial>,
     genome_span: u64,
     rows: String,
     n_windows: u64,
@@ -872,6 +1140,12 @@ impl OrderedSink<StatsPartial> for StatsSink {
             match &mut self.sfs {
                 Some(dst) => dst.merge(src),
                 None => self.sfs = Some(src.clone()),
+            }
+        }
+        if let Some(src) = &partial.fstats {
+            match &mut self.fstats {
+                Some(dst) => dst.merge(src),
+                None => self.fstats = Some(src.clone()),
             }
         }
         for mut segment in std::mem::take(&mut partial.segments) {
@@ -935,6 +1209,7 @@ impl OrderedSink<StatsPartial> for StatsSink {
             rows: self.rows,
             windows: std::mem::take(&mut self.windows),
             sfs: self.sfs.take(),
+            fstats: self.fstats.take(),
             n_invariant_sites: self.n_invariant_sites,
             n_no_alt_records: self.n_no_alt_records,
             n_windows: self.n_windows,
@@ -1134,6 +1409,28 @@ pub fn run_stats_opened(
         .map_or(0, |g| g as usize + 1);
     // The SFS is genome-wide and per group: validate the projections once
     // (docs/rounds/v5/05-algorithms.md §3.1).
+    let fstats_plan = match &request.fstats {
+        None => None,
+        Some(fstats) => {
+            if fstats.tests.is_empty() {
+                return Err(EngineError::job("the f-statistics request lists no tests"));
+            }
+            for test in &fstats.tests {
+                for g in test.pops() {
+                    if g >= n_groups {
+                        return Err(EngineError::job(format!(
+                            "f-statistic {} names group {g} but the sample assignment declares                              {n_groups} group(s)",
+                            test.id()
+                        )));
+                    }
+                }
+            }
+            Some(FStatsPlan {
+                tests: fstats.tests.clone().into(),
+                block_bp: fstats.block_bp.max(1),
+            })
+        }
+    };
     let sfs_plan = match &request.sfs {
         None => None,
         Some(sfs) => {
@@ -1226,10 +1523,12 @@ pub fn run_stats_opened(
             table: reed_io::bcf::GtTable::new(stats_policies()),
         }),
         sfs: sfs_plan,
+        fstats: fstats_plan,
     };
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
         sfs: None,
+        fstats: None,
         size: request.window_size,
         step: request.step,
         width: binning.width(),
@@ -1309,6 +1608,9 @@ pub fn run_stats_opened(
             folded: partial.per_group.first().is_some_and(ProjectedSfsAcc::folded),
             n_sites: partial.per_group.iter().map(|a| a.site_tally().0).collect(),
             n_skipped_m_lt_n: partial.per_group.iter().map(|a| a.site_tally().1).collect(),
+        }),
+        fstats: output.fstats.as_ref().map(|partial| FStatsReport {
+            rows: partial.per_test.iter().filter_map(FStatAcc::row).collect(),
         }),
         n_invariant_sites: output.n_invariant_sites,
         n_no_alt_records: output.n_no_alt_records,
