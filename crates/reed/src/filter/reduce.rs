@@ -30,6 +30,8 @@ pub(super) struct MissingPartial {
     pub(super) n_records: u64,
     /// Per-sample called-allele counts (post-mask).
     pub(super) called: Vec<u64>,
+    /// Pass0's engine metrics (doc_v4 03 A4-5: the driver sums the passes).
+    pub(super) metrics: reed_engine::metrics::StageMetrics,
 }
 
 /// Worker scratch: the shared record pipeline plus the per-sample counters.
@@ -129,7 +131,11 @@ impl ChunkJob for MissingJob {
                 n_records += 1;
             }
         }
-        Ok(MissingPartial { n_records, called: scratch.called.clone() })
+        Ok(MissingPartial {
+            n_records,
+            called: scratch.called.clone(),
+            metrics: reed_engine::metrics::StageMetrics::default(),
+        })
     }
 
     fn run_seam(
@@ -142,7 +148,11 @@ impl ChunkJob for MissingJob {
         scratch.called.clear();
         scratch.called.resize(self.n_samples, 0);
         let n_records = u64::from(self.scan_line(line, scratch)?);
-        Ok(MissingPartial { n_records, called: scratch.called.clone() })
+        Ok(MissingPartial {
+            n_records,
+            called: scratch.called.clone(),
+            metrics: reed_engine::metrics::StageMetrics::default(),
+        })
     }
 }
 
@@ -170,11 +180,13 @@ pub(super) fn run_missing_pass(
     let sink = SumSink { total: Arc::clone(&total) };
     let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
     job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
-    Ok(total
+    let mut partial = total
         .lock()
         .expect("invariant: missing slot not poisoned")
         .take()
-        .expect("invariant: sink finish stored the partial"))
+        .expect("invariant: sink finish stored the partial");
+    partial.metrics = report.metrics;
+    Ok(partial)
 }
 
 /// Sums pass0 partials (integer sums are order-independent).
@@ -202,6 +214,7 @@ impl OrderedSink<MissingPartial> for SumSink {
                 *guard = Some(MissingPartial {
                     n_records: partial.n_records,
                     called: partial.called.clone(),
+                    metrics: reed_engine::metrics::StageMetrics::default(),
                 });
             }
         }

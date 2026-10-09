@@ -71,6 +71,13 @@ pub trait ChunkJob: Sync {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError>;
 
+    /// Cumulative time workers spent waiting on job-internal
+    /// synchronization (the BCF frame chain). Summed into
+    /// [`StageMetrics::chain_wait`]; zero for jobs without a chain.
+    fn wait_time(&self) -> Duration {
+        Duration::ZERO
+    }
+
     /// Processes one seam record (a complete line ending in `\n`).
     ///
     /// `id` is the chunk whose head fragment completed the seam — the seam
@@ -216,6 +223,11 @@ where
     });
     let window = tickets;
     let worker_busy_ns = Arc::new(AtomicU64::new(0));
+    // doc_v4 03 A4-5: reader and reducer cumulative times, so "reader-bound"
+    // is measured instead of inferred.
+    let reader_ns = Arc::new(AtomicU64::new(0));
+    let reduce_ns = Arc::new(AtomicU64::new(0));
+    let chunks_read = Arc::new(AtomicU64::new(0));
 
     let scope_result = std::thread::scope(|scope| -> Result<_, EngineError> {
         // Reader: acquire a ticket, then cut one chunk; sends block when
@@ -228,6 +240,8 @@ where
             let shared = Arc::clone(&shared);
             let ticket_rx = ticket_rx.clone();
             let permits = Arc::clone(&permits);
+            let reader_ns = Arc::clone(&reader_ns);
+            let chunks_read = Arc::clone(&chunks_read);
             move || {
                 loop {
                     if first.failed() {
@@ -240,8 +254,17 @@ where
                     if !ticket || first.failed() {
                         break;
                     }
-                    let chunk = match source.next_chunk() {
-                        Ok(Some(chunk)) => chunk,
+                    let read_started = Instant::now();
+                    let chunk = source.next_chunk();
+                    reader_ns.fetch_add(
+                        read_started.elapsed().as_nanos() as u64,
+                        Ordering::AcqRel,
+                    );
+                    let chunk = match chunk {
+                        Ok(Some(chunk)) => {
+                            chunks_read.fetch_add(1, Ordering::AcqRel);
+                            chunk
+                        }
                         Ok(None) => break,
                         Err(err) => {
                             first.record(EngineError::from(err));
@@ -399,7 +422,13 @@ where
                         return Err(err);
                     }
                 };
-                if let Err(err) = sink.accept(id, &mut msg.partial) {
+                let accept_started = Instant::now();
+                let accepted = sink.accept(id, &mut msg.partial);
+                reduce_ns.fetch_add(
+                    accept_started.elapsed().as_nanos() as u64,
+                    Ordering::AcqRel,
+                );
+                if let Err(err) = accepted {
                     drop(result_rx);
                     return Err(err);
                 }
@@ -431,7 +460,13 @@ where
                                 &mut sink,
                                 id,
                             )?;
-                            sink.accept(id, &mut msg.partial)?;
+                            let accept_started = Instant::now();
+                            let accepted = sink.accept(id, &mut msg.partial);
+                            reduce_ns.fetch_add(
+                                accept_started.elapsed().as_nanos() as u64,
+                                Ordering::AcqRel,
+                            );
+                            accepted?;
                             shared.release_in_flight(msg.footprint);
                             permits.release(msg.footprint);
                             let _ = ticket_tx.send(());
@@ -467,9 +502,12 @@ where
         delivered,
         sink_report,
         StageMetrics {
-            n_chunks_read: 0,
+            n_chunks_read: chunks_read.load(Ordering::Acquire),
             worker_busy: Duration::from_nanos(worker_busy_ns.load(Ordering::Acquire)),
             in_flight_peak_bytes: shared.in_flight_peak.load(Ordering::Acquire),
+            reader_time: Duration::from_nanos(reader_ns.load(Ordering::Acquire)),
+            reduce_time: Duration::from_nanos(reduce_ns.load(Ordering::Acquire)),
+            chain_wait: job.wait_time(),
         },
     ))
 }

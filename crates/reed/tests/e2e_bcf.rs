@@ -105,6 +105,7 @@ fn reports_are_identical_across_formats() {
         het: true,
         missing: true,
         depth: true,
+        summary: false,
         prefix: prefix.to_path_buf(),
     };
     reed::reports::run_reports(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())

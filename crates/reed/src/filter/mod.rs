@@ -137,7 +137,9 @@ pub fn run_filter(
     // The engine metrics come from whichever strategy's `run` call fired, so
     // they are assigned (not initialized) before the report below reads them.
     let mut timing_phases: Vec<(&'static str, f64)> = Vec::new();
-    let timing_engine: Option<reed_engine::metrics::StageMetrics>;
+    // The engine metrics of every `run` this driver makes (pass0 + pass1)
+    // are summed; `chunks` stays the final pass's count (doc_v3 O10).
+    let mut timing_engine = reed_engine::metrics::StageMetrics::default();
     let timing_chunks: u64;
     if input.is_none() && !opts.regions.is_empty() {
         return Err(FilterError::Spec(
@@ -214,7 +216,9 @@ pub fn run_filter(
     let pass0_start = Instant::now();
     let sketch_pass = if strategy == ExecStrategy::SketchThenEmit {
         let opened = first.take().expect("invariant: pass0 consumes the first open");
-        Some(run_sketch_pass(opened, n_samples_in, &plan, opts)?)
+        let pass = run_sketch_pass(opened, n_samples_in, &plan, opts)?;
+        timing_engine.merge(&pass.metrics);
+        Some(pass)
     } else {
         None
     };
@@ -262,6 +266,7 @@ pub fn run_filter(
             None => {
                 let opened = first.take().expect("invariant: pass0 consumes the first open");
                 missing_partial = run_missing_pass(opened, &plan, opts)?;
+                timing_engine.merge(&missing_partial.metrics);
                 (missing_partial.n_records, &missing_partial.called)
             }
         };
@@ -471,7 +476,7 @@ pub fn run_filter(
         let pass1_start = Instant::now();
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
-        timing_engine = Some(report.metrics);
+        timing_engine.merge(&report.metrics);
         timing_chunks = report.n_chunks;
         job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         sketch_funnel
@@ -508,7 +513,7 @@ pub fn run_filter(
         let pass1_start = Instant::now();
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
-        timing_engine = Some(report.metrics);
+        timing_engine.merge(&report.metrics);
         timing_chunks = report.n_chunks;
         job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
         slot
@@ -529,8 +534,12 @@ pub fn run_filter(
             .collect(),
         total_secs: t0.elapsed().as_secs_f64(),
         chunks: timing_chunks,
-        worker_busy_secs: timing_engine.map(|m| m.worker_busy.as_secs_f64()),
-        in_flight_peak_bytes: timing_engine.map(|m| m.in_flight_peak_bytes),
+        chunks_read: timing_engine.n_chunks_read,
+        worker_busy_secs: timing_engine.worker_busy.as_secs_f64(),
+        reader_secs: timing_engine.reader_time.as_secs_f64(),
+        reduce_secs: timing_engine.reduce_time.as_secs_f64(),
+        chain_wait_secs: timing_engine.chain_wait.as_secs_f64(),
+        in_flight_peak_bytes: Some(timing_engine.in_flight_peak_bytes),
     };
     let report = FilterReport {
         n_input_records: funnel.n_input,

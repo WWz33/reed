@@ -15,12 +15,16 @@
 // Casts in this file are bounded by construction: Chunk ids are counted in memory and fit `usize` on every supported target.
 #![allow(clippy::cast_possible_truncation)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::abort::AbortSignal;
 use crate::error::EngineError;
+
+/// The production watchdog: a chain that publishes nothing for this long is
+/// treated as stalled (doc_v4 01 F4-14).
+const DEFAULT_STALL_LIMIT: Duration = Duration::from_secs(120);
 
 /// One carried record fragment: the tail bytes of the previous chunk plus
 /// the virtual offset where that record starts (the index needs it; the
@@ -87,6 +91,19 @@ pub struct FrameChain {
     abort: AbortSignal,
     /// Set by the driver when the run ends, so stragglers do not block.
     finished: AtomicBool,
+    /// Cumulative nanoseconds spent in [`FrameChain::wait`] (doc_v4 03
+    /// A4-5: the chain wait must be measurable, not inferred).
+    wait_ns: AtomicU64,
+    /// Reference point for the publish timestamps below.
+    epoch: Instant,
+    /// Nanoseconds (since `epoch`) of the last publish of any cell, and the
+    /// id it published — the watchdog is a *global* silence, not a per-cell
+    /// wait (doc_v4 01 F4-14: a stalled NFS blocks every waiter even while
+    /// some cell is being retried).
+    last_publish_ns: AtomicU64,
+    last_publish_id: AtomicU64,
+    /// The watchdog's silence limit (production: 120 s; tests shorten it).
+    stall_limit: Duration,
 }
 
 impl FrameChain {
@@ -102,6 +119,11 @@ impl FrameChain {
             cv: Condvar::new(),
             abort,
             finished: AtomicBool::new(false),
+            wait_ns: AtomicU64::new(0),
+            epoch: Instant::now(),
+            last_publish_ns: AtomicU64::new(0),
+            last_publish_id: AtomicU64::new(0),
+            stall_limit: DEFAULT_STALL_LIMIT,
         }
     }
 
@@ -113,18 +135,38 @@ impl FrameChain {
     /// [`EngineError::Aborted`] when the run aborts or a worker poisons the
     /// chain before publishing this cell.
     pub fn wait(&self, id: u64) -> Result<Carried, EngineError> {
+        let started = Instant::now();
+        let result = self.wait_inner(id, started);
+        self.wait_ns
+            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+        result
+    }
+
+    /// The cumulative wait time over all callers (engine metrics).
+    #[must_use]
+    pub fn wait_time(&self) -> Duration {
+        Duration::from_nanos(self.wait_ns.load(Ordering::Acquire))
+    }
+
+    fn wait_inner(&self, id: u64, started: Instant) -> Result<Carried, EngineError> {
         // A predecessor's walk is microseconds (one length-prefix pass over
         // one chunk); anything past this safety net means another stage
         // failed without poisoning the chain, and blocking forever would
-        // hang the scope join.
-        const STALL_LIMIT: Duration = Duration::from_secs(120);
-        let started = Instant::now();
+        // hang the scope join. The clock is the *last publish of any cell*
+        // (01 F4-14): a slow storage that still makes progress must not trip
+        // the watchdog.
         let mut state = self.state.lock().expect("invariant: chain not poisoned");
         loop {
-            if started.elapsed() > STALL_LIMIT {
-                return Err(EngineError::Job(
-                    "timed out waiting for the previous chunk's framing".into(),
-                ));
+            let now_ns = self.epoch.elapsed().as_nanos() as u64;
+            let silence_ns = now_ns.saturating_sub(self.last_publish_ns.load(Ordering::Acquire));
+            if u128::from(silence_ns) > self.stall_limit.as_nanos() {
+                let waited = started.elapsed().as_secs_f64();
+                return Err(EngineError::job(format!(
+                    "chain stalled: chunk {id} waited {waited:.1}s; no cell published since \
+                     chunk {} ({:.1}s of silence)",
+                    self.last_publish_id.load(Ordering::Acquire),
+                    silence_ns as f64 / 1e9,
+                )));
             }
             if let Some(slot) = state.cells.get_mut(id as usize)
                 && let Some(cell) = slot.take()
@@ -146,6 +188,9 @@ impl FrameChain {
 
     /// Publishes the carried record for `id` (chunk `id`'s head fragment).
     pub fn publish(&self, id: u64, carried: Carried) {
+        self.last_publish_ns
+            .store(self.epoch.elapsed().as_nanos() as u64, Ordering::Release);
+        self.last_publish_id.store(id, Ordering::Release);
         let mut state = self.state.lock().expect("invariant: chain not poisoned");
         let idx = id as usize;
         if state.cells.len() <= idx {
@@ -221,3 +266,31 @@ impl Drop for PublishGuard<'_> {
 
 /// One chain per run, shared by the job.
 pub type SharedChain = Arc<FrameChain>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering as _;
+
+    /// F4-14: the watchdog fires on *global* silence and names the waiter,
+    /// the waited time and the last publish.
+    #[test]
+    fn stall_watchdog_reports_the_global_silence() {
+        let abort = crate::abort::abort();
+        let mut chain = FrameChain::new(abort.signal.clone());
+        chain.stall_limit = Duration::from_millis(20);
+        // Cell 1 is never published: only the construction-time cell 0 exists.
+        let err = chain.wait(1).expect_err("a silent chain must trip the watchdog");
+        let text = err.to_string();
+        assert!(text.contains("chain stalled"), "{text}");
+        assert!(text.contains("chunk 1"), "{text}");
+        assert!(text.contains("since chunk 0"), "{text}");
+
+        // A publish after the wait starts resets the silence clock: the next
+        // waiter is served instead of timing out.
+        chain.publish(1, Carried::default());
+        assert!(chain.wait(1).is_ok());
+        assert!(chain.wait_time() > Duration::ZERO);
+        assert_eq!(chain.last_publish_id.load(Ordering::Acquire), 1);
+    }
+}

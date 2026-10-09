@@ -66,6 +66,11 @@ impl<S: Default> Default for InputScratch<S> {
 }
 
 impl<J: ChunkJob> InputJob<J> {
+    /// The chain's cumulative wait (engine metric, doc_v4 03 A4-5).
+    fn chain_wait(&self) -> std::time::Duration {
+        self.bcf.as_ref().map_or(std::time::Duration::ZERO, |bcf| bcf.chain.wait_time())
+    }
+
     /// Wraps `inner` for the input `opened` opened; BCF inputs get a chain
     /// cell 0 (chunk 0 never waits) bound to the run's abort signal.
     #[must_use]
@@ -200,6 +205,10 @@ fn walk_records(text: &[u8], from: usize) -> usize {
 impl<J: ChunkJob + Sync> ChunkJob for InputJob<J> {
     type Partial = J::Partial;
     type Scratch = InputScratch<J::Scratch>;
+
+    fn wait_time(&self) -> std::time::Duration {
+        self.chain_wait() + self.inner.wait_time()
+    }
 
     fn framing(&self) -> RecordFraming {
         if self.bcf.is_some() {

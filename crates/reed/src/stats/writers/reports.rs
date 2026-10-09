@@ -28,6 +28,7 @@ use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
 use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
+use reed_stats::summary::report::QcReportAcc;
 use reed_stats::IndividualFAcc;
 
 /// Which reports to write.
@@ -44,6 +45,9 @@ pub struct ReportRequest {
     /// `--depth`: `PREFIX.idepth` (per sample) and `PREFIX.ldepth.mean`
     /// (per site) in vcftools' layouts.
     pub depth: bool,
+    /// `--summary`: also accumulate the bcftools-stats QC summary in this
+    /// same pass (doc_v4 O-1: the two families used to read twice).
+    pub summary: bool,
     /// Output prefix (`-o PREFIX`).
     pub prefix: PathBuf,
 }
@@ -63,6 +67,11 @@ pub struct ReportsOutcome {
     pub files: Vec<PathBuf>,
     /// Records scanned.
     pub n_records: u64,
+    /// The merged QC summary when `summary` was requested (`render_bcftools_stats`
+    /// turns it into `PREFIX.stats`).
+    pub qc: Option<QcReportAcc>,
+    /// The engine's stage metrics (doc_v4 03 A4-5).
+    pub metrics: reed_engine::metrics::StageMetrics,
 }
 
 /// The reports that need per-site rows, and the fields each needs.
@@ -75,6 +84,7 @@ struct ReportPlan {
     smiss: bool,
     het: bool,
     depth: bool,
+    summary: bool,
 }
 
 impl ReportPlan {
@@ -87,6 +97,7 @@ impl ReportPlan {
             smiss: request.missing,
             het: request.het,
             depth: request.depth,
+            summary: request.summary,
         }
     }
 
@@ -99,6 +110,8 @@ impl ReportPlan {
 /// Worker → sink partial: rendered rows plus the per-sample accumulators.
 #[derive(Default)]
 struct ReportPartial {
+    /// The QC summary pieces this chunk accumulated (`--summary`).
+    qc: Option<QcReportAcc>,
     freq: Vec<u8>,
     hardy: Vec<u8>,
     vmiss: Vec<u8>,
@@ -112,7 +125,8 @@ struct ReportPartial {
     n_records: u64,
 }
 
-/// The scan job: one record → rendered rows + per-sample updates.
+/// The scan job: one record → rendered rows + per-sample updates (+ the QC
+/// summary sections when `--summary` shares the pass).
 struct ReportJob {
     n_samples: usize,
     policies: GenotypePolicies,
@@ -126,10 +140,18 @@ struct ReportScratch {
     planes: Option<PlaneBlock>,
     counters: PolicyCounters,
     mask: SampleMask,
+    /// The QC summary accumulator (`--summary`, doc_v4 O-1).
+    qc: Option<crate::stats::writers::qc_report::QcAccumulator>,
 }
 
 impl ReportScratch {
-    fn new(n_samples: usize, policies: GenotypePolicies, het: bool, depth: bool) -> Self {
+    fn new(
+        n_samples: usize,
+        policies: GenotypePolicies,
+        het: bool,
+        depth: bool,
+        summary: bool,
+    ) -> Self {
         Self {
             // DP is decoded only for `--depth` (O2).
             scanner: if depth {
@@ -140,6 +162,9 @@ impl ReportScratch {
             planes: het.then(|| PlaneBlock::new(1, n_samples, false)),
             counters: PolicyCounters::default(),
             mask: SampleMask::all(n_samples),
+            qc: summary.then(|| {
+                crate::stats::writers::qc_report::QcAccumulator::new(n_samples)
+            }),
         }
     }
 }
@@ -154,10 +179,15 @@ impl ChunkJob for ReportJob {
         body: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch
-            .get_or_insert_with(|| {
-                ReportScratch::new(self.n_samples, self.policies, self.plan.het, self.plan.depth)
-            });
+        let scratch = scratch.get_or_insert_with(|| {
+            ReportScratch::new(
+                self.n_samples,
+                self.policies,
+                self.plan.het,
+                self.plan.depth,
+                self.plan.summary,
+            )
+        });
         let mut partial = self.new_partial();
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
@@ -165,6 +195,7 @@ impl ChunkJob for ReportJob {
             }
             self.push_line(line, scratch, &mut partial)?;
         }
+        self.drain_qc(scratch, &mut partial);
         Ok(partial)
     }
 
@@ -174,17 +205,31 @@ impl ChunkJob for ReportJob {
         line: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let scratch = scratch
-            .get_or_insert_with(|| {
-                ReportScratch::new(self.n_samples, self.policies, self.plan.het, self.plan.depth)
-            });
+        let scratch = scratch.get_or_insert_with(|| {
+            ReportScratch::new(
+                self.n_samples,
+                self.policies,
+                self.plan.het,
+                self.plan.depth,
+                self.plan.summary,
+            )
+        });
         let mut partial = self.new_partial();
         self.push_line(line, scratch, &mut partial)?;
+        self.drain_qc(scratch, &mut partial);
         Ok(partial)
     }
 }
 
 impl ReportJob {
+    /// Moves the worker's QC accumulator into the chunk partial, leaving a
+    /// fresh one behind.
+    fn drain_qc(&self, scratch: &mut ReportScratch, partial: &mut ReportPartial) {
+        if let Some(qc) = &mut scratch.qc {
+            partial.qc = Some(qc.take_acc());
+        }
+    }
+
     /// Allocates the partial's per-sample accumulators for this request.
     fn new_partial(&self) -> ReportPartial {
         ReportPartial {
@@ -281,6 +326,12 @@ impl ReportJob {
 
         if self.plan.sites() {
             self.render_site(&lr, &site, pos1, &counts, n_missing, site_depth, partial);
+        }
+        // The QC summary sections read the same record in the same pass
+        // (doc_v4 O-1); its scanner has its own policies (haploid as half
+        // call, per-ALT tracking), so it decodes independently.
+        if let Some(qc) = &mut scratch.qc {
+            qc.push_line(line)?;
         }
         partial.n_records += 1;
         Ok(())
@@ -427,6 +478,8 @@ struct ReportSink {
     depth_sums: Vec<(f64, u64)>,
     individual: IndividualFAcc,
     n_records: u64,
+    /// The `--summary` accumulator (`None` unless it shares the pass).
+    qc: Option<QcReportAcc>,
     out: Arc<Mutex<Option<ReportsOutcome>>>,
 }
 
@@ -466,6 +519,9 @@ impl OrderedSink<ReportPartial> for ReportSink {
         }
         if let Some(other) = partial.individual.take() {
             self.individual.merge(&other);
+        }
+        if let (Some(dst), Some(src)) = (&mut self.qc, partial.qc.take()) {
+            dst.merge(&src);
         }
         Ok(())
     }
@@ -539,7 +595,14 @@ impl OrderedSink<ReportPartial> for ReportSink {
             files.push(path(".smiss"));
         }
         let n_records = self.n_records;
-        *self.out.lock().expect("invariant: reports slot not poisoned") = Some(ReportsOutcome { files, n_records });
+        *self.out.lock().expect("invariant: reports slot not poisoned") = Some(ReportsOutcome {
+            files,
+            n_records,
+            qc: self.qc.take(),
+            // The engine metrics come from the run, not the sink; the
+            // driver fills this after `run` returns.
+            metrics: reed_engine::metrics::StageMetrics::default(),
+        });
         Ok(n_records)
     }
 }
@@ -687,16 +750,23 @@ pub fn run_reports_opened(
         depth_sums: vec![(0.0, 0); n_samples],
         individual: IndividualFAcc::new(n_samples),
         n_records: 0,
+        qc: request.summary.then(|| {
+            reed_stats::summary::report::QcReportAcc::new(
+                u32::try_from(n_samples).unwrap_or(u32::MAX),
+            )
+        }),
         out: Arc::new(Mutex::new(None)),
     };
     let out = Arc::clone(&sink.out);
     let report = run(source.as_mut(), &job, sink, budget, &abort)?;
     job.finish(report.n_chunks, true)?;
-    Ok(out
+    let mut outcome = out
         .lock()
         .expect("invariant: reports slot not poisoned")
         .take()
-        .expect("invariant: sink finish stored the outcome"))
+        .expect("invariant: sink finish stored the outcome");
+    outcome.metrics = report.metrics;
+    Ok(outcome)
 }
 
 #[cfg(test)]

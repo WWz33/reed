@@ -60,6 +60,7 @@ fn reports_match_hand_computed_values() {
         het: true,
         missing: true,
         depth: true,
+        summary: false,
         prefix: prefix.clone(),
     };
     let budget = ThreadBudget { threads: 2, mem: MemBudget::default_half_memory() };

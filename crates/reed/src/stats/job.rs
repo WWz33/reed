@@ -262,6 +262,9 @@ pub struct StatsReport {
     pub n_multiallelic_skipped: u64,
     /// Chunks processed.
     pub n_chunks: u64,
+    /// The engine's stage metrics (doc_v4 03 A4-5): reader/reducer/chain
+    /// cumulative times, printed at `--verbosity 2`.
+    pub metrics: reed_engine::metrics::StageMetrics,
     /// Wall time.
     pub elapsed: Duration,
 }
@@ -566,6 +569,46 @@ impl StatsJob {
             .scan(&lr, &site, counters)
             .map_err(EngineError::from)?;
         self.push_row(pos0, out.codes, row, current, partial)
+    }
+
+    /// The record sink for a filtering wrapper (doc_v4 O-2): the wrapper
+    /// already decoded and masked the genotypes, so this path parses only
+    /// the fixed columns again and skips both the GT decode and the
+    /// rewritten-text round-trip.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Job`] for malformed records.
+    pub fn run_records(
+        &self,
+        records: &[crate::filtered::ScannedRecord<'_>],
+        scratch: &mut StatsScratch,
+    ) -> Result<StatsPartial, EngineError> {
+        let mut partial = StatsPartial::default();
+        let mut current: Option<SegmentPartial> = None;
+        self.reset_row(scratch);
+        for rec in records {
+            let Some(lr) = LineRef::parse(rec.line) else {
+                return Err(EngineError::job("record line has fewer than 9 columns"));
+            };
+            let site = SiteView::parse(&lr).map_err(EngineError::from)?;
+            let Some(pos0) = self.site_prefix(
+                site.contig_name,
+                site.pos1,
+                site.n_alt(),
+                site.is_invariant(),
+                &mut current,
+                &mut partial,
+            )?
+            else {
+                continue;
+            };
+            self.push_row(pos0, rec.codes, &mut scratch.row, &mut current, &mut partial)?;
+        }
+        if let Some(segment) = current.take() {
+            partial.segments.push(segment);
+        }
+        Ok(partial)
     }
 
     /// The native BCF record sink (doc_v3 02-bcf.md §2.4/§2.5): each framed
@@ -1069,9 +1112,10 @@ pub fn run_stats_opened(
     let report = match &request.filter {
         Some(plan) => {
             let job = crate::bcf_input::InputJob::new(
-                crate::filtered::FilteredJob::new(
+                crate::filtered::FilteredJob::with_records(
                     Some(Arc::clone(plan)),
                     Arc::clone(&keep_for_filter),
+                    StatsJob::run_records,
                     job,
                 ),
                 &opened,
@@ -1117,6 +1161,7 @@ pub fn run_stats_opened(
         n_records: output.n_records,
         n_multiallelic_skipped: output.n_multiallelic_skipped,
         n_chunks: report.n_chunks,
+        metrics: report.metrics,
         elapsed: report.elapsed,
     })
 }

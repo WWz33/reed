@@ -41,9 +41,16 @@ pub struct TimingReport {
     pub total_secs: f64,
     /// Chunks the final pass consumed.
     pub chunks: u64,
-    /// Summed worker-busy time, when the engine reported it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub worker_busy_secs: Option<f64>,
+    /// Chunks read across all passes (doc_v4 03 A4-5).
+    pub chunks_read: u64,
+    /// Summed worker-busy time across all passes.
+    pub worker_busy_secs: f64,
+    /// Cumulative reader time (`next_chunk`) across all passes.
+    pub reader_secs: f64,
+    /// Cumulative reducer time (`accept`) across all passes.
+    pub reduce_secs: f64,
+    /// Cumulative time workers waited on the BCF frame chain.
+    pub chain_wait_secs: f64,
     /// Peak in-flight bytes, when the engine reported it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_flight_peak_bytes: Option<u64>,
@@ -108,9 +115,11 @@ impl FilterReport {
         }
         let _ = writeln!(text, "total_ms\t{:.3}", t.total_secs * 1e3);
         let _ = writeln!(text, "chunks\t{}", t.chunks);
-        if let Some(busy) = t.worker_busy_secs {
-            let _ = writeln!(text, "worker_busy_ms\t{:.3}", busy * 1e3);
-        }
+        let _ = writeln!(text, "chunks_read\t{}", t.chunks_read);
+        let _ = writeln!(text, "worker_busy_ms\t{:.3}", t.worker_busy_secs * 1e3);
+        let _ = writeln!(text, "reader_ms\t{:.3}", t.reader_secs * 1e3);
+        let _ = writeln!(text, "reduce_ms\t{:.3}", t.reduce_secs * 1e3);
+        let _ = writeln!(text, "chain_wait_ms\t{:.3}", t.chain_wait_secs * 1e3);
         if let Some(peak) = t.in_flight_peak_bytes {
             let _ = writeln!(text, "in_flight_peak_bytes\t{peak}");
         }

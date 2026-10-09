@@ -43,6 +43,45 @@ struct QcJob {
     n_samples: usize,
 }
 
+/// A summary accumulator another job can feed in its own pass (doc_v4 O-1):
+/// the reports job scans the same records, so requesting two families no
+/// longer reads the input twice.
+pub(crate) struct QcAccumulator {
+    job: QcJob,
+    scratch: QcScratch,
+    acc: QcReportAcc,
+    n_samples: u32,
+}
+
+impl QcAccumulator {
+    /// Creates the accumulator for `n_samples` sample columns.
+    pub(crate) fn new(n_samples: usize) -> Self {
+        let job = QcJob { n_samples };
+        let scratch = job.build_scratch();
+        Self {
+            job,
+            scratch,
+            acc: QcReportAcc::new(u32::try_from(n_samples).unwrap_or(u32::MAX)),
+            n_samples: u32::try_from(n_samples).unwrap_or(u32::MAX),
+        }
+    }
+
+    /// Feeds one record (exactly the parsing [`QcJob::push_line`] does).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Job`] for malformed records.
+    pub(crate) fn push_line(&mut self, line: &[u8]) -> Result<(), EngineError> {
+        self.job.push_line(line, &mut self.scratch, &mut self.acc)
+    }
+
+    /// Takes the accumulated report, leaving a fresh empty one: per-chunk
+    /// partials must be independent, the sink merges them in chunk order.
+    pub(crate) fn take_acc(&mut self) -> QcReportAcc {
+        std::mem::replace(&mut self.acc, QcReportAcc::new(self.n_samples))
+    }
+}
+
 #[derive(Default)]
 struct QcPartial {
     acc: Option<QcReportAcc>,

@@ -34,13 +34,22 @@ W0 门（02 §7）六条全部通过；`cargo test --workspace` 全绿，`cargo 
 | 额外修正：输出索引改为 opt-in（非文档列出） | `WriteIndex::parse(None)` 此前返回 `Csi`，即不给 `-W` 也写索引；`-Oz -o /dev/null` 因此报 `/dev/null.csi: Permission denied`（旧二进制同样复现，属既有缺陷）。改为 bcftools 语义：`-W`/`-W=csi` 才写 | `write::index::tests::flavor_parsing_and_suffixes`；手工 `filter subset --max-missing 0.9 -Oz6 -o /dev/null` 通过 |
 | 额外修正：错误渲染（非文档列出） | `main` 改为 `eprintln!("reed: {err}")`（Display）；此前 `String` 错误经 `Result` 的 Debug 打印带引号（`Error: "…"`） | `cli_contract` 的 index 用例；手工 `reed index -` 输出 `reed: reed index needs a seekable file: …` |
 
+### W2 三处「多付的工作」与计时（O-1/O-2/O-5；01 F4-6/F4-7/F4-14）
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| O-1 报告一次读取（F4-6） | `ReportRequest.summary`：QC summary 的累加器（`QcAccumulator`）并入 report job 的 partial——每 chunk 取走上交、sink 按序合并，`reed stats --freq…--summary` 单遍完成；stdin 双族不再落盘（`StdinSpill` 分支删除） | 全量 8 个输出文件与旧两遍实现的 **md5 全同**（afreq/hardy/vmiss/ldepth.mean/idepth/het/smiss/stats）；同一时间窗 A/B：旧 5.25–5.42 s / 231.6 s user → 新 3.62–3.67 s / 178.0–178.7 s（wall −31%，CPU −23%）；子集 0.88 → 0.64 s |
+| O-2 传 codes（F4-7） | `FilteredJob::with_records` + `ScannedRecord{line, codes}` + `StatsJob::run_records`：掩码后的 `GtCode` 直接交给内层，跳过 `edit_vcf_line` 的整行重写与内层的 LineRef/SiteView/GT 重扫；文本路径（`FilteredJob::new`）保留给需要字节的消费者 | `stats_site_filters_match_the_filter_then_stats_composition`（CLI，`stats --X` ≡ `filter --X` + `stats` 逐字节）；子集上两条路径的 `_pi.txt` md5 同为 `438b1a1e…`；全量 `--min-dp 5 --min-gq 20 --max-missing 0.9 --maf 0.05 --pi` 3.00 / 3.04 / 3.00 s（负载 1.04 / 5.37 / 5.37）→ 门 ≤3.0 s 达标 |
+| O-5 计时扩展（A4-5） | `StageMetrics` 新增 `n_chunks_read`（此前恒 0）、`reader_time`（`next_chunk` 累计）、`reduce_time`（`accept` 累计）、`chain_wait`（`ChunkJob::wait_time`；BCF 链在 `FrameChain::wait` 内累计）与 `merge`（多遍求和、在途峰值取最大）；filter 的 `--timing`/`--verbosity 2` 与 stats 的 `--verbosity 2` 都打印（`chunks_read`/`reader_ms`/`reduce_ms`/`chain_wait_ms`/`worker_busy_ms`） | 子集 VCF：reader 535 ms / reduce 64 ms / chain_wait 0；子集 BCF：reader 613 ms / chain_wait 72 ms；全量五统计：VCF reader 2.16–2.20 s、BCF 2.28–2.43 s（reader 占 wall 的 87%，即 W3 的靶子） |
+| F4-14 看门狗 | `STALL_LIMIT` 由「单 cell 等待 120 s」改为「自上次任何 cell 发布以来的全局静默 120 s」，错误文本带等待的 chunk id、等待时长与最后发布的 chunk id；`FrameChain::wait_time()` 供 O-5 读取 | `frame_chain::tests::stall_watchdog_reports_the_global_silence`（缩短限时断言错误文本与发布后恢复）；全部 BCF e2e 通过 |
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 输出索引的默认值 | 已修正（非文档列出） | 见 W1 表末两行的"额外修正" |
 | `sample.max_missing` 的形态 | 偏差（已登记） | 现实现没有样本级漏斗条目（报告只有 head/tail/mask 的**记录**计数），故 `sample.max_missing` 不是 `FilterReport.funnel` 的元素，而是报告新增的 `sample_rule: {rule, threshold, n_dropped}`（`reed-filter/src/funnel.rs`）；`after_mask.max_missing`、`after_mask.max_missing_count` 按 §5.3 作为 tail 漏斗 id |
-| W2–W6 | 待做 | 见 `06-roadmap.md` |
+| W3–W6 | 待做 | 见 `06-roadmap.md` |
 
 ## 基准（2026-10-09 复审基线，56 线程，负载 0.3，热缓存）
 

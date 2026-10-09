@@ -10,6 +10,17 @@ use reed_engine::budget::{MemBudget, ThreadBudget};
 use crate::cli::StatsCli;
 use crate::units::input_path;
 
+/// Prints the engine's stage metrics (doc_v4 03 A4-5): the reader, reducer
+/// and frame-chain cumulative times without which "reader-bound" is only an
+/// inference.
+fn print_engine_metrics(m: &reed_engine::metrics::StageMetrics) {
+    eprintln!("chunks_read\t{}", m.n_chunks_read);
+    eprintln!("engine.reader_ms\t{:.3}", m.reader_time.as_secs_f64() * 1e3);
+    eprintln!("engine.reduce_ms\t{:.3}", m.reduce_time.as_secs_f64() * 1e3);
+    eprintln!("engine.chain_wait_ms\t{:.3}", m.chain_wait.as_secs_f64() * 1e3);
+    eprintln!("worker_busy_ms\t{:.3}", m.worker_busy.as_secs_f64() * 1e3);
+}
+
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
 fn site_spec_is_empty(spec: &reed_filter::spec::FilterSpec) -> bool {
@@ -267,24 +278,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         targets.push((region.contig.clone(), region.start1, region.end1));
     }
 
-    // Open once: stdin streams into the driver (03-performance.md O5). The
-    // only mode that reads twice is a report run asking for both families
-    // (per-site/per-sample reports and the QC summary) on stdin — that is
-    // spilled once, deleted on drop.
+    // Open once: stdin streams into the driver (03-performance.md O5). Every
+    // mode reads once now — the report run accumulates the QC summary in the
+    // same pass (doc_v4 O-1), so no spill is needed even on stdin.
+    let _ = tmp_dir;
     let input_file = input_path(&input);
-    let two_families =
-        (freq || hardy || het || missing || depth) && summary;
-    let spill = if input_file.is_none() && two_families {
-        Some(
-            reed::input::StdinSpill::new(tmp_dir.as_deref().map(Path::new))
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
-        )
-    } else {
-        None
-    };
-    let open_path: Option<PathBuf> = input_file
-        .clone()
-        .or_else(|| spill.as_ref().map(|s| s.path().to_path_buf()));
+    let open_path: Option<PathBuf> = input_file.clone();
     let mut opened = Some(
         reed::input::open_regions(open_path.as_deref(), &regions)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
@@ -365,12 +364,15 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         };
         let mut files = Vec::new();
         if freq || hardy || het || missing || depth {
+            // O-1: `--summary` rides along in the same pass (one read for
+            // both families).
             let request = reed::reports::ReportRequest {
                 freq,
                 hardy,
                 het,
                 missing,
                 depth,
+                summary,
                 prefix: PathBuf::from(&prefix),
             };
             let source = opened
@@ -380,6 +382,13 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             let outcome = reed::reports::run_reports_opened(source, &request, &budget)?;
             let reports_secs = reports_start.elapsed().as_secs_f64();
             files.extend(outcome.files);
+            if let (Some(qc), true) = (&outcome.qc, summary) {
+                let mut path = std::ffi::OsString::from(&prefix);
+                path.push(".stats");
+                let text = reed::qc_report::render_bcftools_stats(qc);
+                std::fs::write(std::path::PathBuf::from(&path), &text)?;
+                files.push(std::path::PathBuf::from(path));
+            }
             if verbosity.shows_summary() {
                 eprintln!(
                     "{} records in {:.1}s -> {}",
@@ -393,9 +402,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
                 eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
                 eprintln!("phase.reports_ms\t{:.3}", reports_secs * 1e3);
                 eprintln!("n_records\t{}", outcome.n_records);
+                print_engine_metrics(&outcome.metrics);
             }
         }
-        if summary {
+        if summary && files.is_empty() {
+            // Summary alone: the QC job is the whole pass.
             let source = match opened.take() {
                 Some(source) => source,
                 None => reed::input::open(open_path.as_deref())
@@ -535,6 +546,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             eprintln!("n_records\t{}", report.n_records);
             eprintln!("n_windows\t{}", report.n_windows);
             eprintln!("chunks\t{}", report.n_chunks);
+            print_engine_metrics(&report.metrics);
         }
         return Ok(());
     }
@@ -575,6 +587,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         eprintln!("n_records\t{}", report.n_records);
         eprintln!("n_windows\t{}", report.n_windows);
         eprintln!("chunks\t{}", report.n_chunks);
+        print_engine_metrics(&report.metrics);
     }
     match out {
         Some(path) => std::fs::write(path, report.tsv)?,

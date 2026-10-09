@@ -28,6 +28,8 @@ pub(super) struct SketchPassOutput {
     /// The pass0 funnel (head-rule hits; tail/mask counters still zero —
     /// the mid stage fills them).
     pub funnel: FunnelPartial,
+    /// Pass0's engine metrics (doc_v4 03 A4-5: the driver sums the passes).
+    pub metrics: reed_engine::metrics::StageMetrics,
 }
 
 /// One chunk's sketch plus where its trailing seam site landed.
@@ -295,6 +297,8 @@ impl OrderedSink<SketchPartial> for SketchSink {
             cohort_called: self.cohort,
             n_records,
             funnel: self.funnel,
+            // Filled by `run_sketch_pass` from the engine's RunReport.
+            metrics: reed_engine::metrics::StageMetrics::default(),
         });
         Ok(n_records)
     }
