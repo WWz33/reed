@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use reed::filter::{run_filter, FilterOptions};
-use reed_filter::spec::{CallRate, FilterSpecV2, TailRules};
+use reed_filter::spec::{CallRate, FilterSpec, TailRules};
 
 /// Writes `text` as a plain VCF under a per-test temp directory.
 fn write_vcf(dir: &Path, name: &str, text: &str) -> PathBuf {
@@ -32,7 +32,7 @@ fn temp_dir(tag: &str) -> PathBuf {
 /// Runs `reed filter` (library driver) with the given after-mask rules and
 /// returns the surviving POS values in file order.
 fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
-    let spec = FilterSpecV2 { site_after_mask: tail, ..FilterSpecV2::default() };
+    let spec = FilterSpec { site_after_mask: tail, ..FilterSpec::default() };
     let opts = FilterOptions {
         threads: 2,
         output: Some(out.to_path_buf()),
@@ -40,7 +40,6 @@ fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
         compress_level: 6,
         strategy: None,
         command_line: "e2e_missing_boundary".to_string(),
-        quiet: true,
         timing: None,
         report_json: None,
         force_samples: false,
@@ -338,7 +337,7 @@ fn sample_call_rate_matches_plink2_mind() {
     }
     let input = write_vcf(&dir, "samples.vcf", &body);
     let out = dir.join("out.vcf");
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         min_sample_call_rate: Some(CallRate::parse("0.9").expect("valid")),
         genotype: reed_filter::spec::GenotypeRules {
             mask_if: vec![reed_filter::spec::GenotypeMaskRule {
@@ -348,7 +347,7 @@ fn sample_call_rate_matches_plink2_mind() {
             }],
             ..reed_filter::spec::GenotypeRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let opts = FilterOptions {
         threads: 2,
@@ -357,7 +356,6 @@ fn sample_call_rate_matches_plink2_mind() {
         compress_level: 6,
         strategy: None,
         command_line: "e2e_missing_boundary".to_string(),
-        quiet: true,
         timing: None,
         report_json: None,
         force_samples: false,

@@ -5,7 +5,7 @@
 use std::io::Write;
 
 use reed::filter::{run_filter, FilterOptions};
-use reed_filter::spec::{FilterSpecV2, OnMissing};
+use reed_filter::spec::{FilterSpec, OnMissing};
 use reed_filter::FilterError;
 
 /// Compresses `text` into a BGZF stream cut at `block_data`-byte blocks —
@@ -101,16 +101,16 @@ fn write_fixture(name: &str, n_records: usize) -> std::path::PathBuf {
 
 /// The gold pipeline as a typed spec (the flags of 02-cli.md §6 expressed
 /// through the spec types; the flag-based CLI builds exactly this).
-fn gold_spec() -> FilterSpecV2 {
+fn gold_spec() -> FilterSpec {
     use reed_filter::spec::{
         CallRate, GenotypeMaskRule, GenotypeRules, InfoPredicate, OnMissing, RecomputeSpec,
-        SiteRulesV2, TailRules,
+        SiteRules, TailRules,
     };
-    FilterSpecV2 {
+    FilterSpec {
         // s3 is missing in 98% of the records; s1's `--min-dp` mask leaves it
         // at exactly 0.9 (the boundary is kept).
         min_sample_call_rate: Some(CallRate::parse("0.9").expect("valid")),
-        site: SiteRulesV2 {
+        site: SiteRules {
             variant_class: vec!["snv".into()],
             max_alt_alleles: 1,
             require_filter: vec!["PASS".into()],
@@ -129,7 +129,7 @@ fn gold_spec() -> FilterSpecV2 {
                 quantifier: None,
             })
             .collect(),
-            ..SiteRulesV2::default()
+            ..SiteRules::default()
         },
         genotype: GenotypeRules {
             mask_if: [("DP", "< 5"), ("DP", "> 100"), ("GQ", "< 20")]
@@ -148,7 +148,7 @@ fn gold_spec() -> FilterSpecV2 {
             ..TailRules::default()
         },
         recompute: RecomputeSpec::all(),
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     }
 }
 
@@ -160,7 +160,6 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
         compress_level: 6,
         strategy,
         command_line: "test".to_string(),
-        quiet: true,
         timing: None,
         report_json: None,
         force_samples: false,
@@ -177,7 +176,7 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
 fn single_pass_and_two_pass_reparse_produce_identical_output() {
     let dir_path = write_fixture("strategies", 6_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = gold_spec();
+    let spec: FilterSpec = gold_spec();
 
     let out_single = dir.join("single.vcf.gz");
     let out_two = dir.join("two.vcf.gz");
@@ -219,7 +218,7 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
 fn output_is_deterministic_across_thread_counts() {
     let dir_path = write_fixture("determinism", 6_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = gold_spec();
+    let spec: FilterSpec = gold_spec();
 
     let mut reference: Option<Vec<u8>> = None;
     for threads in [1_usize, 3, 8] {
@@ -277,7 +276,7 @@ fn mask_default_on_missing_is_keep() {
     use reed_filter::spec::{GenotypeMaskRule, GenotypeRules};
     // The mask default is Keep at the spec level (§11.1): a missing DP/GQ
     // never masks (plink2 semantics), and the compiler accepts it.
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         genotype: GenotypeRules {
             mask_if: vec![GenotypeMaskRule {
                 field: "DP".into(),
@@ -286,7 +285,7 @@ fn mask_default_on_missing_is_keep() {
             }],
             ..GenotypeRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     assert_eq!(spec.genotype.mask_if[0].on_missing, OnMissing::Keep);
     let dir_path = write_fixture("maskdefault", 5);
@@ -301,7 +300,7 @@ fn mask_default_on_missing_is_keep() {
 fn provenance_and_ascertainment_are_written() {
     let dir_path = write_fixture("provenance", 30);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = gold_spec();
+    let spec: FilterSpec = gold_spec();
     let out = dir.join("o.vcf.gz");
     run_filter(Some(dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
 
@@ -344,7 +343,7 @@ fn _assert_error_type(e: FilterError) -> FilterError {
 fn all_three_strategies_produce_identical_bytes() {
     let dir_path = write_fixture("three-strategies", 8_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = gold_spec();
+    let spec: FilterSpec = gold_spec();
 
     let mut hashes = Vec::new();
     for (name, strategy) in [
@@ -374,7 +373,7 @@ fn all_three_strategies_produce_identical_bytes() {
 fn sketch_funnel_matches_the_single_pass_funnel() {
     let dir_path = write_fixture("sketch-funnel", 6_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
-    let spec: FilterSpecV2 = gold_spec();
+    let spec: FilterSpec = gold_spec();
 
     let single = run_filter(
         Some(dir_path.as_path()),
@@ -429,7 +428,6 @@ mod write_index {
             compress_level: 6,
             strategy: None,
             command_line: "test".into(),
-            quiet: true,
         timing: None,
             report_json: None,
             force_samples: false,
@@ -449,7 +447,7 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.out.vcf.gz");
 
-        run_filter(Some(input.as_path()), &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Csi))
+        run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::filter::WriteIndex::Csi))
             .expect("invariant: filter runs");
 
         let index = noodles::csi::fs::read(dir.join("wide.out.vcf.gz.csi"))
@@ -489,7 +487,7 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.tbi.vcf.gz");
 
-        let result = run_filter(Some(input.as_path()), &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::Tbi));
+        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::filter::WriteIndex::Tbi));
         assert!(result.is_err(), "TBI must refuse coordinates ≥ 2^29");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -505,7 +503,7 @@ mod write_index {
         std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
         let out = dir.join("und.out.vcf.gz");
 
-        let result = run_filter(Some(input.as_path()), &FilterSpecV2::default(), &opts(&out, reed::filter::WriteIndex::None));
+        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::filter::WriteIndex::None));
         assert!(result.is_err(), "an undeclared contig must fail, not alias tid 0");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -550,7 +548,7 @@ fn record_wider_than_one_block_round_trips() {
     std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
     let out = dir.join("wide.out.vcf.gz");
 
-    run_filter(Some(input.as_path()), &FilterSpecV2::default(), &options(None, &out))
+    run_filter(Some(input.as_path()), &FilterSpec::default(), &options(None, &out))
         .expect("invariant: filter runs on a record wider than one block");
 
     use std::io::Read as _;
@@ -582,7 +580,7 @@ fn plain_and_bgzf_inputs_agree() {
     let bgzf_path = dir.join("in.vcf.gz");
     std::fs::write(&bgzf_path, bgzf(&text, 512)).expect("invariant: write bgzf");
 
-    let spec = FilterSpecV2::default();
+    let spec = FilterSpec::default();
     let out_plain = dir.join("plain.out.vcf.gz");
     let out_bgzf = dir.join("bgzf.out.vcf.gz");
     let rp = run_filter(Some(&plain), &spec, &options(None, &out_plain)).expect("invariant: plain run");
@@ -612,7 +610,7 @@ fn default_policies_reject_haploid_and_polyploid_calls() {
         let body = text.replace("\t1:30:99", &format!("\t{gt}:30:99"));
         std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
         let out = dir.join("o.vcf.gz");
-        let err = run_filter(Some(&path), &FilterSpecV2::default(), &options(None, &out))
+        let err = run_filter(Some(&path), &FilterSpec::default(), &options(None, &out))
             .expect_err("the default policies must reject this input");
         let message = err.to_string();
         assert!(
@@ -640,12 +638,12 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
     let path = dir.join("in.vcf.gz");
     std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
     let out = dir.join("o.vcf.gz");
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         policy: PolicyRules {
             ploidy: PloidyPolicy::AllowHaploid,
             ..PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let report = run_filter(Some(&path), &spec, &options(None, &out)).expect("invariant: run");
     assert_eq!(report.n_output_records, 2);
@@ -671,11 +669,11 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
 /// `--max-maf`, `--max-mac` — filter the same sites as their mirrors.
 #[test]
 fn exclude_types_and_allele_bounds_are_mirrors() {
-    use reed_filter::spec::SiteRulesV2;
+    use reed_filter::spec::SiteRules;
     let dir_path = write_fixture("bounds", 400);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
 
-    let run = |spec: &FilterSpecV2, name: &str| {
+    let run = |spec: &FilterSpec, name: &str| {
         let out = dir.join(format!("{name}.vcf.gz"));
         let report =
             run_filter(Some(dir_path.as_path()), spec, &options(None, &out)).expect("invariant: run");
@@ -691,36 +689,36 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
         (report.n_output_records, text)
     };
 
-    let snv_only = FilterSpecV2 {
-        site: SiteRulesV2 { variant_class: vec!["snv".into()], ..SiteRulesV2::default() },
-        ..FilterSpecV2::default()
+    let snv_only = FilterSpec {
+        site: SiteRules { variant_class: vec!["snv".into()], ..SiteRules::default() },
+        ..FilterSpec::default()
     };
-    let exclude_indels = FilterSpecV2 {
-        site: SiteRulesV2 {
+    let exclude_indels = FilterSpec {
+        site: SiteRules {
             exclude_variant_class: vec!["indel".into(), "mnv".into()],
-            ..SiteRulesV2::default()
+            ..SiteRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let (n_snv, _) = run(&snv_only, "snv");
     let (n_excl, _) = run(&exclude_indels, "excl");
     assert_eq!(n_snv, n_excl, "-V indels,mnps must keep exactly the SNVs (fixture has no symbolic/ref)");
 
     // MAF band: [0.1, 0.5] keeps exactly what max_maf leaves.
-    let min_maf = FilterSpecV2 {
+    let min_maf = FilterSpec {
         site_after_mask: reed_filter::spec::TailRules {
             min_maf: Some(0.1),
             ..reed_filter::spec::TailRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
-    let with_max = FilterSpecV2 {
+    let with_max = FilterSpec {
         site_after_mask: reed_filter::spec::TailRules {
             min_maf: Some(0.1),
             max_maf: Some(0.5),
             ..reed_filter::spec::TailRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let (n_min, _) = run(&min_maf, "min");
     let (n_max, _) = run(&with_max, "max");
@@ -728,13 +726,13 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
     assert!(n_min < 400, "the MAF floor must drop something: {n_min}");
 
     // MAC upper bound mirrors the MAF one at 2N = 8 alleles.
-    let max_mac = FilterSpecV2 {
+    let max_mac = FilterSpec {
         site_after_mask: reed_filter::spec::TailRules {
             min_maf: Some(0.1),
             max_mac: 4,
             ..reed_filter::spec::TailRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let (n_mac, _) = run(&max_mac, "mac");
     assert!(n_mac <= n_max, "MAC <= 4 is a stricter band than MAF <= 0.5");
@@ -758,7 +756,7 @@ fn set_gts_masks_from_format_expressions() {
         } else {
             after.exclude.push("FMT/DP>10".to_string());
         }
-        let spec = FilterSpecV2 {
+        let spec = FilterSpec {
             genotype: GenotypeRules {
                 set_gts: Some(".".to_string()),
                 ..GenotypeRules::default()
@@ -770,7 +768,7 @@ fn set_gts_masks_from_format_expressions() {
                 multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
                 ..reed_filter::spec::PolicyRules::default()
             },
-            ..FilterSpecV2::default()
+            ..FilterSpec::default()
         };
         let out = dir.join(format!("{name}.vcf.gz"));
         let report = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
@@ -809,18 +807,18 @@ fn format_expressions_need_set_gts() {
     let dir_path = write_fixture("setgtsfail", 5);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
     let out = dir.join("o.vcf.gz");
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         site_after_mask: TailRules {
             include: vec!["FMT/DP>10".to_string()],
             ..TailRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
         .expect_err("FMT/ without --set-gts must fail");
     assert!(err.to_string().contains("--set-gts"), "{err}");
 
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         genotype: reed_filter::spec::GenotypeRules {
             set_gts: Some(".".to_string()),
             ..reed_filter::spec::GenotypeRules::default()
@@ -829,7 +827,7 @@ fn format_expressions_need_set_gts() {
             include: vec!["FMT/DP[0]>10".to_string()],
             ..reed_filter::spec::TailRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
         .expect_err("subscripts are not supported yet");
@@ -847,7 +845,7 @@ fn format_expressions_need_set_gts() {
 #[test]
 fn sample_call_rate_counts_post_mask_over_head_survivors() {
     use reed_filter::plan::ExecStrategy;
-    use reed_filter::spec::{CallRate, GenotypeMaskRule, GenotypeRules, SiteRulesV2};
+    use reed_filter::spec::{CallRate, GenotypeMaskRule, GenotypeRules, SiteRules};
     let mut text = String::from(HEADER);
     for i in 0..100_u32 {
         let pass = i >= 90;
@@ -865,11 +863,11 @@ fn sample_call_rate_counts_post_mask_over_head_survivors() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let path = dir.join("in.vcf.gz");
     std::fs::write(&path, bgzf(&text, 256)).expect("invariant: write");
-    let spec_with = |threshold: &str| FilterSpecV2 {
+    let spec_with = |threshold: &str| FilterSpec {
         min_sample_call_rate: Some(CallRate::parse(threshold).expect("valid")),
-        site: SiteRulesV2 {
+        site: SiteRules {
             require_filter: vec!["PASS".into()],
-            ..SiteRulesV2::default()
+            ..SiteRules::default()
         },
         genotype: GenotypeRules {
             mask_if: vec![GenotypeMaskRule {
@@ -879,7 +877,7 @@ fn sample_call_rate_counts_post_mask_over_head_survivors() {
             }],
             ..GenotypeRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     for (name, strategy) in [
         ("single", ExecStrategy::SinglePass),
@@ -931,13 +929,13 @@ fn static_subset_and_sample_call_rate_combine() {
     let dir_path = write_fixture("subsetmind", 1_000);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
     // Keep s0,s3 statically; drop s3 via the call-rate rule (98% missing).
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         sample_select: Some(SampleSelect {
             keep: Some(SampleList::Names(vec!["s0".into(), "s3".into()])),
             remove: None,
         }),
         min_sample_call_rate: Some(CallRate::parse("0.5").expect("valid")),
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let out = dir.join("o.vcf.gz");
     let report = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
@@ -971,7 +969,7 @@ fn default_biallelic_gate_drops_multiallelic_records() {
     std::fs::write(&path, bgzf(&text, 128)).expect("invariant: write");
 
     let out = dir.join("gated.vcf.gz");
-    let gated = run_filter(Some(path.as_path()), &FilterSpecV2::default(), &options(None, &out))
+    let gated = run_filter(Some(path.as_path()), &FilterSpec::default(), &options(None, &out))
         .expect("invariant: run");
     assert_eq!(gated.n_output_records, 1, "the multiallelic record is gated out");
     assert!(
@@ -983,12 +981,12 @@ fn default_biallelic_gate_drops_multiallelic_records() {
         gated.funnel
     );
 
-    let allowed = FilterSpecV2 {
+    let allowed = FilterSpec {
         policy: reed_filter::spec::PolicyRules {
             multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
             ..reed_filter::spec::PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let out = dir.join("allowed.vcf.gz");
     let report = run_filter(Some(path.as_path()), &allowed, &options(None, &out))
@@ -1006,7 +1004,7 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
     let dir_path = write_fixture("ac-multiallelic", 200);
     let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
     // Dropping a sample turns on the AC/AN update (bcftools view semantics).
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         sample_select: Some(SampleSelect {
             keep: Some(SampleList::Names(vec!["s0".into(), "s1".into(), "s2".into()])),
             remove: None,
@@ -1015,7 +1013,7 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
             multiallelic: MultiallelicPolicy::Allow,
             ..PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let out = dir.join("err.vcf.gz");
     let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
@@ -1024,7 +1022,7 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
 
     // With the default gate the multiallelic records are dropped first, so
     // the same subset update runs and the recomputed AC stays valid.
-    let gated = FilterSpecV2 { policy: PolicyRules::default(), ..spec };
+    let gated = FilterSpec { policy: PolicyRules::default(), ..spec };
     let out = dir.join("ok.vcf.gz");
     let report = run_filter(Some(dir_path.as_path()), &gated, &options(None, &out))
         .expect("invariant: gated run");

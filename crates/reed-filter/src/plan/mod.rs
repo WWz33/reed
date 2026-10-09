@@ -16,7 +16,7 @@ pub use strategy::ExecStrategy;
 
 use crate::spec::region::RegionTriple;
 use crate::spec::{
-    FilterSpecV2, OnMissing, Quantifier, RegionRule,
+    FilterSpec, OnMissing, Quantifier, RegionRule,
 };
 use crate::FilterError;
 
@@ -42,7 +42,7 @@ pub enum HeadRule {
     MaxAltAlleles(u32),
     /// The default biallelic gate: records with more than one ALT are
     /// dropped unless the spec allows multiallelic input (§11.6,
-    /// [`FilterSpecV2::multiallelics_allowed`]). Pushed by `compile` when
+    /// [`FilterSpec::multiallelics_allowed`]). Pushed by `compile` when
     /// `biallelic_gate` is set and no explicit `max_alt_alleles` covers it.
     BiallelicGate,
     /// The FILTER column must be one of these (`.` never passes).
@@ -308,7 +308,7 @@ pub struct FilterPlan {
     pub provenance: provenance::Provenance,
 }
 
-/// Compiles the v2 spec against the input header.
+/// Compiles the spec against the input header.
 ///
 /// `biallelic_gate` is the filter driver's default (§11.6, plink2-style):
 /// push [`HeadRule::BiallelicGate`] unless the spec allows multiallelic
@@ -321,7 +321,7 @@ pub struct FilterPlan {
 /// types, `Number` outside {1, A}, a missing quantifier where one is
 /// required, thresholds out of range, or the M7 `midp` HWE mode.
 pub fn compile(
-    spec: &FilterSpecV2,
+    spec: &FilterSpec,
     tags: &TagTable,
     command_line: &str,
     biallelic_gate: bool,

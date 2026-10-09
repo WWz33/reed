@@ -22,14 +22,17 @@ pub enum WriteIndex {
 }
 
 impl WriteIndex {
-    /// Parses the optional `--write-index[=csi|tbi]` value.
+    /// Parses the optional `--write-index[=csi|tbi]` value: absent = no
+    /// index (bcftools semantics — the index is opt-in via `-W`), `-W` alone
+    /// or `-W=csi` = CSI, `-W=tbi` = TBI.
     ///
     /// # Errors
     ///
     /// [`IoError::Io`] on an unknown flavor name.
     pub fn parse(value: Option<&str>) -> Result<Self, IoError> {
         match value {
-            None | Some("") | Some("csi") => Ok(Self::Csi),
+            None => Ok(Self::None),
+            Some("") | Some("csi") => Ok(Self::Csi),
             Some("tbi") => Ok(Self::Tbi),
             Some(other) => Err(IoError::Io(format!(
                 "unknown index flavor {other:?} (expected csi or tbi)"
@@ -191,7 +194,10 @@ mod tests {
 
     #[test]
     fn flavor_parsing_and_suffixes() {
-        assert_eq!(WriteIndex::parse(None).expect("invariant: default"), WriteIndex::Csi);
+        // No `-W` at all = no index (bcftools); `-W`/`-W=csi` selects CSI.
+        assert_eq!(WriteIndex::parse(None).expect("invariant: default"), WriteIndex::None);
+        assert_eq!(WriteIndex::parse(Some("csi")).expect("invariant: csi"), WriteIndex::Csi);
+        assert_eq!(WriteIndex::parse(Some("")).expect("invariant: bare -W"), WriteIndex::Csi);
         assert_eq!(WriteIndex::parse(Some("tbi")).expect("invariant: tbi"), WriteIndex::Tbi);
         assert!(WriteIndex::parse(Some("nope")).is_err());
         assert_eq!(WriteIndex::Tbi.suffix(), ".tbi");

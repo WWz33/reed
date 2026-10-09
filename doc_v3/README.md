@@ -1,5 +1,9 @@
 # reed doc_v3：第三轮复审 + BCF 编解码方案（2026-10-08）
 
+> **后继修订**（见 `docs/INDEX.md`）：doc_v4 修订参数方向（`--geno/--mind` → `--max-missing` 家族）
+> 与 CLI/文档一致性；doc_v3 04 §C3 的"`TagTable` 未做"在 `doc_v3/STATUS.md` 更正为**已做**（doc_v4 01 F4-2）。
+> V0–V6 的实施结果仍以 `doc_v3/STATUS.md` 为准。
+
 > 延续 doc_v2。doc_v2 的规范（CLI、对齐原则、架构）继续有效；本目录给出 R0–R8 落地后的复审、R6 剩余的 BCF 方案、
 > 性能与清理计划。不修改代码。
 

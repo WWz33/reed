@@ -4,7 +4,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::spec::FilterSpecV2;
+use crate::spec::FilterSpec;
 use crate::FilterError;
 
 /// Provenance of one run.
@@ -15,7 +15,7 @@ pub struct Provenance {
     /// `##reed_command=`.
     pub command: String,
     /// `##reed_filterCommand=` (the canonical flag spelling of the spec,
-    /// `FilterSpecV2::to_args`; 02-cli.md §1).
+    /// `FilterSpec::to_args`; 02-cli.md §1).
     pub filter_command: String,
     /// `##reed_filter_spec=` (canonical JSON).
     pub canonical_json: String,
@@ -31,7 +31,7 @@ impl Provenance {
     ///
     /// [`FilterError::Spec`] when the spec fails to serialize (never in
     /// practice: every field is JSON-native).
-    pub fn new(spec: &FilterSpecV2, command_line: &str) -> Result<Self, FilterError> {
+    pub fn new(spec: &FilterSpec, command_line: &str) -> Result<Self, FilterError> {
         let value = serde_json::to_value(spec)
             .map_err(|e| FilterError::Spec(format!("spec serialization failed: {e}")))?;
         // serde_json's Map is a BTreeMap unless `preserve_order` is on, so

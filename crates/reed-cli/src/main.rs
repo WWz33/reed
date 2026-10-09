@@ -11,7 +11,16 @@ use clap::Parser;
 use cli::{Cli, Command};
 
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn main() {
+    if let Err(err) = run() {
+        // Display, not Debug: a `String` error would otherwise print its
+        // Debug form with surrounding quotes.
+        eprintln!("reed: {err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match Cli::parse().command {
         Command::Qc(args) => translate::qc::run_qc(args),
         Command::Filter(args) => translate::filter::run_filter_cli(args),

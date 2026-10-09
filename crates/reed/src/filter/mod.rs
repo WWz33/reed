@@ -26,7 +26,7 @@ use reed_engine::error::EngineError;
 use reed_engine::pipeline::{run, OrderedSink};
 use reed_filter::funnel::{FilterReport, FunnelPartial};
 use reed_filter::plan::{ExecStrategy, HeadRule};
-use reed_filter::spec::{FilterSpecV2, SampleList};
+use reed_filter::spec::{FilterSpec, SampleList};
 use reed_filter::FilterError;
 use reed_core::ChunkId;
 use reed_io::noodles_vcf as vcf;
@@ -68,10 +68,10 @@ pub struct FilterOptions {
     pub strategy: Option<ExecStrategy>,
     /// The `##reed_command` line (captured argv).
     pub command_line: String,
-    /// Suppress the human stderr table.
-    pub quiet: bool,
     /// Write the `--timing` report here (doc_v3 03 O10): per-phase wall time
-    /// plus the engine's chunk/worker-busy/in-flight metrics.
+    /// plus the engine's chunk/worker-busy/in-flight metrics. The same text
+    /// is in the returned report (`FilterReport::timing_text`), which the CLI
+    /// prints at `--verbosity 2`; the driver itself never prints.
     pub timing: Option<PathBuf>,
     /// Write the JSON report here.
     pub report_json: Option<PathBuf>,
@@ -122,14 +122,14 @@ fn ferr(err: EngineError) -> FilterError {
     FilterError::Io(std::io::Error::other(err.to_string()))
 }
 
-/// Runs the v2 filter.
+/// Runs the filter.
 ///
 /// # Errors
 ///
 /// Spec compilation, transport, job and sink failures.
 pub fn run_filter(
     input: Option<&Path>,
-    spec: &FilterSpecV2,
+    spec: &FilterSpec,
     opts: &FilterOptions,
 ) -> Result<FilterReport, FilterError> {
     let t0 = Instant::now();
@@ -521,6 +521,17 @@ pub fn run_filter(
     // ---- report (§11.5) ----
     let funnel_stages = report::funnel_stages(&head_ids, &tail_ids, &funnel);
     let masked_by_rule = report::masked_by_rule(&mask_ids, &funnel);
+    let timing = reed_filter::funnel::TimingReport {
+        threads: opts.threads.max(1),
+        phases: timing_phases
+            .iter()
+            .map(|(name, secs)| ((*name).to_string(), *secs))
+            .collect(),
+        total_secs: t0.elapsed().as_secs_f64(),
+        chunks: timing_chunks,
+        worker_busy_secs: timing_engine.map(|m| m.worker_busy.as_secs_f64()),
+        in_flight_peak_bytes: timing_engine.map(|m| m.in_flight_peak_bytes),
+    };
     let report = FilterReport {
         n_input_records: funnel.n_input,
         n_output_records: funnel.n_output,
@@ -533,35 +544,10 @@ pub fn run_filter(
         policy_counters: funnel.policy,
         strategy: strategy.id().to_string(),
         elapsed_secs: t0.elapsed().as_secs_f64(),
+        timing,
     };
-    if !opts.quiet {
-        report::eprint_report(&report);
-    }
     if let Some(path) = &opts.timing {
-        use std::fmt::Write as _;
-        let mut text = String::from("# reed filter timing (03-performance.md O10)\n");
-        let _ = writeln!(text, "strategy\t{}", strategy.id());
-        let _ = writeln!(text, "threads\t{}", opts.threads.max(1));
-        let _ = writeln!(text, "n_records_in\t{}", funnel.n_input);
-        let _ = writeln!(text, "n_records_out\t{}", funnel.n_output);
-        for (phase, secs) in &timing_phases {
-            let _ = writeln!(text, "phase.{phase}_ms\t{:.3}", secs * 1e3);
-        }
-        let _ = writeln!(text, "total_ms\t{:.3}", t0.elapsed().as_secs_f64() * 1e3);
-        let _ = writeln!(text, "chunks\t{timing_chunks}");
-        if let Some(metrics) = timing_engine {
-            let _ = writeln!(
-                text,
-                "worker_busy_ms\t{:.3}",
-                metrics.worker_busy.as_secs_f64() * 1e3
-            );
-            let _ = writeln!(
-                text,
-                "in_flight_peak_bytes\t{}",
-                metrics.in_flight_peak_bytes
-            );
-        }
-        std::fs::write(path, text).map_err(FilterError::from)?;
+        std::fs::write(path, report.timing_text()).map_err(FilterError::from)?;
     }
     if let Some(path) = &opts.report_json {
         let json = serde_json::to_string_pretty(&report)

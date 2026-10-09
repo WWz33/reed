@@ -1,4 +1,4 @@
-//! Funnel and report v2 (§11.5): stable string `RuleId`s (fixing A24),
+//! Funnel and report (§11.5): stable string `RuleId`s (fixing A24),
 //! additive per-chunk counters, mask attribution, and the JSON report.
 
 use serde::Serialize;
@@ -26,6 +26,27 @@ pub struct MaskedBy {
     pub rule: RuleId,
     /// Called-to-missing transitions attributed to this rule.
     pub n_masked: u64,
+}
+
+/// Phase wall times plus the final pass's engine metrics (`--timing`, doc_v3
+/// O10; doc_v4 03 A4-5 extends the engine side). The CLI renders this for
+/// `--timing FILE` and for `--verbosity 2`, so the driver never prints.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct TimingReport {
+    /// Worker threads the run used.
+    pub threads: usize,
+    /// `(phase, seconds)` in signal order (open, pass0, mid, pass1).
+    pub phases: Vec<(String, f64)>,
+    /// Whole-run wall time.
+    pub total_secs: f64,
+    /// Chunks the final pass consumed.
+    pub chunks: u64,
+    /// Summed worker-busy time, when the engine reported it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_busy_secs: Option<f64>,
+    /// Peak in-flight bytes, when the engine reported it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_flight_peak_bytes: Option<u64>,
 }
 
 /// The dynamic sample rule's outcome (`sample.max_missing`, doc_v4
@@ -66,6 +87,35 @@ pub struct FilterReport {
     pub strategy: String,
     /// Wall time (seconds).
     pub elapsed_secs: f64,
+    /// Phase breakdown for `--timing` / `--verbosity 2`.
+    pub timing: TimingReport,
+}
+
+impl FilterReport {
+    /// The `--timing` text (doc_v3 O10): one `key<TAB>value` line per
+    /// counter, phases in signal order.
+    #[must_use]
+    pub fn timing_text(&self) -> String {
+        use std::fmt::Write as _;
+        let t = &self.timing;
+        let mut text = String::from("# reed filter timing (03-performance.md O10)\n");
+        let _ = writeln!(text, "strategy\t{}", self.strategy);
+        let _ = writeln!(text, "threads\t{}", t.threads);
+        let _ = writeln!(text, "n_records_in\t{}", self.n_input_records);
+        let _ = writeln!(text, "n_records_out\t{}", self.n_output_records);
+        for (phase, secs) in &t.phases {
+            let _ = writeln!(text, "phase.{phase}_ms\t{:.3}", secs * 1e3);
+        }
+        let _ = writeln!(text, "total_ms\t{:.3}", t.total_secs * 1e3);
+        let _ = writeln!(text, "chunks\t{}", t.chunks);
+        if let Some(busy) = t.worker_busy_secs {
+            let _ = writeln!(text, "worker_busy_ms\t{:.3}", busy * 1e3);
+        }
+        if let Some(peak) = t.in_flight_peak_bytes {
+            let _ = writeln!(text, "in_flight_peak_bytes\t{peak}");
+        }
+        text
+    }
 }
 
 /// Policy trigger counters (§11.5): the decode-level transformations the

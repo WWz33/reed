@@ -12,9 +12,9 @@ use crate::units::input_path;
 
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
-fn site_spec_is_empty(spec: &reed_filter::spec::FilterSpecV2) -> bool {
+fn site_spec_is_empty(spec: &reed_filter::spec::FilterSpec) -> bool {
     
-    spec.site == reed_filter::spec::SiteRulesV2::default()
+    spec.site == reed_filter::spec::SiteRules::default()
         && spec.genotype == reed_filter::spec::GenotypeRules::default()
         && spec.site_after_mask == reed_filter::spec::TailRules::default()
 }
@@ -255,6 +255,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         max_missing_sample: _,
     } = args;
 
+    // 03-architecture.md §3.3: one verbosity contract for every subcommand.
+    verbosity.init_tracing();
+    let started = std::time::Instant::now();
     // `-r/-R` (indexed) and `-t/-T` (streamed) share the filter's spellings
     // (04-cleanup §2.1).
     let (regions, mut targets, targets_exclude) = parse_regions(&regions_args)?;
@@ -285,6 +288,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     let mut opened = Some(
         reed::input::open_regions(open_path.as_deref(), &regions)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
+    );
+    let open_secs = started.elapsed().as_secs_f64();
+    tracing::debug!(
+        open_ms = open_secs * 1e3,
+        input = %input,
+        "reed stats opened the input"
     );
     let facts = &opened.as_ref().expect("invariant: just opened").facts;
     let sample_names: Vec<String> = facts.sample_names.clone();
@@ -342,7 +351,6 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         threads,
         mem: memory.map_or_else(MemBudget::default_half_memory, |m| MemBudget::from_bytes(m.saturating_mul(1 << 20))),
     };
-    let _ = verbosity;
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts.
@@ -368,15 +376,24 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             let source = opened
                 .take()
                 .expect("invariant: the first family consumes the first open");
+            let reports_start = std::time::Instant::now();
             let outcome = reed::reports::run_reports_opened(source, &request, &budget)?;
+            let reports_secs = reports_start.elapsed().as_secs_f64();
             files.extend(outcome.files);
-            eprintln!(
-                "{} records in {:.1}s -> {}",
-                outcome.n_records,
-                // reports are fast; report wall time via the outcome count only
-                0.0,
-                files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-            );
+            if verbosity.shows_summary() {
+                eprintln!(
+                    "{} records in {:.1}s -> {}",
+                    outcome.n_records,
+                    reports_secs,
+                    files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+                );
+            }
+            if verbosity.shows_timing() {
+                eprintln!("# reed stats timing (reports)");
+                eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
+                eprintln!("phase.reports_ms\t{:.3}", reports_secs * 1e3);
+                eprintln!("n_records\t{}", outcome.n_records);
+            }
         }
         if summary {
             let source = match opened.take() {
@@ -384,6 +401,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
                 None => reed::input::open(open_path.as_deref())
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
             };
+            let summary_start = std::time::Instant::now();
             let outcome = reed::qc_report::run_qc_report_opened(
                 source,
                 &reed::qc_report::QcOptions { threads, json: None },
@@ -392,6 +410,17 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             path.push(".stats");
             std::fs::write(std::path::PathBuf::from(&path), &outcome.bcftools_text)?;
             files.push(std::path::PathBuf::from(path));
+            if verbosity.shows_summary() {
+                eprintln!(
+                    "reed stats: summary written in {:.1}s",
+                    summary_start.elapsed().as_secs_f64()
+                );
+            }
+            if verbosity.shows_timing() {
+                eprintln!("# reed stats timing (summary)");
+                eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
+                eprintln!("phase.summary_ms\t{:.3}", summary_start.elapsed().as_secs_f64() * 1e3);
+            }
         }
         return Ok(());
     }
@@ -402,12 +431,14 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     };
     let (gt_groups, group_names) =
         assign_groups(Path::new(&groups), &sample_names, force_samples)?;
-    eprintln!(
-        "{} samples, {} groups: {}",
-        sample_names.len(),
-        group_names.len(),
-        group_names.join(", ")
-    );
+    if verbosity.shows_summary() {
+        eprintln!(
+            "{} samples, {} groups: {}",
+            sample_names.len(),
+            group_names.len(),
+            group_names.join(", ")
+        );
+    }
 
     let pbs_triples = parse_pbs_triples(&pbs, &group_names)?;
 
@@ -468,7 +499,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             pixy: Some(pixy),
         };
         let source = opened.take().expect("invariant: the windowed mode reads once");
+        let run_start = std::time::Instant::now();
         let report = run_stats_opened(source, request, &budget)?;
+        let run_secs = run_start.elapsed().as_secs_f64();
         let Some(prefix) = out else {
             return Err("pixy mode writes files: pass -o PREFIX".into());
         };
@@ -482,17 +515,27 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             &command_line,
             env!("CARGO_PKG_VERSION"),
         )?;
-        eprintln!(
-            "{} windows, {} records in {:.1}s -> {}",
-            report.n_windows,
-            report.n_records,
-            report.elapsed.as_secs_f64(),
-            written
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        if verbosity.shows_summary() {
+            eprintln!(
+                "{} windows, {} records in {:.1}s -> {}",
+                report.n_windows,
+                report.n_records,
+                report.elapsed.as_secs_f64(),
+                written
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if verbosity.shows_timing() {
+            eprintln!("# reed stats timing (windowed)");
+            eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
+            eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
+            eprintln!("n_records\t{}", report.n_records);
+            eprintln!("n_windows\t{}", report.n_windows);
+            eprintln!("chunks\t{}", report.n_chunks);
+        }
         return Ok(());
     }
 
@@ -512,15 +555,27 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         pixy: None,
     };
     let source = opened.take().expect("invariant: the windowed mode reads once");
+    let run_start = std::time::Instant::now();
     let report = run_stats_opened(source, request, &budget)?;
-    eprintln!(
-        "{} windows, {} records, {} multiallelic skipped, {} chunks in {:.1}s",
-        report.n_windows,
-        report.n_records,
-        report.n_multiallelic_skipped,
-        report.n_chunks,
-        report.elapsed.as_secs_f64()
-    );
+    let run_secs = run_start.elapsed().as_secs_f64();
+    if verbosity.shows_summary() {
+        eprintln!(
+            "{} windows, {} records, {} multiallelic skipped, {} chunks in {:.1}s",
+            report.n_windows,
+            report.n_records,
+            report.n_multiallelic_skipped,
+            report.n_chunks,
+            report.elapsed.as_secs_f64()
+        );
+    }
+    if verbosity.shows_timing() {
+        eprintln!("# reed stats timing (windowed)");
+        eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
+        eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
+        eprintln!("n_records\t{}", report.n_records);
+        eprintln!("n_windows\t{}", report.n_windows);
+        eprintln!("chunks\t{}", report.n_chunks);
+    }
     match out {
         Some(path) => std::fs::write(path, report.tsv)?,
         None => print!("{}", report.tsv),

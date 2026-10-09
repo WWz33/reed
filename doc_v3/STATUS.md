@@ -65,7 +65,7 @@
 
 | 项 | 状态 | 原因 |
 |---|---|---|
-| C3 `TagTable`（reed-filter 去 noodles） | 未做 | 架构纯净性改造，不影响功能；plan::compile 仍直接接收 noodles 头 |
+| C3 `TagTable`（reed-filter 去 noodles） | **已做**（doc_v4 01 F4-2 更正：本行此前记为未做，与代码不符） | `reed-core/src/tag_table.rs` 存在；`reed_io::header::tag_table()` 已接入 `reed_filter::plan::compile` 的入口（`crates/reed/src/filter/mod.rs`、`crates/reed-cli/src/translate/stats.rs` 均从 header 构建）；`crates/reed-filter/Cargo.toml` 无 noodles（`grep noodles` 为空）。守卫：`bash scripts/check-doc-drift.sh` |
 | C4 合并 QC 入口 / reed-qc 并入 reed-stats | 已做 | `reed qc` 保留为隐藏弃用别名（stderr 警告）；`reed-qc` crate 删除，代码并入 `reed-stats::summary`（`summary/{mod.rs,histogram.rs,report.rs}`，`serde` 依赖随之移入），其测试改引用新路径；`reed/src/{stats,reports,pixy,qc,qc_report}.rs` 按 doc_v2 03 §8 移到 `reed/src/stats/{job.rs,writers/*.rs}`，旧公共路径（`reed::reports`/`reed::pixy`/`reed::qc_report`）由 crate 根 re-export 保持 | 342 测试全绿、clippy 干净、工作区从 9 个 crate 减到 8；`writers/*` 内部尚未按格式细分（`plink2_table`/`vcftools_depth`/`bcftools_stats`/`log`），文件保持现有单文件结构 |
 | C2 的 `pub(crate)` 化 | 改为 `#[doc(hidden)]` | 对拍套件是 integration test，需要跨 crate 访问这些累加器；移入单元测试是纯机械工作 |
 | C5 类型化 `EngineError` | 已做（doc_v2 03 §4.4 的形状，doc_v3 C5 引用该节）：`Io(std::io::Error)`、`Input(reed_io::IoError)`（保留 Locus）、`Job(Box<dyn Error + Send + Sync>)`（保留类型与 source 链）、`WorkerPanicked`/`MemBudgetExceeded`/`Aborted`；`EngineError::job(msg)` 造消息型错误，`From<CoreError>`/`From<IoError>`/`From<io::Error>` 三处转换 | 构造点全部改走 typed 转换；`source_errors_propagate` 断言传输错误落到 `Input(IoError::Io(_))`；335 测试全绿 |

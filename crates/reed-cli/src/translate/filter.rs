@@ -1,5 +1,5 @@
 //! `reed filter` flag translation (02-cli.md §3, §6): the typed
-//! [`reed_filter::spec::FilterSpecV2`] plus the driver call. The inverse
+//! [`reed_filter::spec::FilterSpec`] plus the driver call. The inverse
 //! mapping (`FilterSpec::to_args`) lives in `reed-filter`.
 
 use std::path::PathBuf;
@@ -16,13 +16,13 @@ use crate::units::input_path;
 /// Unknown variant types or malformed expressions.
 pub(crate) fn site_spec(
     args: &crate::cli::filter_flags::SiteFilterArgs,
-) -> Result<reed_filter::spec::FilterSpecV2, String> {
-    use reed_filter::spec::{FilterSpecV2, GenotypeMaskRule, OnMissing};
+) -> Result<reed_filter::spec::FilterSpec, String> {
+    use reed_filter::spec::{FilterSpec, GenotypeMaskRule, OnMissing};
     // `site_spec` serves both `reed filter` and `reed stats`; the removed
     // drop-direction flags never reach here (their value parsers reject them
     // with the conversion hint at parse time).
     let cli = args;
-    let mut spec = FilterSpecV2::default();
+    let mut spec = FilterSpec::default();
     // ---- site: variant class / alleles / FILTER ----
     let variant_class = |token: &str| -> Result<&'static str, String> {
         Ok(match token.trim() {
@@ -147,14 +147,14 @@ pub(crate) fn site_spec(
     Ok(spec)
 }
 
-/// Translates the CLI flags into a typed [`reed_filter::spec::FilterSpecV2`]
+/// Translates the CLI flags into a typed [`reed_filter::spec::FilterSpec`]
 /// (02-cli.md §3, §6): the shared site/threshold flags (04-cleanup §2.1)
 /// plus the sample, region and INFO-update parts that stay filter-only.
 ///
 /// # Errors
 ///
 /// Unknown tokens (variant types, output type) and malformed expressions.
-pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpecV2, String> {
+pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed_filter::spec::FilterSpec, String> {
     use reed_filter::spec::{SampleList, SampleSelect};
     let mut spec = site_spec(&cli.site_args)?;
 
@@ -276,7 +276,8 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
         no_version,
         ..
     } = &cli;
-    let spec_v2 = spec_from_flags(&cli)?;
+    verbosity.init_tracing();
+    let spec = spec_from_flags(&cli)?;
     let strategy = strategy
         .as_deref()
         .map(|s| match s {
@@ -348,7 +349,6 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
         compress_level,
         strategy,
         command_line,
-        quiet: *verbosity == 0,
         timing: cli.timing.as_ref().map(PathBuf::from),
         report_json: report.as_ref().map(PathBuf::from),
         force_samples: *force_samples,
@@ -359,21 +359,54 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
         mem_bytes: memory.map(|m| m.saturating_mul(1 << 20)),
         no_version: *no_version,
     };
-    let report = reed::filter::run_filter(input_path(input).as_deref(), &spec_v2, &opts)?;
-    if *verbosity > 0 {
+    tracing::debug!(threads, strategy = ?strategy, "reed filter starting");
+    let report = reed::filter::run_filter(input_path(input).as_deref(), &spec, &opts)?;
+    if verbosity.shows_summary() {
+        eprint_report(&report);
+    }
+    if verbosity.shows_timing() {
+        eprint!("{}", report.timing_text());
+    }
+    tracing::debug!(
+        n_input = report.n_input_records,
+        n_output = report.n_output_records,
+        samples = report.n_samples_out,
+        "reed filter finished"
+    );
+    Ok(())
+}
+
+/// The human summary (`--verbosity 1`): one line plus the funnel table
+/// (doc_v4 03 §3.3). Moved out of the driver so the library never prints.
+fn eprint_report(report: &reed_filter::funnel::FilterReport) {
+    eprintln!(
+        "reed filter: {} -> {} records ({} of {} samples), strategy {}, {:.1}s",
+        report.n_input_records,
+        report.n_output_records,
+        report.n_samples_out,
+        report.n_samples_in,
+        report.strategy,
+        report.elapsed_secs
+    );
+    if !report.funnel.is_empty() {
+        eprintln!("funnel:");
+        for stage in &report.funnel {
+            eprintln!("  {:<28} {}", stage.rule, stage.n_passed);
+        }
+    }
+    if let Some(rule) = &report.sample_rule {
         eprintln!(
-            "reed filter: {} -> {} records in {:.1}s",
-            report.n_input_records, report.n_output_records, report.elapsed_secs
+            "  {:<28} {} ({} dropped)",
+            rule.rule, report.n_samples_out, rule.n_dropped
         );
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
-    use reed_filter::spec::FilterSpecV2;
+    use reed_filter::spec::FilterSpec;
 
     /// Parses a flag vector through the real clap definitions.
     fn cli_from(args: &[String]) -> FilterCli {
@@ -506,14 +539,14 @@ mod tests {
     /// the provenance line and the CLI agree on one spelling.
     #[test]
     fn no_update_renders_only_when_set() {
-        let base = FilterSpecV2::default();
+        let base = FilterSpec::default();
         assert!(!base.to_args().contains(&"-I".to_string()));
-        let spec = FilterSpecV2 {
+        let spec = FilterSpec {
             recompute: reed_filter::spec::RecomputeSpec {
                 no_update: true,
                 ..reed_filter::spec::RecomputeSpec::default()
             },
-            ..FilterSpecV2::default()
+            ..FilterSpec::default()
         };
         assert!(spec.to_args().contains(&"-I".to_string()));
     }

@@ -1,7 +1,7 @@
 //! The filter specification (§11.1): typed, serde-serializable, validated
 //! at plan-compile time against the input header.
 //!
-//! One source feeds the v2 spec: the CLI flags (02-cli.md §3), translated
+//! One source feeds the spec: the CLI flags (02-cli.md §3), translated
 //! into these types by `reed-cli`; tests construct it directly. There is no
 //! TOML or conf file format (02-cli.md §0).
 
@@ -22,9 +22,10 @@ pub use predicate::{Cmp, OnMissing, Quantifier, Typed};
 pub use region::{Region, RegionRule};
 pub use recompute::RecomputeSpec;
 
-/// The v2 filter specification (§11.1). Field names mirror the TOML keys.
+/// The filter specification (§11.1). One typed value; the flag vector is
+/// its other spelling (`to_args`, `spec/render.rs`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct FilterSpecV2 {
+pub struct FilterSpec {
     /// Static sample subset (`-s/-S/--keep/--remove`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_select: Option<SampleSelect>,
@@ -39,7 +40,7 @@ pub struct FilterSpecV2 {
     pub targets: RegionRule,
     /// Site-level rules evaluated on the fixed columns + INFO.
     #[serde(default)]
-    pub site: SiteRulesV2,
+    pub site: SiteRules,
     /// Genotype-level mask rules (any hit → GT becomes `./.`).
     #[serde(default)]
     pub genotype: GenotypeRules,
@@ -54,7 +55,7 @@ pub struct FilterSpecV2 {
     pub policy: PolicyRules,
 }
 
-impl FilterSpecV2 {
+impl FilterSpec {
     /// Whether multiallelic inputs may survive into the output
     /// (`docs/architecture-spec.md` §11.6: `multiallelic != "reject"` or
     /// `max_alt_alleles > 1`). When false, the filter's plan gates records
@@ -68,7 +69,7 @@ impl FilterSpecV2 {
 
 /// Site-level rules (§11.1 `[site]`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct SiteRulesV2 {
+pub struct SiteRules {
     /// Keep only these variant classes (`snv | mnv | indel | symbolic | ref`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variant_class: Vec<String>,

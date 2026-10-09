@@ -5,7 +5,15 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::units::parse_size;
 
+/// The shared `<INPUT>` help text (doc_v4 03-architecture.md §3.6): one
+/// constant for `filter` and `stats` so the accepted formats cannot drift
+/// (01 F4-13). `index` states its file-only restriction separately.
+const INPUT_HELP: &str = "Input VCF/VCF.gz/BCF, or `-` for stdin";
+
 pub(crate) mod filter_flags;
+pub(crate) mod verbosity;
+
+use verbosity::Verbosity;
 
 /// The `reed` command line.
 #[derive(Parser)]
@@ -60,7 +68,7 @@ pub(crate) struct QcCli {
 /// flags in one command.
 #[derive(Args)]
 pub(crate) struct FilterCli {
-    /// Input BGZF VCF (.vcf.gz)
+    #[arg(help = INPUT_HELP)]
     pub input: String,
     #[command(flatten)]
     pub regions_args: filter_flags::RegionArgs,
@@ -98,7 +106,8 @@ pub(crate) struct FilterCli {
     /// extension
     #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
     pub out: Option<String>,
-    /// Write an index next to the output: csi (default) or tbi
+    /// Write an index next to the output: `-W` or `-W=csi` (default), or
+    /// `-W=tbi`; omit for no index (bcftools semantics)
     #[arg(short = 'W', long = "write-index",
           value_name = "csi|tbi", num_args = 0..=1, default_missing_value = "csi")]
     pub write_index: Option<String>,
@@ -123,9 +132,10 @@ pub(crate) struct FilterCli {
     /// Directory for temporary files (the stdin spill of multi-pass runs)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
-    /// 0 silent, 1 summary (default), 2 per-stage, 3 debug
-    #[arg(long, value_name = "INT", default_value_t = 1)]
-    pub verbosity: u8,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
     /// Do not write the ##reed_* provenance header lines
     #[arg(long)]
     pub no_version: bool,
@@ -135,7 +145,7 @@ pub(crate) struct FilterCli {
 /// Build a CSI (default) or TBI index for an existing BGZF VCF.
 #[derive(Args)]
 pub(crate) struct IndexCli {
-    /// Input VCF/VCF.gz/BCF, or `-` for stdin
+    /// Input VCF/VCF.gz/BCF (file only: the index needs a seekable input)
     pub input: String,
     /// Write a CSI index (default; bcftools `-c`)
     #[arg(short = 'c', long = "csi", conflicts_with = "tbi")]
@@ -152,6 +162,10 @@ pub(crate) struct IndexCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
 }
 
 
@@ -159,7 +173,7 @@ pub(crate) struct IndexCli {
 /// never after a tool.
 #[derive(Args)]
 pub(crate) struct StatsCli {
-    /// Input VCF/VCF.gz/BCF, or `-` for stdin
+    #[arg(help = INPUT_HELP)]
     pub input: String,
     #[command(flatten)]
     pub regions_args: filter_flags::RegionArgs,
@@ -178,8 +192,8 @@ pub(crate) struct StatsCli {
     pub max_missing_sample: Option<String>,
     /// Groups file: `sample<TAB>population` rows, no header (pixy
     /// populations-file format); required by the windowed/pixy modes
-    #[arg(long = "pop", visible_alias = "populations", short = 'g',
-          hide_short_help = true, alias = "groups", value_name = "FILE")]
+    #[arg(long = "pop", visible_alias = "populations", alias = "groups",
+          value_name = "FILE")]
     pub pop: Option<String>,
     /// π per population (Nei & Li 1979; missing data: Korunes & Samuk
     /// 2021 = pixy)
@@ -268,8 +282,9 @@ pub(crate) struct StatsCli {
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
     pub memory: Option<u64>,
-    /// 0 silent, 1 summary (default), 2 per-stage, 3 debug
-    #[arg(long, value_name = "INT", default_value_t = 1)]
-    pub verbosity: u8,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
 }
 

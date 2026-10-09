@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use reed::filter::{run_filter, FilterOptions};
 use reed::stats::{run_stats, Levels, PixyOptions, StatsRequest};
 use reed_engine::budget::{MemBudget, ThreadBudget};
-use reed_filter::spec::FilterSpecV2;
+use reed_filter::spec::FilterSpec;
 
 /// The fixtures live with the decoder (reed-io); the drivers read them from
 /// here so one binary fixture serves both test suites.
@@ -128,17 +128,17 @@ fn reports_are_identical_across_formats() {
 #[test]
 fn bcf_output_round_trips_to_the_same_records() {
     let dir = dir("bcf-out");
-    let spec = FilterSpecV2 {
-        site: reed_filter::spec::SiteRulesV2 {
+    let spec = FilterSpec {
+        site: reed_filter::spec::SiteRules {
             min_qual: Some(50.0),
-            ..reed_filter::spec::SiteRulesV2::default()
+            ..reed_filter::spec::SiteRules::default()
         },
         // The fixture carries a haploid call (chr2:500).
         policy: reed_filter::spec::PolicyRules {
             ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
             ..reed_filter::spec::PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let run = |input: &Path, out: &Path, bcf: Option<u8>| {
         let opts = FilterOptions {
@@ -148,7 +148,6 @@ fn bcf_output_round_trips_to_the_same_records() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-            quiet: true,
         timing: None,
             report_json: None,
             force_samples: false,
@@ -209,12 +208,12 @@ fn render_via_reed(path: &Path) -> String {
 fn bcf_output_is_thread_count_independent() {
     let dir = dir("bcf-threads");
     // The fixture carries a haploid call (chr2:500).
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         policy: reed_filter::spec::PolicyRules {
             ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
             ..reed_filter::spec::PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let run = |threads: usize, out: &Path| {
         let opts = FilterOptions {
@@ -224,7 +223,6 @@ fn bcf_output_is_thread_count_independent() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-            quiet: true,
         timing: None,
             report_json: None,
             force_samples: false,
@@ -257,7 +255,7 @@ fn bcf_output_is_thread_count_independent() {
 fn af_bounds_match_bcftools_on_the_fixture() {
     let dir = dir("bcf-af");
     let run = |min_af: Option<f64>, max_af: Option<f64>| -> Vec<String> {
-        let spec = FilterSpecV2 {
+        let spec = FilterSpec {
             site_after_mask: reed_filter::spec::TailRules {
                 min_af,
                 max_af,
@@ -271,7 +269,7 @@ fn af_bounds_match_bcftools_on_the_fixture() {
                 ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
                 multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
             },
-            ..FilterSpecV2::default()
+            ..FilterSpec::default()
         };
         let out = dir.join("o.vcf.gz");
         let opts = FilterOptions {
@@ -281,7 +279,6 @@ fn af_bounds_match_bcftools_on_the_fixture() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-            quiet: true,
         timing: None,
             report_json: None,
             force_samples: false,
@@ -318,12 +315,12 @@ fn af_bounds_match_bcftools_on_the_fixture() {
 fn chain_framing_is_boundary_independent() {
     let dir = dir("bcf-splits");
     let bytes = inflate_bgzf_bytes(&std::fs::read(fixture("fix.bcf")).expect("invariant: fixture"));
-    let spec = FilterSpecV2 {
+    let spec = FilterSpec {
         policy: reed_filter::spec::PolicyRules {
             ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
             ..reed_filter::spec::PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let run = |input: &Path, out: &Path| {
         let opts = FilterOptions {
@@ -333,7 +330,6 @@ fn chain_framing_is_boundary_independent() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-            quiet: true,
         timing: None,
             report_json: None,
             force_samples: false,
@@ -366,10 +362,10 @@ fn chain_framing_is_boundary_independent() {
 #[test]
 fn filter_output_is_identical_across_formats() {
     let dir = dir("filter");
-    let spec = FilterSpecV2 {
-        site: reed_filter::spec::SiteRulesV2 {
+    let spec = FilterSpec {
+        site: reed_filter::spec::SiteRules {
             min_qual: Some(50.0),
-            ..reed_filter::spec::SiteRulesV2::default()
+            ..reed_filter::spec::SiteRules::default()
         },
         genotype: reed_filter::spec::GenotypeRules {
             mask_if: vec![reed_filter::spec::GenotypeMaskRule {
@@ -384,7 +380,7 @@ fn filter_output_is_identical_across_formats() {
             ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
             ..reed_filter::spec::PolicyRules::default()
         },
-        ..FilterSpecV2::default()
+        ..FilterSpec::default()
     };
     let run = |input: &Path, out: &Path| {
         let opts = FilterOptions {
@@ -394,7 +390,6 @@ fn filter_output_is_identical_across_formats() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-            quiet: true,
         timing: None,
             report_json: None,
             force_samples: false,

@@ -1,4 +1,4 @@
-//! `FilterSpecV2::to_args`: the inverse of the CLI translation
+//! `FilterSpec::to_args`: the inverse of the CLI translation
 //! (`doc_v2/03-architecture.md` §8, `spec/render.rs`).
 //!
 //! Round trip: `to_args()` renders a spec as the flag vector that
@@ -8,7 +8,7 @@
 //! `-i QUAL>=P`, and typed INFO predicates (`site.info`) become no flag at
 //! all — the CLI carries INFO rules as expressions in `site.include`.
 
-use super::{FilterSpecV2, HweMode, OnMissing, SampleList};
+use super::{FilterSpec, HweMode, OnMissing, SampleList};
 
 /// Appends a flag plus its value.
 fn flag(args: &mut Vec<String>, name: &str, value: impl std::fmt::Display) {
@@ -25,7 +25,7 @@ fn f(value: f64) -> String {
     s
 }
 
-impl FilterSpecV2 {
+impl FilterSpec {
     /// The flag vector equivalent to this spec (02-cli.md §3).
     ///
     /// The order follows the evaluation order of 02-cli.md §6 so the output
@@ -175,13 +175,13 @@ mod tests {
     use super::*;
     use crate::spec::CallRate;
 
-    fn args_of(spec: &FilterSpecV2) -> Vec<String> {
+    fn args_of(spec: &FilterSpec) -> Vec<String> {
         spec.to_args()
     }
 
     #[test]
     fn renders_a_combined_sample_selection() {
-        let spec = FilterSpecV2 {
+        let spec = FilterSpec {
             sample_select: Some(super::super::SampleSelect {
                 keep: Some(SampleList::Names(vec!["a".into(), "b".into()])),
                 remove: Some(SampleList::Names(vec!["c".into()])),
@@ -198,8 +198,8 @@ mod tests {
 
     #[test]
     fn renders_the_documented_flags() {
-        let spec = FilterSpecV2 {
-            site: super::super::SiteRulesV2 {
+        let spec = FilterSpec {
+            site: super::super::SiteRules {
                 variant_class: vec!["snv".into()],
                 exclude_variant_class: vec!["indel".into()],
                 max_alt_alleles: 1,
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn call_rates_always_render_as_parsable() {
-        let spec = FilterSpecV2 {
+        let spec = FilterSpec {
             site_after_mask: super::super::TailRules {
                 min_call_rate: Some(CallRate::parse("0.5").expect("valid")),
                 ..Default::default()
