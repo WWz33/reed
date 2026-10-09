@@ -180,7 +180,7 @@ W0 引入的 `after_mask.max_missing`、`after_mask.max_missing_count`、`sample
 | 参数 | 含义 | 方向性 |
 |---|---|---|
 | `--pop/--populations FILE` | 群体文件 | — |
-| `--pi/--dxy/--theta/--tajima-d/--fst [wc84\|hudson]/--pbs A,B,C [--pbs-normed]` | 统计量 | — |
+| `--pi/--dxy/--theta/--tajima-d/--fst [wc84\|hudson] [--fst-global]/--pbs A,B,C [--pbs-normed]` | 统计量 | `--fst-global`：三个群体以上时算合并（r 群体 WC84）而非成对，默认成对；见 05 §2.1 |
 | `--freq/--hardy/--het/--missing/--depth/--summary` | 报告 | — |
 | `--window/--step`、`--levels`、`--skip-empty` | 窗口 | — |
 | `--variant-only`、`--bypass-invariant-check` | 输入声明（pixy 语义） | 声明，非阈值 |

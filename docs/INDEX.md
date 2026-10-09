@@ -25,7 +25,8 @@
 | `docs/statistics-reference-map.md` | 统计量到参考实现的映射；对拍结果见各轮 STATUS |
 | `doc_v2/` | 第二轮复审与修订规范；被 doc_v3（BCF/性能/清理）与 doc_v4（参数方向）增量修订 |
 | `doc_v3/` | 第三轮复审与 BCF/性能/清理；V0–V6 已完成，状态在 `doc_v3/STATUS.md`（C3 行按 doc_v4 01 F4-2 更正） |
-| `doc_v4/` | **当前一轮**：复审（01）、参数语义规范（02）、架构残留（03）、性能（04）、算法台账（05）、路线（06）、状态（STATUS） |
+| `doc_v4/` | 第四轮：复审（01）、参数语义规范回退版（02）、架构残留（03）、性能（04）、算法台账（05）、路线 W0–W6（06）、目录树（07）、状态（STATUS）；W0–W4 已落地 |
+| `doc_v5/` | **当前一轮**：复审（01）、**合并版 CLI 规范（02，当前有效）**、架构与 crate 残留（03）、性能（04）、W5/W6 出口设计（05）、目录树执行版（06）、路线 X0–X7（07）、状态（STATUS） |
 
 ## 每轮明确取代的章节（增量，不是整份作废）
 
@@ -33,6 +34,9 @@
 |---|---|
 | doc_v2 02 §3.1 `--mind` / §3.4 `--geno`（plink2 丢弃方向） | doc_v4 02 §3：**名字保留**，语义精确定义（等位计、掩码后、精确边界） |
 | doc_v4 02 首版 §5.1–§5.4、§6、§7 的改名（`--max-missing*`） | doc_v4 02（回退版）同名小节：撤回改名 |
+| doc_v2 02 §5.2 `--fst-pops A,B,C`（多群体合并 Fst） | doc_v4 05 §2.1：作废，改为 `--fst` + 布尔开关 `--fst-global`（默认成对） |
+| doc_v2 02（整体）与 doc_v4 02（回退版） | **doc_v5 02-cli.md 合并版**是当前有效的 CLI 规范；两者转为历史 |
+| doc_v4 05 §2–§2.1、06-roadmap.md 的 W5/W6、07-layout.md | doc_v5 05（出口设计）、07（X0–X7）、06（目录树执行版） |
 | doc_v2 05 §2.3"`--max-missing` 方向与 `--geno` 相反，不提供别名" | doc_v4 02 §8：结论保留（不提供别名）；`--max-missing` 已不是 reed 的参数 |
 | doc_v3 04 §C3"`TagTable` 未做" | doc_v3/STATUS.md 更正为**已做**（doc_v4 01 F4-2） |
 | docs/architecture-spec.md §13.17 的漏斗 id 示例（`after_mask.missing`） | doc_v4 02 §5.3 定名（`after_mask.missing`、`sample.mind`）；architecture-spec.md §13.17 已就地回改 |
