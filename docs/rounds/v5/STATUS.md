@@ -85,6 +85,18 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 
 **偏差**：逐位点门取 2e-6 而非 05 §3.2 写的 1e-9——vcftools 的 `weir.fst` 以 `%g`（6 位有效数字）打印，参考文件本身的分辨率就是 5e-7；genome 级门 1e-9 达标（2.2e-16）。
 
+### X4.3 Patterson f 统计（05 §3.3）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| genome-wide 请求路径 | `StatsRequest.fstats: Option<FStatsRequest { tests, block_bp }>`；`FStatTest::{F2,F3,F4,Dstat,F4Ratio}`；job 在 `push_row` 逐位点喂 `(num, den)`，partial 与窗口 partial 并列上交，sink 合并 | `2ca548f` | `crates/reed/tests/e2e_fstats.rs`（3 项） |
+| 分块 jackknife | 新增 `BpBlockJackknife`：块键为 `(contig, pos0 / block_bp)`，与 chunk 划分和线程数无关（`--block-size`，默认 5M bp；Patterson/admixtools 口径）。原 `BlockJackknife`（按位点序数分块）保留 | `2ca548f` | 跨线程确定性测试；`jackknife.rs` 单测 |
+| 公式复用 | `patterson.rs` 抽出 `f2_site`/`f3_site`/`f4_site` 三个逐位点函数，累加器改为调用它们（公式不再重复两份） | `2ca548f` | `patterson_fstats` 10 项全绿（抽取后未变） |
+| CLI | `--f2 A,B`、`--f3 C;A,B`、`--f4 A,B;C,D`、`--dstat A,B;C,D`、`--f4-ratio A,B;C,D;X`、`--block-size SIZE`（可重复；分号分角色组，逗号分群体）；输出 `PREFIX.fstats`：`stat pops estimate se z n_blocks n_snps` | `2ca548f` | 夹具与子集输出；`cli_contract` 新旗标测试 |
+| 对拍 | `gold/popgen/run_allel_fstats.sh` + `compare_fstats.py`（scikit-allel `patterson_f2/f3/patterson_d`） | `2ca548f` | **夹具**：f2 `0.375`、f3 `0.2916666666666667`、f4 `0`、D `0.5098039215686274`，最大相对差 **0**（门 1e-12）；**子集**（Chr01-03 × clean.3pop.txt）：f2/f3 最大相对差 **1.3e-16**（门 1e-9） |
+
+**偏差**：SE 只在夹具级可比——allel 的 `blen` 按**变异数**分块，reed 按 **bp** 分块（Patterson/admixtools 口径），真实数据上两套块网格不同，故 `compare_fstats.py` 以 `--no-se` 比较估计量；SE 由 reed 的 bp 分块自洽给出（`n_blocks` 记录在输出里）。
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
