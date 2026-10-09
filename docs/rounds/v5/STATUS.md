@@ -55,6 +55,13 @@ X1 门：`cargo test --release --workspace` 全绿；`cargo build --release --wo
 
 X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh` 21/21 ok；新路径 `run_all.sh` 烟测（`REGION=Chr01:1-2000000`）三方各 4,051 位点、Jaccard 1.0、同名样本基因型零不一致，168 s。**偏差**：全量 `run_all.sh` 的正文 md5 门未在本轮重跑（bcftools 分支约 40 min）；以同路径的小区域烟测证明脚本在新路径可跑通。
 
+### X3 reports 门（03 §5）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| summary 消费共享扫描 | reports job 在请求含 `--summary` 时用 `.tracking_alleles()` 扫描器并解码 DP（`depth \|\| summary`）；`QcAccumulator::push_scan(&ScanOutput, &LineRef, &SiteView)` 取代自建扫描——删 `QcJob` 的 scanner/`QcScratch`/`push_line` 与 `GenotypeScanner` 依赖；`reports.rs` 把同一 `out` 交给 summary | `63c9f4c` | 守卫 `! grep -qE 'GenotypeScanner\|QcScratch' summary.rs` |
+| 输出不变 + 门 | 全量 `clean.vcf.gz --freq --hardy --het --missing --depth --summary`（56 线程）：重构前后 8 个报告文件 md5 逐一相同（afreq `b2884092…`、hardy `fd8fbf27…`、het `790293d9…`、smiss `5f4fe4f8…`、vmiss `7c325d64…`、idepth `a4b6dd3a…`、ldepth.mean `475ee083…`、stats `189e025b…`）；wall 3.75 → **3.037 s**、CPU 184 → **152.0 s**（门 ≤ 3.2 s / ≤ 155 s；3 次 3.037/3.037/3.044 s、151.9/152.1/152.0 s，极差 ≤ 0.3%；批次开始负载 4.63 为自抬升，按 04 §4 纪律标注） | `63c9f4c` | 上述 md5 逐文件对比；`e2e_reports`、`determinism`、`e2e_bcf` 全绿 |
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |

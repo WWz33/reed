@@ -12,22 +12,20 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use reed_engine::error::EngineError;
-use reed_io::vcf::fixed::{parse_pos1, parse_qual};
+use reed_io::vcf::fixed::parse_qual;
+use reed_io::vcf::genotype_scan::{ScanOutput, INT_MISSING};
 use reed_io::vcf::info::info_fragments;
 use reed_io::vcf::line::LineRef;
-use reed_core::genotype::{
-    GenotypePolicies, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
-};
-use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
 use reed_io::vcf::site::SiteView;
-use reed_io::Locus;
 use reed_stats::summary::report::{acgt, alt_class, is_transition, subst_index, QcReportAcc};
 
-/// The per-record parser: reads only what each section needs — fixed
-/// columns for SN/TSTV/ST/QUAL/IDD, INFO for DP-sites, GT+DP for
-/// AF/SiS/PSC/DP-genotypes.
+/// The per-record accumulator body: reads only what each section needs —
+/// fixed columns for SN/TSTV/ST/QUAL/IDD, INFO for DP-sites, and the reports
+/// job's scan output for GT/DP (doc_v5 03 §5: nothing is parsed twice).
 struct QcJob {
-    n_samples: usize,
+    /// Per-ALT allele counts of the current record (the GT fallback for the
+    /// AF/SiS sections when INFO/AC is absent).
+    ac: Vec<u64>,
 }
 
 /// A summary accumulator another job can feed in its own pass (doc_v4 O-1):
@@ -35,7 +33,6 @@ struct QcJob {
 /// longer reads the input twice.
 pub(crate) struct QcAccumulator {
     job: QcJob,
-    scratch: QcScratch,
     acc: QcReportAcc,
     n_samples: u32,
 }
@@ -43,23 +40,26 @@ pub(crate) struct QcAccumulator {
 impl QcAccumulator {
     /// Creates the accumulator for `n_samples` sample columns.
     pub(crate) fn new(n_samples: usize) -> Self {
-        let job = QcJob { n_samples };
-        let scratch = job.build_scratch();
         Self {
-            job,
-            scratch,
+            job: QcJob { ac: Vec::new() },
             acc: QcReportAcc::new(u32::try_from(n_samples).unwrap_or(u32::MAX)),
             n_samples: u32::try_from(n_samples).unwrap_or(u32::MAX),
         }
     }
 
-    /// Feeds one record (exactly the parsing [`QcJob::push_line`] does).
+    /// Feeds one record from the reports job's scan (doc_v5 03 §5): the
+    /// caller already decoded GT (with `tracking_alleles`) and DP.
     ///
     /// # Errors
     ///
-    /// [`EngineError::Job`] for malformed records.
-    pub(crate) fn push_line(&mut self, line: &[u8]) -> Result<(), EngineError> {
-        self.job.push_line(line, &mut self.scratch, &mut self.acc)
+    /// [`EngineError::Job`] for malformed QUAL/INFO fields.
+    pub(crate) fn push_scan(
+        &mut self,
+        out: &ScanOutput<'_>,
+        lr: &LineRef<'_>,
+        site: &SiteView<'_>,
+    ) -> Result<(), EngineError> {
+        self.job.push_scan(&mut self.acc, out, lr, site)
     }
 
     /// Takes the accumulated report, leaving a fresh empty one: per-chunk
@@ -69,54 +69,15 @@ impl QcAccumulator {
     }
 }
 
-/// Worker scratch: scanner + INFO fragment ranges + per-record allele state.
-struct QcScratch {
-    scanner: GenotypeScanner,
-    /// Per-sample allele index pairs of the current record.
-    gt_pairs: Vec<[Option<u16>; 2]>,
-    /// Per-record per-ALT allele counts and AN (all samples).
-    ac: Vec<u64>,
-    an: u64,
-    /// Per-record policy triggers (the summary never rejects a record for a
-    /// tolerable policy trigger; `Reject`/`RequireDiploid` still error).
-    counters: PolicyCounters,
-}
-
 impl QcJob {
-    fn build_scratch(&self) -> QcScratch {
-        QcScratch {
-            // bcftools stats counts multi-allelic AC per allele and treats
-            // haploid calls as half calls, so the decode collapses ALT
-            // indices above 1 while the raw indices stay available below.
-            scanner: GenotypeScanner::new(
-                self.n_samples,
-                &[b"DP"],
-                &[],
-                GenotypePolicies {
-                    ploidy: PloidyPolicy::HaploidAsHalfCall,
-                    multiallelic: MultiallelicPolicy::CollapseAlt,
-                    ..GenotypePolicies::default()
-                },
-            )
-            .tracking_alleles(),
-            gt_pairs: vec![[None, None]; self.n_samples],
-            ac: Vec::new(),
-            an: 0,
-            counters: PolicyCounters::default(),
-        }
-    }
-
-    fn push_line(
-        &self,
-        line: &[u8],
-        scratch: &mut QcScratch,
+    fn push_scan(
+        &mut self,
         acc: &mut QcReportAcc,
+        out: &ScanOutput<'_>,
+        lr: &LineRef<'_>,
+        site: &SiteView<'_>,
     ) -> Result<(), EngineError> {
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
-        };
-        let pos1 = parse_pos1(lr.pos_text(), &Locus { contig_name: String::new(), pos1: 0 })
-            .map_err(EngineError::from)?;
+        let pos1 = site.pos1;
         let locus = || reed_io::Locus {
             contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(),
             pos1,
@@ -201,10 +162,10 @@ impl QcJob {
             acc.qual.indel.push_iqual(iqual);
         }
 
-        // ---- genotype scan (GT + DP) ----
-        scratch.ac.clear();
-        scratch.ac.resize(n_alt, 0);
-        scratch.an = 0;
+        // ---- genotype counts from the shared scan (GT + DP) ----
+        self.ac.clear();
+        self.ac.resize(n_alt, 0);
+        let mut an = 0_u64;
         // AF/SiS allele counts: bcftools's bcf_calc_ac prefers INFO/AC+AN
         // when both are present (with the right cardinality) and only
         // falls back to GT otherwise — mirrored here so the AF/SiS
@@ -213,23 +174,18 @@ impl QcJob {
         let mut af_counts: Option<(Vec<u64>, u64)> = None;
         let mut n_nonref_samples = 0;
         let mut i_nonref = 0_usize;
-        scratch.counters = PolicyCounters::default();
-        let site = SiteView::parse(&lr).map_err(EngineError::from)?;
-        let out = scratch
-            .scanner
-            .scan(&lr, &site, &mut scratch.counters)
-            .map_err(EngineError::from)?;
-        let raw_alleles = out.alleles.expect("invariant: QcScratch tracks alleles");
+        let raw_alleles = out
+            .alleles
+            .expect("invariant: the summary requires tracking_alleles");
         let dp_column = out.int_columns.first().map(Vec::as_slice).unwrap_or(&[]);
         for (i, [a, b]) in raw_alleles.as_chunks::<2>().0.iter().enumerate() {
             let pair = [*a, *b];
-            scratch.gt_pairs[i] = pair;
             for allele in pair {
                 match allele {
-                    Some(0) => scratch.an += 1,
+                    Some(0) => an += 1,
                     Some(a) => {
-                        scratch.an += 1;
-                        if let Some(slot) = scratch.ac.get_mut(usize::from(a) - 1) {
+                        an += 1;
+                        if let Some(slot) = self.ac.get_mut(usize::from(a) - 1) {
                             *slot += 1;
                         }
                     }
@@ -329,7 +285,7 @@ impl QcJob {
         }
         let (af_ac, af_an): (Vec<u64>, u64) = match af_counts {
             Some((ac, an)) => (ac, an),
-            None => (scratch.ac.clone(), scratch.an),
+            None => (self.ac.clone(), an),
         };
 
         // ---- SiS: singleton records (AC == 1) ----

@@ -95,4 +95,9 @@ check "the docs index has no doc_vN/ path (doc_v5 X2)" \
 check "the gold products live under target/ (doc_v5 X2)" \
     bash -c '[ ! -d gold/work ] && [ ! -d gold/out ]'
 
+# doc_v5 03 §5 / 07 X3: the summary consumes the reports scan; it has no
+# scanner of its own any more.
+check "the summary has no second scanner (doc_v5 X3)" \
+    bash -c '! grep -qE "GenotypeScanner|QcScratch" crates/reed/src/stats/writers/summary.rs'
+
 exit "$fail"

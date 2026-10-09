@@ -161,11 +161,20 @@ impl ReportScratch {
         summary: bool,
     ) -> Self {
         Self {
-            // DP is decoded only for `--depth` (O2).
-            scanner: if depth {
-                GenotypeScanner::new(n_samples, &[b"DP"], &[], policies)
-            } else {
-                GenotypeScanner::new(n_samples, &[], &[], policies)
+            // DP is decoded for `--depth` and for `--summary` (whose DP
+            // sections read the genotype depth); `--summary` also needs the
+            // raw allele indices for its per-ALT counts (doc_v5 03 §5).
+            scanner: {
+                let scanner = if depth || summary {
+                    GenotypeScanner::new(n_samples, &[b"DP"], &[], policies)
+                } else {
+                    GenotypeScanner::new(n_samples, &[], &[], policies)
+                };
+                if summary {
+                    scanner.tracking_alleles()
+                } else {
+                    scanner
+                }
             },
             planes: het.then(|| PlaneBlock::new(1, n_samples, false)),
             counters: PolicyCounters::default(),
@@ -347,11 +356,11 @@ impl ReportJob {
         if self.plan.sites() {
             self.render_site(&lr, &site, pos1, &counts, n_missing, site_depth, partial);
         }
-        // The QC summary sections read the same record in the same pass
-        // (doc_v4 O-1); its scanner has its own policies (haploid as half
-        // call, per-ALT tracking), so it decodes independently.
+        // The QC summary consumes the scan above (doc_v5 03 §5): the reports
+        // scanner already carries the raw allele indices and the DP column,
+        // so there is no second GT parse.
         if let Some(qc) = &mut scratch.qc {
-            qc.push_line(line)?;
+            qc.push_scan(&out, &lr, &site)?;
         }
         partial.n_records += 1;
         Ok(())
