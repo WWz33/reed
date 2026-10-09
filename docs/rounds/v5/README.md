@@ -12,6 +12,7 @@
 4. 不为语义统一而改短名字；语义缺口用条文补。→ 写进 02 §0。
 5. 不做 `reed-py`，`reed-cli` 是唯一前端；项目定调为前后端形态。→ 08 §6。
 6. **LD 剪枝不照搬 plink 的两段式**（2026-10-10）：`--indep-pairwise` 是 `reed filter` 的位点规则（stats 共用），一条命令直接输出剪枝后的 VCF；`.prune.in/.prune.out` 只是 `--prune-list PREFIX` 的可选副产品；位点选择算法照 plink2 并逐 ID 对拍。→ 02 §3.4、05 §3.4、X4.4。
+7. **本项目目前不做多等位**（2026-10-10）：X5 取消；现状即终态（默认 `-M 2` 剔除，放开后要求重算时报错不写错）；05 §4 的设计存档。
 
 ## 文件
 
@@ -21,7 +22,7 @@
 | [02-cli.md](02-cli.md) | **合并版 CLI 规范**：三条命令全部参数（按实测 `--help` 核对）、缺失阈值的精确定义与整数判定、表达式子集、求值顺序、stats 的统计参数/窗口/输出列、`--fst-global`、`--sfs`、退出码、与 `--help` 的差异登记 |
 | [03-architecture.md](03-architecture.md) | 建成形态（mmap、BCF 原生过滤输入、长度前缀链、票据）、`unsafe` 策略的两处例外、残余差距 A5-1…A5-5、`crates/` 内残留 C-1…C-9、reports 门的结构修法、守卫扩展 |
 | [04-performance.md](04-performance.md) | v5 基线（3 次中位数）与 v4 对照、CPU 账、下一步 P5-1…P5-5、测量纪律修正（负载自抬升） |
-| [05-algorithms.md](05-algorithms.md) | 对齐台账；**W5 出口设计**：`--sfs --proj`（genome-wide 路径、dadi/fsc2、easySFS 对拍）、`--fst-global`（vcftools weighted Fst 对拍）、f 统计（Patterson、block jackknife、allel 对拍）、LD（尾窗携带、plink2 对拍）；W6 多等位重算 |
+| [05-algorithms.md](05-algorithms.md) | 对齐台账；**W5 出口设计**：`--sfs --proj`（genome-wide 路径、dadi/fsc2、easySFS 对拍）、`--fst-global`（vcftools weighted Fst 对拍）、f 统计（Patterson、block jackknife、allel 对拍）、LD（剪枝进 filter、尾窗携带、plink2 对拍，附代码示意）；W6 多等位重算已裁决不做，设计存档 |
 | [06-layout.md](06-layout.md) | 目录树执行版（承 docs/rounds/v4/07）：目标树、映射与 `git mv`、要同步改的引用、注意事项 |
 | [07-roadmap.md](07-roadmap.md) | X0 解除阻塞 → X1 卫生 → X2 搬迁 → X3 reports 门；X4 统计接入；X5 多等位；X6 CLI 缺口；X7 CI |
 | [08-api-surface.md](08-api-surface.md) | **项目定位**：用代码事实回答"像不像 API 库"（结论：CLI 产品，库是内部结构，README 停在 v0.2）；两种终态 A（工具优先，推荐）/ B（API 库）；A 的清单 L-1…L-7 并入 X1 |

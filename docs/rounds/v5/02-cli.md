@@ -114,7 +114,7 @@
 | 默认 | 样本被静态子集或 `--mind` 剔除时按 bcftools view 规则更新 `INFO/AC`、`INFO/AN`；只做掩码时不更新（与 `bcftools filter -S .` 一致） |
 | `-I, --no-update` | 不更新 |
 | `-x, --remove-info LIST` | 删除 INFO 标签 |
-| `--fill-tags LIST` | 重算并写入 AC、AN、AF、MAF、NS、HWE、F_MISSING…，定义同 `bcftools +fill-tags`；多等位位点的逐等位重算见 05 §4（W6，现为显式报错而非静默写错） |
+| `--fill-tags LIST` | 重算并写入 AC、AN、AF、MAF、NS、HWE、F_MISSING…，定义同 `bcftools +fill-tags`。**多等位不做**（裁决 2026-10-10）：默认门 `-M 2` 已剔除；显式放开多等位又要求重算时报错，不静默写错（05 §4 存档） |
 
 ---
 

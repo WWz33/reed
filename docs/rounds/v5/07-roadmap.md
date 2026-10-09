@@ -6,7 +6,7 @@
 X0 解除工作树阻塞 ──► X1 crate 与文档卫生（C-1/2/3/8/9、A5-2/3、unsafe 守卫）──► X2 目录搬迁（06）
                                                                                    ├─► X3 reports 门（03 §5）
 X4 统计接入（SFS → --fst-global → f 统计 → LD；含 C-5）可与 X1–X3 并行
-X5 多等位重算（05 §4）
+X5 多等位重算（05 §4）——**不做**（裁决 2026-10-10，设计存档）
 X6 CLI 缺口（--bed-file、--sites-file、-q :type）
 X7 CI（.github/workflows + ci/ 守卫）——X2 之后立刻
 C-4（noodles 编码器退出生产路径）与 C-7（job.rs 拆分）各自单独 PR，任何时间
@@ -19,7 +19,7 @@ C-4（noodles 编码器退出生产路径）与 C-7（job.rs 拆分）各自单�
 | **X2** | 06-layout.md §4 的 `git mv` 全部执行：`docs/{spec,rounds}`、`ci/`、`bench/suites/`、`gold/{work,out}` → `target/gold/`（`REED_SCRATCH`）、`docs/rounds/v1/design.md` → `docs/rounds/v1/`；§5 的引用一次 sed；`docs/spec/cli.md` = docs/rounds/v5/02 | `cargo test` 全绿；`gold/scripts/run_all.sh` 在新路径跑通并 md5 不变；`! grep -rq 'doc_v[0-9]/' docs/README.md` |
 | **X3** | 03 §5：reports job 一开始就用 `tracking_alleles()` 扫描器，summary 累加器消费 `ScanOutput`，删自建扫描 | 8 个报告文件 md5 不变；全量 ≤ 3.2 s、CPU ≤ 155 s（负载 < 1，3 次中位数） |
 | **X4** | 05 §3 按序：3.1 SFS（genome-wide 路径、dadi/fsc2 写出、`run_easysfs.sh`）→ 3.2 `--fst-global`（`StatKind::FstGlobal`、`_fst_global.txt`、`run_vcftools_fst.sh`；作废 `--fst-pops` 的注释与 doc_v2 行）→ 3.3 f 统计（`.fstats`、block jackknife、`compare_fstats.py`）→ 3.4 LD：`--indep-pairwise` 进 `reed filter`（共用 `SiteFilterArgs`；pass0 按 contig 算保留位图 + pass1 发射；`--prune-list PREFIX` 可选写清单；stats 共用），`--ld-decay / --ld-pairs` 进 stats（尾窗携带），`run_plink2_ld.sh` 对拍（剪枝集合逐 ID 相同、r² 1e-9；裁决 2026-10-10，见 05 §3.4.3 对在途代码的处置）；C-5 随 SFS 一起拆 `individual.rs` | 每项：fixture 逐值门 + 全量门（05 §3 各小节）；通过后去掉 `#[doc(hidden)]`、`--help` 列出、`cli_contract` 快照更新 |
-| **X5** | 05 §4 多等位逐等位重算 | `multiallelic.vcf` 与 `bcftools +fill-tags` 逐字节一致；gold md5 不变 |
+| **X5** | **不做**（用户裁决 2026-10-10："本项目目前不做多等位"）。现状即终态：默认门 `-M 2` 剔除多等位位点；显式放开又要求 AC/MAF/HWE 重算时**报错**，不静默写错；05 §4 的设计与代码示意存档备用 | 守卫：`multiallelic.vcf` 上放开 `-M` 后 `--fill-tags AC` 仍是报错而非写错；gold md5 不变 |
 | **X6** | `--bed-file`（BED 窗口，等价于 pixy `--bed_file`）、`--sites-file`、`-q/-Q` 的 `:type` 后缀 | pixy BED 模式逐列一致；bcftools `-q 0.05:minor` 位点集合一致 |
 | **X7** | `.github/workflows/ci.yml`：`cargo test --release --workspace`、`clippy`、`bash ci/check-doc-drift.sh`、子集数字门（263,420 / 381,672） | CI 绿；守卫脚本在 CI 失败即阻断 |
 
