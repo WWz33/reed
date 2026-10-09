@@ -185,95 +185,225 @@ pub enum LdWindow {
     Bp(u64),
 }
 
-/// Ordered-carry LD pruning (plink2 semantics): sites are consumed in
-/// order; a site is KEPT when its r² with every already-kept site within
-/// the window is strictly below `threshold`; otherwise it is pruned.
+/// plink2 `--indep-pairwise` pruning (docs/rounds/v5/05-algorithms.md
+/// §3.4.1; `plink2_ld.cc` `IndepPairwiseThread`, read 2026-10-10).
 ///
-/// `step` follows plink2: only every `step`-th variant is a pruning
-/// candidate; the rest are kept unconditionally (they still enter the kept
-/// ring, so later candidates are tested against them).
+/// Sites arrive in contig/position order. The window is a sliding span of
+/// `window` (variants, or bp when `LdWindow::Bp`), advanced by `step`
+/// variants. Within a window every surviving pair is tested with the exact
+/// integer judgment `cov² > R2 · var1 · var2` (strictly greater, so a pair
+/// with no common observations never prunes); when it fires, the variant
+/// with the **higher major-allele frequency** is pruned (ties, within
+/// `1 + 1e-6`, prune the later one). Monomorphic sites are pruned on
+/// arrival, like plink2's `FillVaggs` check.
 #[derive(Clone, Debug)]
 pub struct LdPruner {
     threshold: f64,
     window: LdWindow,
     step: usize,
-    /// The ring of kept sites' (site, pos0, planes) — bounded by the window.
-    kept: std::collections::VecDeque<(usize, u64, Vec<u64>)>,
-    /// Per kept site: the four planes (W words each, flattened).
     w: usize,
     n_samples: usize,
-    /// Sites consumed so far (the candidate test is `seen % step == 0`).
+    /// The current window's sites, in arrival order.
+    sites: Vec<PruneSite>,
+    /// `sites` indices removed in this window.
+    removed: Vec<bool>,
+    /// Global ordinals kept so far.
+    kept: Vec<usize>,
+    /// Global ordinals pruned.
+    pruned: Vec<usize>,
+    /// Sites consumed (the window/step arithmetic runs on this counter).
     seen: usize,
+    /// Ordinal of the current window's first site (the next window starts at
+    /// `window_start + step`).
+    window_start: usize,
+    /// Whether the current window has been evaluated.
+    evaluated: bool,
+}
+
+/// One site the pruner holds: its global ordinal, position, the four planes
+/// and the major-allele frequency (plink2's `cur_maj_freqs`).
+#[derive(Clone, Debug)]
+struct PruneSite {
+    ordinal: usize,
+    pos0: u64,
+    planes: Vec<u64>,
+    maj_freq: f64,
 }
 
 impl LdPruner {
-    /// A pruner at `threshold` (r²) over `window`, testing every `step`-th
-    /// variant (`step` is read as 1 when 0).
+    /// A pruner at `threshold` (r²) over `window`, stepping `step` variants
+    /// (`step` is read as 1 when 0).
     #[must_use]
     pub fn new(threshold: f64, window: LdWindow, step: usize, w: usize, n_samples: usize) -> Self {
         Self {
             threshold,
             window,
             step: step.max(1),
-            kept: std::collections::VecDeque::new(),
             w,
             n_samples,
+            sites: Vec::new(),
+            removed: Vec::new(),
+            kept: Vec::new(),
+            pruned: Vec::new(),
             seen: 0,
+            window_start: 0,
+            evaluated: false,
         }
     }
 
-    /// Whether this site is kept given its four planes; absorbs it into
-    /// the kept set when it is.
-    pub fn push(&mut self, site: usize, pos0: u64, planes: [&[u64]; 4]) -> bool {
-        let candidate = self.seen % self.step == 0;
-        self.seen += 1;
-        if candidate {
-            for (_, _, kept_planes) in &self.kept {
-                let kp: [&[u64]; 4] = [
-                    &kept_planes[0..self.w],
-                    &kept_planes[self.w..2 * self.w],
-                    &kept_planes[2 * self.w..3 * self.w],
-                    &kept_planes[3 * self.w..4 * self.w],
-                ];
-                if let Some(r2) = pair_sums(planes, kp, self.n_samples).r2()
-                    && r2 >= self.threshold
-                {
-                    return false;
-                }
-            }
+    /// Feeds one site: `ordinal` is its global index among the sites this
+    /// pruner sees, `maj_freq` its major-allele frequency (all samples, the
+    /// post-import `--freq` convention). Returns whether it is kept.
+    ///
+    /// Sites must arrive in contig/position order; a new contig starts a
+    /// fresh window (call [`Self::finish_contig`] between contigs).
+    pub fn push(&mut self, ordinal: usize, pos0: u64, planes: [&[u64]; 4], maj_freq: f64) -> bool {
+        // plink2 prunes monomorphic variants on arrival.
+        if !(maj_freq < 1.0) {
+            self.pruned.push(ordinal);
+            self.seen += 1;
+            return false;
         }
         let mut flat = Vec::with_capacity(4 * self.w);
         for p in planes {
             flat.extend_from_slice(p);
         }
-        self.kept.push_back((site, pos0, flat));
-        self.evict(pos0);
-        true
+        self.sites.push(PruneSite { ordinal, pos0, planes: flat, maj_freq });
+        self.removed.push(false);
+        self.seen += 1;
+        if self.window_full() {
+            self.evaluate_window();
+        }
+        !self.removed.last().copied().unwrap_or(false)
     }
 
-    /// Drops kept sites that fell out of the window.
-    fn evict(&mut self, pos0: u64) {
+    /// Whether the window's span is complete.
+    fn window_full(&self) -> bool {
         match self.window {
-            LdWindow::Variants(max) => {
-                while self.kept.len() > max {
-                    self.kept.pop_front();
-                }
-            }
+            LdWindow::Variants(max) => self.sites.len() >= max,
             LdWindow::Bp(bp) => {
-                while let Some((_, kept_pos, _)) = self.kept.front() {
-                    if *kept_pos + bp < pos0 {
-                        self.kept.pop_front();
-                    } else {
-                        break;
-                    }
+                let first = self.sites.first().map(|s| s.pos0);
+                let last = self.sites.last().map(|s| s.pos0);
+                match (first, last) {
+                    (Some(f), Some(l)) => l.saturating_sub(f) > bp,
+                    _ => false,
                 }
             }
         }
     }
 
-    /// The kept site indices in consumption order.
+    /// Runs the window's pairwise scan, then advances the window by `step`.
+    fn evaluate_window(&mut self) {
+        // Reverse scan, nearest pairs first (plink2's default order).
+        let n = self.sites.len();
+        let mut second = n;
+        while second > 1 {
+            second -= 1;
+            if self.removed[second] {
+                continue;
+            }
+            let mut first = second;
+            while first > 0 {
+                first -= 1;
+                if self.removed[first] {
+                    continue;
+                }
+                if self.prunes(first, second) {
+                    // The pair fires: prune the higher major-allele frequency
+                    // (ties → the later site), then stop testing this second.
+                    if self.sites[first].maj_freq <= self.sites[second].maj_freq * (1.0 + 1e-6) {
+                        self.removed[second] = true;
+                        break;
+                    }
+                    self.removed[first] = true;
+                }
+            }
+        }
+        self.evaluated = true;
+        self.advance_window();
+    }
+
+    /// plink2's exact judgment: `cov² > R2 · var1 · var2` with integer
+    /// cross-products (zero common observations never prunes).
+    fn prunes(&self, first: usize, second: usize) -> bool {
+        let a = &self.sites[first];
+        let b = &self.sites[second];
+        fn planes_of(s: &PruneSite, w: usize) -> [&[u64]; 4] {
+            [
+                &s.planes[0..w],
+                &s.planes[w..2 * w],
+                &s.planes[2 * w..3 * w],
+                &s.planes[3 * w..4 * w],
+            ]
+        }
+        let sums = pair_sums(planes_of(a, self.w), planes_of(b, self.w), self.n_samples);
+        let n = i128::from(sums.n);
+        let cov = n * i128::from(sums.sum_xy) - i128::from(sums.sum_x) * i128::from(sums.sum_y);
+        let var1 = n * i128::from(sums.sum_x2) - i128::from(sums.sum_x) * i128::from(sums.sum_x);
+        let var2 = n * i128::from(sums.sum_y2) - i128::from(sums.sum_y) * i128::from(sums.sum_y);
+        // The comparison is done in f64 like plink2 (the values are i64
+        // products there); the exact integer form is used here, so the
+        // threshold is scaled by the same factor on both sides.
+        let lhs = (cov as f64) * (cov as f64);
+        let rhs = self.threshold * (var1 as f64) * (var2 as f64);
+        lhs > rhs
+    }
+
+    /// Advances the window: the kept sites at or after `window_start + step`
+    /// stay, the rest are recorded.
+    fn advance_window(&mut self) {
+        let next_start = self.window_start + self.step;
+        let mut kept_window = Vec::new();
+        let mut removed_window = Vec::new();
+        for (i, site) in self.sites.iter().enumerate() {
+            if self.removed[i] {
+                self.pruned.push(site.ordinal);
+            } else if i >= next_start {
+                kept_window.push(site.clone());
+                removed_window.push(false);
+            } else {
+                self.kept.push(site.ordinal);
+            }
+        }
+        self.sites = kept_window;
+        self.removed = removed_window;
+        self.window_start = next_start.min(self.sites.len());
+    }
+
+    /// Ends the current contig: the window is evaluated once more (the last
+    /// partial window) and every remaining site is decided.
+    pub fn finish_contig(&mut self) {
+        if !self.sites.is_empty() && !self.evaluated {
+            // The last window may be shorter than the window size: plink2
+            // still tests its pairs.
+            self.evaluate_window();
+        }
+        for (i, site) in self.sites.iter().enumerate() {
+            if self.removed[i] {
+                self.pruned.push(site.ordinal);
+            } else {
+                self.kept.push(site.ordinal);
+            }
+        }
+        self.sites.clear();
+        self.removed.clear();
+        self.window_start = 0;
+        self.evaluated = false;
+    }
+
+    /// The kept global ordinals, ascending.
     #[must_use]
     pub fn kept_sites(&self) -> Vec<usize> {
-        self.kept.iter().map(|(s, _, _)| *s).collect()
+        let mut out = self.kept.clone();
+        out.sort_unstable();
+        out
+    }
+
+    /// The pruned global ordinals, ascending.
+    #[must_use]
+    pub fn pruned_sites(&self) -> Vec<usize> {
+        let mut out = self.pruned.clone();
+        out.sort_unstable();
+        out
     }
 }

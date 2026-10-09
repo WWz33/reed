@@ -39,7 +39,7 @@ pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::{build_accs, StatAcc, StatKey};
 use reed_core::genotype::PlaneBlock;
 use reed_stats::jackknife::BpBlockJackknife;
-use reed_stats::ld::{LdDecayAcc, LdPruner, LdWindow};
+use reed_stats::ld::LdDecayAcc;
 use reed_stats::patterson::{
     f2_site, f3_site, f4_site, PattersonKind,
 };
@@ -267,21 +267,8 @@ pub struct LdRequest {
     pub decay_max_bp: Option<u64>,
     /// Decay bin width in bp (default 1000).
     pub decay_bin_bp: u64,
-    /// `--indep-pairwise W S R2`: the pruning window.
-    pub prune: Option<LdPruneRequest>,
     /// Write the per-pair table (`--ld-pairs`).
     pub pairs: bool,
-}
-
-/// The `--indep-pairwise W S R2` triple.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LdPruneRequest {
-    /// Window: variant count, or bp (`kb` spelling).
-    pub window: LdWindow,
-    /// Step in variants.
-    pub step: usize,
-    /// r² threshold.
-    pub r2: f64,
 }
 
 /// The LD output.
@@ -291,10 +278,6 @@ pub struct LdReport {
     pub decay: Vec<(u64, u64, u64, Option<f64>)>,
     /// Per-pair rows: `(contig, pos1_a, pos1_b, r2)`.
     pub pairs: Vec<(String, u64, u64, f64)>,
-    /// Kept site keys from `--indep-pairwise`.
-    pub prune_in: Vec<(String, u64)>,
-    /// Pruned site keys.
-    pub prune_out: Vec<(String, u64)>,
 }
 
 /// The validated LD plan shared by the job and the sink.
@@ -302,23 +285,13 @@ pub struct LdReport {
 struct LdPlan {
     decay_max_bp: Option<u64>,
     decay_bin_bp: u64,
-    prune: Option<LdPruneRequest>,
     pairs: bool,
 }
 
 impl LdPlan {
-    /// The widest bp window the tail must span (decay or the pruning window).
+    /// The widest bp window the tail must span.
     fn window_bp(&self) -> Option<u64> {
-        let prune_bp = match self.prune.map(|p| p.window) {
-            Some(LdWindow::Bp(bp)) => Some(bp),
-            _ => None,
-        };
-        match (self.decay_max_bp, prune_bp) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        }
+        self.decay_max_bp
     }
 
     /// Decay bin edges: `[0, bin), [bin, 2·bin), …` up to `decay_max_bp`.
@@ -348,8 +321,6 @@ struct LdPartial {
     head: Vec<(Vec<u8>, u64, Vec<u64>)>,
     /// The chunk's last sites, up to `max_bp` before the last position.
     tail: Vec<(Vec<u8>, u64, Vec<u64>)>,
-    /// Every site of the chunk, in order (only filled when pruning runs).
-    all_sites: Vec<(Vec<u8>, u64, Vec<u64>)>,
     /// Decay sums for pairs with both sites inside this chunk.
     decay: Option<LdDecayAcc>,
     /// Pairs written (`--ld-pairs`) with both sites inside this chunk.
@@ -1013,7 +984,6 @@ impl StatsJob {
         let ld_partial = partial.ld.get_or_insert_with(|| LdPartial {
             head: Vec::new(),
             tail: Vec::new(),
-            all_sites: Vec::new(),
             decay: plan.decay_max_bp.map(|_| LdDecayAcc::new(plan.decay_edges())),
             pairs: Vec::new(),
         });
@@ -1070,9 +1040,6 @@ impl StatsJob {
                 }
             }
             None => ld_partial.head.push((contig.clone(), pos0, flat.clone())),
-        }
-        if plan.prune.is_some() {
-            ld_partial.all_sites.push((contig.clone(), pos0, flat));
         }
     }
 
@@ -1298,9 +1265,6 @@ struct SinkOutput {
     fstats: Option<FStatsPartial>,
     /// LD partials.
     ld: Option<LdPartial>,
-    /// Prune keys from `--indep-pairwise`.
-    ld_prune_in: Vec<(Vec<u8>, u64)>,
-    ld_prune_out: Vec<(Vec<u8>, u64)>,
     n_invariant_sites: u64,
     n_no_alt_records: u64,
     n_windows: u64,
@@ -1357,13 +1321,6 @@ struct StatsSink {
     ld_partial: Option<LdPartial>,
     /// The carried tail planes across chunk boundaries.
     ld_tail: Vec<(Vec<u8>, u64, Vec<u64>)>,
-    /// The pruning state (candidates are the sites in order).
-    ld_pruner: Option<LdPruner>,
-    /// Kept / pruned keys (`(contig, pos1)`) in consumption order.
-    ld_prune_in: Vec<(Vec<u8>, u64)>,
-    ld_prune_out: Vec<(Vec<u8>, u64)>,
-    /// The previous site's key, for the pruner's site index.
-    ld_site_index: usize,
     /// The LD plan (the sink needs the window for the tail and the prune).
     ld: Option<LdPlan>,
     /// LD plane width in words and the sample count (the sink's pair math).
@@ -1426,7 +1383,6 @@ impl OrderedSink<StatsPartial> for StatsSink {
                                 .get_or_insert_with(|| LdPartial {
                                     head: Vec::new(),
                                     tail: Vec::new(),
-                                    all_sites: Vec::new(),
                                     decay: Some(LdDecayAcc::new(plan.decay_edges())),
                                     pairs: Vec::new(),
                                 });
@@ -1449,7 +1405,6 @@ impl OrderedSink<StatsPartial> for StatsSink {
             let entry = self.ld_partial.get_or_insert_with(|| LdPartial {
                 head: Vec::new(),
                 tail: Vec::new(),
-                all_sites: Vec::new(),
                 decay: None,
                 pairs: Vec::new(),
             });
@@ -1460,38 +1415,6 @@ impl OrderedSink<StatsPartial> for StatsSink {
                 }
             }
             entry.pairs.extend(src.pairs.iter().cloned());
-            // Pruning: candidates in site order, on the sink thread (the
-            // pruning is order-dependent, so it cannot run per chunk). The
-            // full site list is carried when pruning is requested.
-            if let Some(prune) = plan.prune {
-                if self.ld_pruner.is_none() {
-                    self.ld_pruner = Some(LdPruner::new(
-                        prune.r2,
-                        prune.window,
-                        prune.step,
-                        self.ld_w,
-                        self.ld_n_samples,
-                    ));
-                }
-                let pruner = self.ld_pruner.as_mut().expect("invariant: just set");
-                for (contig, pos0, flat) in &src.all_sites {
-                    let w = self.ld_w;
-                    let planes: [&[u64]; 4] = [
-                        &flat[0..w],
-                        &flat[w..2 * w],
-                        &flat[2 * w..3 * w],
-                        &flat[3 * w..4 * w],
-                    ];
-                    let kept = pruner.push(self.ld_site_index, *pos0, planes);
-                    self.ld_site_index += 1;
-                    let key = (contig.clone(), *pos0 + 1);
-                    if kept {
-                        self.ld_prune_in.push(key);
-                    } else {
-                        self.ld_prune_out.push(key);
-                    }
-                }
-            }
             // Carry this chunk's tail forward, evicting out-of-window sites.
             if let Some(max) = plan.window_bp() {
                 let last = src.tail.last().map(|(_, p, _)| *p).unwrap_or(0);
@@ -1558,8 +1481,6 @@ impl OrderedSink<StatsPartial> for StatsSink {
             .lock()
             .expect("invariant: stats slot not poisoned") = Some(SinkOutput {
             ld: self.ld_partial.take(),
-            ld_prune_in: std::mem::take(&mut self.ld_prune_in),
-            ld_prune_out: std::mem::take(&mut self.ld_prune_out),
             rows: self.rows,
             windows: std::mem::take(&mut self.windows),
             sfs: self.sfs.take(),
@@ -1788,7 +1709,6 @@ pub fn run_stats_opened(
     let ld_plan = request.ld.as_ref().map(|ld| LdPlan {
         decay_max_bp: ld.decay_max_bp,
         decay_bin_bp: ld.decay_bin_bp.max(1),
-        prune: ld.prune,
         pairs: ld.pairs,
     });
     let sfs_plan = match &request.sfs {
@@ -1892,10 +1812,6 @@ pub fn run_stats_opened(
         fstats: None,
         ld_partial: None,
         ld_tail: Vec::new(),
-        ld_pruner: None,
-        ld_prune_in: Vec::new(),
-        ld_prune_out: Vec::new(),
-        ld_site_index: 0,
         ld: ld_plan,
         ld_w: header.n_samples().div_ceil(64),
         ld_n_samples: header.n_samples(),
@@ -1995,16 +1911,6 @@ pub fn run_stats_opened(
                     .map(|(c, a, b, r2)| {
                         (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2)
                     })
-                    .collect(),
-                prune_in: output
-                    .ld_prune_in
-                    .iter()
-                    .map(|(c, p)| (String::from_utf8_lossy(c).into_owned(), *p))
-                    .collect(),
-                prune_out: output
-                    .ld_prune_out
-                    .iter()
-                    .map(|(c, p)| (String::from_utf8_lossy(c).into_owned(), *p))
                     .collect(),
             }
         }),

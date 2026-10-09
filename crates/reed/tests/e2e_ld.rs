@@ -4,7 +4,7 @@
 //! values here are plink2's (printed at six significant digits).
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{run_stats, InvariantMode, LdPruneRequest, LdRequest, LdWindow, Levels, PixyOptions, StatsRequest};
+use reed::{run_stats, InvariantMode, LdRequest, Levels, PixyOptions, StatsRequest};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -38,10 +38,6 @@ const PLINK2_R2: [(u64, u64, f64); 15] = [
     (5, 6, 0.058_823_5),
 ];
 
-/// plink2 `--indep-pairwise 10 1 0.5` on the fixture.
-const PLINK2_PRUNE_IN: [u64; 3] = [1, 5, 6];
-const PLINK2_PRUNE_OUT: [u64; 3] = [2, 3, 4];
-
 fn request(ld: LdRequest) -> StatsRequest {
     StatsRequest {
         kinds: Vec::new(),
@@ -64,7 +60,7 @@ fn request(ld: LdRequest) -> StatsRequest {
 }
 
 #[test]
-fn pairwise_r2_and_prune_match_plink2() {
+fn pairwise_r2_matches_plink2() {
     let dir = std::env::temp_dir().join(format!("reed-ld-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("ld.vcf");
@@ -76,11 +72,6 @@ fn pairwise_r2_and_prune_match_plink2() {
         request(LdRequest {
             decay_max_bp: Some(100_000),
             decay_bin_bp: 1000,
-            prune: Some(LdPruneRequest {
-                window: LdWindow::Variants(10),
-                step: 1,
-                r2: 0.5,
-            }),
             pairs: true,
         }),
         &budget,
@@ -109,13 +100,6 @@ fn pairwise_r2_and_prune_match_plink2() {
     assert_eq!(ld.decay[0].1, 1000);
     assert!(ld.decay[0].3.is_some());
 
-    let mut in_pos: Vec<u64> = ld.prune_in.iter().map(|(_, p)| *p).collect();
-    let mut out_pos: Vec<u64> = ld.prune_out.iter().map(|(_, p)| *p).collect();
-    in_pos.sort_unstable();
-    out_pos.sort_unstable();
-    assert_eq!(in_pos, PLINK2_PRUNE_IN, "prune.in");
-    assert_eq!(out_pos, PLINK2_PRUNE_OUT, "prune.out");
-
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -134,7 +118,6 @@ fn ld_is_identical_across_thread_counts() {
             request(LdRequest {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
-                prune: None,
                 pairs: true,
             }),
             &budget,

@@ -245,7 +245,6 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         block_size,
         ld_decay,
         ld_pairs,
-        indep_pairwise,
         pbs,
         pbs_normed,
         sfs,
@@ -426,8 +425,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         || fst.is_some()
         || !pbs.is_empty()
         || fstats_requested
-        || ld_decay.is_some()
-        || !indep_pairwise.is_empty();
+        || ld_decay.is_some();
     let (gt_groups, group_names) = match &pop {
         Some(groups) => assign_groups(Path::new(groups), &sample_names, force_samples)?,
         None if sfs.is_some() && !windowed => {
@@ -456,7 +454,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         let step = if step == 0 { size } else { step };
         // A bare `--sfs` has no window denominators, so the all-sites check
         // does not apply (05 §3.1 accepts variant-only input).
-        let ld_requested = ld_decay.is_some() || !indep_pairwise.is_empty();
+        let ld_requested = ld_decay.is_some();
         let invariant = if variant_only
             || (sfs.is_some() && !windowed)
             || fstats_requested
@@ -554,11 +552,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             &group_names,
         )?;
         // LD: `--ld-decay` / `--indep-pairwise` (docs/rounds/v5/05 §3.4).
-        let ld_request = build_ld_request(
-            ld_decay.as_deref(),
-            ld_pairs,
-            &indep_pairwise.join(" "),
-        )?;
+        let ld_request = build_ld_request(ld_decay.as_deref(), ld_pairs)?;
         // The SFS is genome-wide: with no windowed kind, skip the window
         // grid entirely (genome level only) and give it a nominal size.
         let sfs_only = kinds.is_empty() && fstats_request.is_none();
@@ -776,10 +770,8 @@ fn build_fstats_request(
 fn build_ld_request(
     ld_decay: Option<&str>,
     ld_pairs: bool,
-    indep_pairwise: &str,
 ) -> Result<Option<reed::LdRequest>, Box<dyn std::error::Error + Send + Sync>> {
-    let indep_pairwise = (!indep_pairwise.is_empty()).then_some(indep_pairwise);
-    if ld_decay.is_none() && indep_pairwise.is_none() {
+    if ld_decay.is_none() {
         return Ok(None);
     }
     let decay_max_bp = match ld_decay {
@@ -787,40 +779,9 @@ fn build_ld_request(
         Some("") => Some(100_000),
         Some(text) => Some(crate::units::parse_size(text)?),
     };
-    let prune = match indep_pairwise {
-        None => None,
-        Some(text) => {
-            let parts: Vec<&str> = text.split_whitespace().collect();
-            if parts.len() != 3 {
-                return Err(format!(
-                    "--indep-pairwise expects W S R2 (e.g. `50 5 0.2`), got {text:?}"
-                )
-                .into());
-            }
-            let (window, kb) = if let Some(kb) = parts[0].strip_suffix("kb") {
-                (crate::units::parse_size(kb)?, true)
-            } else {
-                (crate::units::parse_size(parts[0])?, false)
-            };
-            let step: usize = parts[1]
-                .parse()
-                .map_err(|_| format!("invalid --indep-pairwise step {:?}", parts[1]))?;
-            let r2: f64 = parts[2]
-                .parse()
-                .map_err(|_| format!("invalid --indep-pairwise r2 {:?}", parts[2]))?;
-            if kb && step != 1 {
-                return Err("--indep-pairwise with a kb window requires step 1".into());
-            }
-            let window = if kb { reed::LdWindow::Bp(window) } else {
-                reed::LdWindow::Variants(usize::try_from(window).unwrap_or(usize::MAX))
-            };
-            Some(reed::LdPruneRequest { window, step, r2 })
-        }
-    };
     Ok(Some(reed::LdRequest {
         decay_max_bp,
         decay_bin_bp: 1000,
-        prune,
         pairs: ld_pairs,
     }))
 }

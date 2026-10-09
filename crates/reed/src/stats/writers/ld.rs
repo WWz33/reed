@@ -1,8 +1,8 @@
 //! LD writers (docs/rounds/v5/05-algorithms.md §3.4): `PREFIX.ld.decay`
-//! (`bin_start bin_end n_pairs mean_r2`), the plink2-style per-pair
-//! `PREFIX.ld` (`CHROM_A POS_A ID_A CHROM_B POS_B ID_B UNPHASED_R2`) and the
-//! pruning lists `PREFIX.prune.in` / `PREFIX.prune.out` (one `CHROM_POS`
-//! variant id per line).
+//! (`bin_start bin_end n_pairs mean_r2`) and the plink2-style per-pair
+//! `PREFIX.ld` (`CHROM_A POS_A ID_A CHROM_B POS_B ID_B UNPHASED_R2`).
+//! Pruning moved to `reed filter --indep-pairwise` (docs/rounds/v5/05
+//! §3.4.1).
 
 use std::path::{Path, PathBuf};
 
@@ -36,14 +36,6 @@ pub fn write_ld(prefix: &Path, report: &LdReport) -> Result<Vec<PathBuf>, Engine
             out.push_str(&format!("{contig}\t{a}\t.\t{contig}\t{b}\t.\t{r2}\n"));
         }
         files.push(write(prefix, ".ld", out)?);
-    }
-    if !report.prune_in.is_empty() || !report.prune_out.is_empty() {
-        let key = |(contig, pos): &(String, u64)| format!("{contig}_{pos}");
-        let in_text: String = report.prune_in.iter().map(|k| format!("{}\n", key(k))).collect();
-        let out_text: String =
-            report.prune_out.iter().map(|k| format!("{}\n", key(k))).collect();
-        files.push(write(prefix, ".prune.in", in_text)?);
-        files.push(write(prefix, ".prune.out", out_text)?);
     }
     Ok(files)
 }

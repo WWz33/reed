@@ -63,7 +63,7 @@ pub use crate::filter::{run_filter, FilterOptions, WriteIndex};
 pub use crate::index::run_index;
 pub use crate::stats::{
     assign_groups, default_kinds, pixy_kinds, run_stats, run_stats_opened, FStatTest, FStatsReport,
-    FStatsRequest, FstKind, InvariantMode, LdPruneRequest, LdReport, LdRequest, Levels, PbsKind,
+    FStatsRequest, FstKind, InvariantMode, LdReport, LdRequest, Levels, PbsKind,
     PixyOptions, SfsReport, SfsRequest, StatKind, StatsReport, StatsRequest,
 };
 pub use reed_stats::ld::LdWindow;

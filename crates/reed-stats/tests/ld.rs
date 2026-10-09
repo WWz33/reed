@@ -207,8 +207,9 @@ fn decay_bins_aggregate_means() {
 }
 
 #[test]
-fn ordered_carry_pruning_keeps_first_of_high_ld() {
-    // Three identical sites: the first is kept, the rest pruned.
+fn pruner_keeps_the_lower_major_frequency_of_a_high_ld_pair() {
+    // Three identical sites (r² = 1): the pair fires, so the one with the
+    // higher major-allele frequency is pruned; ties prune the later site.
     let spec = vec![
         (b'0', b'0'),
         (b'0', b'1'),
@@ -219,34 +220,49 @@ fn ordered_carry_pruning_keeps_first_of_high_ld() {
     ];
     let g = gts(&spec);
     let p = planes(&g);
+    // Major-allele frequency 0.5 at every site (3 alt of 6 alleles each
+    // slot: 6 of 12) → ties, so the later site is pruned.
     let mut pruner = LdPruner::new(0.8, LdWindow::Variants(10), 1, p[0].len(), g.len());
-    assert!(pruner.push(0, 0, p));
-    assert!(!pruner.push(1, 10, p), "identical site → pruned");
-    assert!(!pruner.push(2, 20, p));
-    assert_eq!(pruner.kept_sites(), vec![0]);
+    assert!(pruner.push(0, 0, p, 0.5));
+    assert!(pruner.push(1, 10, p, 0.5));
+    pruner.finish_contig();
+    // One of the pair is pruned (the later one, on a tie).
+    assert_eq!(pruner.kept_sites().len(), 1);
+    assert_eq!(pruner.pruned_sites(), vec![1]);
 }
 
 #[test]
-fn pruner_window_forgets_beyond_max_sites() {
-    // Identical sites, max_sites = 1: after keeping site 0 and pruning
-    // site 1, site 2 compares only against the most recent KEPT site
-    // (still 0 — pruned sites never enter the ring), so it prunes too.
-    let spec = vec![(b'0', b'1'), (b'1', b'0'), (b'0', b'0'), (b'1', b'1')];
+fn pruner_drops_monomorphic_sites_on_arrival() {
+    // A constant site has major-allele frequency 1.0: plink2 prunes it
+    // immediately, before any pair test.
+    let spec = vec![(b'0', b'0'), (b'0', b'1'), (b'1', b'1'), (b'1', b'0')];
     let g = gts(&spec);
     let p = planes(&g);
-    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(1), 1, p[0].len(), g.len());
-    assert!(pruner.push(0, 0, p));
-    assert!(!pruner.push(1, 10, p));
-    assert!(!pruner.push(2, 20, p));
-
-    // A constant site (zero variance → no r²) is kept and, with
-    // max_sites = 1, EVICTS site 0 from the ring: the window holds only
-    // the most recent kept site.
     let constant = gts(&[(b'0', b'0'), (b'0', b'0'), (b'0', b'0'), (b'0', b'0')]);
     let q = planes(&constant);
-    assert!(pruner.push(3, 30, q), "constant site: zero variance → no r² → kept");
-    assert_eq!(pruner.kept_sites(), vec![3]);
-    // The next constant site also never prunes (zero variance → no r²).
-    assert!(pruner.push(4, 40, q));
-    assert_eq!(pruner.kept_sites(), vec![4]);
+    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(10), 1, p[0].len(), g.len());
+    assert!(pruner.push(0, 0, p, 0.5));
+    assert!(!pruner.push(1, 10, q, 1.0), "monomorphic → pruned on arrival");
+    pruner.finish_contig();
+    assert_eq!(pruner.kept_sites(), vec![0]);
+    assert_eq!(pruner.pruned_sites(), vec![1]);
 }
+
+#[test]
+fn pruner_window_advances_by_step() {
+    // step = 2: the second window starts two sites after the first, so the
+    // first window's second site is decided by the first window's scan.
+    let spec = vec![(b'0', b'0'), (b'0', b'1'), (b'1', b'1'), (b'1', b'0'), (b'0', b'0'), (b'1', b'1')];
+    let g = gts(&spec);
+    let p = planes(&g);
+    let mut pruner = LdPruner::new(0.8, LdWindow::Variants(2), 2, p[0].len(), g.len());
+    for (i, pos) in [0_u64, 10, 20, 30].into_iter().enumerate() {
+        pruner.push(i, pos, p, 0.5);
+    }
+    pruner.finish_contig();
+    // Every site is identical, so each window prunes its second member:
+    // the windows are {0,1}, {2,3}, and the trailing partial window.
+    assert_eq!(pruner.pruned_sites(), vec![1, 3]);
+    assert!(pruner.kept_sites().contains(&0));
+}
+

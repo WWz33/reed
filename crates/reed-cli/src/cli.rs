@@ -262,10 +262,6 @@ pub(crate) struct StatsCli {
     /// Also write the per-pair LD table (PREFIX.ld)
     #[arg(long = "ld-pairs")]
     pub ld_pairs: bool,
-    /// LD pruning, plink2 semantics: W S R2 (W variants or `W kb`)
-    #[arg(long = "indep-pairwise", value_name = "W S R2", num_args = 1..=3,
-          value_delimiter = ' ')]
-    pub indep_pairwise: Vec<String>,
     /// Projected site-frequency spectrum, genome-wide (docs/rounds/v5/05
     /// §3.1): writes PREFIX_sfs/dadi and PREFIX_sfs/fastsimcoal2; needs
     /// --proj. Default unfolded (REF = ancestral); `--sfs folded` folds it
