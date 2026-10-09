@@ -97,6 +97,22 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 
 **偏差**：SE 只在夹具级可比——allel 的 `blen` 按**变异数**分块，reed 按 **bp** 分块（Patterson/admixtools 口径），真实数据上两套块网格不同，故 `compare_fstats.py` 以 `--no-se` 比较估计量；SE 由 reed 的 bp 分块自洽给出（`n_blocks` 记录在输出里）。
 
+### X4.4 LD：`--ld-decay` / `--indep-pairwise`（05 §3.4）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| 流式逐对 r² | `LdRequest { decay_max_bp, decay_bin_bp, prune, pairs }`；worker 用 chunk 内 carry 算同 chunk 对；sink 用「本 chunk 的 **head** 窗 × 携带的 **tail** 窗」补全跨 chunk 对；carry 每 chunk 重置，任一对只计一次 | `f0d6d3f` | 区域 `Chr01:1-2,000,000` 在 1/4/56 线程下 md5 相同（427,153 对） |
+| 修剪 | `LdPruner` 扩为 `LdWindow::{Variants,Bp}` + plink2 的 step 语义；sink 按位点顺序喂入全量位点（`all_sites`），顺序依赖的决策不进 worker | `f0d6d3f` | 夹具 prune 集合与 plink2 完全一致 |
+| 输出 | `PREFIX.ld.decay`（`bin_start bin_end n_pairs mean_r2`）、`PREFIX.ld`（plink2 `.vcor` 列）、`PREFIX.prune.in/.out`（`CHROM_POS`） | `f0d6d3f` | 夹具与区域输出 |
+| CLI | `--ld-decay [MAX_BP]`（默认 100k、1 kb 箱）、`--ld-pairs`、`--indep-pairwise W S R2`（W 为位点数或 `W kb`，kb 时要求 step 1） | `f0d6d3f` | `e2e_ld.rs`（2 项）；`cli_contract` 新旗标 |
+| 对拍 | `gold/popgen/run_plink2_ld.sh`：plink2 `--r2-unphased` 与 `--indep-pairwise` | `f0d6d3f` | **夹具**：15 对 r² 最大相对差 1.02e-6（plink2 `%g` 6 位，容差 2e-6）、prune 集合相同；**区域**（Chr01:1-2,000,000，427,152 对）：无缺失对、最大相对差 5.0e-6（同为打印精度） |
+
+**偏差**：r² 门取 2e-6 而非 05 §3.4 写的 1e-9——plink2 的 `.vcor` 以 `%g`（6 位有效数字）打印，参考文件分辨率即 5e-7；prune 集合门（集合相等）达标。`--indep-pairwise` 的 kb 窗口与位点窗口都已实现，但只在位点窗口上与 plink2 对拍（夹具 6 位点，kb 窗口无区分度）。
+
+### X4 完成度
+
+X4 的四项（3.1 SFS、3.2 `--fst-global`、3.3 f 统计、3.4 LD）全部落地，每项都有 fixture 逐值门与全量级（子集/区域）对拍，参照物分别为 easySFS、vcftools、scikit-allel、plink2。C-5（拆 `individual.rs`）未做，登记在下方偏差表。
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -106,7 +122,11 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 | 08 §6.2 单一 `reed::Error` + `kind()` | 未做 | 现有 `FilterError`/`EngineError`/`IoError`/`CoreError` 未合并为 `reed::Error`；退出码仍由前端各自映射。留待后续 PR |
 | 08 §6.4.4 cli_contract 往返 | 未做 | 现有往返测试只覆盖 filter；stats/index 的往返测试未补 |
 | L-2 完全精选 | 部分 | 门面以 `pub use` 重导出模块（`spec/expr/plan/funnel`、`budget/metrics`、`bgzf/chunk/header`）与类型；`unreachable_pub` 为 crate 级 allow。未逐项把非精选项改 `pub(crate)`（量大，留待后续） |
-| X4.2–X4.4、X5、X6 | 待做 | X4.2 `--fst-global`（`StatKind::FstGlobal`、`_fst_global.txt`、`run_vcftools_fst.sh`）；X4.3 f 统计（`.fstats`、block jackknife、`compare_fstats.py`）；X4.4 LD（尾窗携带、`LdPruner`、`run_plink2_ld.sh`）；C-5 拆 `individual.rs` 随 X4 一并；X5 多等位重算；X6 CLI 缺口。X7 已随 X2 落地 |
+| C-5 拆 `individual.rs` | 未做 | X4 的四个统计量已落地，但 `individual.rs`（individual F + joint SFS 两个统计量）未拆为 `het.rs` + `sfs/{projected,joint}.rs`；属纯归属调整，留待后续 |
+| 联合 SFS（两群体二维谱） | 未做 | 05 §3.1 的两群体二维谱（`JointSfsAcc` 已有实现）未接 CLI；当前 `--sfs` 写一维谱（每群体一个） |
+| X5 多等位重算 | 待做 | 05 §4（`--fill-tags` 的逐等位 AC/AF、MAF 次等位口径、HWE 多等位写 `.`） |
+| X6 CLI 缺口 | 待做 | `--bed-file`、`--sites-file`、`-q/-Q` 的 `:type` 后缀 |
+| X7 | 已落地 | `.github/workflows/ci.yml`（X2 时创建，数据门条件化） |
 
 > 本轮收口于 green 主干：X0、X1、X2、X3、X7 已落地，未完成项逐条在上表登记。X4 按计划"每个统计量单独 PR"，从 05 §3.1 的 SFS genome-wide 路径开始。
 
