@@ -150,11 +150,15 @@ pub(crate) fn site_spec(
     }
 
     // ---- after-mask site rules ----
-    if let Some(f) = cli.min_af {
+    if let Some(text) = &cli.min_af {
+        let (f, kind) = crate::cli::filter_flags::parse_af_with_type(text)?;
         spec.site_after_mask.min_af = Some(f);
+        spec.site_after_mask.min_af_kind = Some(kind);
     }
-    if let Some(f) = cli.max_af {
+    if let Some(text) = &cli.max_af {
+        let (f, kind) = crate::cli::filter_flags::parse_af_with_type(text)?;
         spec.site_after_mask.max_af = Some(f);
+        spec.site_after_mask.max_af_kind = Some(kind);
     }
     if let Some(rate) = cli.geno {
         spec.site_after_mask.max_missing = Some(rate);

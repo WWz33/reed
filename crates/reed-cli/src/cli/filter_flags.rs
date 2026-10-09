@@ -41,6 +41,23 @@ pub(crate) fn removed_max_missing_count(_text: &str) -> Result<String, String> {
 
 /// `reed stats` does not take the sample-level rule (`--mind`): it needs a
 /// full pass before the statistics (doc_v4 02 回退版 §3.2).
+/// Parses `FLOAT[:type]` for `-q/-Q` (bcftools `:nref/:alt1/:minor/:major/
+/// `:nonmajor`; docs/rounds/v5/02-cli.md §3.2). The type defaults to `nref`.
+pub(crate) fn parse_af_with_type(text: &str) -> Result<(f64, reed::spec::AfKind), String> {
+    let (value, kind) = match text.split_once(':') {
+        None => (text, reed::spec::AfKind::Nref),
+        Some((v, t)) => (v, reed::spec::AfKind::parse(t)?),
+    };
+    let value: f64 = value
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid allele-frequency value {value:?}"))?;
+    if !(0.0..=1.0).contains(&value) {
+        return Err(format!("allele frequency out of range [0,1]: {value}"));
+    }
+    Ok((value, kind))
+}
+
 pub(crate) fn unsupported_stats_mind(_text: &str) -> Result<String, String> {
     Err(
         "reed stats does not support --mind (the sample rule needs a full pass before the \
@@ -130,13 +147,16 @@ pub(crate) struct SiteFilterArgs {
     /// value (only `.`, bcftools filter -S .)
     #[arg(long, value_name = ".")]
     pub set_gts: Option<String>,
-    /// Minimum non-reference allele frequency (bcftools -q): the INFO AC/AN
-    /// values are used when both are present, else the genotype counts
-    #[arg(short = 'q', long = "min-af", value_name = "FLOAT")]
-    pub min_af: Option<f64>,
-    /// Maximum non-reference allele frequency (bcftools -Q)
-    #[arg(short = 'Q', long = "max-af", value_name = "FLOAT")]
-    pub max_af: Option<f64>,
+    /// Minimum allele frequency (bcftools -q): the INFO AC/AN values are
+    /// used when both are present, else the genotype counts; an optional
+    /// `:type` suffix selects the allele (`nref` default, `alt1`, `minor`,
+    /// `major`, `nonmajor`)
+    #[arg(short = 'q', long = "min-af", value_name = "FLOAT[:type]")]
+    pub min_af: Option<String>,
+    /// Maximum allele frequency (bcftools -Q), with the same `:type`
+    /// suffix as `-q`
+    #[arg(short = 'Q', long = "max-af", value_name = "FLOAT[:type]")]
+    pub max_af: Option<String>,
     /// Keep sites whose missing rate (missing alleles / 2·samples, after
     /// masking) is at most FLOAT (plink2 semantics; vcftools spells the
     /// complement)

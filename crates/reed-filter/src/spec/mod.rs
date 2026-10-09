@@ -59,6 +59,57 @@ pub struct FilterSpec {
     pub ld_prune: Option<LdPruneSpec>,
 }
 
+/// Which allele frequency a `-q/-Q` threshold applies to (bcftools
+/// `:type` suffix; docs/rounds/v5/02-cli.md §3.2). The default is `nref`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AfKind {
+    /// Frequency of non-reference alleles (bcftools' default).
+    Nref,
+    /// Frequency of the first ALT allele (bcftools `:alt1`).
+    Alt1,
+    /// Frequency of the minor allele (bcftools `:minor`).
+    Minor,
+    /// Frequency of the major allele (bcftools `:major`).
+    Major,
+    /// `1 − minor` (bcftools `:nonmajor`).
+    Nonmajor,
+}
+
+impl AfKind {
+    /// Parses the `:type` suffix (without the colon).
+    ///
+    /// # Errors
+    ///
+    /// The supported list for an unknown token.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Ok(match text {
+            "nref" => Self::Nref,
+            "alt1" => Self::Alt1,
+            "minor" => Self::Minor,
+            "major" => Self::Major,
+            "nonmajor" => Self::Nonmajor,
+            other => {
+                return Err(format!(
+                    "unknown allele-frequency type {other:?} \
+                     (expected nref, alt1, minor, major or nonmajor)"
+                ))
+            }
+        })
+    }
+
+    /// The stable suffix spelling.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Nref => "nref",
+            Self::Alt1 => "alt1",
+            Self::Minor => "minor",
+            Self::Major => "major",
+            Self::Nonmajor => "nonmajor",
+        }
+    }
+}
+
 /// The `--indep-pairwise` rule (docs/rounds/v5/05-algorithms.md §3.4.1).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LdPruneSpec {
@@ -180,9 +231,15 @@ pub struct TailRules {
     /// the INFO AC/AN values are used when both are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_af: Option<f64>,
+    /// `-q`'s `:type` suffix (bcftools `:nref/:alt1/:minor/:major/:nonmajor`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_af_kind: Option<AfKind>,
     /// Non-reference allele frequency upper bound (bcftools `-Q/--max-af`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_af: Option<f64>,
+    /// `-Q`'s `:type` suffix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_af_kind: Option<AfKind>,
     /// HWE exact-test p lower bound (`0`/absent = off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_hwe_p: Option<f64>,

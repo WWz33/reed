@@ -30,10 +30,12 @@ pub fn eval_tail(
                     !truth
                 }
             }
-            TailRule::MinAf(bound) => non_reference_af(values, counts)
-                .is_some_and(|freq| freq >= *bound),
-            TailRule::MaxAf(bound) => non_reference_af(values, counts)
-                .is_some_and(|freq| freq <= *bound),
+            TailRule::MinAf(bound, kind) => {
+                af_of(values, counts, *kind).is_some_and(|freq| freq >= *bound)
+            }
+            TailRule::MaxAf(bound, kind) => {
+                af_of(values, counts, *kind).is_some_and(|freq| freq <= *bound)
+            }
             TailRule::MaxMissing(rate) => {
                 n_samples_out > 0
                     && rate.tolerates(total_alleles.saturating_sub(counts.an), total_alleles)
@@ -62,12 +64,59 @@ pub fn eval_tail(
 /// type): the INFO AC/AN values when both are present (bcftools semantics —
 /// they may be stale), else the genotype-derived counts. `None` when the
 /// site has no called alleles at all (such sites fail both bounds).
-fn non_reference_af(values: &crate::expr::SiteValues<'_>, counts: &SiteCounts) -> Option<f64> {
-    if let Some(freq) = crate::eval::head::non_reference_af_info(values.info) {
-        return Some(freq);
+/// The allele frequency a `-q/-Q` threshold applies to (bcftools `:type`;
+/// docs/rounds/v5/02-cli.md §3.2; `vcfview.c` `subset_vcf` + `bcf_calc_ac`
+/// with `BCF_UN_INFO|BCF_UN_FMT`, read 2026-10-10):
+///   * the per-allele counts come from INFO/AC + INFO/AN when both exist,
+///     else from the genotype tallies (`counts`);
+///   * `nref` = Σ(ALT counts)/an, `alt1` = AC[1]/an;
+///   * `minor`/`major` = min/max over every allele's count (REF included);
+///   * `nonmajor` = (an − max count)/an.
+/// The comparison runs in f64 exactly like bcftools; a site with an == 0
+/// never passes.
+fn af_of(
+    values: &crate::expr::SiteValues<'_>,
+    counts: &SiteCounts,
+    kind: crate::spec::AfKind,
+) -> Option<f64> {
+    use crate::spec::AfKind;
+    // INFO/AC lists the ALT counts only; prepend the REF count as
+    // `an − ΣALT` (bcftools' `bcf_calc_ac` fills `ac[0]` the same way).
+    let info = crate::eval::head::allele_counts_info(values.info);
+    let (counts_per_allele, an) = match info {
+        Some((alts, an)) => {
+            let alt_sum: u64 = alts.iter().sum();
+            if alt_sum > an {
+                return None;
+            }
+            let mut counts = Vec::with_capacity(alts.len() + 1);
+            counts.push(an - alt_sum);
+            counts.extend(alts);
+            (counts, an)
+        }
+        None => {
+            if counts.an == 0 {
+                return None;
+            }
+            (vec![counts.an - counts.ac, counts.ac], counts.an)
+        }
+    };
+    if an == 0 {
+        return None;
     }
-    (counts.an > 0).then(|| counts.ac as f64 / counts.an as f64)
+    let an = an as f64;
+    let alt_sum: u64 = counts_per_allele.iter().skip(1).sum();
+    let max_count = *counts_per_allele.iter().max()?;
+    let min_count = *counts_per_allele.iter().min()?;
+    Some(match kind {
+        AfKind::Nref => alt_sum as f64 / an,
+        AfKind::Alt1 => *counts_per_allele.get(1)? as f64 / an,
+        AfKind::Minor => min_count as f64 / an,
+        AfKind::Major => max_count as f64 / an,
+        AfKind::Nonmajor => (an - max_count as f64) / an,
+    })
 }
+
 
 #[cfg(test)]
 mod tests {

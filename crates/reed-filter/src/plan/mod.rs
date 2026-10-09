@@ -217,10 +217,11 @@ pub enum TailRule {
         /// The compiled predicate.
         expr: crate::expr::Expr,
     },
-    /// Non-reference allele frequency lower bound (bcftools `-q`).
-    MinAf(f64),
-    /// Non-reference allele frequency upper bound (bcftools `-Q`).
-    MaxAf(f64),
+    /// Allele-frequency lower bound (bcftools `-q`), with the `:type` the
+    /// threshold applies to.
+    MinAf(f64, crate::spec::AfKind),
+    /// Allele-frequency upper bound (bcftools `-Q`), with its `:type`.
+    MaxAf(f64, crate::spec::AfKind),
     /// Site missing-rate cap (`--geno`: `2N − an ≤ X · 2N`; exact integer
     /// judgment, doc_v4 02 回退版 §4).
     MaxMissing(crate::spec::MissingRate),
@@ -242,8 +243,8 @@ impl TailRule {
     pub fn id(&self) -> String {
         match self {
             Self::Expr { id, .. } => id.clone(),
-            Self::MinAf(_) => "after_mask.min_af".to_string(),
-            Self::MaxAf(_) => "after_mask.max_af".to_string(),
+            Self::MinAf(..) => "after_mask.min_af".to_string(),
+            Self::MaxAf(..) => "after_mask.max_af".to_string(),
             Self::MaxMissing(_) => crate::funnel::AFTER_MASK_MISSING.to_string(),
             Self::MinMaf(_) => "after_mask.maf".to_string(),
             Self::MaxMaf(_) => "after_mask.max_maf".to_string(),
@@ -361,13 +362,17 @@ pub fn compile(
         head.push(HeadRule::MinQual(q));
     }
     // `-q/-Q` (bcftools): the INFO AC/AN values decide at the site stage when
-    // the header declares both; the tail rule covers records without them.
+    // the header declares both AND the threshold is the `nref` form; the
+    // other `:type`s are genotype-derived and live in the tail only.
     let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
     for bound in spec.site_after_mask.min_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
             return Err(FilterError::Spec(format!("min_af out of range [0,1]: {bound}")));
         }
-        if info_af {
+        if info_af
+            && spec.site_after_mask.min_af_kind.unwrap_or(crate::spec::AfKind::Nref)
+                == crate::spec::AfKind::Nref
+        {
             head.push(HeadRule::MinAfInfo(af_threshold(bound)));
         }
     }
@@ -375,7 +380,10 @@ pub fn compile(
         if !(0.0..=1.0).contains(&bound) {
             return Err(FilterError::Spec(format!("max_af out of range [0,1]: {bound}")));
         }
-        if info_af {
+        if info_af
+            && spec.site_after_mask.max_af_kind.unwrap_or(crate::spec::AfKind::Nref)
+                == crate::spec::AfKind::Nref
+        {
             head.push(HeadRule::MaxAfInfo(af_threshold(bound)));
         }
     }
@@ -498,13 +506,19 @@ pub fn compile(
         if !(0.0..=1.0).contains(&f) {
             return Err(FilterError::Spec(format!("min_af out of range [0,1]: {f}")));
         }
-        tail.push(TailRule::MinAf(af_threshold(f)));
+        tail.push(TailRule::MinAf(
+            af_threshold(f),
+            spec.site_after_mask.min_af_kind.unwrap_or(crate::spec::AfKind::Nref),
+        ));
     }
     if let Some(f) = spec.site_after_mask.max_af {
         if !(0.0..=1.0).contains(&f) {
             return Err(FilterError::Spec(format!("max_af out of range [0,1]: {f}")));
         }
-        tail.push(TailRule::MaxAf(af_threshold(f)));
+        tail.push(TailRule::MaxAf(
+            af_threshold(f),
+            spec.site_after_mask.max_af_kind.unwrap_or(crate::spec::AfKind::Nref),
+        ));
     }
     if let Some(rate) = spec.site_after_mask.max_missing {
         // The range is validated where the rate is parsed

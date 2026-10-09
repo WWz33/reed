@@ -109,6 +109,40 @@ pub fn eval_head(
     true
 }
 
+/// Per-allele INFO/AC counts and INFO/AN (bcftools' `bcf_calc_ac` prefers
+/// them over the genotype tallies; docs/rounds/v5/02-cli.md §3.2). Returns
+/// `(counts, an)` with the counts in allele order (REF first), or `None`
+/// when either tag is absent or malformed.
+#[must_use]
+pub fn allele_counts_info(info: &[u8]) -> Option<(Vec<u64>, u64)> {
+    let mut ac: Option<Vec<u64>> = None;
+    let mut an: Option<u64> = None;
+    for (tag, value) in info_fragments(info) {
+        let Some(value) = value else { continue };
+        match tag {
+            b"AC" => {
+                let text = std::str::from_utf8(value).ok()?;
+                let mut counts = Vec::new();
+                for part in text.split(',') {
+                    if part == "." {
+                        return None;
+                    }
+                    counts.push(part.parse::<u64>().ok()?);
+                }
+                ac = Some(counts);
+            }
+            b"AN" => {
+                an = std::str::from_utf8(value).ok()?.parse::<u64>().ok();
+            }
+            _ => {}
+        }
+    }
+    match (ac, an) {
+        (Some(ac), Some(an)) if an > 0 => Some((ac, an)),
+        _ => None,
+    }
+}
+
 /// `AC` (summed over ALTs) / `AN` from the INFO text; `None` when either is
 /// missing or malformed (the record then defers to the tail rule, matching
 /// bcftools' per-record fallback to genotype counts).
