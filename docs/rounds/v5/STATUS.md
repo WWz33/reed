@@ -71,7 +71,9 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 | 08 §6.2 单一 `reed::Error` + `kind()` | 未做 | 现有 `FilterError`/`EngineError`/`IoError`/`CoreError` 未合并为 `reed::Error`；退出码仍由前端各自映射。留待后续 PR |
 | 08 §6.4.4 cli_contract 往返 | 未做 | 现有往返测试只覆盖 filter；stats/index 的往返测试未补 |
 | L-2 完全精选 | 部分 | 门面以 `pub use` 重导出模块（`spec/expr/plan/funnel`、`budget/metrics`、`bgzf/chunk/header`）与类型；`unreachable_pub` 为 crate 级 allow。未逐项把非精选项改 `pub(crate)`（量大，留待后续） |
-| X2–X7 | 待做 | 见 `07-roadmap.md` |
+| X4–X6 | 待做 | X4 统计接入（SFS genome-wide 路径 → `--fst-global` → f 统计 → LD；含 C-5 拆 `individual.rs`；SFS 可参考 `stash@{0}` 的累加器与 writers，但其窗口形态不采用）；X5 多等位重算；X6 CLI 缺口。X7 已随 X2 落地（`.github/workflows/ci.yml`，数据门条件化） |
+
+> 本轮收口于 green 主干：X0、X1、X2、X3、X7 已落地，未完成项逐条在上表登记。X4 按计划"每个统计量单独 PR"，从 05 §3.1 的 SFS genome-wide 路径开始。
 
 ## 基准（2026-10-09 v5 复审基线，56 线程，热缓存；负载与中位数见 `04-performance.md` §1）
 
