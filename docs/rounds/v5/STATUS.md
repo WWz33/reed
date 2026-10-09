@@ -66,11 +66,11 @@ X2 门：`cargo test --release --workspace` 全绿；`bash ci/check-doc-drift.sh
 
 | 项 | 内容 | commit | 验证 |
 |---|---|---|---|
-| genome-wide 请求路径 | `StatsRequest.sfs: Option<SfsRequest { projections, folded }>`；job 在 `push_row` 里喂每个群体的 `ProjectedSfsAcc`（`ProjectionCache` 记忆权重），partial 与窗口 partial 并列上交，sink 收尾合并；`StatsReport.sfs: Option<SfsReport>`。不是窗口统计，不进 `_*.txt` 行模型 | `cbcba18` | `crates/reed/tests/e2e_sfs.rs`（3 项）；buf 与 BCF 原生输入共用 `push_row`，`clean.bcf --sfs --proj 428` 三群体 1.1 s 跑通 |
-| 累加器全支撑 | `ProjectedSfsAcc::bins` 扩到 `n+1`（folded: `n/2+1`），新增 `folded()`/`spectrum()`；`pi()`/`segregating()` 仍只用 `1..n`；`ProjectionCache` 加 `Clone` | `cbcba18` | `cargo test -p reed-stats --test projected_sfs`（7 项，含改写后的全支撑断言） |
-| 输出格式 | `PREFIX_sfs/dadi/<pop>-<n>.sfs`（`<n+1> unfolded\|folded` / 谱 / mask；folded 保持 n+1 长度、上半补零，mask 标 k=0 与结构零区）；`PREFIX_sfs/fastsimcoal2/<pop>_{DAF\|MAF}pop0.obs`（`1 observation` / `d0_0…d0_n` / 谱）；`--sfs-int` 取整 | `cbcba18` | 与 easySFS 的实际文件逐字段对齐（`gold/popgen/compare_sfs.py`） |
-| CLI | `--sfs [folded] --proj N[,N…]`（默认 unfolded；单值广播到各群体）、`--sfs-int`；无 `--pop` 时全体样本为一个群体（名为 `all`）；裸 `--sfs`（无窗口统计）不触发 all-sites 检查，levels 自动 genome-only | `cbcba18` | `e2e_sfs`；手工：`reed stats gold/fixtures/sfs.vcf --pop … --sfs --proj 6` |
-| 对拍 | `gold/popgen/run_easysfs.sh` + `compare_sfs.py`（rtol 1e-6，取整前） | `cbcba18` | fixture：unfolded 7 bins 最大相对差 **1.04e-15**、folded **4.36e-16**；子集全量级（Chr01-03 × clean.3pop.txt 三群体，各投影到 2·min(n_i)=214）见下 |
+| genome-wide 请求路径 | `StatsRequest.sfs: Option<SfsRequest { projections, folded }>`；job 在 `push_row` 里喂每个群体的 `ProjectedSfsAcc`（`ProjectionCache` 记忆权重），partial 与窗口 partial 并列上交，sink 收尾合并；`StatsReport.sfs: Option<SfsReport>`。不是窗口统计，不进 `_*.txt` 行模型 | `a49d318` | `crates/reed/tests/e2e_sfs.rs`（3 项）；buf 与 BCF 原生输入共用 `push_row`，`clean.bcf --sfs --proj 428` 三群体 1.1 s 跑通 |
+| 累加器全支撑 | `ProjectedSfsAcc::bins` 扩到 `n+1`（folded: `n/2+1`），新增 `folded()`/`spectrum()`；`pi()`/`segregating()` 仍只用 `1..n`；`ProjectionCache` 加 `Clone` | `a49d318` | `cargo test -p reed-stats --test projected_sfs`（7 项，含改写后的全支撑断言） |
+| 输出格式 | `PREFIX_sfs/dadi/<pop>-<n>.sfs`（`<n+1> unfolded\|folded` / 谱 / mask；folded 保持 n+1 长度、上半补零，mask 标 k=0 与结构零区）；`PREFIX_sfs/fastsimcoal2/<pop>_{DAF\|MAF}pop0.obs`（`1 observation` / `d0_0…d0_n` / 谱）；`--sfs-int` 取整 | `a49d318` | 与 easySFS 的实际文件逐字段对齐（`gold/popgen/compare_sfs.py`） |
+| CLI | `--sfs [folded] --proj N[,N…]`（默认 unfolded；单值广播到各群体）、`--sfs-int`；无 `--pop` 时全体样本为一个群体（名为 `all`）；裸 `--sfs`（无窗口统计）不触发 all-sites 检查，levels 自动 genome-only | `a49d318` | `e2e_sfs`；手工：`reed stats gold/fixtures/sfs.vcf --pop … --sfs --proj 6` |
+| 对拍 | `gold/popgen/run_easysfs.sh` + `compare_sfs.py`（rtol 1e-6，取整前） | `a49d318` | fixture：unfolded 7 bins 最大相对差 **1.04e-15**、folded **4.36e-16**；子集全量级（Chr01-03 × clean.3pop.txt 三群体，各投影到 2·min(n_i)=214）见下 |
 
 **偏差**：`--sfs-int` 与 easySFS `--dtype int` 在“恰为半整数”的分箱可差 1（easySFS 的浮点噪声把精确 1.5 落成 1.499999999999999 → 取整 1；reed 的补偿求和得 1.5 → 取整 2）。规范里的 `1 3 3 2 1 1 0` 即此例；对拍以“取整前”的浮点 rtol 1e-6 为准（05 §3.1 的措辞“取整前”）。两群体（二维联合谱）与 `--sfs-int` 的半整数取整规则留待后续。
 
