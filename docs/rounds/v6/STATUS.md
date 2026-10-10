@@ -131,6 +131,44 @@
 
 （无——Y1e/f/h 完成。）
 
+## Y2：I/O 热路径（2026-10-11）
+
+### Y2 已落地项
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| A6-5 deflate 常驻缓冲 | `Deflater` 带常驻 scratch（`len` 恒等于 capacity，只随 bound 增长一次），块输出改为 header/BSIZE/负载/CRC 四段 `extend_from_slice`——每块不再 `resize(bound+8, 0)`（gold 输入 ≈350K 块的 65 KiB memset + realloc 归零） | `0493575` | roundtrip/noodles crosscheck 单测不变；gold 正文 md5 不变 |
+| A6-6 inflate 按元数据走块 | `Inflater::inflate_window(block, 精确 ISIZE 窗口)` 免清零（窗口可为上一次用过的旧字节，libdeflate 恰好覆写它报告的量）；`inflate_chunk` 改读 chunk 的 `blocks` 元数据——免二次块头解析、免每块 64 KiB memset，worker 的 scratch 只随最大 chunk 增长一次；校验 Σcomp_len == payload 长度 | `0493575` | 引擎 9 项 pipeline 测试（夹具补上真实 blocks 表）；全部 inflate 单测 |
+| A6-7 流式源偏移漂移 | `fill_to_target` 不再 `drain` 空成员：保留在 chunk payload、`blocks` 记 `(size, 0)`、chunk 目标按非空字节计（与 mmap 源同规则）；`carry_offset = compressed_start + cut` 从此等于真实文件偏移（旧实现里被删空成员的字节使后续 chunk 的 `compressed_start` 偏小，stdin/管道输入的虚拟偏移错） | `0493575` | 新增 `streaming_and_mmap_sources_agree_on_chunk_metadata`（空成员夹具：两源逐 chunk 的 offset/blocks 表/first_in_block_offset/payload 字节全等，夹具含 ≥2 个空成员条目）；01-review D2 的两个拼接夹具全绿 |
+| A6-8 memrchr | `owned_body_range`/`tail_range` 的标量 `rposition` → `memchr::memrchr`（每 chunk 全文扫描） | `0493575` | seam/记录完整性既有测试 |
+| A6-10 GtTable 进程级共享 | filter 侧 `FilterJob`/`MatrixJob` 持 `Arc<GtTable>`：每 run 一份（`native_bcf` 时构造一次），worker 的 `NativeScratch` 只持 Arc 克隆；stats 侧本就每 run 一份 | `a47e43f` | 380 测试；BCF 输入 gold 正文 md5 == VCF |
+| A6-11 每记录分配 | `render_info_value` 直用 `format_g6_into`（去掉 String 中转）；`edit_info` 直写 `out`（seen 上栈，>8 条回退堆，结果空才补 `.`）；`parse_pos1`/`parse_qual` 收借用的 contig 字节/`(chrom, pos1)` 元组、`Locus` 只在错误分支构造（site.rs/head.rs/expr/summary.rs/index.rs 的成功路径不再每记录 `from_utf8_lossy().into_owned()`）；`decode_gt_text`/`decode_pair`/`decode_slow`/render.rs `bad()` 泛化到 `LocusSource`，`decode_record_gt` 传 `(contig_name, pos1)`；`render_site_part`/`render_sample_part` 直接用字典里的 contig 字节 | `a47e43f` | g6 gold 渲染测试、INFO/样本编辑测试、BCF 渲染测试全绿；跨格式 md5 门 |
+| A6-12 索引写出 | `Indexer::add(name: &[u8])`：CSI 路径（默认）从不构造名字，TBI 才 lossy 转换；`OrderedOutput` 与 `reed index` 的 reducer 侧不再每记录造 String | `a47e43f` | gold 运行含 `-W`，其 `.csi` 照常写出、gold md5 与 parity 不变 |
+
+### Y2 门（2026-10-11 实测，除注明外 56 线程）
+
+| 门 | 结果 |
+|---|---|
+| gold 正文 md5（`run_reed.sh`，8 线程） | **`7aedc59ac798729a2674e6e7ef19adfc`**（与 v3–v6 逐字符相同）；`check_parity` PASS：348 样本 MATCH，基因型差 mean=0 max=0 |
+| 跨格式 | BCF 输入 gold 正文 md5 同 `7aedc59a…`（two_pass_reparse，8.9 s） |
+| 子集数字门 | 263,420 / 381,672（== 三家基线） |
+| `--mind` 三策略 + t1/t56 | 五份正文 md5 全等（`fcc6494c…`，== Y1e 记录） |
+| filter 跨线程 | 子集 t1/t56 正文 md5 相同（`fef4cb07…`） |
+| 报告 md5（8 文件，全量） | afreq `b2884092…`、hardy `fd8fbf27…`、het `790293d9…`、smiss `5f4fe4f8…`、vmiss `7c325d64…`、idepth `a4b6dd3a…`、ldepth.mean `475ee083…`、stats `189e025b…` == Y0 记录 |
+| stdin 等价 | 子集 8/8、全量 8/8（`cat clean.vcf.gz \| reed stats …` 与文件路径的 8 份输出 md5 相同） |
+| plink2 LD 夹具（`gold/popgen/run_plink2_ld.sh`） | PASS r²（15 对，1.02e-06）+ PASS prune（3 保留/3 剪除） |
+| filter gold 计时 ×3 | **user 400.2 / 399.5 / 400.0 s（门 ≤ 420，baseline 460 → −60 CPU-s）**；wall 7.70 / 7.64 / 7.67 s（baseline 8.85） |
+| stats 五统计 ×3 | user 70.8 / 70.6 / 70.9 s（门 ≤ 68 **未达**，见偏差登记）；wall 1.73 / 1.77 / 1.74 s |
+| reports 极差（门 ≤ 3%） | /tmp 3.10 / 3.13 / 3.13 s；tmpfs（/dev/shm）3.09 / 3.10 / 3.11 s——极差 ≤ 1.3% |
+| 四件套 | 测试 380 通过 / 0 失败；fmt、clippy（CI 命令）、rustdoc 退出 0；守卫 29/29 ok |
+
+### Y2 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| stats ≤ 68 s 未达 | 实测 70.6–70.9（baseline 72，−1.4）。04 §3 对 A6-6 的 3–5 CPU-s 估计偏高：旧实现的每块 memset（64 KiB）与实际正文同量（bgzip 满块 ≈ 64 KiB inflated），常驻缓冲真正省掉的是"每 worker 一次性"之外的 ≈15 GB memset ≈ 1.5 CPU-s，加 memrchr 与分配清理后与实测 −1.4 一致；stats 路径没有 deflate（A6-5 的大头在 filter），HWE 缓存（A6-16）在 Y3 |
+| reports 双峰（04 §7） | **不复现**：同机 /tmp 与 tmpfs 各 3 次，wall 极差 ≤ 1.3%；`--verbosity 2` 的 reader_ms ≈ 360、reduce_ms ≈ 2.0 s 三次稳定。输出设备无关 → v6 复审时的写回嫌疑排除，双峰归因于当时批次环境（复审在 1.28 负载下测得 3.0–5.4 s）。门按现状达成 |
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -155,6 +193,9 @@
 | filter gold `-Oz1` | 5.64 s | 289 s |
 | stats 五统计 VCF / BCF | 1.78 / 1.65 s | 72 / 56 s |
 | reports 两族 + summary | 3.0–5.4 s（双峰） | 147 s |
+| **Y2 实测（2026-10-11）**：filter gold `-Oz6` VCF | **7.64–7.70 s** | **400 s**（−60） |
+| **Y2 实测**：stats 五统计 VCF | 1.72–1.77 s | **70.6–70.9 s**（−1.4，见 Y2 偏差） |
+| **Y2 实测**：reports 两族 + summary | **3.09–3.13 s（双峰消失，/tmp 与 tmpfs 一致）** | — |
 | stats 边过滤 `--pi` | 3.09 s | 153.6 s |
 | index VCF / BCF | 1.63 / 1.12 s | 75 / 44.5 s |
 | `--sfs` / `--fst-global` / f 统计 | 1.60 / 1.52 / 1.56 s | 73 / 71 / 71.5 s |

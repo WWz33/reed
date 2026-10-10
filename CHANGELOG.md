@@ -36,6 +36,24 @@ are the stability promise (`docs/spec/cli.md` §0).
 - The whole tree is `cargo fmt`-clean under the pinned 1.99 toolchain, and the
   CI clippy command (`--all-targets -- -D warnings`) passes (doc_v6 05 §1–§2).
 
+- I/O hot paths reuse their buffers (doc_v6 03 §3, A6-5/6/8, Y2): the
+  deflater keeps a resident output scratch instead of zero-filling the
+  worst-case bound per block, `inflate_chunk` walks the chunk's block table
+  into exact-size windows (no second header parse, no per-block 64 KiB
+  memset), and the chunk tail scan uses `memrchr`. The filter gold run
+  drops from 460 to 400 CPU-s.
+- The streaming BGZF source keeps empty members in the chunk (A6-7, Y2):
+  dropping them used to shift every later chunk's `compressed_start`, so
+  virtual offsets computed from stdin/pipe input could be wrong. The
+  streaming and mmap sources now produce identical chunk metadata, locked
+  by a test with an empty-member fixture.
+- Per-record allocations left the hot paths (A6-11/12, Y2): the error
+  `Locus` is built from borrowed bytes only when an error carries it
+  (`LocusSource`), INFO edits write into the output buffer directly, and
+  the index writer no longer builds a contig-name `String` per record on
+  the (default) CSI path. The BCF GT decode table is one `Arc` per run
+  instead of one per worker (A6-10).
+
 ### Added
 
 - Streaming per-contig pruning (Y1f): each contig's matrix feeds its own
