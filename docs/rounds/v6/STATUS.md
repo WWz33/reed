@@ -169,6 +169,42 @@
 | stats ≤ 68 s 未达 | 实测 70.6–70.9（baseline 72，−1.4）。04 §3 对 A6-6 的 3–5 CPU-s 估计偏高：旧实现的每块 memset（64 KiB）与实际正文同量（bgzip 满块 ≈ 64 KiB inflated），常驻缓冲真正省掉的是"每 worker 一次性"之外的 ≈15 GB memset ≈ 1.5 CPU-s，加 memrchr 与分配清理后与实测 −1.4 一致；stats 路径没有 deflate（A6-5 的大头在 filter），HWE 缓存（A6-16）在 Y3 |
 | reports 双峰（04 §7） | **不复现**：同机 /tmp 与 tmpfs 各 3 次，wall 极差 ≤ 1.3%；`--verbosity 2` 的 reader_ms ≈ 360、reduce_ms ≈ 2.0 s 三次稳定。输出设备无关 → v6 复审时的写回嫌疑排除，双峰归因于当时批次环境（复审在 1.28 负载下测得 3.0–5.4 s）。门按现状达成 |
 
+## Y3：过滤热路径（2026-10-11）
+
+### Y3 已落地项
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| A6-20 | `emit_survivor`：文本路径与原生 BCF 路径的两套"编辑 + 写出"闭包合并为一个方法（site_keep 检查 → fill_info_set → EditPlan → edit_vcf_line → IndexKey → 写出；BCF 路径传入渲染后的整行 `edit_line`） | `731ccf4` | 子集正文 md5 三门不变（见 Y3 门表）；`cargo clippy` 通过 |
+| A6-15 | `stale: Vec<&[u8]>` 每 chunk 构建一次（`stale_refs`，run_chunk/run_seam/run_bcf_records/emit 的 run_chunk），不再每幸存记录一次；`filtered.rs` 本就用空表未动。**偏差**：05 写的"预先算在 FilterPlan 里"不可行——`EditPlan.info_remove: &[&[u8]]` 的借用形状从 plan 的 `Vec<Vec<u8>>` 拿不到 `'static`，且 `-x` 可传任意 tag（`translate/filter.rs:301`），每 chunk 构建已消除每记录分配 | `731ccf4` | 同上 |
+| A6-16 | HWE 走 `HweCache`：`SiteCounts::hwe_test_input()` 暴露 `(n_called, mac, het)`（degenerate 返回 None，哨兵 p=1 语义逐位保留）；`fill_info_set` 加 cache 参数（worker 级，`--fill-tags HWE`）、`eval_tail` 的 MinHweP（pipeline 字段）、`--hardy` 报告（`ReportScratch` 字段）、mid_stage 每 chunk 一个（决策并行，无锁） | `731ccf4` | gold 正文 md5 与 reports 8 文件 md5 全部不变（cache 命中与未命中返回同一位型）；site_counts/tail 既有单测不变 |
+| A6-19 | `Bitset::clear()`：整字 `fill(0)`（padding 保持零不变式）；run_stages 不再逐位 `set(false)` | `731ccf4` | `--mind`/单 pass 子集 md5 不变 |
+| A6-17 | 列式掩码：每条 field 规则对整列（连续 u32/f32）一次遍历，首中归属经 `attribute_hit`（bit + mask_rule + mask_hits 语义逐位保留；表达式规则仍先于 field 规则，per-sample 顺序不变）；`eval_mask`/`mask_values` 删除；`--set-gts .` 复用管道的 `(tag, value)` 表原地更新（`FmtValue` 类型与闲置的 `fmt_values` scratch 删除，`SiteValues.fmt` 直接借用该表）——表达式路径无每样本分配；Integer 阈值走 `Op::apply_i64` 整数域比较（u32→i64 精确，序同构） | `a55c560`、`91a59df` | `--mind`（矩阵路径共用 run_stages）子集 md5 `fcc6494c…` == pre-Y3 二进制；set-gts 冒烟 `975e01ca…` == pre-Y3 |
+| A6-18 | `CmpOp`/`LogicOp` 解析期一次成型（eval/compare/check 不再热路径匹配算符串 `"&&"`/`"==`）；`InfoIndex`（reed-io::vcf::info，片段字节区间 + round-trip 单测）每记录建一次：head 有任一 INFO/Expr 规则时在 `eval_head` 构建，类型化 INFO 规则与表达式（head 表达式、`--set-gts .` 掩码、tail 表达式）共用；`HeadScratch` 字段 pub 供 reed 侧复用 | `d3ece77` | 子集 gold-args 门（4 tag 表达式 + 8 tag stale）逐字节不变 |
+
+### Y3 门（2026-10-11 实测）
+
+| 门 | 结果 |
+|---|---|
+| gold 正文 md5（`run_reed.sh` 参数，直接调 reed，56 线程 ×3） | **`7aedc59ac798729a2674e6e7ef19adfc`**（与 v3–v6 逐字符相同，3/3） |
+| `check_parity` | **PASS**：1,768,759 / 1,768,759 位点，Jaccard 1.000000，348 样本 MATCH，基因型差 mean=0 max=0 |
+| 子集数字门 `--min-dp 5 --min-gq 20 --geno 0.1 / 0.2` | **263,420 / 381,672**（正文 md5 `fef4cb07…` / `371d3a0d…`，== Y2 记录） |
+| `stats_site_filters_match_the_filter_then_stats_composition` | 通过（381 项内） |
+| 报告 md5（8 文件，全量） | afreq `b2884092…`、hardy `fd8fbf27…`、het `790293d9…`、smiss `5f4fe4f8…`、vmiss `7c325d64…`、idepth `a4b6dd3a…`、ldepth.mean `475ee083…`、stats `189e025b…` == Y0 记录 |
+| `--mind 0.1` 子集 | 正文 md5 `fcc6494c…`（== pre-Y3 二进制 == Y1e 记录） |
+| `--set-gts .` 基准 | 无每样本分配（`fmt_storage` 原地更新，代码事实）；子集 user 94.7 vs 94.7（pre/post 一致，无回退） |
+| filter gold 计时 ×3（同协议 A/B） | **user 395.4 / 395.5 / 395.7 s**（pre-Y3 同协议 398.2 → **−2.6 CPU-s**）；wall 7.62–7.68 s（pre 7.65） |
+| 四件套 | 测试 **381** 通过 / 0 失败（+1：`index_get_matches_the_scan`）；fmt、clippy（CI 命令）、rustdoc 退出 0；守卫 29/29 ok |
+
+### Y3 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| **filter user −30 s 门未达** | 实测 −2.6（398.2 → 395.6，同协议同机 A/B）。逐项消融（子集，261,788 幸存者）：`--fill-tags HWE` 全路径仅 **0.9 CPU-s**（pre-Y3 with-HWE 57.6 vs no-HWE 56.6），全量 ≈5–6，远小于门假设的份额；且 `(n_called, mac)` 工作集超过 8192 memo，clear-on-full 下命中 ≈0（位型不变，数据更均匀时才见效）。掩码的 u32→f64 转换不是瓶颈：整数域比较 395.7 vs 395.4（噪声内），循环受 `masked.get`/`evaluated` 的逐元素分支链与列扫描限制（无 perf 可用的机器上不再猜）。分配类（stale/emit）≈1 CPU-s（no-edit 消融 −1.0）。03/04 对 A6-15…18 的算术在本数据上系统性高估——与 Y2 stats 门（承诺 −3 实测 −1.4）同一模式。下一个大头是 Y4 记录模型（04：`-Ob` 文本往返 = +61 CPU-s），不在 Y3 微项里 |
+| A6-15 落点 | 见上表行内说明：per-chunk 构建替代"算在 FilterPlan"，理由是借用形状 + `-x` 任意 tag |
+| A6-18 落点 | "预编译为闭包/字节码"实现为解析期 op 枚举（热路径不再匹配算符串）；未做闭包编译（YAGNI） |
+| 计时协议注 | `run_reed.sh` 的 `THREADS` 默认 8（config）；与 Y2 基线可比的计时 = 直接调 reed（默认 56 线程），8 线程跑出 wall 66 s / 6× 并行属协议差异，不是回退。正文 md5 与线程数无关（3/3 一致） |
+
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
@@ -196,6 +232,8 @@
 | **Y2 实测（2026-10-11）**：filter gold `-Oz6` VCF | **7.64–7.70 s** | **400 s**（−60） |
 | **Y2 实测**：stats 五统计 VCF | 1.72–1.77 s | **70.6–70.9 s**（−1.4，见 Y2 偏差） |
 | **Y2 实测**：reports 两族 + summary | **3.09–3.13 s（双峰消失，/tmp 与 tmpfs 一致）** | — |
+| **Y3 实测（2026-10-11）**：filter gold `-Oz` VCF，56 线程 ×3 | **7.62–7.68 s** | **395.4–395.7 s**（pre-Y3 同协议 398.2 → −2.6，门 −30 未达，见 Y3 偏差） |
+| **Y3 实测**：`--fill-tags HWE`（子集，pre-Y3 消融） | — | 0.9 CPU-s / 261,788 幸存者 |
 | stats 边过滤 `--pi` | 3.09 s | 153.6 s |
 | index VCF / BCF | 1.63 / 1.12 s | 75 / 44.5 s |
 | `--sfs` / `--fst-global` / f 统计 | 1.60 / 1.52 / 1.56 s | 73 / 71 / 71.5 s |

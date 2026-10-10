@@ -53,6 +53,20 @@ are the stability promise (`docs/spec/cli.md` §0).
   the index writer no longer builds a contig-name `String` per record on
   the (default) CSI path. The BCF GT decode table is one `Arc` per run
   instead of one per worker (A6-10).
+- The filter's survivor emit is one method (`emit_survivor`) for the text
+  and native BCF paths, the stale-tag list builds once per chunk, and the
+  mask rules run columnar — one contiguous pass per rule over the scanned
+  FORMAT columns, integer thresholds compared in the integer domain
+  (A6-15/17/20, Y3). The `--set-gts .` expression path reuses the
+  pipeline's scanned FORMAT table in place (no per-sample allocation) and
+  expressions compile to operator enums at parse time (A6-18). INFO reads
+  go through a per-record fragment index shared by the typed head rules
+  and the expressions (`reed_io::vcf::info::InfoIndex`, A6-18). The
+  exact-test HWE (`--fill-tags HWE`, `--hwe`, `--hardy`) is memoized per
+  worker through `HweCache` (A6-16); the emitted p-values are unchanged.
+  Full-gold CPU moved 398.2 → 395.6 s; the measurements behind the
+  roadmap's larger estimate are recorded in `docs/rounds/v6/STATUS.md`
+  (Y3 deviation).
 
 ### Added
 
