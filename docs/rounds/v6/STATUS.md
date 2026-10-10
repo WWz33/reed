@@ -101,19 +101,41 @@
 | LD 矩阵化 + 位置区块并行（Y1b/Y1d） | stats 的 LD 不再走 head/tail 携带：worker 按 contig 填站点主序位平面矩阵（样本按群体主序、字对齐——群体对读连续字切片，cohort 和 = 群体和的整数精确相加）；每 contig 矩阵在独立线程做位置区块（4096）并行衰减，`finish` 按 contig 序合并 | `35444fd` | 全量 `--ld-decay 100k`：**8.4 s**（`--pop` 3 群体）/ **6.4 s**（无 `--pop`），门 ≤ 10 s（原 169 s）；cohort 衰减与串行实现逐位相同（区域 3,556,592 对、100/100 bin 全同；夹具 r² PASS）；1/8/56 线程 `.ld.decay`/`.ld` md5 相同（区域 + 全量）；BCF 输入与 VCF 逐对相同（顺带修了旧实现 BCF 路径 contig 不复位的缺陷） |
 | 每群体衰减曲线 | `.ld.decay` 增加首列 `pop`：cohort 记 `all`，`--pop` 命名多于一个群体时逐群体各一块；群体曲线只计在该群体样本上有定义的对（对按样本子集计，不按位点） | `35444fd` | `e2e_ld::ld_decay_carries_per_population_curves`（群体计数 ≤ cohort 计数、cohort bin = 15 对）；`.ld.decay` 400 行 = 100 bin ×（all + 3 群体） |
 
+### Y1e/Y1f/Y1h：统一矩阵 pass0（2026-10-11）
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| 统一 MatrixJob/MatrixSink（Y1e，03 §7） | `reed/src/filter/pass0/{mod,matrix,prune}.rs`：一个 chunk job 对每个 head 幸存记录产 `(4+R)·w` 字的位点行（原始 4 平面 + 每掩码规则一张触发位图），sink 按 contig 拼 `SiteMatrix`（块式，步长校验）并记逐 chunk 的记录位图与全局位点号；`MissingJob`/`SketchJob`/`LdPruneJob` 与 `reed_filter::sketch` 全删，`mid_stage` 改从矩阵按全局位点号读回（计数函数按原始平面 + 规则位图移植，`masked_gt` 等公式逐位保留）；`scan_head_failures`/`RecordView::head_passed` 死面随 sketch 一起删 | `2863b61` | `cargo test --release --workspace` 全绿（移植的 4 项平面计数单测 + 3 项新 e2e）；三策略全基因组正文 md5 一致；子集 1/8/56 线程一致 |
+| `--mind` 从 miss 平面按列 popcount | worker 填完位点平面后对 `(miss ∨ mask)` 逐位提取累计 `m0/m1`，单元收口 `called = 2·sites − m0 − m1`（doc_v4 02 回退版 §3.2：分母是 head 幸存者，掩码计缺失）；不再有第二条计数路径 | `2863b61` | 子集三策略 + t1/t56 正文 md5 全等（`fcc6494c…`）；全基因组三策略正文 md5 全等；`mind_counts_post_mask_over_head_survivors` 三策略分支全绿 |
+| head 幸存者 + tail 标志语义 | 矩阵收 **head** 幸存者；tail 不再在 pass0 内联（有 `--mind` 时 keep 未定），剪枝用的幸存过滤来自 mid stage 的 per-site tail 判定；无 `--mind` 时 tail 在 pass0 内联（keep 已定），矩阵只收 head∧tail 位点——剪枝序列 = 每条位点规则之后（02 §6 step 6b，plink2 载入后剪枝的顺序） | `2863b61` | `pruner_sees_only_post_tail_sites`：`--geno 0.5` 下 pruner n_seen 3→2、输出 {1} vs 无 tail {1,2}；`mind_counts_ignore_tail_rules`：加 tail 规则后 `--mind` 落样数不变（post-tail 分母会把边界样本翻转） |
+| `--mind` + `--indep-pairwise` 组合 | 同一 pass0：矩阵带规则位图，mind 解析 → mid stage（tail over 最终 keep）→ 幸存位图过滤剪枝 → EmitJob 携 `site_keep` 跳过被剪位点；漏斗 `n_output` 扣除被剪数、`n_ld_pruned` 记被剪数（旧代码该组合会因二次 `first.take()` panic） | `2863b61` | `mind_and_indep_pairwise_combine`：9 样本（mind 落 1）+ 每组剪至首位点，输出 [1,6] |
+| 流式 contig 剪枝 + 预算（Y1f） | 无 `--mind` 时每 contig 关闭即 `std::thread` 交付剪枝（任一时刻常驻一个矩阵，剪枝与解码重叠）；单 contig 矩阵超 `--memory` 字节预算报 `MemBudgetExceeded`；sketch 形态（整基因组常驻）的预算判断沿用 `choose_for_mind`（位点 × (4+R)·w·8，与 sketch 同式） | `2863b61` | 区域剪枝与 plink2 对称差 0（见下）；全量 235,403 == plink2（与 pre-Y1e 二进制正文 md5 一致） |
+| gold 门复跑（Y1h） | gold 正文 md5、子集数字门、报告 md5、plink2 夹具 LD 对拍、区域剪枝对拍全部重测 | `2863b61` | 见下"Y1e 门"表 |
+
+### Y1e 门（2026-10-11 实测，除注明外 56 线程）
+
+| 门 | 结果 |
+|---|---|
+| 全量 `filter --indep-pairwise 50 5 0.2 -Oz1` | 235,403 保留，正文 md5 == pre-Y1e 二进制（其 plink2 等价在 Y1c 验证）；**3.6 s**（Y1c 基线 4.0 s）；t1 正文 md5 相同 |
+| 区域 `50kb 0.2` / `50 5 0.2`（plink2 `p2kb`/`p2` 参考） | 158 == 158、277 == 277，对称差 0 |
+| gold 正文 md5（`run_reed.sh`，全量） | **`7aedc59ac798729a2674e6e7ef19adfc`**（与 v3–v6 逐字符相同） |
+| 子集数字门 `--min-dp 5 --min-gq 20 --geno 0.1 / 0.2` | 263,420 / 381,672（== 三家基线） |
+| 报告 md5（8 文件，全量） | afreq/hardy/het/smiss/vmiss/idepth/ldepth.mean/stats 与 Y0 记录逐字符相同 |
+| `gold/popgen/run_plink2_ld.sh` | PASS r²（15 对，1.02e-06）+ PASS prune（3 保留/3 剪除） |
+| `--mind` 子集三策略 + t1/t56 | 五份正文 md5 全等（`fcc6494c…`） |
+| `--mind` 全基因组三策略 | 三份正文 md5 全等；**6.5/6.5/6.6 s**（single_pass/two_pass/sketch 形态） |
+| 测试 | `cargo test --release --workspace` 379 通过 / 0 失败 |
+| fmt / clippy（CI 命令）/ rustdoc / 守卫 | 全部退出 0；守卫 29/29 ok |
+
 ### Y1 剩余
 
-| 项 | 说明 |
-|---|---|
-| Y1e | `--mind` 改从矩阵 miss 平面按列 popcount（called(s) = 2·sites − 列 popcount(slot0_miss) − 列 popcount(slot1_miss)）；删 `MissingJob`/`SketchJob`/`LdPruneJob`。**语义要点**：`--mind` 的分母是 head 幸存者（doc_v4 02 回退版 §3.2），而剪枝矩阵现按 head+tail 幸存者收集——归一的 pass0 矩阵须改收 head 幸存者并逐位点记 tail 是否通过（剪枝用该标志过滤），否则有 tail 规则时 `--mind` 计数会变。`mid_stage` 的 sketch 片段（头幸存位点平面 + 规则位图）随之被矩阵取代 |
-| Y1f | 矩阵内存估计进 `--memory` 预算；超预算按 contig 分段（衰减已是按 contig 分析，只差预算判断与提示） |
-| Y1h | `--mind` 输出与 sketch/two-pass 逐字节相同的门；gold 正文 md5 复跑 |
+（无——Y1e/f/h 完成。）
 
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| Y1 剩余（Y1e/f/h） | 进行中 | 剪枝与衰减已矩阵化并过门（见上）；`--mind` 归一与内存估计待做 |
+| `--mind` + `--indep-pairwise` 的内存预算 | 已知限制 | 组合强制 sketch 形态（矩阵整基因组常驻，剪枝幸存集依赖全基因组 keep）；`choose_for_mind` 的预算判断对此组合不生效，超预算不报错。缓解见 Y6（或后续按 contig 两段式） |
 | LD bp 窗口（F6-10） | **已修**（`a5cd8a2`） | 区域 `50kb 0.2` 158 == plink2 对称差 0；02 §3.2 的 M6-4 行随之关闭 |
 | C-5、联合 SFS、`--bed-file`/`--sites-file`、前后端收尾三项 | 待做 | 并入 Y6 |
 | `is_sequential` / 顺序模式（F6-6） | 待裁决 | Y5 实现或改规范 |
@@ -137,7 +159,8 @@
 | index VCF / BCF | 1.63 / 1.12 s | 75 / 44.5 s |
 | `--sfs` / `--fst-global` / f 统计 | 1.60 / 1.52 / 1.56 s | 73 / 71 / 71.5 s |
 | `--ld-decay 100k` | **8.4 s**（`--pop`）/ **6.4 s** | 413 / 337 s |
-| `filter --indep-pairwise 50 5 0.2 -Oz1` | **4.0 s** | 181 s |
+| `filter --indep-pairwise 50 5 0.2 -Oz1` | **4.0 s**（Y1c）→ **3.6 s**（Y1e 流式 contig 剪枝） | 181 s |
+| `filter --mind 0.1 -Oz1`（三形态） | **6.5 / 6.5 / 6.6 s** | — |
 | plink2：pgen 导入 / 从 pgen 剪枝 / 从 pgen 报告 | 27.8 / 0.66 / 1.48 s | 105 / 1.5 / 2.75 s |
 
 > Y0 未触及计算路径（删除的死代码无生产调用者；`memchr` 与 `f64::midpoint` 的替换经 md5/对拍验证逐字节不变），故不重跑全量基准。Y1 起按 04 §9 的纪律重测。

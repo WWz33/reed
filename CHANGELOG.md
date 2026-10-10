@@ -9,6 +9,23 @@ are the stability promise (`docs/spec/cli.md` §0).
 
 ### Changed
 
+- One pass0 serves every filter-side global analysis (doc_v6 03 §7, Y1e):
+  the `MatrixJob`/`MatrixSink` pair fills per-contig site-major plane
+  matrices that `--mind`, `--indep-pairwise` and the sketch path's mid
+  stage all read back. The three previous normalizations
+  (`MissingJob`, `SketchJob`, `LdPruneJob`) and `reed_filter::sketch` are
+  deleted. `--mind` counts come from the miss-plane column popcounts
+  (`called(s) = 2·sites − pop(slot0_miss ∨ mask) − pop(slot1_miss ∨ mask)`);
+  `--mind` + `--indep-pairwise` now combine in one run (they previously
+  could not share the first open).
+- The pruning runs after every site rule: without `--mind` the pass0
+  evaluates the tail rules inline and the pruner sees only post-tail
+  sites (plink2's load-then-prune order, 02-cli §6 step 6b); with `--mind`
+  the mid stage's survivor bitmap filters the pruner. The report's
+  `ld_prune` counts are post-tail (`n_seen` shrinks when tail rules drop
+  sites).
+- `PipelineOptions::scan_head_failures` and `RecordView::head_passed` are
+  gone (their only user was the sketch pass).
 - The window-layout output writers are `reed::windows` (`WindowLayoutOptions`,
   `window_kinds`) instead of the previous vendor-named module (doc_v6 05 §7.2,
   E6-13); the output bytes are unchanged.
@@ -20,6 +37,11 @@ are the stability promise (`docs/spec/cli.md` §0).
   CI clippy command (`--all-targets -- -D warnings`) passes (doc_v6 05 §1–§2).
 
 ### Added
+
+- Streaming per-contig pruning (Y1f): each contig's matrix feeds its own
+  prune thread as soon as the stream closes it, so one matrix is resident
+  at a time; a single contig over the `--memory` budget fails with
+  `MemBudgetExceeded`.
 
 - `LICENSE-MIT` and `LICENSE-APACHE` (the manifests declared
   `MIT OR Apache-2.0` with no license text until now).
