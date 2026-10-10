@@ -4,13 +4,13 @@
 //! reducer feeds each contig's sites, in order, to one [`LdPruner`] and
 //! returns the global ordinals to keep. Pass1 then emits only those sites.
 //!
-//! The pruning is order-dependent, so it cannot run per chunk. Today one
-//! [`LdPruner`] runs inside the ordered reducer (`LdPruneSink`), i.e. all
-//! contigs are pruned serially on the reduce thread — the 66 s pass0 cost
-//! measured in docs/rounds/v6/04-performance.md §6. Per-contig parallel
-//! pruning is the Y1 matrix work (docs/rounds/v6/06-roadmap.md); the pruner
-//! itself is already contig-agnostic. Only the current window's sites are
-//! resident (P5-5: memory does not grow with contig length).
+//! The pruning is order-dependent **within a contig** and independent
+//! **between contigs** (plink2's subcontig parallelism), so the reducer only
+//! collects each chunk's surviving sites in arrival order and the per-contig
+//! pruners run in parallel at the end (`rayon`). Before Y1 one pruner ran on
+//! the reduce thread for the whole file: 66 s pass0, 64 s of it in the
+//! reducer (docs/rounds/v6/04-performance.md §6). Each pruner is
+//! contig-agnostic and keeps only its window's sites resident (P5-5).
 
 use std::sync::{Arc, Mutex};
 
@@ -270,6 +270,8 @@ pub(super) struct LdPruneResult {
     pub(super) n_pruned: u64,
     /// Pass0's engine metrics.
     pub(super) metrics: reed_engine::metrics::StageMetrics,
+    /// Wall time of the parallel per-contig prune (Y1 measurement).
+    pub(super) prune_secs: f64,
 }
 
 /// Runs the pruning pass0 over an opened input.
@@ -304,118 +306,112 @@ pub(super) fn run_ld_prune_pass(
     let _ = native_bcf;
     let job = crate::bcf_input::InputJob::new(inner, &opened, &abort);
     let crate::input::OpenedInput { mut source, .. } = opened;
-    let total: Arc<Mutex<Option<LdPruneResult>>> = Arc::new(Mutex::new(None));
+    let collected: Arc<Mutex<Option<Vec<PruneContig>>>> = Arc::new(Mutex::new(None));
     let sink = LdPruneSink {
-        base: 0,
-        pruner: None,
-        current_contig: Vec::new(),
-        keys: Vec::new(),
-        kept: Vec::new(),
+        contigs: Vec::new(),
         n_survivors: 0,
-        n_pruned: 0,
-        config,
-        w: n_samples.div_ceil(64),
-        n_samples,
-        out: Arc::clone(&total),
+        out: Arc::clone(&collected),
     };
     let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
     job.finish(report.n_chunks, opts.regions.is_empty())
         .map_err(ferr)?;
-    let mut result = total
+    let contigs = collected
         .lock()
         .expect("invariant: prune slot not poisoned")
         .take()
-        .expect("invariant: sink finish stored the result");
+        .expect("invariant: sink finish stored the sites");
+    let prune_start = std::time::Instant::now();
+    let mut result = prune_contigs(contigs, config, n_samples.div_ceil(64).max(1), n_samples);
+    result.prune_secs = prune_start.elapsed().as_secs_f64();
     result.metrics = report.metrics;
     Ok(result)
 }
 
-/// The reducer: feeds each contig's sites, in order, to one pruner.
+/// The reducer: collects every surviving site in arrival order, grouped by
+/// contig. No pruning happens here — the per-contig pruners run in parallel
+/// once the stream is exhausted (`prune_contigs`), which is the Y1 fix for
+/// the 64 s serial reducer (docs/rounds/v6/04-performance.md §6).
 struct LdPruneSink {
-    /// Ordinal base of the sites seen so far.
-    base: u64,
-    pruner: Option<LdPruner>,
-    /// The contig the current pruner is working on.
-    current_contig: Vec<u8>,
-    /// Every surviving site's key, in arrival order (parallel to the
-    /// pruner's ordinals).
-    keys: Vec<(Vec<u8>, u64)>,
-    /// The kept keys, filled at each contig's end.
-    kept: Vec<(Vec<u8>, u64)>,
+    /// Surviving sites per contig, in arrival order.
+    contigs: Vec<PruneContig>,
     n_survivors: u64,
-    n_pruned: u64,
-    config: PruneConfig,
-    w: usize,
-    n_samples: usize,
-    out: Arc<Mutex<Option<LdPruneResult>>>,
+    out: Arc<Mutex<Option<Vec<PruneContig>>>>,
+}
+
+/// One contig's surviving sites, in arrival order.
+struct PruneContig {
+    name: Vec<u8>,
+    sites: Vec<PruneSite>,
 }
 
 impl OrderedSink<LdPrunePartial> for LdPruneSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut LdPrunePartial) -> Result<(), EngineError> {
         for site in partial.sites.drain(..) {
-            // A new contig: close the previous one's window.
-            if site.contig != self.current_contig {
-                if let Some(mut pruner) = self.pruner.take() {
-                    pruner.finish_contig();
-                    self.absorb(&pruner);
-                }
-                self.current_contig.clone_from(&site.contig);
-                self.pruner = Some(LdPruner::new(
-                    self.config.threshold,
-                    self.config.window,
-                    self.config.step,
-                    self.w,
-                    self.n_samples,
-                ));
-            }
-            let pruner = self.pruner.as_mut().expect("invariant: just set");
-            let planes: [&[u64]; 4] = [
-                &site.planes[0..self.w],
-                &site.planes[self.w..2 * self.w],
-                &site.planes[2 * self.w..3 * self.w],
-                &site.planes[3 * self.w..4 * self.w],
-            ];
-            let ordinal = usize::try_from(self.n_survivors).unwrap_or(usize::MAX);
-            pruner.push(ordinal, site.pos0, planes, site.stats);
-            self.keys.push((site.contig, site.pos0));
             self.n_survivors += 1;
+            match self.contigs.last_mut() {
+                Some(cur) if cur.name == site.contig => cur.sites.push(site),
+                _ => {
+                    let name = site.contig.clone();
+                    self.contigs.push(PruneContig {
+                        name,
+                        sites: vec![site],
+                    });
+                }
+            }
         }
-        self.base += partial.n_survivors;
         Ok(())
     }
 
-    fn finish(mut self) -> Result<u64, EngineError> {
-        if let Some(mut pruner) = self.pruner.take() {
-            pruner.finish_contig();
-            self.absorb(&pruner);
-        }
-        self.n_pruned = self.n_survivors - self.kept.len() as u64;
-        // Group by contig; the keys arrive in contig/position order, so each
-        // contig's positions are already ascending.
-        let mut per_contig: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
-        for (contig, pos0) in &self.kept {
-            match per_contig.last_mut() {
-                Some((c, positions)) if c == contig => positions.push(*pos0),
-                _ => per_contig.push((contig.clone(), vec![*pos0])),
-            }
-        }
-        *self.out.lock().expect("invariant: prune slot not poisoned") = Some(LdPruneResult {
-            keep: SiteKeepSet { per_contig },
-            n_survivors: self.n_survivors,
-            n_pruned: self.n_pruned,
-            metrics: reed_engine::metrics::StageMetrics::default(),
-        });
-        Ok(self.n_survivors)
+    fn finish(self) -> Result<u64, EngineError> {
+        let n = self.n_survivors;
+        *self.out.lock().expect("invariant: prune slot not poisoned") = Some(self.contigs);
+        Ok(n)
     }
 }
 
-impl LdPruneSink {
-    /// Records one closed contig's keep decisions.
-    fn absorb(&mut self, pruner: &LdPruner) {
-        for ordinal in pruner.kept_sites() {
-            if let Some(key) = self.keys.get(ordinal) {
-                self.kept.push(key.clone());
+/// Prunes every contig in parallel (plink2's subcontig parallelism) and
+/// returns the kept sites plus the counters.
+///
+/// Each contig gets its own [`LdPruner`] fed in arrival order, so the
+/// within-contig decision sequence is exactly the serial one; contigs share
+/// nothing, so the parallel result is deterministic.
+fn prune_contigs(
+    contigs: Vec<PruneContig>,
+    config: PruneConfig,
+    w: usize,
+    n_samples: usize,
+) -> LdPruneResult {
+    use rayon::prelude::*;
+    let n_survivors: u64 = contigs.iter().map(|c| c.sites.len() as u64).sum();
+    let per_contig: Vec<(Vec<u8>, Vec<u64>)> = contigs
+        .into_par_iter()
+        .map(|c| {
+            let mut pruner =
+                LdPruner::new(config.threshold, config.window, config.step, w, n_samples);
+            for (i, site) in c.sites.iter().enumerate() {
+                let planes: [&[u64]; 4] = [
+                    &site.planes[0..w],
+                    &site.planes[w..2 * w],
+                    &site.planes[2 * w..3 * w],
+                    &site.planes[3 * w..4 * w],
+                ];
+                pruner.push(i, site.pos0, planes, site.stats);
             }
-        }
+            pruner.finish_contig();
+            let kept: Vec<u64> = pruner
+                .kept_sites()
+                .into_iter()
+                .filter_map(|ordinal| c.sites.get(ordinal).map(|s| s.pos0))
+                .collect();
+            (c.name, kept)
+        })
+        .collect();
+    let n_kept: u64 = per_contig.iter().map(|(_, p)| p.len() as u64).sum();
+    LdPruneResult {
+        keep: SiteKeepSet { per_contig },
+        n_survivors,
+        n_pruned: n_survivors - n_kept,
+        metrics: reed_engine::metrics::StageMetrics::default(),
+        prune_secs: 0.0,
     }
 }

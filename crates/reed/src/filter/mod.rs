@@ -362,6 +362,7 @@ pub fn run_filter(
         let result = ld_prune::run_ld_prune_pass(opened, &plan, &keep, config, opts, native_bcf)?;
         timing_engine.merge(&result.metrics);
         timing_phases.push(("pass0_ld", pass_start.elapsed().as_secs_f64()));
+        timing_phases.push(("pass0_prune", result.prune_secs));
         ld_prune_report = Some((result.n_survivors, result.n_pruned));
         Some(Arc::new(result.keep))
     } else {

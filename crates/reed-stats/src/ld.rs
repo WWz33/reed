@@ -320,9 +320,12 @@ impl LdPruner {
             planes: flat,
             maj_freq: stats.maj_freq,
         });
+        // The site survives unless this window's scan removed it. `pruned`
+        // only grows by appending, so the newly appended entries are the
+        // whole answer — no scan over the history (that was O(n²)).
+        let before = self.pruned.len();
         self.maybe_evaluate();
-        // The site survives unless this window's scan removed it.
-        !self.pruned.contains(&ordinal)
+        !self.pruned[before..].contains(&ordinal)
     }
 
     /// Evaluates the window once its span is complete, then advances it.
