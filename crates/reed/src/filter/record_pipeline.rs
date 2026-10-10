@@ -499,23 +499,51 @@ where
             let Some(column) = scan.int_columns.get(rule.int_column) else {
                 continue;
             };
-            for (i, &x) in column.iter().enumerate() {
-                if masked.get(i)
-                    || !evaluated(i)
-                    || (x == INT_MISSING && !mask_on_missing)
-                    || (x != INT_MISSING && !rule.cmp.apply_f64(f64::from(x)))
-                {
-                    continue;
+            // Integer thresholds compare in the integer domain (A6-17: no
+            // per-element u32→f64 round-trip; the semantics are the same —
+            // u32 widens exactly and the op is the same enum).
+            match rule.cmp.value {
+                reed_filter::spec::Typed::Int(threshold) => {
+                    let op = rule.cmp.op;
+                    for (i, &x) in column.iter().enumerate() {
+                        if masked.get(i)
+                            || !evaluated(i)
+                            || (x == INT_MISSING && !mask_on_missing)
+                            || (x != INT_MISSING && !op.apply_i64(i64::from(x), threshold))
+                        {
+                            continue;
+                        }
+                        attribute_hit(
+                            i,
+                            rule_index,
+                            keep.get(i).copied().unwrap_or(true),
+                            opts.counts,
+                            masked,
+                            mask_rule,
+                            funnel,
+                        );
+                    }
                 }
-                attribute_hit(
-                    i,
-                    rule_index,
-                    keep.get(i).copied().unwrap_or(true),
-                    opts.counts,
-                    masked,
-                    mask_rule,
-                    funnel,
-                );
+                reed_filter::spec::Typed::Float(_) => {
+                    for (i, &x) in column.iter().enumerate() {
+                        if masked.get(i)
+                            || !evaluated(i)
+                            || (x == INT_MISSING && !mask_on_missing)
+                            || (x != INT_MISSING && !rule.cmp.apply_f64(f64::from(x)))
+                        {
+                            continue;
+                        }
+                        attribute_hit(
+                            i,
+                            rule_index,
+                            keep.get(i).copied().unwrap_or(true),
+                            opts.counts,
+                            masked,
+                            mask_rule,
+                            funnel,
+                        );
+                    }
+                }
             }
         }
     }
