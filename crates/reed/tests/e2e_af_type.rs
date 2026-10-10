@@ -5,7 +5,7 @@
 //! `gold/popgen/run_bcftools_af.sh`.
 
 use reed::spec::{AfKind, FilterSpec};
-use reed::{run_filter, FilterOptions};
+use reed::{FilterOptions, run_filter};
 
 /// 4 samples; sites: pos 1 has AC=2 (INFO stale, AN=8), pos 2 AC=6,
 /// pos 3 has no INFO/AC (genotype-only), pos 4 is monomorphic.
@@ -51,10 +51,7 @@ fn keep(tag: &str, kind: AfKind, min_af: f64) -> Vec<u64> {
 fn af_types_use_info_counts_and_the_bcftools_definitions() {
     // The expected sets are bcftools' own on this fixture (`bcftools view
     // -q X:type`), which prefers INFO/AC+AN over the genotype tallies.
-    for (tag, kind) in [
-        ("nref", AfKind::Nref),
-        ("alt1", AfKind::Alt1),
-    ] {
+    for (tag, kind) in [("nref", AfKind::Nref), ("alt1", AfKind::Alt1)] {
         assert_eq!(keep(tag, kind, 0.3), vec![1, 2, 3], "{tag} 0.3");
         assert_eq!(keep(tag, kind, 0.5), vec![2, 3], "{tag} 0.5");
         assert_eq!(keep(tag, kind, 0.6), vec![2], "{tag} 0.6");
@@ -62,7 +59,7 @@ fn af_types_use_info_counts_and_the_bcftools_definitions() {
     // minor = min over REF and ALT counts (INFO first, genotype fallback).
     assert_eq!(keep("minor", AfKind::Minor, 0.3), vec![1, 3]);
     assert_eq!(keep("minor", AfKind::Minor, 0.5), vec![3]);
-    assert!(keep("minor", AfKind::Minor, 0.6).is_empty());
+    assert_eq!(keep("minor", AfKind::Minor, 0.6), [] as [u64; 0]);
     // major = max over both counts.
     assert_eq!(keep("major", AfKind::Major, 0.3), vec![1, 2, 3, 4]);
     assert_eq!(keep("major", AfKind::Major, 0.5), vec![1, 2, 3, 4]);
@@ -70,5 +67,5 @@ fn af_types_use_info_counts_and_the_bcftools_definitions() {
     // nonmajor = 1 − major.
     assert_eq!(keep("nonmajor", AfKind::Nonmajor, 0.3), vec![1, 3]);
     assert_eq!(keep("nonmajor", AfKind::Nonmajor, 0.5), vec![3]);
-    assert!(keep("nonmajor", AfKind::Nonmajor, 0.6).is_empty());
+    assert_eq!(keep("nonmajor", AfKind::Nonmajor, 0.6), [] as [u64; 0]);
 }

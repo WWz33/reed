@@ -3,6 +3,7 @@
 //! per test. `pops` names the populations in the test's role order
 //! (`f3` prints `C;A,B`-style roles joined by commas for a flat column).
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use reed_engine::error::EngineError;
@@ -28,15 +29,17 @@ pub fn write_fstats(
             .map(|&g| group_names.get(g).map_or("?", String::as_str))
             .collect::<Vec<_>>()
             .join(",");
-        out.push_str(&format!(
-            "{}\t{pops}\t{}\t{}\t{}\t{}\t{}\n",
+        writeln!(
+            out,
+            "{}\t{pops}\t{}\t{}\t{}\t{}\t{}",
             row.test.id(),
             cell(row.estimate),
             cell(row.se),
             cell(row.z),
             row.n_blocks,
             row.n_sites,
-        ));
+        )
+        .expect("invariant: writing to String");
     }
     let mut path = prefix.as_os_str().to_os_string();
     path.push(".fstats");
@@ -47,5 +50,9 @@ pub fn write_fstats(
 
 /// `NA` for non-finite values (fewer than two blocks, zero denominator).
 fn cell(v: f64) -> String {
-    if v.is_finite() { format!("{v}") } else { "NA".to_string() }
+    if v.is_finite() {
+        format!("{v}")
+    } else {
+        "NA".to_string()
+    }
 }

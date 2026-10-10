@@ -24,10 +24,28 @@ pub(crate) mod verbosity;
 use verbosity::Verbosity;
 
 /// The `reed` command line.
+///
+/// `--version` prints the crate version plus the exact source state the
+/// binary was built from (E6-11): `reed 0.3.0 (v0.3.0-12-g8709f1f 2026-10-10,
+/// rustc 1.99.0)`. The pieces come from `build.rs`; a source tarball without
+/// git shows `unknown` for the commit/date.
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("REED_BUILD_COMMIT"),
+    " ",
+    env!("REED_BUILD_DATE"),
+    ", ",
+    env!("REED_BUILD_RUSTC"),
+    ")"
+);
+
+/// The `reed` command line.
 #[derive(Parser)]
 #[command(
     name = "reed",
     version,
+    long_version = LONG_VERSION,
     about = "Population-genetics statistics and hard filtering, in pure Rust"
 )]
 pub(crate) struct Cli {
@@ -91,7 +109,12 @@ pub(crate) struct FilterCli {
     pub output_type: Option<String>,
     /// Output file (default: stdout); the format comes from -O or the
     /// extension
-    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
+    #[arg(
+        short = 'o',
+        long = "output",
+        visible_alias = "out",
+        value_name = "FILE"
+    )]
     pub out: Option<String>,
     /// Write an index next to the output: `-W` or `-W=csi` (default), or
     /// `-W=tbi`; omit for no index (bcftools semantics)
@@ -132,7 +155,6 @@ pub(crate) struct FilterCli {
     pub no_command: bool,
 }
 
-
 /// Build a CSI (default) or TBI index for an existing BGZF VCF.
 #[derive(Args)]
 pub(crate) struct IndexCli {
@@ -159,7 +181,6 @@ pub(crate) struct IndexCli {
     pub verbosity: Verbosity,
 }
 
-
 /// Window statistics (02-cli.md §5): the statistics are named after the method,
 /// never after a tool.
 #[derive(Args)]
@@ -181,24 +202,28 @@ pub(crate) struct StatsCli {
     #[arg(long, value_name = "FLOAT", hide = true,
           value_parser = filter_flags::removed_max_missing_sample)]
     pub max_missing_sample: Option<String>,
-    /// Groups file: `sample<TAB>population` rows, no header (pixy
-    /// populations-file format); required by the windowed/pixy modes
-    #[arg(long = "pop", visible_alias = "populations", alias = "groups",
-          value_name = "FILE")]
+    /// Groups file: `sample<TAB>population` rows, no header (the
+    /// populations-file convention); required by the windowed modes
+    #[arg(
+        long = "pop",
+        visible_alias = "populations",
+        alias = "groups",
+        value_name = "FILE"
+    )]
     pub pop: Option<String>,
     /// π per population (Nei & Li 1979; missing data: Korunes & Samuk
-    /// 2021 = pixy)
+    /// 2021)
     #[arg(long)]
     pub pi: bool,
-    /// dxy per population pair (Nei 1987; missing data: pixy)
+    /// dxy per population pair (Nei 1987; missing data: Korunes & Samuk 2021)
     #[arg(long)]
     pub dxy: bool,
     /// Watterson's θ per population (Watterson 1975; per-allele-class
-    /// mutation counts, pixy)
+    /// mutation counts, Korunes & Samuk 2021)
     #[arg(long)]
     pub theta: bool,
     /// Tajima's D per population (Tajima 1989; denominator once at the
-    /// window-average allele count, pixy)
+    /// window-average allele count, Korunes & Samuk 2021)
     #[arg(long = "tajima-d")]
     pub tajima_d: bool,
     /// Fst for all population pairs; `wc84` (Weir & Cockerham 1984,
@@ -283,12 +308,16 @@ pub(crate) struct StatsCli {
     #[arg(long)]
     pub bypass_invariant_check: bool,
     /// Skip group-file rows naming samples absent from the header
-    /// (default: error, pixy behavior)
+    /// (default: error, the reference behavior)
     #[arg(long)]
     pub force_samples: bool,
     /// Contig lengths as a .fai-style file (name, length), for inputs
     /// whose header lacks ##contig lines
-    #[arg(long = "contig-lengths", alias = "contig-lengths-path", value_name = "FILE")]
+    #[arg(
+        long = "contig-lengths",
+        alias = "contig-lengths-path",
+        value_name = "FILE"
+    )]
     pub contig_lengths: Option<String>,
     /// Window size in bp (accepts 100k, 1M, 100kb)
     #[arg(long = "window", alias = "size", default_value = "100000", value_parser = parse_size)]
@@ -303,7 +332,12 @@ pub(crate) struct StatsCli {
     #[arg(long)]
     pub skip_empty: bool,
     /// Output prefix: PREFIX_pi.txt, PREFIX.afreq, ... (or the TSV on stdout)
-    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "PREFIX")]
+    #[arg(
+        short = 'o',
+        long = "output",
+        visible_alias = "out",
+        value_name = "PREFIX"
+    )]
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
@@ -319,4 +353,3 @@ pub(crate) struct StatsCli {
           value_parser = Verbosity::parse)]
     pub verbosity: Verbosity,
 }
-

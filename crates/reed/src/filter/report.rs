@@ -12,10 +12,16 @@ pub(super) fn funnel_stages(
 ) -> Vec<FunnelStage> {
     let mut stages: Vec<FunnelStage> = Vec::new();
     for (id, n) in head_ids.iter().zip(&funnel.head_hits) {
-        stages.push(FunnelStage { rule: id.clone(), n_passed: *n });
+        stages.push(FunnelStage {
+            rule: id.clone(),
+            n_passed: *n,
+        });
     }
     for (id, n) in tail_ids.iter().zip(&funnel.tail_hits) {
-        stages.push(FunnelStage { rule: id.clone(), n_passed: *n });
+        stages.push(FunnelStage {
+            rule: id.clone(),
+            n_passed: *n,
+        });
     }
     stages
 }
@@ -26,6 +32,9 @@ pub(super) fn masked_by_rule(mask_ids: &[String], funnel: &FunnelPartial) -> Vec
     mask_ids
         .iter()
         .zip(&funnel.mask_hits)
-        .map(|(id, n)| MaskedBy { rule: id.clone(), n_masked: *n })
+        .map(|(id, n)| MaskedBy {
+            rule: id.clone(),
+            n_masked: *n,
+        })
         .collect()
 }

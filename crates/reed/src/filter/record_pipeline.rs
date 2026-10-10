@@ -7,17 +7,17 @@
 //! [`PipelineOptions`] they declare. Nothing in this file knows about
 //! strategies, blocks or output.
 
+use reed_core::Bitset;
 use reed_core::count::SiteCounts;
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
-use reed_core::Bitset;
 use reed_engine::error::EngineError;
-use reed_filter::eval::head::{eval_head, HeadScratch};
+use reed_filter::eval::head::{HeadScratch, eval_head};
 use reed_filter::eval::mask::eval_mask;
-use reed_filter::expr::{self, FmtValue};
 use reed_filter::eval::tail::eval_tail;
+use reed_filter::expr::{self, FmtValue};
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
-use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner, ScanOutput};
+use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::{ContigTable, SiteView};
 
@@ -128,7 +128,12 @@ impl RecordPipeline {
     /// Adapts the pipeline to a plan (mask rule count, `--set-gts .`
     /// expression columns).
     pub(crate) fn resize_for(&mut self, plan: &FilterPlan) {
-        self.field_rules = plan.mask.iter().filter(|r| r.expr.is_none()).cloned().collect();
+        self.field_rules = plan
+            .mask
+            .iter()
+            .filter(|r| r.expr.is_none())
+            .cloned()
+            .collect();
         self.field_rule_map = plan
             .mask
             .iter()
@@ -176,10 +181,12 @@ impl RecordPipeline {
         let pos1 = site.pos1;
 
         // ---- head stage (§11.2: order is semantics) ----
-        let head_passed =
-            eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
+        let head_passed = eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
         if !head_passed && !opts.scan_head_failures {
-            return Ok(Processed { head_passed: false, emitted: false });
+            return Ok(Processed {
+                head_passed: false,
+                emitted: false,
+            });
         }
 
         // ---- scan stage (the one decoder; policies counted once) ----
@@ -262,10 +269,12 @@ impl RecordPipeline {
         }
         .map_err(job_err)?;
         let pos1 = site.pos1;
-        let head_passed =
-            eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
+        let head_passed = eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
         if !head_passed && !opts.scan_head_failures {
-            return Ok(Processed { head_passed: false, emitted: false });
+            return Ok(Processed {
+                head_passed: false,
+                emitted: false,
+            });
         }
         funnel.policy.add_decode(native.counters);
         let scan = ScanOutput {
@@ -390,7 +399,6 @@ impl NativeScratch {
         .map_err(EngineError::from)?;
         Ok(())
     }
-
 }
 
 /// The stages after the decoder — mask, count, tail, body — shared by the
@@ -534,8 +542,7 @@ where
         } else {
             let (s0, s1) = (code.slot_state(0), code.slot_state(1));
             let n_alt = u64::from(s0 == STATE_ALT) + u64::from(s1 == STATE_ALT);
-            let n_miss =
-                u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
+            let n_miss = u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
             counts.ns += 1;
             counts.an += 2 - n_miss;
             counts.ac += n_alt;
@@ -568,7 +575,10 @@ where
             &plan.tail,
             &mut funnel.tail_hits,
         ) {
-            return Ok(Processed { head_passed: true, emitted: false });
+            return Ok(Processed {
+                head_passed: true,
+                emitted: false,
+            });
         }
     }
 
@@ -585,7 +595,10 @@ where
         funnel,
     };
     body(&mut view)?;
-    Ok(Processed { head_passed, emitted: true })
+    Ok(Processed {
+        head_passed,
+        emitted: true,
+    })
 }
 
 /// Index of `GT` among the colon-separated FORMAT keys.

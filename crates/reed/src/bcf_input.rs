@@ -17,8 +17,8 @@ use reed_engine::abort::Abort;
 use reed_engine::error::EngineError;
 use reed_engine::frame_chain::{Carried, FrameChain};
 use reed_engine::pipeline::ChunkJob;
+use reed_io::bcf::{BcfDict, VirtualMap, declared_len, record_len, record_ref, render_record};
 use reed_io::chunk::ChunkBytes;
-use reed_io::bcf::{declared_len, record_len, record_ref, render_record, BcfDict, VirtualMap};
 use reed_io::chunk::framing::RecordFraming;
 
 use crate::input::OpenedInput;
@@ -61,14 +61,19 @@ pub struct InputScratch<S> {
 
 impl<S: Default> Default for InputScratch<S> {
     fn default() -> Self {
-        Self { inner: S::default(), rendered: Vec::new() }
+        Self {
+            inner: S::default(),
+            rendered: Vec::new(),
+        }
     }
 }
 
 impl<J: ChunkJob> InputJob<J> {
     /// The chain's cumulative wait (engine metric, doc_v4 03 A4-5).
     fn chain_wait(&self) -> std::time::Duration {
-        self.bcf.as_ref().map_or(std::time::Duration::ZERO, |bcf| bcf.chain.wait_time())
+        self.bcf
+            .as_ref()
+            .map_or(std::time::Duration::ZERO, |bcf| bcf.chain.wait_time())
     }
 
     /// Wraps `inner` for the input `opened` opened; BCF inputs get a chain
@@ -78,9 +83,16 @@ impl<J: ChunkJob> InputJob<J> {
         let bcf = opened.bcf.as_ref().map(|dict| {
             let chain = Arc::new(FrameChain::new(abort.signal.clone()));
             chain.publish(0, Carried::default());
-            BcfState { chain, dict: Arc::clone(dict) }
+            BcfState {
+                chain,
+                dict: Arc::clone(dict),
+            }
         });
-        Self { inner, bcf, native: None }
+        Self {
+            inner,
+            bcf,
+            native: None,
+        }
     }
 
     /// Wraps `inner` with a native BCF record entry point: on BCF input the
@@ -107,7 +119,12 @@ impl<J: ChunkJob> InputJob<J> {
     pub fn finish(&self, n_chunks: u64, expect_complete: bool) -> Result<(), EngineError> {
         let Some(bcf) = &self.bcf else { return Ok(()) };
         bcf.chain.finish();
-        if expect_complete && bcf.chain.peek(n_chunks).is_some_and(|tail| !tail.is_empty()) {
+        if expect_complete
+            && bcf
+                .chain
+                .peek(n_chunks)
+                .is_some_and(|tail| !tail.is_empty())
+        {
             return Err(EngineError::Job(
                 "BCF input ends inside a record (truncated file)".into(),
             ));
@@ -138,7 +155,10 @@ impl<J: ChunkJob> InputJob<J> {
         } else {
             0
         };
-        let map = VirtualMap { chunk_start: chunk.compressed_start, blocks: &chunk.blocks };
+        let map = VirtualMap {
+            chunk_start: chunk.compressed_start,
+            blocks: &chunk.blocks,
+        };
         if skip >= text.len() {
             // Defensive: the header always ends inside chunk 0.
             guard.publish(Carried::default());

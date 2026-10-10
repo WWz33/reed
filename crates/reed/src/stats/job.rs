@@ -16,35 +16,34 @@
 //! coordinate).
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use reed_core::count::SiteGroupCounts;
-use reed_core::grid::WindowGrid;
 use reed_core::ChunkId;
-use reed_engine::budget::ThreadBudget;
-use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
+use reed_core::count::SiteGroupCounts;
 use reed_core::count::code_has_alt;
+use reed_core::genotype::PlaneBlock;
 use reed_core::genotype::{
     GenotypePolicies, GtCode, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
 };
+use reed_core::grid::WindowGrid;
+use reed_engine::budget::ThreadBudget;
+use reed_engine::error::EngineError;
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::bcf::BcfDict;
 use reed_io::vcf::genotype_scan::GenotypeScanner;
-use reed_io::vcf::site::SiteView;
 use reed_io::vcf::line::LineRef;
+use reed_io::vcf::site::SiteView;
 pub use reed_stats::fst::FstKind;
-pub use reed_stats::pbs::PbsKind;
-use reed_stats::request::{build_accs, StatAcc, StatKey};
-use reed_core::genotype::PlaneBlock;
 use reed_stats::jackknife::BpBlockJackknife;
 use reed_stats::ld::LdDecayAcc;
-use reed_stats::patterson::{
-    f2_site, f3_site, f4_site, PattersonKind,
-};
-use reed_stats::sfs::{ProjectedSfsAcc, ProjectionCache};
+use reed_stats::patterson::{PattersonKind, f2_site, f3_site, f4_site};
+pub use reed_stats::pbs::PbsKind;
 pub use reed_stats::request::StatKind;
+use reed_stats::request::{StatAcc, StatKey, build_accs};
+use reed_stats::sfs::{ProjectedSfsAcc, ProjectionCache};
 use reed_stats::window::{BpBinning, ContigBins};
 
 /// The full per-group/per-pair statistic set over `n_groups` groups: π and
@@ -55,12 +54,22 @@ use reed_stats::window::{BpBinning, ContigBins};
 pub fn default_kinds(n_groups: usize) -> Vec<StatKind> {
     let mut kinds = Vec::new();
     for group in 0..n_groups {
-        kinds.push(StatKind::Pi { group, per_bp: false });
-        kinds.push(StatKind::Pi { group, per_bp: true });
+        kinds.push(StatKind::Pi {
+            group,
+            per_bp: false,
+        });
+        kinds.push(StatKind::Pi {
+            group,
+            per_bp: true,
+        });
     }
     for a in 0..n_groups {
         for b in (a + 1)..n_groups {
-            kinds.push(StatKind::Dxy { a, b, per_bp: false });
+            kinds.push(StatKind::Dxy {
+                a,
+                b,
+                per_bp: false,
+            });
             kinds.push(StatKind::Dxy { a, b, per_bp: true });
             for kind in [FstKind::Hudson, FstKind::WeirCockerham84] {
                 kinds.push(StatKind::Fst { a, b, kind });
@@ -68,23 +77,51 @@ pub fn default_kinds(n_groups: usize) -> Vec<StatKind> {
         }
     }
     if n_groups >= 3 {
-        kinds.push(StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::Yi2010 });
-        kinds.push(StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::PbsN1 });
+        kinds.push(StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 2,
+            kind: PbsKind::Yi2010,
+        });
+        kinds.push(StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 2,
+            kind: PbsKind::PbsN1,
+        });
     }
     for group in 0..n_groups {
-        kinds.push(StatKind::Sfs { group, folded: false });
-        kinds.push(StatKind::Sfs { group, folded: true });
-        kinds.push(StatKind::ThetaW { group, per_bp: false });
-        kinds.push(StatKind::ThetaW { group, per_bp: true });
-        kinds.push(StatKind::TajimaD { group, min_sites: 0 });
+        kinds.push(StatKind::Sfs {
+            group,
+            folded: false,
+        });
+        kinds.push(StatKind::Sfs {
+            group,
+            folded: true,
+        });
+        kinds.push(StatKind::ThetaW {
+            group,
+            per_bp: false,
+        });
+        kinds.push(StatKind::ThetaW {
+            group,
+            per_bp: true,
+        });
+        kinds.push(StatKind::TajimaD {
+            group,
+            min_sites: 0,
+        });
     }
     kinds
 }
 
-/// The pixy-mode statistic set: π per group and/or dxy per pair, in output
-/// column order (02-cli.md §5.2).
+/// The window-mode statistic set: π per group and/or dxy per pair, in
+/// output column order (02-cli.md §5.2).
+// The booleans are the mode's independent switches; they map 1:1 to the
+// user-facing flags, and a struct would not carry more meaning.
+#[allow(clippy::fn_params_excessive_bools)]
 #[must_use]
-pub fn pixy_kinds(
+pub fn window_kinds(
     n_groups: usize,
     pi: bool,
     dxy: bool,
@@ -96,24 +133,37 @@ pub fn pixy_kinds(
     let mut kinds = Vec::new();
     if pi {
         for group in 0..n_groups {
-            kinds.push(StatKind::Pi { group, per_bp: false });
+            kinds.push(StatKind::Pi {
+                group,
+                per_bp: false,
+            });
         }
     }
     if dxy {
         for a in 0..n_groups {
             for b in (a + 1)..n_groups {
-                kinds.push(StatKind::Dxy { a, b, per_bp: false });
+                kinds.push(StatKind::Dxy {
+                    a,
+                    b,
+                    per_bp: false,
+                });
             }
         }
     }
     if theta {
         for group in 0..n_groups {
-            kinds.push(StatKind::ThetaW { group, per_bp: false });
+            kinds.push(StatKind::ThetaW {
+                group,
+                per_bp: false,
+            });
         }
     }
     if tajima {
         for group in 0..n_groups {
-            kinds.push(StatKind::TajimaD { group, min_sites: 0 });
+            kinds.push(StatKind::TajimaD {
+                group,
+                min_sites: 0,
+            });
         }
     }
     if let Some(kind) = fst {
@@ -126,7 +176,12 @@ pub fn pixy_kinds(
     if let Some(kind) = pbs {
         // One triple: group 0 is the branch of interest (Yi et al. 2010).
         if n_groups >= 3 {
-            kinds.push(StatKind::Pbs { a: 0, b: 1, c: 2, kind });
+            kinds.push(StatKind::Pbs {
+                a: 0,
+                b: 1,
+                c: 2,
+                kind,
+            });
         }
     }
     kinds
@@ -162,7 +217,7 @@ impl Levels {
                 other => {
                     return Err(EngineError::job(format!(
                         "unknown level {other:?} (expected window, contig or genome)"
-                    )))
+                    )));
                 }
             }
         }
@@ -171,11 +226,11 @@ impl Levels {
 }
 
 /// How the input's invariant sites are treated (04-algorithms.md §3,
-/// 02-cli.md §5.3). pixy's rule: an all-sites input is the default, and
+/// 02-cli.md §5.3). The reference rule: an all-sites input is the default, and
 /// anything else must be declared.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InvariantMode {
-    /// The input must contain invariant sites (pixy's check); a file with
+    /// The input must contain invariant sites (the reference check); a file with
     /// only variant sites fails at the end of the run.
     Require,
     /// `--variant-only`: the file has only variant sites; absent window
@@ -187,10 +242,10 @@ pub enum InvariantMode {
     Bypass,
 }
 
-/// pixy-layout window output (02-cli.md §5.4): π/dxy files with the
+/// Window-layout output (02-cli.md §5.4): π/dxy files with the
 /// integer audit columns.
 #[derive(Clone, Copy, Debug)]
-pub struct PixyOptions {
+pub struct WindowLayoutOptions {
     /// Invariant-site policy.
     pub invariant: InvariantMode,
 }
@@ -231,9 +286,9 @@ pub struct StatsRequest {
     /// a length for every contig with records and is never fabricated
     /// (01-review D7).
     pub contig_lengths: HashMap<Vec<u8>, u64>,
-    /// `Some` = pixy-layout output mode (structured rows, invariant-site
+    /// `Some` = window-layout output mode (structured rows, invariant-site
     /// policy); `None` = the wide debug TSV.
-    pub pixy: Option<PixyOptions>,
+    pub layout: Option<WindowLayoutOptions>,
     /// Indexed regions (`-r/-R`): the reader seeks to the mapped range and
     /// records outside the regions are dropped.
     pub regions: Vec<reed_io::chunk::region::Region>,
@@ -245,8 +300,8 @@ pub struct StatsRequest {
     /// Per-sample keep mask (`-s/-S/--keep/--remove`); `None` = all kept.
     pub keep_samples: Option<Vec<bool>>,
     /// The compiled filter plan (`-v/-m/-f/-i/-e/--min-dp/--max-missing/--maf/...`,
-    /// 04-cleanup §2.1): applied to every record in the same pass by
-    /// [`crate::filtered::FilteredJob`]. `None` = no site-level filtering.
+    /// 04-cleanup §2.1): applied to every record in the same pass by the
+    /// filtered job. `None` = no site-level filtering.
     pub filter: Option<Arc<reed_filter::plan::FilterPlan>>,
     /// Projected SFS, genome-wide (docs/rounds/v5/05-algorithms.md §3.1);
     /// `None` = not requested. Not a window statistic.
@@ -513,7 +568,9 @@ impl FStatAcc {
     }
 
     fn push(&mut self, contig: &[u8], pos0: u64, row: &[SiteGroupCounts]) {
-        let Some((num, den)) = self.site(row) else { return };
+        let Some((num, den)) = self.site(row) else {
+            return;
+        };
         self.num.add(num);
         self.den.add(den);
         self.n_sites += 1;
@@ -542,7 +599,11 @@ impl FStatAcc {
             _ => (self.num.value(), f64::NAN),
         };
         let (est_jk, se_jk, n_blocks) = self.jk.jackknife().unwrap_or((estimate, f64::NAN, 0));
-        let z = if se_jk.is_finite() && se_jk > 0.0 { est_jk / se_jk } else { f64::NAN };
+        let z = if se_jk.is_finite() && se_jk > 0.0 {
+            est_jk / se_jk
+        } else {
+            f64::NAN
+        };
         Some(FStatRow {
             test: self.test.clone(),
             estimate,
@@ -619,11 +680,11 @@ impl SfsPartial {
 pub struct StatsReport {
     /// TSV: a header line, then one row per selected level.
     pub tsv: String,
-    /// Structured window rows (pixy mode only).
+    /// Structured window rows (window-layout mode only).
     pub windows: Vec<WindowRow>,
     /// Site-wide invariant sites seen in the input.
     pub n_invariant_sites: u64,
-    /// Records with ALT = `.` (pixy's all-sites check).
+    /// Records with ALT = `.` (the all-sites check).
     pub n_no_alt_records: u64,
     /// Window-level rows emitted.
     pub n_windows: u64,
@@ -646,10 +707,10 @@ pub struct StatsReport {
     pub elapsed: Duration,
 }
 
-/// Parses a `sample<TAB>population` groups file — pixy's populations-file
+/// Parses a `sample<TAB>population` groups file — the reference populations-file
 /// convention: two columns, no header row, `#` comments allowed
 /// (reed_core::GroupTable::from_tsv). A file row naming a sample absent
-/// from the VCF header is an error (pixy behavior) unless `force_samples`,
+/// from the VCF header is an error (the reference behavior) unless `force_samples`,
 /// which skips it with a warning. Group ids follow first-appearance order.
 ///
 /// # Errors
@@ -661,20 +722,23 @@ pub fn assign_groups(
     sample_names: &[String],
     force_samples: bool,
 ) -> Result<(Vec<Option<u32>>, Vec<String>), EngineError> {
-    let samples = reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
-        .map_err(EngineError::from)?;
+    let samples =
+        reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
+            .map_err(EngineError::from)?;
     let table = reed_core::group::GroupTable::from_tsv(
         groups_path,
         &samples,
-        reed_core::group::GroupFileOptions { ignore_missing_samples: force_samples },
+        reed_core::group::GroupFileOptions {
+            ignore_missing_samples: force_samples,
+        },
     )
     .map_err(EngineError::from)?;
     let mut gt_groups: Vec<Option<u32>> = vec![None; sample_names.len()];
     let mut names: Vec<String> = Vec::with_capacity(table.n_groups());
     for (group_idx, group) in table.iter().enumerate() {
         names.push(group.name.clone());
-        let group_idx = u32::try_from(group_idx)
-            .map_err(|_| EngineError::job("more than u32::MAX groups"))?;
+        let group_idx =
+            u32::try_from(group_idx).map_err(|_| EngineError::job("more than u32::MAX groups"))?;
         for (word_idx, &word) in group.mask.words().iter().enumerate() {
             let mut word = word;
             while word != 0 {
@@ -703,7 +767,7 @@ pub struct StatsPartial {
     n_multiallelic_skipped: u64,
     /// Site-wide invariant sites (no ALT called by any sample).
     n_invariant_sites: u64,
-    /// Records whose ALT column is `.` (pixy's all-sites marker).
+    /// Records whose ALT column is `.` (the all-sites marker).
     n_no_alt_records: u64,
     /// Genome-wide projected spectra (docs/rounds/v5/05-algorithms.md §3.1).
     sfs: Option<SfsPartial>,
@@ -783,7 +847,7 @@ pub struct StatsScratch {
 }
 
 /// The statistics decode policies: haploid calls are half calls and ALT
-/// indices above 1 collapse onto the single ALT allele (pixy's biallelic
+/// indices above 1 collapse onto the single ALT allele (the biallelic
 /// view; multi-allelic records are skipped before the scan anyway).
 fn stats_policies() -> GenotypePolicies {
     GenotypePolicies {
@@ -842,7 +906,9 @@ impl ChunkJob for StatsJob {
 impl StatsJob {
     fn reset_row(&self, scratch: &mut StatsScratch) {
         scratch.row.clear();
-        scratch.row.resize(self.n_groups, SiteGroupCounts::default());
+        scratch
+            .row
+            .resize(self.n_groups, SiteGroupCounts::default());
     }
 
     /// The site stage both record sources share (text and native BCF): the
@@ -901,7 +967,7 @@ impl StatsJob {
                     contig_name: String::from_utf8_lossy(contig).into_owned(),
                     pos1,
                     len_bp: len,
-                }
+                },
             ));
         }
         if is_invariant {
@@ -916,6 +982,10 @@ impl StatsJob {
 
     /// The genotype stage both record sources share: the per-group counts,
     /// the ascending-position check and the bin accumulation.
+    // The arguments are distinct caller-owned scratch buffers (row, caches,
+    // segment, partial, LD scratch); bundling them into a struct would only
+    // move the same borrows around.
+    #[allow(clippy::too_many_arguments)]
     fn push_row(
         &self,
         pos0: u64,
@@ -944,7 +1014,7 @@ impl StatsJob {
                 reed_core::CoreError::PositionNotAscending {
                     prev_pos0: segment.last_pos0,
                     pos0,
-                }
+                },
             ));
         }
         segment.bins.push_site(pos0, row, any_alt);
@@ -962,13 +1032,7 @@ impl StatsJob {
 
     /// Feeds the LD path for one site (docs/rounds/v5/05-algorithms.md
     /// §3.4): pairs against the carried tail, then the site joins the tail.
-    fn push_ld(
-        &self,
-        pos0: u64,
-        codes: &[GtCode],
-        partial: &mut StatsPartial,
-        ld: &mut LdScratch,
-    ) {
+    fn push_ld(&self, pos0: u64, codes: &[GtCode], partial: &mut StatsPartial, ld: &mut LdScratch) {
         let Some(plan) = &self.ld else { return };
         let contig = &ld.contig;
         let window_bp = plan.window_bp();
@@ -978,13 +1042,19 @@ impl StatsJob {
             .get_or_insert_with(|| PlaneBlock::new(1, self.n_samples, false));
         block.push_codes(0, codes);
         let site = block.site_planes(0);
-        let planes: [&[u64]; 4] =
-            [site.slot0_alt, site.slot0_miss, site.slot1_alt, site.slot1_miss];
+        let planes: [&[u64]; 4] = [
+            site.slot0_alt,
+            site.slot0_miss,
+            site.slot1_alt,
+            site.slot1_miss,
+        ];
 
         let ld_partial = partial.ld.get_or_insert_with(|| LdPartial {
             head: Vec::new(),
             tail: Vec::new(),
-            decay: plan.decay_max_bp.map(|_| LdDecayAcc::new(plan.decay_edges())),
+            decay: plan
+                .decay_max_bp
+                .map(|_| LdDecayAcc::new(plan.decay_edges())),
             pairs: Vec::new(),
         });
         // In-chunk pairs come from the worker-local carry. Cross-chunk
@@ -1006,12 +1076,9 @@ impl StatsJob {
                         decay.push(dist, r2);
                     }
                     if plan.pairs {
-                        ld_partial.pairs.push((
-                            contig.clone(),
-                            *carry_pos0 + 1,
-                            pos0 + 1,
-                            r2,
-                        ));
+                        ld_partial
+                            .pairs
+                            .push((contig.clone(), *carry_pos0 + 1, pos0 + 1, r2));
                     }
                 }
             }
@@ -1027,7 +1094,9 @@ impl StatsJob {
         }
         ld_partial.tail.push((contig.clone(), pos0, flat.clone()));
         if let Some(max) = window_bp {
-            ld_partial.tail.retain(|(_, p, _)| pos0.saturating_sub(*p) <= max);
+            ld_partial
+                .tail
+                .retain(|(_, p, _)| pos0.saturating_sub(*p) <= max);
         }
         // The head is the chunk's first `max_bp`; once the chunk runs past
         // that, no later site joins it.
@@ -1114,7 +1183,14 @@ impl StatsJob {
         else {
             return Ok(());
         };
-        let StatsScratch { row, scanner, counters, sfs_caches, ld, .. } = scratch;
+        let StatsScratch {
+            row,
+            scanner,
+            counters,
+            sfs_caches,
+            ld,
+            ..
+        } = scratch;
         ld.reset(site.contig_name, self.n_samples.div_ceil(64));
         *counters = PolicyCounters::default();
         let n_samples = self.n_samples;
@@ -1189,7 +1265,9 @@ impl StatsJob {
         scratch: &mut StatsScratch,
     ) -> Result<StatsPartial, EngineError> {
         let Some(bcf) = &self.bcf else {
-            return Err(EngineError::job("internal: BCF records without a BCF input"));
+            return Err(EngineError::job(
+                "internal: BCF records without a BCF input",
+            ));
         };
         let mut partial = StatsPartial::default();
         let mut current: Option<SegmentPartial> = None;
@@ -1219,7 +1297,10 @@ impl StatsJob {
                 header.chrom
             ))
         })?;
-        let Some(pos1) = u64::try_from(header.pos0).ok().and_then(|p| p.checked_add(1)) else {
+        let Some(pos1) = u64::try_from(header.pos0)
+            .ok()
+            .and_then(|p| p.checked_add(1))
+        else {
             return Err(EngineError::job("BCF POS is negative"));
         };
         let n_alt = u32::try_from(header.n_allele.saturating_sub(1)).unwrap_or(u32::MAX);
@@ -1281,7 +1362,7 @@ struct CurrentContig {
     first_pos0: u64,
     last_pos0: u64,
     /// Grid origin: windows start at 0 (1-based position 1), the
-    /// pixy/vcftools grid (04-algorithms.md §4).
+    /// the reference-tool grid (04-algorithms.md §4).
     anchor: u64,
     /// Start of the next window to emit (the watermark frontier).
     next_start: u64,
@@ -1301,13 +1382,13 @@ struct StatsSink {
     seed: Vec<StatAcc>,
     levels: Levels,
     skip_empty: bool,
-    /// pixy-layout mode (structured rows + invariant policy).
-    pixy: Option<PixyOptions>,
-    /// Structured rows (pixy mode only).
+    /// Window-layout mode (structured rows + invariant policy).
+    layout: Option<WindowLayoutOptions>,
+    /// Structured rows (window-layout mode only).
     windows: Vec<WindowRow>,
     /// Site-wide invariant sites seen.
     n_invariant_sites: u64,
-    /// Records with ALT = `.` (pixy's all-sites check).
+    /// Records with ALT = `.` (the all-sites check).
     n_no_alt_records: u64,
     contig_len: HashMap<Vec<u8>, u64>,
     current: Option<CurrentContig>,
@@ -1378,24 +1459,19 @@ impl OrderedSink<StatsPartial> for StatsSink {
                             &tail_flat[3 * w..4 * w],
                         ];
                         if let Some(r2) = reed_stats::ld::pair_sums(a, b, self.ld_n_samples).r2() {
-                            let entry = self
-                                .ld_partial
-                                .get_or_insert_with(|| LdPartial {
-                                    head: Vec::new(),
-                                    tail: Vec::new(),
-                                    decay: Some(LdDecayAcc::new(plan.decay_edges())),
-                                    pairs: Vec::new(),
-                                });
+                            let entry = self.ld_partial.get_or_insert_with(|| LdPartial {
+                                head: Vec::new(),
+                                tail: Vec::new(),
+                                decay: Some(LdDecayAcc::new(plan.decay_edges())),
+                                pairs: Vec::new(),
+                            });
                             if let Some(decay) = &mut entry.decay {
                                 decay.push(dist, r2);
                             }
                             if plan.pairs {
-                                entry.pairs.push((
-                                    contig.clone(),
-                                    *tail_pos0 + 1,
-                                    pos0 + 1,
-                                    r2,
-                                ));
+                                entry
+                                    .pairs
+                                    .push((contig.clone(), *tail_pos0 + 1, pos0 + 1, r2));
                             }
                         }
                     }
@@ -1417,8 +1493,15 @@ impl OrderedSink<StatsPartial> for StatsSink {
             entry.pairs.extend(src.pairs.iter().cloned());
             // Carry this chunk's tail forward, evicting out-of-window sites.
             if let Some(max) = plan.window_bp() {
-                let last = src.tail.last().map(|(_, p, _)| *p).unwrap_or(0);
-                self.ld_tail.retain(|(c, p, _)| c != &src.tail.last().map(|(c, _, _)| c.clone()).unwrap_or_default() || last.saturating_sub(*p) <= max);
+                let last = src.tail.last().map_or(0, |(_, p, _)| *p);
+                self.ld_tail.retain(|(c, p, _)| {
+                    c != &src
+                        .tail
+                        .last()
+                        .map(|(c, _, _)| c.clone())
+                        .unwrap_or_default()
+                        || last.saturating_sub(*p) <= max
+                });
             }
             self.ld_tail.extend(src.tail.iter().cloned());
         }
@@ -1463,11 +1546,15 @@ impl OrderedSink<StatsPartial> for StatsSink {
             let totals = self.genome_totals.clone();
             self.write_row("genome", 0, bp, bp, &totals);
         }
-        // pixy's all-sites check (04-algorithms.md §3): a file with no
+        // The all-sites check (04-algorithms.md §3): a file with no
         // invariant sites must be declared with --variant-only or
         // --bypass-invariant-check.
-        if matches!(self.pixy, Some(PixyOptions { invariant: InvariantMode::Require }))
-            && self.n_no_alt_records == 0
+        if matches!(
+            self.layout,
+            Some(WindowLayoutOptions {
+                invariant: InvariantMode::Require
+            })
+        ) && self.n_no_alt_records == 0
         {
             return Err(EngineError::job(format!(
                 "input has no invariant sites ({} records, none with ALT = \".\"): declare \
@@ -1476,10 +1563,7 @@ impl OrderedSink<StatsPartial> for StatsSink {
                 self.n_records
             )));
         }
-        *self
-            .out
-            .lock()
-            .expect("invariant: stats slot not poisoned") = Some(SinkOutput {
+        *self.out.lock().expect("invariant: stats slot not poisoned") = Some(SinkOutput {
             ld: self.ld_partial.take(),
             rows: self.rows,
             windows: std::mem::take(&mut self.windows),
@@ -1527,13 +1611,15 @@ impl StatsSink {
     /// position reaches `s+size−1` (§8.3). Consumed bins are freed. The
     /// contig length does not gate this loop — only the trailing windows
     /// in `close_contig` need it.
+    #[allow(clippy::unnecessary_wraps)] // callers share the Result-returning shape of the window writers
     fn emit_complete_windows(&mut self, cur: &mut CurrentContig) -> Result<(), EngineError> {
         let watermark = cur.last_pos0.saturating_add(1);
         let mut s = cur.next_start;
         while s.saturating_add(self.size) <= watermark {
             let end = s + self.size;
             let bins = (s / self.width)..end.div_ceil(self.width);
-            if !(self.skip_empty && !cur.bins.any_bin_in(bins.clone())) {
+            let skip = self.skip_empty && !cur.bins.any_bin_in(bins.clone());
+            if !skip {
                 let accs = cur.bins.finish_bins(bins);
                 self.write_row(
                     &String::from_utf8_lossy(&cur.name),
@@ -1575,7 +1661,8 @@ impl StatsSink {
         while s < len && s <= cur.last_pos0 {
             let end = s.saturating_add(self.size).min(len);
             let bins = (s / self.width)..end.div_ceil(self.width);
-            if !(self.skip_empty && !cur.bins.any_bin_in(bins.clone())) {
+            let skip = self.skip_empty && !cur.bins.any_bin_in(bins.clone());
+            if !skip {
                 let accs = cur.bins.finish_bins(bins);
                 self.write_row(&contig, s + 1, end, end - s, &accs);
                 cur.span_end = end;
@@ -1598,10 +1685,12 @@ impl StatsSink {
     /// (the AccessibleBp/per-bp denominator at that level).
     fn write_row(&mut self, contig: &str, start1: u64, end0: u64, bp: u64, accs: &[StatAcc]) {
         let variant_only = matches!(
-            self.pixy,
-            Some(PixyOptions { invariant: InvariantMode::VariantOnly })
+            self.layout,
+            Some(WindowLayoutOptions {
+                invariant: InvariantMode::VariantOnly
+            })
         );
-        if self.pixy.is_some() {
+        if self.layout.is_some() {
             self.windows.push(WindowRow {
                 contig: contig.to_string(),
                 start1,
@@ -1633,7 +1722,9 @@ impl StatsSink {
                         acc.value(kind, bp)
                     };
                     match value {
-                        Some(value) => self.rows.push_str(&format!("{value}")),
+                        Some(value) => {
+                            write!(self.rows, "{value}").expect("invariant: writing to String");
+                        }
                         None => self.rows.push('.'),
                     }
                 }
@@ -1670,7 +1761,10 @@ pub fn run_stats_opened(
     request: StatsRequest,
     budget: &ThreadBudget,
 ) -> Result<StatsReport, EngineError> {
-    let grid = WindowGrid::Bp { size: request.window_size, step: request.step };
+    let grid = WindowGrid::Bp {
+        size: request.window_size,
+        step: request.step,
+    };
     grid.validate().map_err(EngineError::from)?;
     let binning = BpBinning::from_grid(&grid)
         .ok_or_else(|| EngineError::job("stats driver requires a Bp grid"))?;
@@ -1727,7 +1821,10 @@ pub fn run_stats_opened(
                     )));
                 }
             }
-            Some(SfsPlan { projections: sfs.projections.clone().into(), folded: sfs.folded })
+            Some(SfsPlan {
+                projections: sfs.projections.clone().into(),
+                folded: sfs.folded,
+            })
         }
     };
     // `-s/-S/--keep/--remove`: excluded samples lose their group before the
@@ -1822,7 +1919,7 @@ pub fn run_stats_opened(
         seed: accs.clone(),
         levels: request.levels,
         skip_empty: request.skip_empty,
-        pixy: request.pixy,
+        layout: request.layout,
         windows: Vec::new(),
         n_invariant_sites: 0,
         n_no_alt_records: 0,
@@ -1908,16 +2005,21 @@ pub fn run_stats_opened(
                 pairs: partial
                     .pairs
                     .iter()
-                    .map(|(c, a, b, r2)| {
-                        (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2)
-                    })
+                    .map(|(c, a, b, r2)| (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2))
                     .collect(),
             }
         }),
         sfs: output.sfs.as_ref().map(|partial| SfsReport {
-            spectra: partial.per_group.iter().map(ProjectedSfsAcc::spectrum).collect(),
+            spectra: partial
+                .per_group
+                .iter()
+                .map(ProjectedSfsAcc::spectrum)
+                .collect(),
             projections: partial.per_group.iter().map(ProjectedSfsAcc::n).collect(),
-            folded: partial.per_group.first().is_some_and(ProjectedSfsAcc::folded),
+            folded: partial
+                .per_group
+                .first()
+                .is_some_and(ProjectedSfsAcc::folded),
             n_sites: partial.per_group.iter().map(|a| a.site_tally().0).collect(),
             n_skipped_m_lt_n: partial.per_group.iter().map(|a| a.site_tally().1).collect(),
         }),

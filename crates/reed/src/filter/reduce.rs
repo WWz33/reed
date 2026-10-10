@@ -12,15 +12,15 @@ use std::sync::{Arc, Mutex};
 
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
+use reed_filter::FilterError;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
-use reed_filter::FilterError;
 
 use reed_core::ChunkId;
 
 use super::record_pipeline::{NativeScan, NativeScratch, PipelineOptions, RecordPipeline};
-use super::{ferr, FilterOptions};
+use super::{FilterOptions, ferr};
 
 /// Pass0 partial: per-sample called-allele counts after masking, over
 /// head-surviving records.
@@ -163,7 +163,12 @@ impl MissingJob {
             self.n_samples,
         )?;
         let plan = &self.plan;
-        let MissingScratch { pipeline, called, funnel, .. } = scratch;
+        let MissingScratch {
+            pipeline,
+            called,
+            funnel,
+            ..
+        } = scratch;
         let called = &mut *called;
         let processed = pipeline.process_scanned(
             &native.site_line,
@@ -192,13 +197,14 @@ impl MissingJob {
 
     /// Runs one record and returns whether it survived the head rules; the
     /// body adds the post-mask called alleles of such records.
-    fn scan_line(
-        &self,
-        line: &[u8],
-        scratch: &mut MissingScratch,
-    ) -> Result<bool, EngineError> {
+    fn scan_line(&self, line: &[u8], scratch: &mut MissingScratch) -> Result<bool, EngineError> {
         let plan = &self.plan;
-        let MissingScratch { pipeline, called, funnel, .. } = scratch;
+        let MissingScratch {
+            pipeline,
+            called,
+            funnel,
+            ..
+        } = scratch;
         let called = &mut *called;
         let processed = pipeline.process(line, plan, &[], OPTS, funnel, |view| {
             for (i, &code) in view.scan.codes.iter().enumerate() {
@@ -288,15 +294,23 @@ pub(super) fn run_missing_pass(
         float_keys: Arc::from(plan.float_fields.clone().into_boxed_slice()),
     };
     let job = if native_bcf {
-        crate::bcf_input::InputJob::with_bcf_records(inner, &opened, &abort, MissingJob::run_bcf_records)
+        crate::bcf_input::InputJob::with_bcf_records(
+            inner,
+            &opened,
+            &abort,
+            MissingJob::run_bcf_records,
+        )
     } else {
         crate::bcf_input::InputJob::new(inner, &opened, &abort)
     };
     let crate::input::OpenedInput { mut source, .. } = opened;
     let total: Arc<Mutex<Option<MissingPartial>>> = Arc::new(Mutex::new(None));
-    let sink = SumSink { total: Arc::clone(&total) };
+    let sink = SumSink {
+        total: Arc::clone(&total),
+    };
     let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
-    job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
+    job.finish(report.n_chunks, opts.regions.is_empty())
+        .map_err(ferr)?;
     let mut partial = total
         .lock()
         .expect("invariant: missing slot not poisoned")
@@ -339,7 +353,10 @@ impl OrderedSink<MissingPartial> for SumSink {
     }
 
     fn finish(self) -> Result<u64, EngineError> {
-        let total = self.total.lock().expect("invariant: missing slot not poisoned");
+        let total = self
+            .total
+            .lock()
+            .expect("invariant: missing slot not poisoned");
         Ok(total.as_ref().map_or(0, |t| t.n_records))
     }
 }

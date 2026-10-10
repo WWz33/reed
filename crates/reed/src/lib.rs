@@ -59,18 +59,18 @@ mod input;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).
-pub use crate::filter::{run_filter, FilterOptions, WriteIndex};
+pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
 pub use crate::index::run_index;
 pub use crate::stats::{
-    assign_groups, default_kinds, pixy_kinds, run_stats, run_stats_opened, FStatTest, FStatsReport,
-    FStatsRequest, FstKind, InvariantMode, LdReport, LdRequest, Levels, PbsKind,
-    PixyOptions, SfsReport, SfsRequest, StatKind, StatsReport, StatsRequest,
+    FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode, LdReport, LdRequest, Levels,
+    PbsKind, SfsReport, SfsRequest, StatKind, StatsReport, StatsRequest, WindowLayoutOptions,
+    assign_groups, default_kinds, run_stats, run_stats_opened, window_kinds,
 };
 pub use reed_stats::ld::LdWindow;
 
-// The output writers (08 §6.2 `reed::writers`): pixy layout, per-site reports
+// The output writers (08 §6.2 `reed::writers`): window layout, per-site reports
 // and the bcftools-stats summary renderer.
-pub use crate::stats::writers::{fstats, ld, pixy, reports, sfs, summary};
+pub use crate::stats::writers::{fstats, ld, reports, sfs, summary, windows};
 
 // The request sub-modules the CLI builds against (08 §6.2): `spec`, `expr`,
 // `plan`, `funnel`.

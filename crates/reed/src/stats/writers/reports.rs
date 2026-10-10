@@ -17,19 +17,21 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use reed_core::ChunkId;
 use reed_core::count::SiteGroupCounts;
-use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters};
+use reed_core::genotype::{
+    GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters,
+};
 use reed_core::math::hwe::hwe_exact_p;
 use reed_core::sample::SampleMask;
-use reed_core::ChunkId;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
-use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
+use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING};
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
-use reed_stats::summary::report::QcReportAcc;
 use reed_stats::IndividualFAcc;
+use reed_stats::summary::report::QcReportAcc;
 
 /// Which reports to write.
 #[derive(Clone, Debug, Default)]
@@ -179,9 +181,7 @@ impl ReportScratch {
             planes: het.then(|| PlaneBlock::new(1, n_samples, false)),
             counters: PolicyCounters::default(),
             mask: SampleMask::all(n_samples),
-            qc: summary.then(|| {
-                crate::stats::writers::summary::QcAccumulator::new(n_samples)
-            }),
+            qc: summary.then(|| crate::stats::writers::summary::QcAccumulator::new(n_samples)),
         }
     }
 }
@@ -250,7 +250,11 @@ impl ReportJob {
     /// Allocates the partial's per-sample accumulators for this request.
     fn new_partial(&self) -> ReportPartial {
         ReportPartial {
-            missing: if self.plan.smiss { vec![0; self.n_samples] } else { Vec::new() },
+            missing: if self.plan.smiss {
+                vec![0; self.n_samples]
+            } else {
+                Vec::new()
+            },
             individual: self.plan.het.then(|| IndividualFAcc::new(self.n_samples)),
             depth_sums: if self.plan.depth {
                 vec![(0.0, 0); self.n_samples]
@@ -313,11 +317,7 @@ impl ReportJob {
         // and the DP value is present.
         let mut site_depth = (0.0_f64, 0.0_f64, 0_u64);
         if self.plan.depth {
-            let dp_column = out
-                .int_columns
-                .first()
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
+            let dp_column = out.int_columns.first().map_or(&[][..], Vec::as_slice);
             let mut sum = 0.0_f64;
             let mut sq = 0.0_f64;
             let mut n = 0_u64;
@@ -415,7 +415,8 @@ impl ReportJob {
             } else {
                 out.extend_from_slice(b"NA");
             }
-            let _ = write!(out, "\t{}", an); out.push(b'\n');
+            let _ = write!(out, "\t{an}");
+            out.push(b'\n');
         }
         if self.plan.hardy {
             let out = &mut partial.hardy;
@@ -516,8 +517,7 @@ impl ReportSink {
     fn open(prefix: &Path, suffix: &str) -> Result<BufWriter<std::fs::File>, EngineError> {
         let mut path = prefix.as_os_str().to_os_string();
         path.push(suffix);
-        let file = std::fs::File::create(PathBuf::from(&path))
-            .map_err(EngineError::Io)?;
+        let file = std::fs::File::create(PathBuf::from(&path)).map_err(EngineError::Io)?;
         Ok(BufWriter::new(file))
     }
 }
@@ -583,7 +583,11 @@ impl OrderedSink<ReportPartial> for ReportSink {
             writeln!(w, "INDV\tN_SITES\tMEAN_DEPTH").map_err(EngineError::Io)?;
             for (i, &(sum, n)) in self.depth_sums.iter().enumerate() {
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
-                let mean = if n > 0 { g6(sum / n as f64) } else { "NA".to_string() };
+                let mean = if n > 0 {
+                    g6(sum / n as f64)
+                } else {
+                    "NA".to_string()
+                };
                 writeln!(w, "{name}\t{n}\t{mean}").map_err(EngineError::Io)?;
             }
             w.flush().map_err(EngineError::Io)?;
@@ -615,16 +619,22 @@ impl OrderedSink<ReportPartial> for ReportSink {
             let mut w = ReportSink::open(&self.request.prefix, ".smiss")?;
             writeln!(w, "#IID\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
             for (i, &missing) in self.missing.iter().enumerate() {
-                let f_miss = if obs > 0 { g6(missing as f64 / obs as f64) } else { "NA".into() };
+                let f_miss = if obs > 0 {
+                    g6(missing as f64 / obs as f64)
+                } else {
+                    "NA".into()
+                };
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
-                writeln!(w, "{name}\t{missing}\t{obs}\t{f_miss}")
-                    .map_err(EngineError::Io)?;
+                writeln!(w, "{name}\t{missing}\t{obs}\t{f_miss}").map_err(EngineError::Io)?;
             }
             w.flush().map_err(EngineError::Io)?;
             files.push(path(".smiss"));
         }
         let n_records = self.n_records;
-        *self.out.lock().expect("invariant: reports slot not poisoned") = Some(ReportsOutcome {
+        *self
+            .out
+            .lock()
+            .expect("invariant: reports slot not poisoned") = Some(ReportsOutcome {
             files,
             n_records,
             qc: self.qc.take(),
@@ -647,24 +657,19 @@ fn g6_into(out: &mut Vec<u8>, x: f64) {
         return;
     }
     let exponent = x.abs().log10().floor() as i32;
-    if !(-4..6).contains(&exponent) {
+    let exponential = !(-4..=5).contains(&exponent);
+    if exponential {
         // Rust prints `2.18867e6` / `1.23456e-3`; printf %g prints
         // `2.18867e+06` / `1.23456e-03`. The exponential form is rare, so a
         // small temporary is fine here.
         let raw = format!("{x:.5e}");
-        match raw.split_once('e') {
-            Some((mantissa, exp)) => {
-                let exp: i32 = exp.parse().unwrap_or(0);
-                let mantissa = trim_trailing_zeros(mantissa);
-                let _ = write!(
-                    out,
-                    "{}e{}{:02}",
-                    mantissa,
-                    if exp < 0 { '-' } else { '+' },
-                    exp.abs()
-                );
-            }
-            None => out.extend_from_slice(raw.as_bytes()),
+        if let Some((mantissa, exp)) = raw.split_once('e') {
+            let exp: i32 = exp.parse().unwrap_or(0);
+            let mantissa = trim_trailing_zeros(mantissa);
+            let sign = if exp < 0 { '-' } else { '+' };
+            let _ = write!(out, "{}e{sign}{:02}", mantissa, exp.abs());
+        } else {
+            out.extend_from_slice(raw.as_bytes());
         }
     } else {
         let decimals = (5 - exponent).max(0) as usize;
@@ -745,29 +750,43 @@ pub fn run_reports_opened(
         targets: request.targets.clone(),
         targets_exclude: request.targets_exclude.clone(),
     };
-    let mut afreq = request.freq.then(|| ReportSink::open(&request.prefix, ".afreq")).transpose()?;
+    let mut afreq = request
+        .freq
+        .then(|| ReportSink::open(&request.prefix, ".afreq"))
+        .transpose()?;
     if let Some(w) = &mut afreq {
-        writeln!(w, "#CHROM\tID\tREF\tALT\tALT_FREQS\tOBS_CT")
-            .map_err(EngineError::Io)?;
+        writeln!(w, "#CHROM\tID\tREF\tALT\tALT_FREQS\tOBS_CT").map_err(EngineError::Io)?;
     }
-    let mut hardy = request.hardy.then(|| ReportSink::open(&request.prefix, ".hardy")).transpose()?;
+    let mut hardy = request
+        .hardy
+        .then(|| ReportSink::open(&request.prefix, ".hardy"))
+        .transpose()?;
     if let Some(w) = &mut hardy {
-        writeln!(w, "#CHROM\tID\tA1\tAX\tHOM_A1_CT\tHET_A1_CT\tTWO_AX_CT\tO(HET_A1)\tE(HET_A1)\tP")
-            .map_err(EngineError::Io)?;
+        writeln!(
+            w,
+            "#CHROM\tID\tA1\tAX\tHOM_A1_CT\tHET_A1_CT\tTWO_AX_CT\tO(HET_A1)\tE(HET_A1)\tP"
+        )
+        .map_err(EngineError::Io)?;
     }
-    let mut vmiss = request.missing.then(|| ReportSink::open(&request.prefix, ".vmiss")).transpose()?;
+    let mut vmiss = request
+        .missing
+        .then(|| ReportSink::open(&request.prefix, ".vmiss"))
+        .transpose()?;
     if let Some(w) = &mut vmiss {
-        writeln!(w, "#CHROM\tID\tMISSING_CT\tOBS_CT\tF_MISS")
-            .map_err(EngineError::Io)?;
+        writeln!(w, "#CHROM\tID\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
     }
-    let mut ldepth = request.depth.then(|| ReportSink::open(&request.prefix, ".ldepth.mean")).transpose()?;
+    let mut ldepth = request
+        .depth
+        .then(|| ReportSink::open(&request.prefix, ".ldepth.mean"))
+        .transpose()?;
     if let Some(w) = &mut ldepth {
-        writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH")
-            .map_err(EngineError::Io)?;
+        writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH").map_err(EngineError::Io)?;
     }
     let abort = reed_engine::abort::abort();
     let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
-    let crate::input::OpenedInput { mut source, facts, .. } = opened;
+    let crate::input::OpenedInput {
+        mut source, facts, ..
+    } = opened;
     let sink = ReportSink {
         request: request.clone(),
         plan,
@@ -809,14 +828,25 @@ mod tests {
     #[test]
     fn g6_into_matches_the_string_form() {
         for x in [
-            0.0, 1.0, 0.5, 0.3333333333, 1e-5, 1.23456789, 123456.0, 1234567.0, 0.000123456,
-            2.18867e6, 1.23456e-3, f64::NAN, 1.0 / 3.0,
+            0.0,
+            1.0,
+            0.5,
+            0.333_333_333_3,
+            1e-5,
+            1.234_567_89,
+            123_456.0,
+            1_234_567.0,
+            0.000_123_456,
+            2.18867e6,
+            1.23456e-3,
+            f64::NAN,
+            1.0 / 3.0,
         ] {
             let mut buf = Vec::new();
             g6_into(&mut buf, x);
             assert_eq!(String::from_utf8(buf).expect("ascii"), g6(x), "x={x}");
         }
-        assert_eq!(g6(123456.0), "123456");
+        assert_eq!(g6(123_456.0), "123456");
         assert_eq!(g6(0.1), "0.1");
         assert_eq!(g6(2.18867e6), "2.18867e+06");
     }

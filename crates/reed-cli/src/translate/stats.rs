@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use reed::{assign_groups, default_kinds, run_stats_opened, Levels, StatsRequest};
 use reed::budget::{MemBudget, ThreadBudget};
+use reed::{Levels, StatsRequest, assign_groups, default_kinds, run_stats_opened};
 
 use crate::cli::StatsCli;
 use crate::units::input_path;
@@ -17,14 +17,16 @@ fn print_engine_metrics(m: &reed::metrics::StageMetrics) {
     eprintln!("chunks_read\t{}", m.n_chunks_read);
     eprintln!("engine.reader_ms\t{:.3}", m.reader_time.as_secs_f64() * 1e3);
     eprintln!("engine.reduce_ms\t{:.3}", m.reduce_time.as_secs_f64() * 1e3);
-    eprintln!("engine.chain_wait_ms\t{:.3}", m.chain_wait.as_secs_f64() * 1e3);
+    eprintln!(
+        "engine.chain_wait_ms\t{:.3}",
+        m.chain_wait.as_secs_f64() * 1e3
+    );
     eprintln!("worker_busy_ms\t{:.3}", m.worker_busy.as_secs_f64() * 1e3);
 }
 
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
 fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
-    
     spec.site == reed::spec::SiteRules::default()
         && spec.genotype == reed::spec::GenotypeRules::default()
         && spec.site_after_mask == reed::spec::TailRules::default()
@@ -44,14 +46,9 @@ type ParsedRegions = (
 /// # Errors
 ///
 /// Malformed region spellings and unreadable region files.
-fn parse_regions(
-    args: &crate::cli::filter_flags::RegionArgs,
-) -> Result<ParsedRegions, String> {
+fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRegions, String> {
     let mut regions = Vec::new();
-    for (list, from_file) in [
-        (&args.regions, false),
-        (&args.regions_file, true),
-    ] {
+    for (list, from_file) in [(&args.regions, false), (&args.regions_file, true)] {
         if let Some(value) = list {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
@@ -71,10 +68,7 @@ fn parse_regions(
     }
     let mut include = Vec::new();
     let mut exclude = Vec::new();
-    for (list, from_file) in [
-        (&args.targets, false),
-        (&args.targets_file, true),
-    ] {
+    for (list, from_file) in [(&args.targets, false), (&args.targets_file, true)] {
         if let Some(value) = list {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
@@ -137,7 +131,11 @@ fn parse_sample_keep(
         if names.is_empty() {
             return Err(format!("empty sample list {list:?}"));
         }
-        let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
+        let slot = if exclude {
+            &mut inline_remove
+        } else {
+            &mut inline_keep
+        };
         if slot.is_some() {
             return Err(format!("repeated -s list of the same polarity ({list:?})"));
         }
@@ -153,7 +151,9 @@ fn parse_sample_keep(
     let mut keep = vec![true; header_samples.len()];
     let mut touched = false;
     if let Some(names) = inline_keep.or_else(|| {
-        file_keep.and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| names_of(&t).ok())
+        file_keep
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| names_of(&t).ok())
     }) {
         keep.iter_mut().for_each(|k| *k = false);
         for name in &names {
@@ -226,9 +226,10 @@ fn parse_pbs_triples(
 /// # Errors
 ///
 /// Translation (unknown levels/sizes) and driver failures.
-pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_stats_cli(
+    args: StatsCli,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let StatsCli {
-
         input,
         pop,
         pi,
@@ -364,11 +365,15 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
     }
 
     let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism().expect("invariant: parallelism").get()
+        std::thread::available_parallelism()
+            .expect("invariant: parallelism")
+            .get()
     });
     let budget = ThreadBudget {
         threads,
-        mem: memory.map_or_else(MemBudget::default_half_memory, |m| MemBudget::from_bytes(m.saturating_mul(1 << 20))),
+        mem: memory.map_or_else(MemBudget::default_half_memory, |m| {
+            MemBudget::from_bytes(m.saturating_mul(1 << 20))
+        }),
     };
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
@@ -409,7 +414,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
                 "{} records in {:.1}s -> {}",
                 outcome.n_records,
                 reports_secs,
-                files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+                files
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
         if verbosity.shows_timing() {
@@ -424,8 +433,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
 
     // Windowed statistics need the populations file; a bare `--sfs` (no
     // windowed statistic) treats every sample as one population.
-    let fstats_requested =
-        !f2.is_empty() || !f3.is_empty() || !f4.is_empty() || !dstat.is_empty() || !f4_ratio.is_empty();
+    let fstats_requested = !f2.is_empty()
+        || !f3.is_empty()
+        || !f4.is_empty()
+        || !dstat.is_empty()
+        || !f4_ratio.is_empty();
     let windowed = pi
         || dxy
         || theta
@@ -441,7 +453,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         }
         None => {
             return Err(
-                "a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into()
+                "a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into(),
             );
         }
     };
@@ -456,35 +468,34 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
 
     let pbs_triples = parse_pbs_triples(&pbs, &group_names)?;
 
-    // pixy-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
-    // with pixy's columns (02-cli.md §5).
+    // Window-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
+    // with the reference column layout (02-cli.md §5).
     if windowed || sfs.is_some() {
         let step = if step == 0 { size } else { step };
         // A bare `--sfs` has no window denominators, so the all-sites check
         // does not apply (05 §3.1 accepts variant-only input).
         let ld_requested = ld_decay.is_some();
-        let invariant = if variant_only
-            || (sfs.is_some() && !windowed)
-            || fstats_requested
-            || ld_requested
-        {
-            reed::InvariantMode::VariantOnly
-        } else if bypass_invariant_check {
-            eprintln!(
-                "reed stats: warning: --bypass-invariant-check computes over present sites \
+        let invariant =
+            if variant_only || (sfs.is_some() && !windowed) || fstats_requested || ld_requested {
+                reed::InvariantMode::VariantOnly
+            } else if bypass_invariant_check {
+                eprintln!(
+                    "reed stats: warning: --bypass-invariant-check computes over present sites \
                  only; π and dxy are overestimated"
-            );
-            reed::InvariantMode::Bypass
-        } else {
-            reed::InvariantMode::Require
-        };
-        let pixy = reed::PixyOptions { invariant };
+                );
+                reed::InvariantMode::Bypass
+            } else {
+                reed::InvariantMode::Require
+            };
+        let layout = reed::WindowLayoutOptions { invariant };
         let fst_kind = match fst.as_deref() {
             None => None,
             Some("wc84") => Some(reed::FstKind::WeirCockerham84),
             Some("hudson") => Some(reed::FstKind::Hudson),
             Some(other) => {
-                return Err(format!("unknown --fst method {other:?} (expected wc84 or hudson)").into());
+                return Err(
+                    format!("unknown --fst method {other:?} (expected wc84 or hudson)").into(),
+                );
             }
         };
         let pbs_kind = if pbs_normed {
@@ -504,7 +515,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
                 );
             }
         }
-        let mut kinds = reed::pixy_kinds(
+        let mut kinds = reed::window_kinds(
             group_names.len(),
             pi,
             dxy,
@@ -517,7 +528,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             kinds.push(reed::StatKind::FstGlobal);
         }
         for &(a, b, c) in &pbs_triples {
-            kinds.push(reed::StatKind::Pbs { a, b, c, kind: pbs_kind });
+            kinds.push(reed::StatKind::Pbs {
+                a,
+                b,
+                c,
+                kind: pbs_kind,
+            });
         }
         // `--sfs [folded] --proj N[,N…]`: a genome-wide spectrum per
         // population (docs/rounds/v5/05-algorithms.md §3.1).
@@ -545,20 +561,16 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
                     )
                     .into());
                 }
-                Some(reed::SfsRequest { projections: values, folded: mode == "folded" })
+                Some(reed::SfsRequest {
+                    projections: values,
+                    folded: mode == "folded",
+                })
             }
         };
         // Patterson f-statistics (docs/rounds/v5/05-algorithms.md §3.3):
         // genome-wide, one row per test, block-jackknife SE.
-        let fstats_request = build_fstats_request(
-            &f2,
-            &f3,
-            &f4,
-            &dstat,
-            &f4_ratio,
-            block_size,
-            &group_names,
-        )?;
+        let fstats_request =
+            build_fstats_request(&f2, &f3, &f4, &dstat, &f4_ratio, block_size, &group_names)?;
         // LD: `--ld-decay` / `--indep-pairwise` (docs/rounds/v5/05 §3.4).
         let ld_request = build_ld_request(ld_decay.as_deref(), ld_pairs)?;
         // The SFS is genome-wide: with no windowed kind, skip the window
@@ -568,10 +580,14 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         let size = if size == 0 && sfs_only { 1000 } else { size };
         let step = if step == 0 { size } else { step };
         let levels = if sfs_only {
-            Levels { window: false, contig: false, genome: true }
+            Levels {
+                window: false,
+                contig: false,
+                genome: true,
+            }
         } else {
             // Honor the user's --levels (the default stays window-only, so
-            // the pixy-layout files keep their historical shape).
+            // the window-layout files keep their historical shape).
             Levels::parse(&levels)?
         };
         let request = StatsRequest {
@@ -590,14 +606,16 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
             levels,
             skip_empty: false,
             contig_lengths,
-            pixy: Some(pixy),
+            layout: Some(layout),
         };
-        let source = opened.take().expect("invariant: the windowed mode reads once");
+        let source = opened
+            .take()
+            .expect("invariant: the windowed mode reads once");
         let run_start = std::time::Instant::now();
         let report = run_stats_opened(source, request, &budget)?;
         let run_secs = run_start.elapsed().as_secs_f64();
         let Some(prefix) = out else {
-            return Err("pixy mode writes files: pass -o PREFIX".into());
+            return Err("window-layout mode writes files: pass -o PREFIX".into());
         };
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
@@ -621,12 +639,12 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         }
         // A bare `--sfs` has no window rows to write.
         if !kinds.is_empty() {
-            files.extend(reed::pixy::write(
+            files.extend(reed::windows::write(
                 Path::new(&prefix),
                 &report,
                 &group_names,
                 &kinds,
-                pixy,
+                layout,
                 &command_line,
                 env!("CARGO_PKG_VERSION"),
             )?);
@@ -672,9 +690,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), Box<dyn std::error::Er
         levels: Levels::parse(&levels)?,
         skip_empty,
         contig_lengths,
-        pixy: None,
+        layout: None,
     };
-    let source = opened.take().expect("invariant: the windowed mode reads once");
+    let source = opened
+        .take()
+        .expect("invariant: the windowed mode reads once");
     let run_start = std::time::Instant::now();
     let report = run_stats_opened(source, request, &budget)?;
     let run_secs = run_start.elapsed().as_secs_f64();
@@ -726,7 +746,10 @@ fn build_fstats_request(
     };
     for spec in f2 {
         let parts = split_roles(spec, 2, "--f2")?;
-        tests.push(reed::FStatTest::F2 { a: index(&parts[0])?, b: index(&parts[1])? });
+        tests.push(reed::FStatTest::F2 {
+            a: index(&parts[0])?,
+            b: index(&parts[1])?,
+        });
     }
     for spec in f3 {
         let parts = split_roles(spec, 3, "--f3")?;
@@ -808,7 +831,12 @@ fn split_roles(
         .collect();
     // Each role group is one population for f2/f3/f4/dstat (the comma form
     // names the populations in order), so flatten and count.
-    let names: Vec<String> = groups.iter().flat_map(|g| g.split(',')).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let names: Vec<String> = groups
+        .iter()
+        .flat_map(|g| g.split(','))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     if names.len() != roles {
         return Err(format!(
             "{flag} expects {roles} population(s) (e.g. `{}`), got {} in {spec:?}",

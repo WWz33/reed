@@ -4,9 +4,8 @@
 //! 2 per population), which the parity script cross-checks on real data;
 //! here they are pinned as literals.
 
-
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{run_stats, InvariantMode, Levels, PixyOptions, StatKind, StatsRequest};
+use reed::{InvariantMode, Levels, StatKind, StatsRequest, WindowLayoutOptions, run_stats};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -39,7 +38,9 @@ fn request(window: u64, levels: Levels) -> StatsRequest {
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         // Structured window rows are filled in pixy-layout mode.
-        pixy: Some(PixyOptions { invariant: InvariantMode::VariantOnly }),
+        layout: Some(WindowLayoutOptions {
+            invariant: InvariantMode::VariantOnly,
+        }),
         regions: Vec::new(),
         targets: Vec::new(),
         targets_exclude: Vec::new(),
@@ -57,12 +58,22 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("fstats.vcf");
     std::fs::write(&vcf, VCF).expect("invariant: fixture write");
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
     // Per-site windows (size 1): one value per site.
     let report = run_stats(
         Some(&vcf),
-        request(1, Levels { window: true, contig: false, genome: false }),
+        request(
+            1,
+            Levels {
+                window: true,
+                contig: false,
+                genome: false,
+            },
+        ),
         &budget,
     )
     .expect("invariant: run");
@@ -81,7 +92,14 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
     // Genome-wide: the Σa/Σ(a+b+c) over all sites (vcftools' weighted Fst).
     let report = run_stats(
         Some(&vcf),
-        request(100_000, Levels { window: false, contig: false, genome: true }),
+        request(
+            100_000,
+            Levels {
+                window: false,
+                contig: false,
+                genome: true,
+            },
+        ),
         &budget,
     )
     .expect("invariant: run");
@@ -90,7 +108,10 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
         .first()
         .and_then(|row| row.accs[0].value(&StatKind::FstGlobal, 100_000))
         .expect("invariant: genome row");
-    assert!((value - 0.25).abs() <= 1e-12, "genome Fst {value} vs vcftools 0.25");
+    assert!(
+        (value - 0.25).abs() <= 1e-12,
+        "genome Fst {value} vs vcftools 0.25"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -104,9 +125,19 @@ fn hudson_has_no_global_form() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("fstats.vcf");
     std::fs::write(&vcf, VCF).expect("invariant: fixture write");
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
-    let mut two = request(1, Levels { window: true, contig: false, genome: false });
+    let mut two = request(
+        1,
+        Levels {
+            window: true,
+            contig: false,
+            genome: false,
+        },
+    );
     two.gt_groups = vec![Some(0), Some(0), Some(1), Some(1), None, None];
     let report = run_stats(Some(&vcf), two, &budget).expect("invariant: run");
     // Two populations: the global value equals the pairwise WC84 value.
@@ -124,15 +155,30 @@ fn hudson_has_no_global_form() {
             gt_groups: vec![Some(0), Some(0), Some(1), Some(1), None, None],
             window_size: 1,
             step: 1,
-            levels: Levels { window: true, contig: false, genome: false },
-            ..request(1, Levels { window: true, contig: false, genome: false })
+            levels: Levels {
+                window: true,
+                contig: false,
+                genome: false,
+            },
+            ..request(
+                1,
+                Levels {
+                    window: true,
+                    contig: false,
+                    genome: false,
+                },
+            )
         },
         &budget,
     )
     .expect("invariant: run");
     let pairwise_value = pairwise.windows[0].accs[0]
         .value(
-            &StatKind::Fst { a: 0, b: 1, kind: reed::FstKind::WeirCockerham84 },
+            &StatKind::Fst {
+                a: 0,
+                b: 1,
+                kind: reed::FstKind::WeirCockerham84,
+            },
             1,
         )
         .expect("invariant: window has sites");
@@ -153,10 +199,20 @@ fn global_fst_is_identical_across_thread_counts() {
 
     let mut values = Vec::new();
     for threads in [1_usize, 3, 7] {
-        let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
+        let budget = ThreadBudget {
+            threads,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
         let report = run_stats(
             Some(&vcf),
-            request(1, Levels { window: true, contig: false, genome: false }),
+            request(
+                1,
+                Levels {
+                    window: true,
+                    contig: false,
+                    genome: false,
+                },
+            ),
             &budget,
         )
         .expect("invariant: run");

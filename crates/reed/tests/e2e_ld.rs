@@ -4,7 +4,7 @@
 //! values here are plink2's (printed at six significant digits).
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{run_stats, InvariantMode, LdRequest, Levels, PixyOptions, StatsRequest};
+use reed::{InvariantMode, LdRequest, Levels, StatsRequest, WindowLayoutOptions, run_stats};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -44,10 +44,16 @@ fn request(ld: LdRequest) -> StatsRequest {
         gt_groups: vec![Some(0); 6],
         window_size: 1000,
         step: 1000,
-        levels: Levels { window: false, contig: false, genome: true },
+        levels: Levels {
+            window: false,
+            contig: false,
+            genome: true,
+        },
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
-        pixy: Some(PixyOptions { invariant: InvariantMode::VariantOnly }),
+        layout: Some(WindowLayoutOptions {
+            invariant: InvariantMode::VariantOnly,
+        }),
         regions: Vec::new(),
         targets: Vec::new(),
         targets_exclude: Vec::new(),
@@ -65,7 +71,10 @@ fn pairwise_r2_matches_plink2() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("ld.vcf");
     std::fs::write(&vcf, VCF).expect("invariant: fixture write");
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
     let report = run_stats(
         Some(&vcf),
@@ -115,7 +124,12 @@ fn filter_indep_pairwise_keeps_the_plink2_set() {
     std::fs::write(&vcf, VCF).expect("invariant: fixture write");
     let out = dir.join("pruned.vcf");
     let mut spec = reed::spec::FilterSpec::default();
-    spec.ld_prune = Some(reed::spec::LdPruneSpec { window: 10, kb: false, step: 1, r2: 0.5 });
+    spec.ld_prune = Some(reed::spec::LdPruneSpec {
+        window: 10,
+        kb: false,
+        step: 1,
+        r2: 0.5,
+    });
     let opts = reed::FilterOptions {
         threads: 2,
         output: Some(out.clone()),
@@ -142,7 +156,10 @@ fn ld_is_identical_across_thread_counts() {
 
     let mut values = Vec::new();
     for threads in [1_usize, 3, 7] {
-        let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
+        let budget = ThreadBudget {
+            threads,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
         let report = run_stats(
             Some(&vcf),
             request(LdRequest {

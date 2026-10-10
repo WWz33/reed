@@ -4,23 +4,23 @@
 
 use std::sync::Arc;
 
-use reed_core::sample::SampleMask;
 use reed_core::ChunkId;
+use reed_core::sample::SampleMask;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::ChunkJob;
 use reed_filter::eval::edit_plan::fill_info_set;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
-use reed_io::vcf::line::LineRef;
-use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan, InfoValueOut};
-use reed_io::bcf::{record_ref, render_record, BcfDict};
+use reed_io::bcf::{BcfDict, record_ref, render_record};
 use reed_io::bcf::{BcfEncoder, NativeEncoder};
+use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line_edit::{EditPlan, InfoValueOut, edit_vcf_line};
 use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
-use super::record_pipeline::{
-    gt_subfield_index, NativeScan, NativeScratch, PipelineOptions, RecordPipeline,
-};
 use super::job_err;
+use super::record_pipeline::{
+    NativeScan, NativeScratch, PipelineOptions, RecordPipeline, gt_subfield_index,
+};
 
 /// The BCF encoders a worker may use: the native B4 encoder by default,
 /// noodles' B2 encoder behind `REED_BCF_ENCODER=noodles` (the two must
@@ -41,7 +41,11 @@ impl BcfEncoders {
         } else {
             None
         };
-        Ok(Self { header, native, noodles })
+        Ok(Self {
+            header,
+            native,
+            noodles,
+        })
     }
 
     fn encode(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<(), reed_io::IoError> {
@@ -136,7 +140,12 @@ impl ChunkJob for FilterJob {
         Ok(partial)
     }
 
-    fn run_seam(&self, _id: ChunkId, line: &[u8], scratch: &mut Self::Scratch) -> Result<Self::Partial, EngineError> {
+    fn run_seam(
+        &self,
+        _id: ChunkId,
+        line: &[u8],
+        scratch: &mut Self::Scratch,
+    ) -> Result<Self::Partial, EngineError> {
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         scratch.funnel.reset(
             self.plan.head.len(),
@@ -170,8 +179,7 @@ impl FilterJob {
             edit_buf: Vec::new(),
             bcf_buf: Vec::new(),
             bcf: self.bcf.as_ref().map(|header| {
-                BcfEncoders::new(Arc::clone(header))
-                    .expect("invariant: the output header encodes")
+                BcfEncoders::new(Arc::clone(header)).expect("invariant: the output header encodes")
             }),
             writer: if self.compressed {
                 BlockWriter::new(self.level, true)
@@ -276,14 +284,29 @@ impl FilterJob {
             tail_n_samples: Some(self.n_samples_out as u64),
             counts: true,
         };
-        let NativeScratch { site_line, full, codes, int_columns, float_columns, counters, .. } =
-            native;
+        let NativeScratch {
+            site_line,
+            full,
+            codes,
+            int_columns,
+            float_columns,
+            counters,
+            ..
+        } = native;
         // The survivor render buffer is moved out for the closure and put
         // back afterwards so its capacity survives across records.
         let full_slot: &mut Vec<u8> = full;
         let mut full = std::mem::take(full_slot);
-        let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel, .. } =
-            scratch;
+        let WorkerScratch {
+            pipeline,
+            info_set,
+            edit_buf,
+            bcf_buf,
+            bcf,
+            writer,
+            funnel,
+            ..
+        } = scratch;
         let site_keep = self.site_keep.as_deref();
         pipeline.process_scanned(
             site_line,
@@ -360,8 +383,16 @@ impl FilterJob {
             tail_n_samples: Some(self.n_samples_out as u64),
             counts: true,
         };
-        let WorkerScratch { pipeline, info_set, edit_buf, bcf_buf, bcf, writer, funnel, .. } =
-            scratch;
+        let WorkerScratch {
+            pipeline,
+            info_set,
+            edit_buf,
+            bcf_buf,
+            bcf,
+            writer,
+            funnel,
+            ..
+        } = scratch;
         let site_keep = self.site_keep.as_deref();
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let site = view.site;

@@ -3,6 +3,7 @@
 //! they are locked here instead of drifting silently (01 F4-3, F4-4, F4-9,
 //! F4-13).
 
+use std::fmt::Write as _;
 use std::process::{Command, Stdio};
 
 const HEADER: &str = "\
@@ -16,15 +17,14 @@ const HEADER: &str = "\
 fn fixture() -> Vec<u8> {
     let mut text = String::from(HEADER);
     for i in 0..10_u32 {
-        text.push_str(&format!(
-            "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n",
-            i + 1
-        ));
+        let _ = writeln!(text, "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0", i + 1);
     }
     let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(4096) {
-        deflater.deflate_block(block, &mut out).expect("invariant: block");
+        deflater
+            .deflate_block(block, &mut out)
+            .expect("invariant: block");
     }
     out.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
     out
@@ -32,7 +32,10 @@ fn fixture() -> Vec<u8> {
 
 fn run(args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_reed"));
-    command.args(args).stdin(Stdio::null()).stderr(Stdio::piped());
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped());
     command.output().expect("invariant: spawn reed")
 }
 
@@ -67,11 +70,17 @@ fn help_lists_the_renamed_flags_only() {
     for flag in ["--geno", "--mind"] {
         assert!(filter.contains(flag), "filter help lacks {flag}");
     }
-    assert!(!filter.contains("--max-missing"), "the withdrawn --max-missing is still listed");
+    assert!(
+        !filter.contains("--max-missing"),
+        "the withdrawn --max-missing is still listed"
+    );
 
     let stats = help(&["stats", "--help"]);
     assert!(stats.contains("--geno"), "stats shares the site flags");
-    assert!(!stats.contains("--max-missing"), "stats must not list --max-missing");
+    assert!(
+        !stats.contains("--max-missing"),
+        "stats must not list --max-missing"
+    );
     assert!(!stats.contains("-g, --pop"), "-g must not abbreviate --pop");
     assert!(stats.contains("--pop"), "the long spelling stays");
     assert!(stats.contains("--populations"), "the visible alias stays");
@@ -94,7 +103,13 @@ fn help_lists_the_new_statistics_flags() {
     let dir = temp_dir("sfs-proj");
     let input = dir.join("in.vcf");
     std::fs::write(&input, fixture()).expect("invariant: fixture");
-    let out = run(&["stats", input.to_str().unwrap(), "--sfs", "-o", dir.join("p").to_str().unwrap()]);
+    let out = run(&[
+        "stats",
+        input.to_str().unwrap(),
+        "--sfs",
+        "-o",
+        dir.join("p").to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--proj"), "{stderr}");
@@ -150,12 +165,19 @@ fn verbosity_levels_are_uniform() {
 
     let timing = run_with("2");
     let text = String::from_utf8_lossy(&timing.stderr);
-    assert!(text.contains("total_ms"), "level 2 prints the timing: {text}");
+    assert!(
+        text.contains("total_ms"),
+        "level 2 prints the timing: {text}"
+    );
     assert!(text.contains("phase.open_ms"), "{text}");
 
     assert!(run_with("3").status.success(), "level 3 is accepted");
     let bad = run_with("4");
-    assert_eq!(bad.status.code(), Some(2), "unimplemented levels are rejected");
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "unimplemented levels are rejected"
+    );
     assert!(
         String::from_utf8_lossy(&bad.stderr).contains("unsupported --verbosity"),
         "{}",
@@ -183,7 +205,11 @@ fn verbosity_levels_are_uniform() {
             .stderr(Stdio::piped())
             .output()
             .expect("invariant: spawn reed");
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stderr).into_owned()
     };
     let quiet = stats("0", &dir.join("s0").display().to_string());
@@ -217,11 +243,23 @@ fn no_command_drops_only_the_argv_line() {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         std::fs::read_to_string(&out).expect("invariant: read")
     };
-    assert!(run_with(&[]).contains("##reed_command="), "argv is recorded by default");
+    assert!(
+        run_with(&[]).contains("##reed_command="),
+        "argv is recorded by default"
+    );
     let text = run_with(&["--no-command"]);
-    assert!(!text.contains("##reed_command="), "--no-command drops the argv line");
-    assert!(text.contains("##reed_version="), "the other provenance lines stay");
-    assert!(!run_with(&["--no-version"]).contains("##reed_"), "--no-version drops all");
+    assert!(
+        !text.contains("##reed_command="),
+        "--no-command drops the argv line"
+    );
+    assert!(
+        text.contains("##reed_version="),
+        "the other provenance lines stay"
+    );
+    assert!(
+        !run_with(&["--no-version"]).contains("##reed_"),
+        "--no-version drops all"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

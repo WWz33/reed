@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use reed::{run_filter, FilterOptions};
-use reed::{run_stats, Levels, PixyOptions, StatsRequest};
+use reed::{FilterOptions, run_filter};
+use reed::{Levels, StatsRequest, WindowLayoutOptions, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_filter::spec::FilterSpec;
 
@@ -66,19 +66,28 @@ fn inflate_bgzf(bytes: &[u8]) -> String {
 }
 
 fn budget() -> ThreadBudget {
-    ThreadBudget { threads: 4, mem: MemBudget::from_bytes(u64::MAX) }
+    ThreadBudget {
+        threads: 4,
+        mem: MemBudget::from_bytes(u64::MAX),
+    }
 }
 
 fn request() -> StatsRequest {
     StatsRequest {
-        kinds: reed::pixy_kinds(2, true, true, true, false, None, None),
+        kinds: reed::window_kinds(2, true, true, true, false, None, None),
         gt_groups: vec![Some(0), Some(0), Some(1)],
         window_size: 1000,
         step: 1000,
-        levels: Levels { window: true, contig: false, genome: false },
+        levels: Levels {
+            window: true,
+            contig: false,
+            genome: false,
+        },
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
-        pixy: Some(PixyOptions { invariant: reed::InvariantMode::VariantOnly }),
+        layout: Some(WindowLayoutOptions {
+            invariant: reed::InvariantMode::VariantOnly,
+        }),
         ..StatsRequest::default()
     }
 }
@@ -87,8 +96,8 @@ fn request() -> StatsRequest {
 #[test]
 fn stats_output_is_identical_across_formats() {
     let bcf = run_stats(Some(&fixture("fix.bcf")), request(), &budget()).expect("invariant: bcf");
-    let vcf = run_stats(Some(&fixture("fix.vcf.gz")), request(), &budget())
-        .expect("invariant: vcf.gz");
+    let vcf =
+        run_stats(Some(&fixture("fix.vcf.gz")), request(), &budget()).expect("invariant: vcf.gz");
     assert_eq!(bcf.tsv, vcf.tsv);
     assert_eq!(bcf.n_records, vcf.n_records);
 }
@@ -112,9 +121,21 @@ fn reports_are_identical_across_formats() {
     };
     reed::reports::run_reports(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
         .expect("invariant: bcf reports");
-    reed::reports::run_reports(Some(&fixture("fix.vcf.gz")), &request(&vcf_prefix), &budget())
-        .expect("invariant: vcf reports");
-    for suffix in [".afreq", ".hardy", ".het", ".smiss", ".vmiss", ".idepth", ".ldepth.mean"] {
+    reed::reports::run_reports(
+        Some(&fixture("fix.vcf.gz")),
+        &request(&vcf_prefix),
+        &budget(),
+    )
+    .expect("invariant: vcf reports");
+    for suffix in [
+        ".afreq",
+        ".hardy",
+        ".het",
+        ".smiss",
+        ".vmiss",
+        ".idepth",
+        ".ldepth.mean",
+    ] {
         let read = |prefix: &Path| {
             let mut p = prefix.as_os_str().to_os_string();
             p.push(suffix);
@@ -151,7 +172,7 @@ fn bcf_output_round_trips_to_the_same_records() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-        timing: None,
+            timing: None,
             report_json: None,
             force_samples: false,
             regions: Vec::new(),
@@ -227,7 +248,7 @@ fn bcf_output_is_thread_count_independent() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-        timing: None,
+            timing: None,
             report_json: None,
             force_samples: false,
             regions: Vec::new(),
@@ -284,7 +305,7 @@ fn af_bounds_match_bcftools_on_the_fixture() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-        timing: None,
+            timing: None,
             report_json: None,
             force_samples: false,
             regions: Vec::new(),
@@ -301,7 +322,11 @@ fn af_bounds_match_bcftools_on_the_fixture() {
             .filter(|l| !l.starts_with('#'))
             .map(|l| {
                 let mut cols = l.split('\t');
-                format!("{}:{}", cols.next().expect("chrom"), cols.next().expect("pos"))
+                format!(
+                    "{}:{}",
+                    cols.next().expect("chrom"),
+                    cols.next().expect("pos")
+                )
             })
             .collect()
     };
@@ -336,7 +361,7 @@ fn chain_framing_is_boundary_independent() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-        timing: None,
+            timing: None,
             report_json: None,
             force_samples: false,
             regions: Vec::new(),
@@ -397,7 +422,7 @@ fn filter_output_is_identical_across_formats() {
             compress_level: 1,
             strategy: None,
             command_line: "test".into(),
-        timing: None,
+            timing: None,
             report_json: None,
             force_samples: false,
             regions: Vec::new(),

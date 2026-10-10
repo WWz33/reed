@@ -14,19 +14,19 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use reed_core::ChunkId;
+use reed_core::{ChunkId, ContigId};
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
 use reed_engine::frame_chain::{FrameChain, SharedChain};
-use reed_io::bcf::{record_len, record_site, VirtualMap};
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
+use reed_io::Locus;
+use reed_io::bcf::{VirtualMap, record_len, record_site};
 use reed_io::chunk::framing::RecordFraming;
-use reed_io::chunk::{inflate_chunk, ChunkBytes};
+use reed_io::chunk::{ChunkBytes, inflate_chunk};
 use reed_io::vcf::fixed::parse_pos1;
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::ContigTable;
 use reed_io::write::index::Indexer;
-use reed_io::Locus;
 
 pub use reed_io::write::index::WriteIndex;
 
@@ -47,7 +47,7 @@ pub struct IndexOutcome {
 /// One record start (in chunk order).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RecordStart {
-    tid: u32,
+    tid: ContigId,
     pos1: u64,
     ref_len: u32,
     /// Virtual offset of the record's first byte.
@@ -130,7 +130,12 @@ impl IndexJob {
         };
         let pos1 = parse_pos1(lr.pos_text(), &locus).map_err(EngineError::from)?;
         let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
-        Ok(RecordStart { tid, pos1, ref_len, voff: map.voff(text_off) })
+        Ok(RecordStart {
+            tid,
+            pos1,
+            ref_len,
+            voff: map.voff(text_off),
+        })
     }
 }
 
@@ -153,7 +158,10 @@ impl ChunkJob for IndexJob {
             let IndexScratch { inflater, text, .. } = scratch;
             inflate_chunk(chunk, inflater, text).map_err(job)?
         };
-        let map = VoMap { chunk_start: chunk.compressed_start, blocks: &chunk.blocks };
+        let map = VoMap {
+            chunk_start: chunk.compressed_start,
+            blocks: &chunk.blocks,
+        };
         let contigs = &mut scratch.contigs;
         let mut partial = IndexPartial::default();
 
@@ -162,7 +170,8 @@ impl ChunkJob for IndexJob {
         if let Some(head) = view.head.clone()
             && !view.text[head.clone()].is_empty()
         {
-            partial.head = Some(self.parse_record(&view.text[head.clone()], head.start, &map, contigs)?);
+            partial.head =
+                Some(self.parse_record(&view.text[head.clone()], head.start, &map, contigs)?);
         }
         let body = view.body.clone();
         // Body lines, one at a time.
@@ -172,7 +181,9 @@ impl ChunkJob for IndexJob {
             let nl = rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len());
             let record = &rest[..nl];
             if !record.is_empty() {
-                partial.body.push(self.parse_record(record, off, &map, contigs)?);
+                partial
+                    .body
+                    .push(self.parse_record(record, off, &map, contigs)?);
             }
             off += nl + 1;
         }
@@ -182,7 +193,8 @@ impl ChunkJob for IndexJob {
         if let Some(tail) = view.tail.clone()
             && !view.text[tail.clone()].is_empty()
         {
-            partial.tail = Some(self.parse_record(&view.text[tail.clone()], tail.start, &map, contigs)?);
+            partial.tail =
+                Some(self.parse_record(&view.text[tail.clone()], tail.start, &map, contigs)?);
         }
         partial.continues = view.text.last() != Some(&b'\n');
         Ok(partial)
@@ -197,7 +209,10 @@ impl ChunkJob for IndexJob {
         // The seam record's start lives in the previous chunk's tail (or in
         // this chunk's head when the previous chunk ended line-aligned); the
         // ordered sink already has it.
-        Ok(IndexPartial { seam: true, ..IndexPartial::default() })
+        Ok(IndexPartial {
+            seam: true,
+            ..IndexPartial::default()
+        })
     }
 }
 
@@ -227,12 +242,15 @@ impl ChunkJob for BcfIndexJob {
         } else {
             0
         };
-        let map = VirtualMap { chunk_start: chunk.compressed_start, blocks: &chunk.blocks };
+        let map = VirtualMap {
+            chunk_start: chunk.compressed_start,
+            blocks: &chunk.blocks,
+        };
         let mut carried = self.chain.wait(chunk_id)?;
         let mut partial = IndexPartial::default();
         let mut guard = self.chain.publish_guard(chunk_id + 1);
         if skip >= text.len() {
-            guard.publish(Default::default());
+            guard.publish(reed_engine::frame_chain::Carried::default());
             return Ok(partial);
         }
         let body_start;
@@ -241,9 +259,8 @@ impl ChunkJob for BcfIndexJob {
             body_start = skip;
             body_end = walk_bcf_records(text, skip);
         } else {
-            let total = declared_total(&carried.head, text).ok_or_else(|| {
-                EngineError::job("BCF record length prefix is truncated")
-            })?;
+            let total = declared_total(&carried.head, text)
+                .ok_or_else(|| EngineError::job("BCF record length prefix is truncated"))?;
             let need = total.saturating_sub(carried.prefix_len as usize);
             if need > text.len() {
                 // The record still spans this chunk: keep the header bytes.
@@ -275,11 +292,12 @@ impl ChunkJob for BcfIndexJob {
         while q < body_end {
             let len = record_len(&text[q..]).expect("invariant: walked records are complete");
             // The shared block starts after the 8-byte length prefix.
-            let (tid, pos0, rlen) =
-                record_site(&text[q + 8..]).map_err(EngineError::from)?;
+            let (tid, pos0, rlen) = record_site(&text[q + 8..]).map_err(EngineError::from)?;
             partial.body.push(RecordStart {
-                tid: u32::try_from(tid)
-                    .map_err(|_| EngineError::job("negative BCF contig index"))?,
+                tid: ContigId(
+                    u32::try_from(tid)
+                        .map_err(|_| EngineError::job("negative BCF contig index"))?,
+                ),
                 pos1: u64::try_from(pos0).unwrap_or(0) + 1,
                 ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
                 voff: map.voff(q),
@@ -295,7 +313,9 @@ impl ChunkJob for BcfIndexJob {
         _line: &[u8],
         _scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        Err(EngineError::job("internal: the BCF index never receives seam lines"))
+        Err(EngineError::job(
+            "internal: the BCF index never receives seam lines",
+        ))
     }
 }
 
@@ -347,7 +367,9 @@ fn entry_at(
     let _ = body_start;
     let (tid, pos0, rlen) = record_site(&buf[8..]).map_err(EngineError::from)?;
     Ok(RecordStart {
-        tid: u32::try_from(tid).map_err(|_| EngineError::job("negative BCF contig index"))?,
+        tid: ContigId(
+            u32::try_from(tid).map_err(|_| EngineError::job("negative BCF contig index"))?,
+        ),
         pos1: u64::try_from(pos0).unwrap_or(0) + 1,
         ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
         voff,
@@ -362,7 +384,7 @@ struct IndexSink {
     contig_names: Arc<[Vec<u8>]>,
     pending: Option<RecordStart>,
     prev_continues: bool,
-    last_pos1: Option<(u32, u64)>,
+    last_pos1: Option<(ContigId, u64)>,
     n_records: u64,
     eof_voff: u64,
     out: Arc<Mutex<Option<u64>>>,
@@ -374,7 +396,8 @@ impl IndexSink {
             && tid == entry.tid
             && entry.pos1 < pos1
         {
-            let name = String::from_utf8_lossy(&self.contig_names[entry.tid as usize]).into_owned();
+            let name =
+                String::from_utf8_lossy(&self.contig_names[entry.tid.get() as usize]).into_owned();
             return Err(EngineError::job(format!(
                 "{name}:{}: positions are not ascending (indexing needs sorted input)",
                 entry.pos1
@@ -389,7 +412,8 @@ impl IndexSink {
     }
 
     fn add(&mut self, entry: RecordStart, end: u64) -> Result<(), EngineError> {
-        let name = String::from_utf8_lossy(&self.contig_names[entry.tid as usize]).into_owned();
+        let name =
+            String::from_utf8_lossy(&self.contig_names[entry.tid.get() as usize]).into_owned();
         self.indexer
             .add(&name, entry.tid, entry.pos1, entry.ref_len, entry.voff, end)
             .map_err(job)
@@ -422,7 +446,13 @@ impl OrderedSink<IndexPartial> for IndexSink {
         if let Some(last) = self.pending.take() {
             self.add(last, self.eof_voff)?;
         }
-        let IndexSink { indexer, path, n_records, out, .. } = self;
+        let IndexSink {
+            indexer,
+            path,
+            n_records,
+            out,
+            ..
+        } = self;
         indexer.write(&path).map_err(job)?;
         *out.lock().expect("invariant: index slot not poisoned") = Some(n_records);
         Ok(n_records)
@@ -454,10 +484,7 @@ pub fn run_index(
         }
     };
     // The compressed file size bounds the last record's chunk.
-    let eof_voff = std::fs::metadata(input)
-        .map_err(EngineError::Io)?
-        .len()
-        << 16;
+    let eof_voff = std::fs::metadata(input).map_err(EngineError::Io)?.len() << 16;
     let mut opened = crate::input::open(Some(input)).map_err(job)?;
     let is_bcf = opened.bcf.is_some();
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
@@ -490,17 +517,24 @@ pub fn run_index(
     let report = if is_bcf {
         let chain = Arc::new(FrameChain::new(abort.signal.clone()));
         chain.publish(0, reed_engine::frame_chain::Carried::default());
-        let job = BcfIndexJob { chain: Arc::clone(&chain) };
+        let job = BcfIndexJob {
+            chain: Arc::clone(&chain),
+        };
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort)?;
         chain.finish();
-        if chain.peek(report.n_chunks).is_some_and(|carried| !carried.is_empty()) {
+        if chain
+            .peek(report.n_chunks)
+            .is_some_and(|carried| !carried.is_empty())
+        {
             return Err(EngineError::Job(
                 "BCF input ends inside a record (truncated file)".into(),
             ));
         }
         report
     } else {
-        let job = IndexJob { contig_names: Arc::clone(&contig_names) };
+        let job = IndexJob {
+            contig_names: Arc::clone(&contig_names),
+        };
         run(opened.source.as_mut(), &job, sink, &budget, &abort)?
     };
     let _ = report;

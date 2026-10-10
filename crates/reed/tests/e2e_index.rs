@@ -5,14 +5,17 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use reed::{run_index, WriteIndex};
+use reed::{WriteIndex, run_index};
+use std::fmt::Write as _;
 
 fn bgzf(text: &str) -> Vec<u8> {
     let mut deflater =
         reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(64) {
-        deflater.deflate_block(block, &mut out).expect("invariant: block fits");
+        deflater
+            .deflate_block(block, &mut out)
+            .expect("invariant: block fits");
     }
     out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
     out
@@ -39,7 +42,7 @@ const HEADER: &str = "\
 fn rows() -> String {
     let mut text = String::from(HEADER);
     for pos in [10_u64, 100, 250, 900] {
-        text.push_str(&format!("chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n"));
+        let _ = writeln!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1");
     }
     text.push_str("chr2\t500\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     text
@@ -58,12 +61,15 @@ fn query(index_path: &Path, vcf: &Path, contig: &str) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let tid = names.iter().position(|n| n == contig).expect("contig in index");
+    let tid = names
+        .iter()
+        .position(|n| n == contig)
+        .expect("contig in index");
     let chunks: Vec<_> = index.reference_sequences()[tid]
         .bins()
         .values()
         .flat_map(|bin| bin.chunks())
-        .cloned()
+        .copied()
         .collect();
     let mut reader =
         noodles::bgzf::io::Reader::new(std::fs::File::open(vcf).expect("invariant: vcf"));
@@ -80,8 +86,7 @@ fn query(index_path: &Path, vcf: &Path, contig: &str) -> Vec<String> {
 #[test]
 fn csi_index_resolves_queries() {
     let (dir, vcf) = write_fixture("csi", &rows());
-    let outcome =
-        run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
+    let outcome = run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
     assert_eq!(outcome.n_records, 5);
     assert_eq!(outcome.path, dir.join("in.vcf.gz.csi"));
 

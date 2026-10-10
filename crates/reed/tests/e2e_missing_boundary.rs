@@ -12,8 +12,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use reed::{run_filter, FilterOptions};
+use reed::{FilterOptions, run_filter};
 use reed_filter::spec::{FilterSpec, MissingRate, TailRules};
+use std::fmt::Write as _;
 
 /// Writes `text` as a plain VCF under a per-test temp directory.
 fn write_vcf(dir: &Path, name: &str, text: &str) -> PathBuf {
@@ -32,7 +33,10 @@ fn temp_dir(tag: &str) -> PathBuf {
 /// Runs `reed filter` (library driver) with the given after-mask rules and
 /// returns the surviving POS values in file order.
 fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
-    let spec = FilterSpec { site_after_mask: tail, ..FilterSpec::default() };
+    let spec = FilterSpec {
+        site_after_mask: tail,
+        ..FilterSpec::default()
+    };
     let opts = FilterOptions {
         threads: 2,
         output: Some(out.to_path_buf()),
@@ -55,14 +59,26 @@ fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
     let text = std::fs::read_to_string(out).expect("invariant: read output");
     text.lines()
         .filter(|l| !l.starts_with('#'))
-        .map(|l| l.split('\t').nth(1).expect("POS").parse::<u64>().expect("number"))
+        .map(|l| {
+            l.split('\t')
+                .nth(1)
+                .expect("POS")
+                .parse::<u64>()
+                .expect("number")
+        })
         .collect()
 }
 
 fn positions(text: &str) -> Vec<u64> {
     text.lines()
         .filter(|l| !l.starts_with('#'))
-        .map(|l| l.split('\t').nth(1).expect("POS").parse::<u64>().expect("number"))
+        .map(|l| {
+            l.split('\t')
+                .nth(1)
+                .expect("POS")
+                .parse::<u64>()
+                .expect("number")
+        })
         .collect()
 }
 
@@ -74,16 +90,20 @@ fn missing_body(n: usize, records: &[(u64, usize)]) -> String {
          ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
          ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{}\n",
-        (0..n).map(|i| format!("s{i}")).collect::<Vec<_>>().join("\t")
+        (0..n)
+            .map(|i| format!("s{i}"))
+            .collect::<Vec<_>>()
+            .join("\t")
     );
     let mut text = header;
     for &(pos, missing) in records {
         let mut gts = vec!["0/0".to_string(); n - missing];
         gts.extend(std::iter::repeat_n("./.".to_string(), missing));
-        text.push_str(&format!(
-            "Chr01\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t{}\n",
+        let _ = writeln!(
+            text,
+            "Chr01\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t{}",
             gts.join("\t")
-        ));
+        );
     }
     text
 }
@@ -118,7 +138,13 @@ fn vcftools_positions(vcftools: &Path, dir: &Path, input: &Path, x: &str) -> Opt
 }
 
 /// `plink2 --vcf in --geno G --export vcf --out PREFIX` → surviving POS.
-fn plink2_positions(plink2: &Path, dir: &Path, input: &Path, geno: &str, tag: &str) -> Option<Vec<u64>> {
+fn plink2_positions(
+    plink2: &Path,
+    dir: &Path,
+    input: &Path,
+    geno: &str,
+    tag: &str,
+) -> Option<Vec<u64>> {
     // No `with_extension`: tags like `0.9` must not turn into file extensions.
     let prefix = dir.join(format!("plink2-{}", tag.replace('.', "_")));
     let out = Command::new(plink2)
@@ -145,7 +171,10 @@ fn fixture_10(dir: &Path) -> PathBuf {
     write_vcf(
         dir,
         "ten.vcf",
-        &missing_body(10, &[(1, 0), (2, 1), (3, 2), (4, 3), (5, 5), (6, 9), (7, 10)]),
+        &missing_body(
+            10,
+            &[(1, 0), (2, 1), (3, 2), (4, 3), (5, 5), (6, 9), (7, 10)],
+        ),
     )
 }
 
@@ -173,7 +202,10 @@ fn site_call_rate_boundaries_match_reference_sets_and_tools() {
         let got = reed_positions(
             &input,
             &out,
-            TailRules { max_missing: Some(rate), ..TailRules::default() },
+            TailRules {
+                max_missing: Some(rate),
+                ..TailRules::default()
+            },
         );
         assert_eq!(got, expected, "reed --geno {x}");
         if let Some(vcftools) = &vcftools {
@@ -226,7 +258,10 @@ fn seven_sample_boundaries_are_exact() {
         let got = reed_positions(
             &input,
             &out,
-            TailRules { max_missing: Some(rate), ..TailRules::default() },
+            TailRules {
+                max_missing: Some(rate),
+                ..TailRules::default()
+            },
         );
         assert_eq!(got, expected, "reed --geno {x} (N = 7)");
         if let Some(vcftools) = &vcftools {
@@ -239,7 +274,8 @@ fn seven_sample_boundaries_are_exact() {
         }
         if let Some(plink2) = &plink2 {
             assert_eq!(
-                plink2_positions(plink2, &dir, &input, x, &format!("seven{x}")).expect("plink2 runs"),
+                plink2_positions(plink2, &dir, &input, x, &format!("seven{x}"))
+                    .expect("plink2 runs"),
                 expected,
                 "plink2 --geno {x} (N = 7)"
             );
@@ -280,7 +316,10 @@ fn half_calls_count_as_one_called_allele() {
         let got = reed_positions(
             &input,
             &out,
-            TailRules { max_missing: Some(rate), ..TailRules::default() },
+            TailRules {
+                max_missing: Some(rate),
+                ..TailRules::default()
+            },
         );
         assert_eq!(got, expected, "reed --geno {x} (half calls)");
         if let Some(vcftools) = &vcftools {
@@ -315,10 +354,11 @@ fn sample_call_rate_matches_plink2_mind() {
         let s1 = if i < 2 { "0/0:5" } else { "0/0:99" };
         let s2 = if i == 0 { "./.:99" } else { "0/0:99" };
         let s3 = if i < 3 { "./.:99" } else { "0/0:99" };
-        body.push_str(&format!(
-            "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT:GQ\t0/0:99\t{s1}\t{s2}\t{s3}\n",
+        let _ = writeln!(
+            body,
+            "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT:GQ\t0/0:99\t{s1}\t{s2}\t{s3}",
             i + 1
-        ));
+        );
     }
     let input = write_vcf(&dir, "samples.vcf", &body);
     let out = dir.join("out.vcf");
@@ -361,7 +401,11 @@ fn sample_call_rate_matches_plink2_mind() {
         .split('\t')
         .collect();
     let kept: Vec<&str> = columns[9..].to_vec();
-    assert_eq!(kept, vec!["s0", "s2"], "s2 sits exactly on the 0.1 boundary");
+    assert_eq!(
+        kept,
+        vec!["s0", "s2"],
+        "s2 sits exactly on the 0.1 boundary"
+    );
 
     if let Some(plink2) = tool("PLINK2", "biosoft/plink2") {
         let prefix = dir.join("plink2-mind");
@@ -369,7 +413,15 @@ fn sample_call_rate_matches_plink2_mind() {
             .current_dir(&dir)
             .args(["--vcf"])
             .arg(&input)
-            .args(["--vcf-min-gq", "20", "--mind", "0.1", "--export", "vcf", "--out"])
+            .args([
+                "--vcf-min-gq",
+                "20",
+                "--mind",
+                "0.1",
+                "--export",
+                "vcf",
+                "--out",
+            ])
             .arg(&prefix)
             .output()
             .expect("invariant: spawn plink2");

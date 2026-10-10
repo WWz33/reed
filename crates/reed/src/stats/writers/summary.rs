@@ -13,11 +13,12 @@
 
 use reed_engine::error::EngineError;
 use reed_io::vcf::fixed::parse_qual;
-use reed_io::vcf::genotype_scan::{ScanOutput, INT_MISSING};
+use reed_io::vcf::genotype_scan::{INT_MISSING, ScanOutput};
 use reed_io::vcf::info::info_fragments;
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
-use reed_stats::summary::report::{acgt, alt_class, is_transition, subst_index, QcReportAcc};
+use reed_stats::summary::report::{QcReportAcc, acgt, alt_class, is_transition, subst_index};
+use std::fmt::Write as _;
 
 /// The per-record accumulator body: reads only what each section needs —
 /// fixed columns for SN/TSTV/ST/QUAL/IDD, INFO for DP-sites, and the reports
@@ -70,6 +71,7 @@ impl QcAccumulator {
 }
 
 impl QcJob {
+    #[allow(clippy::unnecessary_wraps)] // the scan callbacks share one fallible signature
     fn push_scan(
         &mut self,
         acc: &mut QcReportAcc,
@@ -88,7 +90,7 @@ impl QcJob {
         let n_alt = if alts_text == b"." {
             0
         } else {
-            alts_text.iter().filter(|&&b| b == b',').count() + 1
+            memchr::memchr_iter(b',', alts_text).count() + 1
         };
         let reference = lr.reference();
         let alt_of = |i: usize| -> &[u8] {
@@ -101,9 +103,16 @@ impl QcJob {
             }
             &alts_text[from..]
         };
-        let classes: Vec<_> = (0..n_alt).map(|i| alt_class(reference, alt_of(i))).collect();
-        let any_snp = classes.iter().any(|c| matches!(c, reed_core::site::VariantClass::Snv));
-        let all_snp = !classes.is_empty() && classes.iter().all(|c| matches!(c, reed_core::site::VariantClass::Snv));
+        let classes: Vec<_> = (0..n_alt)
+            .map(|i| alt_class(reference, alt_of(i)))
+            .collect();
+        let any_snp = classes
+            .iter()
+            .any(|c| matches!(c, reed_core::site::VariantClass::Snv));
+        let all_snp = !classes.is_empty()
+            && classes
+                .iter()
+                .all(|c| matches!(c, reed_core::site::VariantClass::Snv));
 
         // ---- SN (bcftools counts a record in every type it carries) ----
         let s = &mut acc.summary;
@@ -114,13 +123,22 @@ impl QcJob {
         if any_snp {
             s.n_snv += 1;
         }
-        if classes.iter().any(|c| matches!(c, reed_core::site::VariantClass::Mnv)) {
+        if classes
+            .iter()
+            .any(|c| matches!(c, reed_core::site::VariantClass::Mnv))
+        {
             s.n_mnv += 1;
         }
-        if classes.iter().any(|c| matches!(c, reed_core::site::VariantClass::Indel)) {
+        if classes
+            .iter()
+            .any(|c| matches!(c, reed_core::site::VariantClass::Indel))
+        {
             s.n_indel += 1;
         }
-        if classes.iter().any(|c| matches!(c, reed_core::site::VariantClass::Symbolic)) {
+        if classes
+            .iter()
+            .any(|c| matches!(c, reed_core::site::VariantClass::Symbolic))
+        {
             s.n_symbolic += 1;
         }
         if n_alt > 1 {
@@ -158,7 +176,10 @@ impl QcJob {
                 acc.qual.snv_tv.push_iqual(iqual);
             }
         }
-        if classes.iter().any(|c| matches!(c, reed_core::site::VariantClass::Indel)) {
+        if classes
+            .iter()
+            .any(|c| matches!(c, reed_core::site::VariantClass::Indel))
+        {
             acc.qual.indel.push_iqual(iqual);
         }
 
@@ -177,7 +198,7 @@ impl QcJob {
         let raw_alleles = out
             .alleles
             .expect("invariant: the summary requires tracking_alleles");
-        let dp_column = out.int_columns.first().map(Vec::as_slice).unwrap_or(&[]);
+        let dp_column = out.int_columns.first().map_or(&[][..], Vec::as_slice);
         for (i, [a, b]) in raw_alleles.as_chunks::<2>().0.iter().enumerate() {
             let pair = [*a, *b];
             for allele in pair {
@@ -262,7 +283,9 @@ impl QcJob {
                     && let Some(v) = value
                 {
                     let vals: Option<Vec<u64>> = std::str::from_utf8(v).ok().and_then(|t| {
-                        t.split(',').map(|x| x.parse::<u64>().ok()).collect::<Option<Vec<_>>>()
+                        t.split(',')
+                            .map(|x| x.parse::<u64>().ok())
+                            .collect::<Option<Vec<_>>>()
                     });
                     if let Some(vals) = vals
                         && vals.len() == n_alt
@@ -271,7 +294,9 @@ impl QcJob {
                     }
                 } else if tag == b"AN"
                     && let Some(v) = value
-                    && let Some(an) = std::str::from_utf8(v).ok().and_then(|t| t.parse::<u64>().ok())
+                    && let Some(an) = std::str::from_utf8(v)
+                        .ok()
+                        .and_then(|t| t.parse::<u64>().ok())
                 {
                     info_an = Some(an);
                 }
@@ -324,7 +349,7 @@ impl QcJob {
             }
             let is_snp = class == reed_core::site::VariantClass::Snv;
             let ts = is_snp && is_transition(reference[0], alt[0]);
-            let _tv = is_snp && !ts;
+            // (the tv bucket is filled in the ALT loop below)
             // TSTV: every SNV ALT.
             if is_snp {
                 if ts {
@@ -341,7 +366,8 @@ impl QcJob {
                 }
             }
             // ST: first ALT only.
-            if i == 0 && is_snp
+            if i == 0
+                && is_snp
                 && let Some(sub) = subst_index(reference[0], alt[0])
             {
                 acc.subst[sub] += 1;
@@ -390,7 +416,9 @@ impl QcJob {
             for (tag, value) in info_fragments(info) {
                 if tag == b"DP"
                     && let Some(v) = value
-                    && let Some(dp) = std::str::from_utf8(v).ok().and_then(|t| t.parse::<u32>().ok())
+                    && let Some(dp) = std::str::from_utf8(v)
+                        .ok()
+                        .and_then(|t| t.parse::<u32>().ok())
                 {
                     acc.dp_sites.push(dp);
                 }
@@ -423,7 +451,11 @@ impl Iterator for PositionsIter<'_> {
 
 impl Positions for [u8] {
     fn positions_of(&self, needle: u8) -> PositionsIter<'_> {
-        PositionsIter { data: self, needle, from: 0 }
+        PositionsIter {
+            data: self,
+            needle,
+            from: 0,
+        }
     }
 }
 
@@ -431,7 +463,9 @@ impl Positions for [u8] {
 #[must_use]
 pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
     let mut out = String::new();
-    out.push_str("# This file was produced by reed stats and can be plotted using plot-vcfstats.\n");
+    out.push_str(
+        "# This file was produced by reed stats and can be plotted using plot-vcfstats.\n",
+    );
     out.push_str("# The command line was:\treed stats --summary\n#\n");
     out.push_str("# Definition of sets:\n# ID\t[2]id\t[3]tab-separated file names\n");
     out.push_str("ID\t0\t-\n");
@@ -449,22 +483,36 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
         ("number of multiallelic sites:", s.n_multiallelic),
         ("number of multiallelic SNP sites:", s.n_multiallelic_snv),
     ] {
-        out.push_str(&format!("SN\t0\t{key}\t{value}\n"));
+        writeln!(out, "SN\t0\t{key}\t{value}").expect("invariant: writing to String");
     }
 
     out.push_str("# TSTV, transitions/transversions\n# TSTV\t[2]id\t[3]ts\t[4]tv\t[5]ts/tv\t[6]ts (1st ALT)\t[7]tv (1st ALT)\t[8]ts/tv (1st ALT)\n");
-    let ratio = |ts: u64, tv: u64| if tv > 0 { format!("{:.2}", ts as f64 / tv as f64) } else { "0.00".into() };
-    out.push_str(&format!(
-        "TSTV\t0\t{}\t{}\t{}\t{}\t{}\t{}\n",
-        r.tstv.ts, r.tstv.tv, ratio(r.tstv.ts, r.tstv.tv),
-        r.tstv.ts_alt1, r.tstv.tv_alt1, ratio(r.tstv.ts_alt1, r.tstv.tv_alt1),
-    ));
+    let ratio = |ts: u64, tv: u64| {
+        if tv > 0 {
+            format!("{:.2}", ts as f64 / tv as f64)
+        } else {
+            "0.00".into()
+        }
+    };
+    writeln!(
+        out,
+        "TSTV\t0\t{}\t{}\t{}\t{}\t{}\t{}",
+        r.tstv.ts,
+        r.tstv.tv,
+        ratio(r.tstv.ts, r.tstv.tv),
+        r.tstv.ts_alt1,
+        r.tstv.tv_alt1,
+        ratio(r.tstv.ts_alt1, r.tstv.tv_alt1),
+    )
+    .expect("invariant: writing to String");
 
     out.push_str("# SiS, Singleton stats:\n# SiS\t[2]id\t[3]allele count\t[4]number of SNPs\t[5]number of transitions\t[6]number of transversions\t[7]number of indels\t[8]repeat-consistent\t[9]repeat-inconsistent\t[10]not applicable\n");
-    out.push_str(&format!(
-        "SiS\t0\t{}\t{}\t{}\t{}\t{}\t0\t0\t0\n",
+    writeln!(
+        out,
+        "SiS\t0\t{}\t{}\t{}\t{}\t{}\t0\t0\t0",
         1, r.sis.n_snps, r.sis.ts, r.sis.tv, r.sis.n_indels,
-    ));
+    )
+    .expect("invariant: writing to String");
 
     out.push_str("# AF, Stats by non-reference allele frequency:\n# AF\t[2]id\t[3]allele frequency\t[4]number of SNPs\t[5]number of transitions\t[6]number of transversions\t[7]number of indels\t[8]repeat-consistent\t[9]repeat-inconsistent\t[10]not applicable\n");
     // bcftools folds the singletons bin (0) into bin 1 before printing and
@@ -482,10 +530,12 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
             continue;
         }
         let freq = (i as f64 - 1.0) / (r.af.m_af as f64 - 1.0);
-        out.push_str(&format!(
-            "AF\t0\t{freq:.6}\t{}\t{}\t{}\t{}\t0\t0\t0\n",
+        writeln!(
+            out,
+            "AF\t0\t{freq:.6}\t{}\t{}\t{}\t{}\t0\t0\t0",
             snps[i], ts[i], tv[i], indels[i]
-        ));
+        )
+        .expect("invariant: writing to String");
     }
 
     out.push_str("# QUAL, Stats by quality\n# QUAL\t[2]id\t[3]Quality\t[4]number of SNPs\t[5]number of transitions (1st ALT)\t[6]number of transversions (1st ALT)\t[7]number of indels\n");
@@ -523,32 +573,58 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
             .or_else(|| qval(&r.qual.indel));
         let snps = n_ts + n_tv;
         match qv {
-            None => out.push_str(&format!("QUAL\t0\t.\t{snps}\t{n_ts}\t{n_tv}\t{n_in}\n")),
-            Some(qv) => {
-                out.push_str(&format!("QUAL\t0\t{qv:.1}\t{snps}\t{n_ts}\t{n_tv}\t{n_in}\n"))
-            }
+            None => writeln!(out, "QUAL\t0\t.\t{snps}\t{n_ts}\t{n_tv}\t{n_in}")
+                .expect("invariant: writing to String"),
+            Some(qv) => writeln!(out, "QUAL\t0\t{qv:.1}\t{snps}\t{n_ts}\t{n_tv}\t{n_in}")
+                .expect("invariant: writing to String"),
         }
     }
 
     out.push_str("# ST, Substitution types:\n# ST\t[2]id\t[3]type\t[4]count\n");
-    for (r_base, a_base) in [(b'A', b'C'), (b'A', b'G'), (b'A', b'T'), (b'C', b'A'), (b'C', b'G'), (b'C', b'T'), (b'G', b'A'), (b'G', b'C'), (b'G', b'T'), (b'T', b'A'), (b'T', b'C'), (b'T', b'G')] {
+    for (r_base, a_base) in [
+        (b'A', b'C'),
+        (b'A', b'G'),
+        (b'A', b'T'),
+        (b'C', b'A'),
+        (b'C', b'G'),
+        (b'C', b'T'),
+        (b'G', b'A'),
+        (b'G', b'C'),
+        (b'G', b'T'),
+        (b'T', b'A'),
+        (b'T', b'C'),
+        (b'T', b'G'),
+    ] {
         let idx = subst_index(r_base, a_base).expect("invariant: off-diagonal");
-        out.push_str(&format!("ST\t0\t{}>{}\t{}\n", r_base as char, a_base as char, r.subst[idx]));
+        writeln!(
+            out,
+            "ST\t0\t{}>{}\t{}",
+            r_base as char, a_base as char, r.subst[idx]
+        )
+        .expect("invariant: writing to String");
     }
 
     out.push_str("# DP, depth\n# DP, Depth distribution\n# DP\t[2]id\t[3]bin\t[4]number of genotypes\t[5]fraction of genotypes (%)\t[6]number of sites\t[7]fraction of sites (%)\n");
     let total_gt = r.dp_genotypes.total();
     let total_sites = r.dp_sites.total();
     type DpIter<'a> = std::iter::Peekable<std::boxed::Box<dyn Iterator<Item = (u32, u64)> + 'a>>;
-    let mut gt: DpIter<'_> = (Box::new(r.dp_genotypes.iter()) as std::boxed::Box<dyn Iterator<Item = (u32, u64)>>).peekable();
-    let mut sites: DpIter<'_> = (Box::new(r.dp_sites.iter()) as std::boxed::Box<dyn Iterator<Item = (u32, u64)>>).peekable();
+    let mut gt: DpIter<'_> = (Box::new(r.dp_genotypes.iter())
+        as std::boxed::Box<dyn Iterator<Item = (u32, u64)>>)
+        .peekable();
+    let mut sites: DpIter<'_> = (Box::new(r.dp_sites.iter())
+        as std::boxed::Box<dyn Iterator<Item = (u32, u64)>>)
+        .peekable();
     loop {
         let next_bin = [gt.peek().map(|(b, _)| *b), sites.peek().map(|(b, _)| *b)]
             .into_iter()
             .flatten()
             .min();
         let Some(bin) = next_bin else { break };
-        let take = |it: &mut std::iter::Peekable<std::boxed::Box<dyn Iterator<Item = (u32, u64)> + '_>>, b: u32| -> u64 {
+        let take = |it: &mut std::iter::Peekable<
+            std::boxed::Box<dyn Iterator<Item = (u32, u64)> + '_>,
+        >,
+                    b: u32|
+         -> u64 {
             if it.peek().is_some_and(|(kb, _)| *kb == b) {
                 let (_, n) = it.next().expect("invariant: peeked");
                 n
@@ -561,26 +637,58 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
         if gt_n == 0 && site_n == 0 {
             continue; // bcftools prints only non-empty bins
         }
-        let gt_pct = if total_gt > 0 { gt_n as f64 * 100.0 / total_gt as f64 } else { 0.0 };
-        let site_pct = if total_sites > 0 { site_n as f64 * 100.0 / total_sites as f64 } else { 0.0 };
-        let label = if bin > 500 { ">500".to_string() } else { bin.to_string() };
-        out.push_str(&format!("DP\t0\t{label}\t{gt_n}\t{gt_pct:.6}\t{site_n}\t{site_pct:.6}\n"));
+        let gt_pct = if total_gt > 0 {
+            gt_n as f64 * 100.0 / total_gt as f64
+        } else {
+            0.0
+        };
+        let site_pct = if total_sites > 0 {
+            site_n as f64 * 100.0 / total_sites as f64
+        } else {
+            0.0
+        };
+        let label = if bin > 500 {
+            ">500".to_string()
+        } else {
+            bin.to_string()
+        };
+        writeln!(
+            out,
+            "DP\t0\t{label}\t{gt_n}\t{gt_pct:.6}\t{site_n}\t{site_pct:.6}"
+        )
+        .expect("invariant: writing to String");
     }
 
     out.push_str("# IDD, InDel distribution:\n# IDD\t[2]id\t[3]length (deletions negative)\t[4]number of sites\t[5]number of genotypes\t[6]mean VAF\n");
     for (len, n) in r.idd.iter() {
         if n > 0 && len <= 60 {
-            out.push_str(&format!("IDD\t0\t{}\t{n}\t0\t0.000000\n", len as i64 - 1));
+            writeln!(out, "IDD\t0\t{}\t{n}\t0\t0.000000", len as i64 - 1)
+                .expect("invariant: writing to String");
         }
     }
 
     out.push_str("# PSC, Per-sample counts\n# PSC\t[2]id\t[3]sample\t[4]nRefHom\t[5]nNonRefHom\t[6]nHets\t[7]nTransitions\t[8]nTransversions\t[9]nIndels\t[10]average depth\t[11]nSingletons\t[12]nHapRef\t[13]nHapAlt\t[14]nMissing\n");
     for (i, p) in r.psc.iter().enumerate() {
-        let dp = if p.dp_n > 0 { p.dp_sum as f64 / p.dp_n as f64 } else { 0.0 };
-        out.push_str(&format!(
-            "PSC\t0\tsample_{i}\t{}\t{}\t{}\t{}\t{}\t{}\t{dp:.1}\t{}\t{}\t{}\t{}\n",
-            p.hom_rr, p.hom_aa, p.hets, p.ts, p.tv, p.n_indels, p.singletons, p.hap_ref, p.hap_alt, p.missing,
-        ));
+        let dp = if p.dp_n > 0 {
+            p.dp_sum as f64 / p.dp_n as f64
+        } else {
+            0.0
+        };
+        writeln!(
+            out,
+            "PSC\t0\tsample_{i}\t{}\t{}\t{}\t{}\t{}\t{}\t{dp:.1}\t{}\t{}\t{}\t{}",
+            p.hom_rr,
+            p.hom_aa,
+            p.hets,
+            p.ts,
+            p.tv,
+            p.n_indels,
+            p.singletons,
+            p.hap_ref,
+            p.hap_alt,
+            p.missing,
+        )
+        .expect("invariant: writing to String");
     }
     out
 }

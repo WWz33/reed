@@ -4,9 +4,10 @@
 
 use std::io::Write;
 
-use reed::{run_filter, FilterOptions};
-use reed_filter::spec::{FilterSpec, OnMissing};
+use reed::{FilterOptions, run_filter};
 use reed_filter::FilterError;
+use reed_filter::spec::{FilterSpec, OnMissing};
+use std::fmt::Write as _;
 
 /// Compresses `text` into a BGZF stream cut at `block_data`-byte blocks —
 /// boundaries fall mid-line, forcing seams.
@@ -60,7 +61,11 @@ fn fixture_text(n_records: usize) -> String {
             2 => ["0/0", "0/1", "0/1"],
             _ => ["0/0", "0/0", "0/0"],
         };
-        let gts = if i % 40 == 20 { ["0/0", "0/0", "0/0"] } else { gts };
+        let gts = if i % 40 == 20 {
+            ["0/0", "0/0", "0/0"]
+        } else {
+            gts
+        };
         let mut dps = [30_u32; 3];
         if i % 10 == 5 {
             dps[1] = 3;
@@ -78,12 +83,13 @@ fn fixture_text(n_records: usize) -> String {
         } else {
             "./.:0:0".to_string()
         };
-        text.push_str(&format!(
-            "Chr01\t{pos}\t.\t{ref_b}\t{alt}\t{qual}\t{filter}\t{info}\tGT:DP:GQ\t{}\t{}\t{}\t{s3}\n",
+        let _ = writeln!(
+            text,
+            "Chr01\t{pos}\t.\t{ref_b}\t{alt}\t{qual}\t{filter}\t{info}\tGT:DP:GQ\t{}\t{}\t{}\t{s3}",
             sample(gts[0], dps[0], gqs[0]),
             sample(gts[1], dps[1], gqs[1]),
-            sample(gts[2], dps[2], gqs[2]),
-        ));
+            sample(gts[2], dps[2], gqs[2])
+        );
     }
     text
 }
@@ -152,7 +158,10 @@ fn gold_spec() -> FilterSpec {
     }
 }
 
-fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::Path) -> FilterOptions {
+fn options(
+    strategy: Option<reed_filter::plan::ExecStrategy>,
+    out: &std::path::Path,
+) -> FilterOptions {
     FilterOptions {
         threads: 4,
         output: Some(out.to_path_buf()),
@@ -176,7 +185,10 @@ fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::P
 #[test]
 fn single_pass_and_two_pass_reparse_produce_identical_output() {
     let dir_path = write_fixture("strategies", 6_000);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let spec: FilterSpec = gold_spec();
 
     let out_single = dir.join("single.vcf.gz");
@@ -184,13 +196,19 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
     let r1 = run_filter(
         Some(dir_path.as_path()),
         &spec,
-        &options(Some(reed_filter::plan::ExecStrategy::SinglePass), &out_single),
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SinglePass),
+            &out_single,
+        ),
     )
     .expect("invariant: single pass runs");
     let r2 = run_filter(
         Some(dir_path.as_path()),
         &spec,
-        &options(Some(reed_filter::plan::ExecStrategy::TwoPassReparse), &out_two),
+        &options(
+            Some(reed_filter::plan::ExecStrategy::TwoPassReparse),
+            &out_two,
+        ),
     )
     .expect("invariant: two pass runs");
 
@@ -218,7 +236,10 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
 #[test]
 fn output_is_deterministic_across_thread_counts() {
     let dir_path = write_fixture("determinism", 6_000);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let spec: FilterSpec = gold_spec();
 
     let mut reference: Option<Vec<u8>> = None;
@@ -253,20 +274,31 @@ fn output_is_deterministic_across_thread_counts() {
 #[test]
 fn spec_validation_rejects_unknown_tags_and_ranges() {
     let dir_path = write_fixture("validation", 10);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
 
     // Unknown INFO tag: rejected at compile time, before any record.
     let mut spec = gold_spec();
     spec.site.info[0].tag = "NotDeclared".to_string();
-    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &dir.join("o.vcf.gz")))
-        .expect_err("invariant: unknown tag rejected");
+    let err = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &dir.join("o.vcf.gz")),
+    )
+    .expect_err("invariant: unknown tag rejected");
     assert!(err.to_string().contains("NotDeclared"), "{err}");
 
     // Threshold out of range.
     let mut spec = gold_spec();
     spec.site_after_mask.min_maf = Some(0.9);
-    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &dir.join("o.vcf.gz")))
-        .expect_err("invariant: maf range rejected");
+    let err = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &dir.join("o.vcf.gz")),
+    )
+    .expect_err("invariant: maf range rejected");
     assert!(err.to_string().contains("min_maf"), "{err}");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -290,7 +322,10 @@ fn mask_default_on_missing_is_keep() {
     };
     assert_eq!(spec.genotype.mask_if[0].on_missing, OnMissing::Keep);
     let dir_path = write_fixture("maskdefault", 5);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let out = dir.join("o.vcf.gz");
     let result = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out));
     assert!(result.is_ok(), "Pass normalizes to Keep: {result:?}");
@@ -300,18 +335,20 @@ fn mask_default_on_missing_is_keep() {
 #[test]
 fn provenance_and_ascertainment_are_written() {
     let dir_path = write_fixture("provenance", 30);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let spec: FilterSpec = gold_spec();
     let out = dir.join("o.vcf.gz");
     run_filter(Some(dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
 
     let text = {
         use std::io::Read;
-        let mut reader = noodles::bgzf::io::Reader::new(
-            std::fs::File::open(&out).expect("invariant: output"),
-        );
+        let mut reader =
+            noodles::bgzf::io::Reader::new(std::fs::File::open(&out).expect("invariant: output"));
         let mut header = Vec::new();
-        let mut buf = [0_u8; 1 << 16];
+        let mut buf = vec![0_u8; 1 << 16];
         loop {
             let n = reader.read(&mut buf).expect("invariant: read");
             if n == 0 {
@@ -343,19 +380,29 @@ fn _assert_error_type(e: FilterError) -> FilterError {
 #[test]
 fn all_three_strategies_produce_identical_bytes() {
     let dir_path = write_fixture("three-strategies", 8_000);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let spec: FilterSpec = gold_spec();
 
     let mut hashes = Vec::new();
     for (name, strategy) in [
         ("single", Some(reed_filter::plan::ExecStrategy::SinglePass)),
         ("two", Some(reed_filter::plan::ExecStrategy::TwoPassReparse)),
-        ("sketch", Some(reed_filter::plan::ExecStrategy::SketchThenEmit)),
+        (
+            "sketch",
+            Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
+        ),
     ] {
         let out = dir.join(format!("{name}.vcf.gz"));
         let report = run_filter(Some(dir_path.as_path()), &spec, &options(strategy, &out))
             .unwrap_or_else(|e| panic!("{name} failed: {e}"));
-        assert_eq!(report.strategy, strategy.expect("invariant: forced").id(), "the report names the strategy");
+        assert_eq!(
+            report.strategy,
+            strategy.expect("invariant: forced").id(),
+            "the report names the strategy"
+        );
         let bytes = std::fs::read(&out).expect("invariant: output");
         let hash = {
             use sha2::{Digest, Sha256};
@@ -373,19 +420,28 @@ fn all_three_strategies_produce_identical_bytes() {
 #[test]
 fn sketch_funnel_matches_the_single_pass_funnel() {
     let dir_path = write_fixture("sketch-funnel", 6_000);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let spec: FilterSpec = gold_spec();
 
     let single = run_filter(
         Some(dir_path.as_path()),
         &spec,
-        &options(Some(reed_filter::plan::ExecStrategy::SinglePass), &dir.join("s.vcf.gz")),
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SinglePass),
+            &dir.join("s.vcf.gz"),
+        ),
     )
     .expect("invariant: single pass");
     let sketch = run_filter(
         Some(dir_path.as_path()),
         &spec,
-        &options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &dir.join("k.vcf.gz")),
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
+            &dir.join("k.vcf.gz"),
+        ),
     )
     .expect("invariant: sketch");
     assert_eq!(single.funnel, sketch.funnel, "funnel is strategy-invariant");
@@ -406,7 +462,7 @@ mod write_index {
              ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n",
         );
         for c in 0..70_000 {
-            h.push_str(&format!("##contig=<ID=c{c},length=1000000000>\n"));
+            let _ = writeln!(h, "##contig=<ID=c{c},length=1000000000>");
         }
         h.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n");
         h
@@ -429,7 +485,7 @@ mod write_index {
             compress_level: 6,
             strategy: None,
             command_line: "test".into(),
-        timing: None,
+            timing: None,
             report_json: None,
             force_samples: false,
             regions: Vec::new(),
@@ -449,8 +505,12 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.out.vcf.gz");
 
-        run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::WriteIndex::Csi))
-            .expect("invariant: filter runs");
+        run_filter(
+            Some(input.as_path()),
+            &FilterSpec::default(),
+            &opts(&out, reed::WriteIndex::Csi),
+        )
+        .expect("invariant: filter runs");
 
         let index = noodles::csi::fs::read(dir.join("wide.out.vcf.gz.csi"))
             .expect("invariant: csi written");
@@ -463,22 +523,21 @@ mod write_index {
             .bins()
             .values()
             .flat_map(|bin| bin.chunks())
-            .cloned()
+            .copied()
             .collect();
         assert!(!chunks.is_empty(), "contig 69,999 has index chunks");
         use std::io::BufRead as _;
-        let mut reader = noodles::bgzf::io::Reader::new(
-            std::fs::File::open(&out).expect("invariant: output"),
-        );
+        let mut reader =
+            noodles::bgzf::io::Reader::new(std::fs::File::open(&out).expect("invariant: output"));
         let query = noodles::csi::io::Query::new(&mut reader, chunks);
         let lines: Vec<Vec<u8>> = query
             .split(b'\n')
             .map(|l| l.expect("invariant: query read"))
             .collect();
-        assert!(lines
-            .iter()
-            .any(|l| l.starts_with(b"c69999\t600000000\t")),
-            "record on c69999 at 600,000,000 must be found, got {lines:?}");
+        assert!(
+            lines.iter().any(|l| l.starts_with(b"c69999\t600000000\t")),
+            "record on c69999 at 600,000,000 must be found, got {lines:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -489,7 +548,11 @@ mod write_index {
         let input = wide_fixture(&dir);
         let out = dir.join("wide.tbi.vcf.gz");
 
-        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::WriteIndex::Tbi));
+        let result = run_filter(
+            Some(input.as_path()),
+            &FilterSpec::default(),
+            &opts(&out, reed::WriteIndex::Tbi),
+        );
         assert!(result.is_err(), "TBI must refuse coordinates ≥ 2^29");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -505,8 +568,15 @@ mod write_index {
         std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
         let out = dir.join("und.out.vcf.gz");
 
-        let result = run_filter(Some(input.as_path()), &FilterSpec::default(), &opts(&out, reed::WriteIndex::None));
-        assert!(result.is_err(), "an undeclared contig must fail, not alias tid 0");
+        let result = run_filter(
+            Some(input.as_path()),
+            &FilterSpec::default(),
+            &opts(&out, reed::WriteIndex::None),
+        );
+        assert!(
+            result.is_err(),
+            "an undeclared contig must fail, not alias tid 0"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -528,7 +598,7 @@ fn record_wider_than_one_block_round_trips() {
     );
     text.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
     for s in 0..N {
-        text.push_str(&format!("\ts{s}"));
+        let _ = write!(text, "\ts{s}");
     }
     text.push('\n');
     // Narrow record, then one ~105 KB record (30 digits per sample).
@@ -540,7 +610,7 @@ fn record_wider_than_one_block_round_trips() {
     let mut wide = String::from("c0\t20\t.\tA\tG\t.\tPASS\t.\tGT:XH");
     for s in 0..N {
         let _ = s;
-        wide.push_str(&format!("\t0/1:1.{}", "1234567890".repeat(3)));
+        let _ = write!(wide, "\t0/1:1.{}", "1234567890".repeat(3));
     }
     wide.push('\n');
     text.push_str(&wide);
@@ -550,13 +620,16 @@ fn record_wider_than_one_block_round_trips() {
     std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
     let out = dir.join("wide.out.vcf.gz");
 
-    run_filter(Some(input.as_path()), &FilterSpec::default(), &options(None, &out))
-        .expect("invariant: filter runs on a record wider than one block");
+    run_filter(
+        Some(input.as_path()),
+        &FilterSpec::default(),
+        &options(None, &out),
+    )
+    .expect("invariant: filter runs on a record wider than one block");
 
     use std::io::Read as _;
-    let mut reader = noodles::bgzf::io::Reader::new(
-        std::fs::File::open(&out).expect("invariant: output"),
-    );
+    let mut reader =
+        noodles::bgzf::io::Reader::new(std::fs::File::open(&out).expect("invariant: output"));
     let mut round = Vec::new();
     reader
         .read_to_end(&mut round)
@@ -564,7 +637,11 @@ fn record_wider_than_one_block_round_trips() {
     let out_text = String::from_utf8(round).expect("invariant: utf8");
     let out_lines: Vec<&str> = out_text.lines().filter(|l| !l.starts_with('#')).collect();
     assert_eq!(out_lines.len(), 2);
-    assert_eq!(out_lines[1], wide.trim_end(), "wide record must round-trip byte-identical");
+    assert_eq!(
+        out_lines[1],
+        wide.trim_end(),
+        "wide record must round-trip byte-identical"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -585,8 +662,10 @@ fn plain_and_bgzf_inputs_agree() {
     let spec = FilterSpec::default();
     let out_plain = dir.join("plain.out.vcf.gz");
     let out_bgzf = dir.join("bgzf.out.vcf.gz");
-    let rp = run_filter(Some(&plain), &spec, &options(None, &out_plain)).expect("invariant: plain run");
-    let rb = run_filter(Some(&bgzf_path), &spec, &options(None, &out_bgzf)).expect("invariant: bgzf run");
+    let rp =
+        run_filter(Some(&plain), &spec, &options(None, &out_plain)).expect("invariant: plain run");
+    let rb = run_filter(Some(&bgzf_path), &spec, &options(None, &out_bgzf))
+        .expect("invariant: bgzf run");
     assert_eq!(rp.n_output_records, rb.n_output_records);
     assert_eq!(
         std::fs::read(&out_plain).expect("invariant: read"),
@@ -628,7 +707,7 @@ fn default_policies_reject_haploid_and_polyploid_calls() {
 /// allele index collapses onto the single ALT bit (counted per allele).
 #[test]
 fn relaxed_policy_counts_half_calls_and_collapsed_alleles() {
-    use reed_filter::spec::{PolicyRules, PloidyPolicy};
+    use reed_filter::spec::{PloidyPolicy, PolicyRules};
     let body = format!(
         "{HEADER}\
 Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1:30:99\t0/. :30:99\t0/0:30:99\t0/0:30:99\n\
@@ -655,15 +734,17 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
     // genotype is written back byte for byte.
     let text = {
         use std::io::Read;
-        let mut reader = noodles::bgzf::io::Reader::new(
-            std::fs::File::open(&out).expect("invariant: output"),
-        );
+        let mut reader =
+            noodles::bgzf::io::Reader::new(std::fs::File::open(&out).expect("invariant: output"));
         let mut s = String::new();
         reader.read_to_string(&mut s).expect("invariant: read");
         s
     };
     assert!(text.contains("\t1:30:99"), "haploid call preserved: {text}");
-    assert!(text.contains("\t1/2:30:99"), "multi-allelic text preserved: {text}");
+    assert!(
+        text.contains("\t1/2:30:99"),
+        "multi-allelic text preserved: {text}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -673,12 +754,15 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
 fn exclude_types_and_allele_bounds_are_mirrors() {
     use reed_filter::spec::SiteRules;
     let dir_path = write_fixture("bounds", 400);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
 
     let run = |spec: &FilterSpec, name: &str| {
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report =
-            run_filter(Some(dir_path.as_path()), spec, &options(None, &out)).expect("invariant: run");
+        let report = run_filter(Some(dir_path.as_path()), spec, &options(None, &out))
+            .expect("invariant: run");
         let text = {
             use std::io::Read;
             let mut reader = noodles::bgzf::io::Reader::new(
@@ -692,7 +776,10 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
     };
 
     let snv_only = FilterSpec {
-        site: SiteRules { variant_class: vec!["snv".into()], ..SiteRules::default() },
+        site: SiteRules {
+            variant_class: vec!["snv".into()],
+            ..SiteRules::default()
+        },
         ..FilterSpec::default()
     };
     let exclude_indels = FilterSpec {
@@ -704,7 +791,10 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
     };
     let (n_snv, _) = run(&snv_only, "snv");
     let (n_excl, _) = run(&exclude_indels, "excl");
-    assert_eq!(n_snv, n_excl, "-V indels,mnps must keep exactly the SNVs (fixture has no symbolic/ref)");
+    assert_eq!(
+        n_snv, n_excl,
+        "-V indels,mnps must keep exactly the SNVs (fixture has no symbolic/ref)"
+    );
 
     // MAF band: [0.1, 0.5] keeps exactly what max_maf leaves.
     let min_maf = FilterSpec {
@@ -724,7 +814,10 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
     };
     let (n_min, _) = run(&min_maf, "min");
     let (n_max, _) = run(&with_max, "max");
-    assert_eq!(n_min, n_max, "MAF <= 0.5 is implied by the fixture's MAF distribution");
+    assert_eq!(
+        n_min, n_max,
+        "MAF <= 0.5 is implied by the fixture's MAF distribution"
+    );
     assert!(n_min < 400, "the MAF floor must drop something: {n_min}");
 
     // MAC upper bound mirrors the MAF one at 2N = 8 alleles.
@@ -737,7 +830,10 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
         ..FilterSpec::default()
     };
     let (n_mac, _) = run(&max_mac, "mac");
-    assert!(n_mac <= n_max, "MAC <= 4 is a stricter band than MAF <= 0.5");
+    assert!(
+        n_mac <= n_max,
+        "MAC <= 4 is a stricter band than MAF <= 0.5"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -748,7 +844,10 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
 fn set_gts_masks_from_format_expressions() {
     use reed_filter::spec::{GenotypeRules, TailRules};
     let dir_path = write_fixture("setgts", 200);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     // The fixture masks DP<5 / DP>100 / GQ<20 in the gold spec; here the
     // FMT expression does the masking.
     let run = |include: bool, name: &str| {
@@ -790,14 +889,25 @@ fn set_gts_masks_from_format_expressions() {
     let (masked_include, text_include) = run(true, "include");
     let (masked_exclude, text_exclude) = run(false, "exclude");
     assert!(masked_include > 0 && masked_exclude > 0);
-    assert_ne!(masked_include, masked_exclude, "-i and -e mask different samples");
+    assert_ne!(
+        masked_include, masked_exclude,
+        "-i and -e mask different samples"
+    );
     // `-i 'FMT/DP>10'` keeps samples above the threshold: the fixture's low-DP
     // samples (masked by the expression) become `./.`.
-    assert!(text_include.contains("./.:3"), "fixture DP=3 must be masked under -i");
-    assert!(text_exclude.contains("./.:30") || text_exclude.contains("./.:150"),
-        "DP=30/150 samples are masked under -e");
+    assert!(
+        text_include.contains("./.:3"),
+        "fixture DP=3 must be masked under -i"
+    );
+    assert!(
+        text_exclude.contains("./.:30") || text_exclude.contains("./.:150"),
+        "DP=30/150 samples are masked under -e"
+    );
     // No site is dropped: masking never removes a record.
-    assert_eq!(text_include.lines().filter(|l| !l.starts_with('#')).count(), 200);
+    assert_eq!(
+        text_include.lines().filter(|l| !l.starts_with('#')).count(),
+        200
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -807,7 +917,10 @@ fn set_gts_masks_from_format_expressions() {
 fn format_expressions_need_set_gts() {
     use reed_filter::spec::TailRules;
     let dir_path = write_fixture("setgtsfail", 5);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     let out = dir.join("o.vcf.gz");
     let spec = FilterSpec {
         site_after_mask: TailRules {
@@ -855,11 +968,12 @@ fn mind_counts_post_mask_over_head_survivors() {
         let s0 = if !pass || i == 90 { "./." } else { "0/0" };
         let s1_dp = if pass && i < 95 { 3 } else { 30 };
         let s3 = if pass && i > 90 { "./." } else { "0/0" };
-        text.push_str(&format!(
+        let _ = writeln!(
+            text,
             "Chr01\t{}\t.\tA\tG\t50\t{filter}\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t\
-             {s0}:30:99\t0/0:{s1_dp}:99\t0/0:30:99\t{s3}:30:99\n",
+             {s0}:30:99\t0/0:{s1_dp}:99\t0/0:30:99\t{s3}:30:99",
             i + 1
-        ));
+        );
     }
     let dir = std::env::temp_dir().join(format!("reed-sample-rate-c0-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
@@ -887,8 +1001,12 @@ fn mind_counts_post_mask_over_head_survivors() {
         ("sketch", ExecStrategy::SketchThenEmit),
     ] {
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report = run_filter(Some(&path), &spec_with("0.5"), &options(Some(strategy), &out))
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let report = run_filter(
+            Some(&path),
+            &spec_with("0.5"),
+            &options(Some(strategy), &out),
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(report.n_samples_out, 3, "{name}: s3 dropped, s0/s1/s2 kept");
         // The rule reports under its stable id (doc_v4 02 回退版 §5.3), not
         // as a record funnel stage.
@@ -898,7 +1016,9 @@ fn mind_counts_post_mask_over_head_survivors() {
         assert_eq!(rule.n_dropped, 1, "{name}");
         let mut text = String::new();
         std::io::Read::read_to_string(
-            &mut noodles::bgzf::io::Reader::new(std::fs::File::open(&out).expect("invariant: open")),
+            &mut noodles::bgzf::io::Reader::new(
+                std::fs::File::open(&out).expect("invariant: open"),
+            ),
             &mut text,
         )
         .expect("invariant: read");
@@ -912,14 +1032,24 @@ fn mind_counts_post_mask_over_head_survivors() {
         // 18/20 → dropped; s0's 2/20 → kept (the 90 head failures are not
         // counted).
         assert!(!columns.contains(&"s3"), "{name}: s3 dropped: {columns:?}");
-        assert!(columns.contains(&"s1"), "{name}: s1 kept at the boundary: {columns:?}");
+        assert!(
+            columns.contains(&"s1"),
+            "{name}: s1 kept at the boundary: {columns:?}"
+        );
         assert!(columns.contains(&"s0"), "{name}: s0 kept: {columns:?}");
 
         // One step below s1's exact rate drops it too (missing > 0.5).
         let out = dir.join(format!("{name}-strict.vcf.gz"));
-        let report = run_filter(Some(&path), &spec_with("0.499999999"), &options(Some(strategy), &out))
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(report.n_samples_out, 2, "{name}: s1 drops just below its rate");
+        let report = run_filter(
+            Some(&path),
+            &spec_with("0.499999999"),
+            &options(Some(strategy), &out),
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            report.n_samples_out, 2,
+            "{name}: s1 drops just below its rate"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -930,7 +1060,10 @@ fn mind_counts_post_mask_over_head_survivors() {
 fn static_subset_and_mind_combine() {
     use reed_filter::spec::{MissingRate, SampleList, SampleSelect};
     let dir_path = write_fixture("subsetmind", 1_000);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     // Keep s0,s3 statically; drop s3 via the call-rate rule (98% missing).
     let spec = FilterSpec {
         sample_select: Some(SampleSelect {
@@ -941,8 +1074,8 @@ fn static_subset_and_mind_combine() {
         ..FilterSpec::default()
     };
     let out = dir.join("o.vcf.gz");
-    let report = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
-        .expect("invariant: run");
+    let report =
+        run_filter(Some(dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
     assert_eq!(report.n_samples_in, 4);
     assert_eq!(
         report.n_samples_out, 1,
@@ -972,9 +1105,16 @@ fn default_biallelic_gate_drops_multiallelic_records() {
     std::fs::write(&path, bgzf(&text, 128)).expect("invariant: write");
 
     let out = dir.join("gated.vcf.gz");
-    let gated = run_filter(Some(path.as_path()), &FilterSpec::default(), &options(None, &out))
-        .expect("invariant: run");
-    assert_eq!(gated.n_output_records, 1, "the multiallelic record is gated out");
+    let gated = run_filter(
+        Some(path.as_path()),
+        &FilterSpec::default(),
+        &options(None, &out),
+    )
+    .expect("invariant: run");
+    assert_eq!(
+        gated.n_output_records, 1,
+        "the multiallelic record is gated out"
+    );
     assert!(
         gated
             .funnel
@@ -992,9 +1132,12 @@ fn default_biallelic_gate_drops_multiallelic_records() {
         ..FilterSpec::default()
     };
     let out = dir.join("allowed.vcf.gz");
-    let report = run_filter(Some(path.as_path()), &allowed, &options(None, &out))
-        .expect("invariant: run");
-    assert_eq!(report.n_output_records, 2, "allow lets both records through");
+    let report =
+        run_filter(Some(path.as_path()), &allowed, &options(None, &out)).expect("invariant: run");
+    assert_eq!(
+        report.n_output_records, 2,
+        "allow lets both records through"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1005,11 +1148,18 @@ fn default_biallelic_gate_drops_multiallelic_records() {
 fn ac_update_with_allowed_multiallelics_is_rejected() {
     use reed_filter::spec::{MultiallelicPolicy, PolicyRules, SampleList, SampleSelect};
     let dir_path = write_fixture("ac-multiallelic", 200);
-    let dir = dir_path.parent().expect("invariant: temp dir path").to_path_buf();
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
     // Dropping a sample turns on the AC/AN update (bcftools view semantics).
     let spec = FilterSpec {
         sample_select: Some(SampleSelect {
-            keep: Some(SampleList::Names(vec!["s0".into(), "s1".into(), "s2".into()])),
+            keep: Some(SampleList::Names(vec![
+                "s0".into(),
+                "s1".into(),
+                "s2".into(),
+            ])),
             remove: None,
         }),
         policy: PolicyRules {
@@ -1021,11 +1171,17 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
     let out = dir.join("err.vcf.gz");
     let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
         .expect_err("multiallelic input + AC update must fail until R7");
-    assert!(err.to_string().contains("R7"), "an actionable message: {err}");
+    assert!(
+        err.to_string().contains("R7"),
+        "an actionable message: {err}"
+    );
 
     // With the default gate the multiallelic records are dropped first, so
     // the same subset update runs and the recomputed AC stays valid.
-    let gated = FilterSpec { policy: PolicyRules::default(), ..spec };
+    let gated = FilterSpec {
+        policy: PolicyRules::default(),
+        ..spec
+    };
     let out = dir.join("ok.vcf.gz");
     let report = run_filter(Some(dir_path.as_path()), &gated, &options(None, &out))
         .expect("invariant: gated run");

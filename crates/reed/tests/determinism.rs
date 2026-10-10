@@ -5,9 +5,10 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use sha2::Digest;
-use reed::reports::{run_reports, ReportRequest};
+use reed::reports::{ReportRequest, run_reports};
 use reed_engine::budget::{MemBudget, ThreadBudget};
+use sha2::Digest;
+use std::fmt::Write as _;
 
 /// Writes a synthetic BGZF VCF: mixed variant classes over 8 samples.
 fn make_fixture(dir: &str) -> PathBuf {
@@ -18,21 +19,25 @@ fn make_fixture(dir: &str) -> PathBuf {
          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT",
     );
     for s in 0..8 {
-        text.push_str(&format!("\ts{s}"));
+        let _ = write!(text, "\ts{s}");
     }
     text.push('\n');
     // 3000 records cycling through SNV / MNV / indel / symbolic / ref /
     // multiallelic, with a GT region that forces real sample parsing work.
     for i in 0..3_000 {
         let (reference, alt) = match i % 6 {
-            0 => ("A", "G"),            // SNV
-            1 => ("AG", "CT"),          // MNV
-            2 => ("A", "ATT"),          // insertion
-            3 => ("C", "<DEL>"),        // symbolic
-            4 => ("T", "."),            // monomorphic
-            _ => ("G", "GA,GC"),        // multiallelic
+            0 => ("A", "G"),     // SNV
+            1 => ("AG", "CT"),   // MNV
+            2 => ("A", "ATT"),   // insertion
+            3 => ("C", "<DEL>"), // symbolic
+            4 => ("T", "."),     // monomorphic
+            _ => ("G", "GA,GC"), // multiallelic
         };
-        text.push_str(&format!("chr1\t{}\t.\t{reference}\t{alt}\t50\tPASS\tDP=9\tGT", 1000 + i * 7));
+        let _ = write!(
+            text,
+            "chr1\t{}\t.\t{reference}\t{alt}\t50\tPASS\tDP=9\tGT",
+            1000 + i * 7
+        );
         for s in 0..8 {
             let gt = match (i + s) % 5 {
                 0 => "0/0",
@@ -41,7 +46,7 @@ fn make_fixture(dir: &str) -> PathBuf {
                 3 => "./.",
                 _ => "1|0",
             };
-            text.push_str(&format!("\t{gt}"));
+            let _ = write!(text, "\t{gt}");
         }
         text.push('\n');
     }
@@ -95,8 +100,8 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
             targets_exclude: Vec::new(),
             prefix: prefix.clone(),
         };
-        let outcome = run_reports(Some(&input), &request, &budget(threads))
-            .expect("invariant: reports run");
+        let outcome =
+            run_reports(Some(&input), &request, &budget(threads)).expect("invariant: reports run");
         assert_eq!(outcome.n_records, 3_000, "threads={threads}");
         let qc = outcome.qc.expect("invariant: summary requested");
         assert_eq!(qc.summary.n_records, 3_000, "threads={threads}");

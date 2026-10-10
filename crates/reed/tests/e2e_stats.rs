@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use reed::{assign_groups, default_kinds, run_stats, Levels, StatsRequest};
+use reed::{Levels, StatsRequest, assign_groups, default_kinds, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::fst::FstKind;
 use reed_stats::request::StatKind;
@@ -71,7 +71,7 @@ fn request_with(
         levels,
         skip_empty,
         contig_lengths,
-        pixy: None,
+        layout: None,
         ..StatsRequest::default()
     }
 }
@@ -89,25 +89,51 @@ fn assert_cell(row: &[&str], column: usize, expected: Option<f64>, what: &str) {
     match (expected, row[column]) {
         (None, ".") => {}
         (Some(x), cell) => {
-            let got: f64 = cell.parse().unwrap_or_else(|_| panic!("{what}: {cell}"));
+            let got: f64 = cell.parse().expect("invariant: numeric cell");
             assert!(
                 (got - x).abs() <= 1e-12 * x.abs().max(1.0),
                 "{what}: got {got}, expected {x}"
             );
         }
-        _ => panic!("{what}: expected {expected:?}, got {:?}", row[column]),
+        (e, c) => assert_eq!(e.is_some(), c != ".", "{what}: expected {e:?}, got {c:?}"),
     }
 }
 
 const KINDS_TEST: [StatKind; 8] = [
-    StatKind::Pi { group: 0, per_bp: false },
-    StatKind::Pi { group: 0, per_bp: true },
-    StatKind::Dxy { a: 0, b: 1, per_bp: false },
-    StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson },
-    StatKind::Sfs { group: 0, folded: false },
-    StatKind::ThetaW { group: 0, per_bp: false },
-    StatKind::ThetaW { group: 0, per_bp: true },
-    StatKind::TajimaD { group: 0, min_sites: 0 },
+    StatKind::Pi {
+        group: 0,
+        per_bp: false,
+    },
+    StatKind::Pi {
+        group: 0,
+        per_bp: true,
+    },
+    StatKind::Dxy {
+        a: 0,
+        b: 1,
+        per_bp: false,
+    },
+    StatKind::Fst {
+        a: 0,
+        b: 1,
+        kind: FstKind::Hudson,
+    },
+    StatKind::Sfs {
+        group: 0,
+        folded: false,
+    },
+    StatKind::ThetaW {
+        group: 0,
+        per_bp: false,
+    },
+    StatKind::ThetaW {
+        group: 0,
+        per_bp: true,
+    },
+    StatKind::TajimaD {
+        group: 0,
+        min_sites: 0,
+    },
 ];
 
 #[test]
@@ -119,7 +145,7 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
          sfs.unfolded.0\ttheta_w.total.0\ttheta_w.bp.0\ttajima_d.0\n",
     );
     // Window [1,100]: π = 1/2; π_bp = (1 + 0)/100; dxy = 4/8; Hudson = 0/1;
-    // SFS alt=1 once; θ (pixy: per-site n) = (1/a(2) + 0/a(2))/2 sites = 0.5,
+    // SFS alt=1 once; θ (layout: per-site n) = (1/a(2) + 0/a(2))/2 sites = 0.5,
     // per bp 0.005; n = 2 gives Tajima variance 0 → '.'.
     expected.push_str("chr1\t1\t100\t0.5\t0.01\t0.5\t0\t1\t0.5\t0.005\t.\n");
     // Window [101,200]: no sites — undefined statistics stay '.', the SFS
@@ -131,7 +157,10 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
     expected.push_str("chr1\t201\t300\t0\t0\t1\t1\t0\t0\t0\t.\n");
 
     for threads in [1_usize, 2, 4, 7] {
-        let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
+        let budget = ThreadBudget {
+            threads,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
         let report = run_stats(
             Some(path.as_path()),
             request(KINDS_TEST.to_vec(), Levels::default(), false),
@@ -149,7 +178,10 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
 #[test]
 fn skip_empty_drops_window_rows_only() {
     let path = write_fixture("skip.vcf.gz", &fixture_text());
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
     let report = run_stats(
         Some(path.as_path()),
         request(KINDS_TEST.to_vec(), Levels::default(), true),
@@ -167,10 +199,17 @@ fn skip_empty_drops_window_rows_only() {
 #[test]
 fn contig_and_genome_levels_aggregate_the_bins() {
     let path = write_fixture("levels.vcf.gz", &fixture_text());
-    let budget = ThreadBudget { threads: 3, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 3,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
     let levels = Levels::parse("window,contig,genome").expect("invariant: levels");
-    let report = run_stats(Some(path.as_path()), request(KINDS_TEST.to_vec(), levels, false), &budget)
-        .expect("invariant: fixture run succeeds");
+    let report = run_stats(
+        Some(path.as_path()),
+        request(KINDS_TEST.to_vec(), levels, false),
+        &budget,
+    )
+    .expect("invariant: fixture run succeeds");
 
     let got = rows(&report.tsv);
     assert_eq!(got.len(), 5, "3 window rows + contig row + genome row");
@@ -178,7 +217,11 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     assert_eq!(got[0][0], "chr1");
     assert_eq!(got[2][..3], ["chr1", "201", "300"]);
     assert_eq!(got[3][..3], ["chr1", "1", "300"], "contig span");
-    assert_eq!(got[4][..3], ["genome", "0", "300"], "genome row: summed span");
+    assert_eq!(
+        got[4][..3],
+        ["genome", "0", "300"],
+        "genome row: summed span"
+    );
 
     // Contig totals by hand: π diffs 1 over comps 1+1+1 = 3 (each site
     // has n = 2 chromosomes → one comparable pair);
@@ -206,7 +249,11 @@ fn levels_parse_rejects_unknown_tokens() {
     assert!(Levels::parse("bogus").is_err());
     assert_eq!(
         Levels::parse("window").expect("invariant: valid"),
-        Levels { window: true, contig: false, genome: false }
+        Levels {
+            window: true,
+            contig: false,
+            genome: false
+        }
     );
 }
 
@@ -223,7 +270,10 @@ chr2\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t1/1\t0/0
 chr1\t60\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t1/1
 ";
     let path = write_fixture("revisit.vcf.gz", text);
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
     let err = run_stats(
         Some(path.as_path()),
         request(KINDS_TEST.to_vec(), Levels::default(), false),
@@ -240,11 +290,13 @@ fn assign_groups_maps_header_order() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let path = dir.join("groups.tsv");
     // Pixy populations-file format: two columns, no header row.
-    std::fs::write(&path, "s1\tpop2\ns0\tpop1\ns2\tpop1\n")
-        .expect("invariant: write");
-    let (gt_groups, names) =
-        assign_groups(&path, &["s0".into(), "s1".into(), "s2".into(), "s9".into()], false)
-            .expect("invariant: parse");
+    std::fs::write(&path, "s1\tpop2\ns0\tpop1\ns2\tpop1\n").expect("invariant: write");
+    let (gt_groups, names) = assign_groups(
+        &path,
+        &["s0".into(), "s1".into(), "s2".into(), "s9".into()],
+        false,
+    )
+    .expect("invariant: parse");
     // First appearance order: pop2 (s1) then pop1 (s0, s2); s9 unlisted.
     assert_eq!(names, ["pop2", "pop1"]);
     assert_eq!(gt_groups, [Some(1), Some(0), Some(1), None]);
@@ -310,8 +362,18 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
 
     let err = run_stats(
         Some(path.as_path()),
-        request(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false),
-        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+        request(
+            vec![StatKind::Pi {
+                group: 0,
+                per_bp: true,
+            }],
+            Levels::default(),
+            false,
+        ),
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
     )
     .expect_err("invariant: missing length is refused");
     assert!(err.to_string().contains("no ##contig length"), "{err}");
@@ -321,16 +383,37 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     lengths.insert(b"chr1".to_vec(), 1_000_u64);
     let with_file = run_stats(
         Some(path.as_path()),
-        request_with(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false, lengths),
-        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+        request_with(
+            vec![StatKind::Pi {
+                group: 0,
+                per_bp: true,
+            }],
+            Levels::default(),
+            false,
+            lengths,
+        ),
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
     )
     .expect("invariant: lengths supplement works");
 
     let declared = write_fixture("d7-declared", &fixture_text());
     let reference = run_stats(
         Some(declared.as_path()),
-        request(vec![StatKind::Pi { group: 0, per_bp: true }], Levels::default(), false),
-        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+        request(
+            vec![StatKind::Pi {
+                group: 0,
+                per_bp: true,
+            }],
+            Levels::default(),
+            false,
+        ),
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
     )
     .expect("invariant: declared run");
     assert_eq!(
@@ -358,8 +441,18 @@ chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
     let path = write_fixture("d8-unsorted", unsorted);
     let err = run_stats(
         Some(path.as_path()),
-        request(vec![StatKind::Pi { group: 0, per_bp: false }], Levels::default(), false),
-        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+        request(
+            vec![StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            Levels::default(),
+            false,
+        ),
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
     )
     .expect_err("invariant: unsorted input is refused");
     assert!(err.to_string().contains("ascending"), "{err}");
@@ -375,8 +468,18 @@ chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
     let path = write_fixture("d8-beyond", beyond);
     let err = run_stats(
         Some(path.as_path()),
-        request(vec![StatKind::Pi { group: 0, per_bp: false }], Levels::default(), false),
-        &ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) },
+        request(
+            vec![StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            Levels::default(),
+            false,
+        ),
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
     )
     .expect_err("invariant: position beyond the contig length is refused");
     assert!(err.to_string().contains("exceeds contig"), "{err}");

@@ -17,9 +17,7 @@ use crate::units::input_path;
 /// Parses `--indep-pairwise W[kb] [S] R2` (docs/rounds/v5/05-algorithms.md
 /// §3.4.1): `W` variants (or `W kb`), the step defaults to 1 and must be 1
 /// when the window is in kb.
-fn parse_indep_pairwise(
-    args: &[String],
-) -> Result<Option<reed::spec::LdPruneSpec>, String> {
+fn parse_indep_pairwise(args: &[String]) -> Result<Option<reed::spec::LdPruneSpec>, String> {
     if args.is_empty() {
         return Ok(None);
     }
@@ -51,7 +49,12 @@ fn parse_indep_pairwise(
     if kb && step != 1 {
         return Err("--indep-pairwise with a kb window requires step 1".into());
     }
-    Ok(Some(reed::spec::LdPruneSpec { window, kb, step, r2 }))
+    Ok(Some(reed::spec::LdPruneSpec {
+        window,
+        kb,
+        step,
+        r2,
+    }))
 }
 
 pub(crate) fn site_spec(
@@ -76,7 +79,9 @@ pub(crate) fn site_spec(
     };
     if let Some(list) = &cli.types {
         for token in list.split(',') {
-            spec.site.variant_class.push(variant_class(token)?.to_string());
+            spec.site
+                .variant_class
+                .push(variant_class(token)?.to_string());
         }
     }
     if let Some(list) = &cli.exclude_types {
@@ -220,7 +225,11 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     let mut inline_remove: Option<Vec<String>> = None;
     for list in &cli.sample_args.samples {
         let (exclude, names) = parse_list(list)?;
-        let slot = if exclude { &mut inline_remove } else { &mut inline_keep };
+        let slot = if exclude {
+            &mut inline_remove
+        } else {
+            &mut inline_keep
+        };
         if slot.is_some() {
             return Err(format!(
                 "repeated -s list of the same polarity ({list:?}); combine the names into one list"
@@ -228,7 +237,11 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
         }
         *slot = Some(names);
     }
-    let file_keep = cli.sample_args.samples_file.as_ref().or(cli.sample_args.keep.as_ref());
+    let file_keep = cli
+        .sample_args
+        .samples_file
+        .as_ref()
+        .or(cli.sample_args.keep.as_ref());
     if inline_keep.is_some() && file_keep.is_some() {
         return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
     }
@@ -301,8 +314,9 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     Ok(spec)
 }
 
-
-pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_filter_cli(
+    cli: FilterCli,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let FilterCli {
         input,
         out,
@@ -331,7 +345,9 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
         .transpose()?;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
     let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism().expect("invariant: parallelism").get()
+        std::thread::available_parallelism()
+            .expect("invariant: parallelism")
+            .get()
     });
     // -O v|z|b|u[level]: explicit output type, `-o` names the file (the
     // extension is only inferred when -O is absent).
@@ -343,7 +359,9 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), Box<dyn std::error::E
             let level = if level.is_empty() {
                 *compress_level
             } else {
-                level.parse::<u8>().map_err(|_| format!("invalid -O level in {spec:?}"))?
+                level
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid -O level in {spec:?}"))?
             };
             match kind {
                 "v" => (out.clone().map(PathBuf::from), level, Some(false)),
@@ -454,9 +472,16 @@ mod tests {
     /// Parses a flag vector through the real clap definitions.
     fn cli_from(args: &[String]) -> FilterCli {
         // `Cli` requires a subcommand; prepend the program name and `filter`.
-        let mut argv = vec!["reed".to_string(), "filter".to_string(), "in.vcf.gz".to_string()];
+        let mut argv = vec![
+            "reed".to_string(),
+            "filter".to_string(),
+            "in.vcf.gz".to_string(),
+        ];
         argv.extend_from_slice(args);
-        match crate::cli::Cli::try_parse_from(argv).expect("invariant: flags parse").command {
+        match crate::cli::Cli::try_parse_from(argv)
+            .expect("invariant: flags parse")
+            .command
+        {
             crate::cli::Command::Filter(cli) => cli,
             _ => unreachable!("invariant: the filter subcommand was given"),
         }
@@ -468,28 +493,60 @@ mod tests {
     #[test]
     fn spec_to_args_round_trips_through_the_flags() {
         let flags: Vec<&str> = vec![
-            "-s", "s1,s2",
-            "-t", "Chr01:1-1000,^Chr02",
-            "-v", "snv", "-V", "indel",
-            "-m", "2", "-M", "3",
-            "-f", "PASS",
-            "-i", "QD>=4",
-            "-e", "FS>50",
-            "-i", "F_MISSING<0.05",
-            "-e", "N_MISSING>10",
-            "--min-dp", "5", "--max-dp", "100", "--min-gq", "20",
-            "--geno", "0.1", "--maf", "0.05", "--max-maf", "0.4",
-            "--mac", "3", "--max-mac", "30",
-            "--hwe", "0.000001", "midp",
-            "-x", "INFO/DP,INFO/MLEAC",
-            "--fill-tags", "AC,AN,NS",
+            "-s",
+            "s1,s2",
+            "-t",
+            "Chr01:1-1000,^Chr02",
+            "-v",
+            "snv",
+            "-V",
+            "indel",
+            "-m",
+            "2",
+            "-M",
+            "3",
+            "-f",
+            "PASS",
+            "-i",
+            "QD>=4",
+            "-e",
+            "FS>50",
+            "-i",
+            "F_MISSING<0.05",
+            "-e",
+            "N_MISSING>10",
+            "--min-dp",
+            "5",
+            "--max-dp",
+            "100",
+            "--min-gq",
+            "20",
+            "--geno",
+            "0.1",
+            "--maf",
+            "0.05",
+            "--max-maf",
+            "0.4",
+            "--mac",
+            "3",
+            "--max-mac",
+            "30",
+            "--hwe",
+            "0.000001",
+            "midp",
+            "-x",
+            "INFO/DP,INFO/MLEAC",
+            "--fill-tags",
+            "AC,AN,NS",
             "-I",
         ];
-        let first = spec_from_flags(&cli_from(&flags.iter().map(ToString::to_string).collect::<Vec<_>>()))
-            .expect("invariant: the reference flags translate");
+        let first = spec_from_flags(&cli_from(
+            &flags.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ))
+        .expect("invariant: the reference flags translate");
         let rendered = first.to_args();
-        let second = spec_from_flags(&cli_from(&rendered))
-            .expect("invariant: the rendered flags translate");
+        let second =
+            spec_from_flags(&cli_from(&rendered)).expect("invariant: the rendered flags translate");
         assert_eq!(first, second, "round trip differs; rendered: {rendered:?}");
         assert_eq!(rendered, flags, "the rendering is the canonical spelling");
     }
@@ -522,15 +579,26 @@ mod tests {
             (vec!["--max-missing", "0.9"], "--geno 0.1"),
             (vec!["--max-missing", "0.8"], "--geno 0.2"),
             (vec!["--max-missing-sample", "0.9"], "--mind 0.1"),
-            (vec!["--max-missing-count", "5"], "the missing-threshold family is --geno/--mind only"),
+            (
+                vec!["--max-missing-count", "5"],
+                "the missing-threshold family is --geno/--mind only",
+            ),
         ];
         for (flags, expected) in cases {
-            let mut argv = vec!["reed".to_string(), "filter".to_string(), "in.vcf.gz".to_string()];
+            let mut argv = vec![
+                "reed".to_string(),
+                "filter".to_string(),
+                "in.vcf.gz".to_string(),
+            ];
             argv.extend(flags.iter().map(ToString::to_string));
             let err = crate::cli::Cli::try_parse_from(argv)
                 .err()
                 .expect("withdrawn flag must fail");
-            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "{flags:?}");
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{flags:?}"
+            );
             let text = err.to_string();
             assert!(text.contains("was removed"), "{flags:?}: {text}");
             assert!(text.contains(expected), "{flags:?}: {text}");
@@ -548,10 +616,16 @@ mod tests {
             .collect();
         let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translate");
         let select = first.sample_select.as_ref().expect("invariant: subset");
-        assert_eq!(select.keep, Some(reed::spec::SampleList::File("keep.txt".into())));
+        assert_eq!(
+            select.keep,
+            Some(reed::spec::SampleList::File("keep.txt".into()))
+        );
         assert_eq!(
             select.remove,
-            Some(reed::spec::SampleList::Names(vec!["drop1".into(), "drop2".into()]))
+            Some(reed::spec::SampleList::Names(vec![
+                "drop1".into(),
+                "drop2".into()
+            ]))
         );
         assert_eq!(
             first.mind,
@@ -574,7 +648,10 @@ mod tests {
         ] {
             let args: Vec<String> = flags.iter().map(ToString::to_string).collect();
             let err = spec_from_flags(&cli_from(&args)).expect_err("must conflict");
-            assert!(err.contains("mutually exclusive") || err.contains("repeated"), "{err}");
+            assert!(
+                err.contains("mutually exclusive") || err.contains("repeated"),
+                "{err}"
+            );
         }
     }
 

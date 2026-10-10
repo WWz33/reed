@@ -5,7 +5,7 @@
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    run_stats, FStatTest, FStatsRequest, InvariantMode, Levels, PixyOptions, StatsRequest,
+    FStatTest, FStatsRequest, InvariantMode, Levels, StatsRequest, WindowLayoutOptions, run_stats,
 };
 
 const VCF: &str = "\
@@ -32,10 +32,16 @@ fn request(tests: Vec<FStatTest>, block_bp: u64) -> StatsRequest {
         gt_groups: vec![Some(0), Some(0), Some(1), Some(1), Some(2), Some(2)],
         window_size: 1000,
         step: 1000,
-        levels: Levels { window: false, contig: false, genome: true },
+        levels: Levels {
+            window: false,
+            contig: false,
+            genome: true,
+        },
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
-        pixy: Some(PixyOptions { invariant: InvariantMode::VariantOnly }),
+        layout: Some(WindowLayoutOptions {
+            invariant: InvariantMode::VariantOnly,
+        }),
         regions: Vec::new(),
         targets: Vec::new(),
         targets_exclude: Vec::new(),
@@ -53,13 +59,26 @@ fn fstats_match_scikit_allel() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("fstats.vcf");
     std::fs::write(&vcf, VCF).expect("invariant: fixture write");
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
     let tests = vec![
         FStatTest::F2 { a: 0, b: 1 },
         FStatTest::F3 { c: 2, a: 0, b: 1 },
-        FStatTest::F4 { a: 0, b: 1, c: 2, d: 2 },
-        FStatTest::Dstat { a: 0, b: 1, c: 0, d: 2 },
+        FStatTest::F4 {
+            a: 0,
+            b: 1,
+            c: 2,
+            d: 2,
+        },
+        FStatTest::Dstat {
+            a: 0,
+            b: 1,
+            c: 0,
+            d: 2,
+        },
     ];
     let report = run_stats(Some(&vcf), request(tests, 1), &budget).expect("invariant: run");
     let fstats = report.fstats.expect("invariant: f-stats requested");
@@ -91,13 +110,21 @@ fn fstats_are_identical_across_thread_counts() {
 
     let mut values = Vec::new();
     for threads in [1_usize, 3, 7] {
-        let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
+        let budget = ThreadBudget {
+            threads,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
         let report = run_stats(
             Some(&vcf),
             request(
                 vec![
                     FStatTest::F2 { a: 0, b: 1 },
-                    FStatTest::Dstat { a: 0, b: 1, c: 0, d: 2 },
+                    FStatTest::Dstat {
+                        a: 0,
+                        b: 1,
+                        c: 0,
+                        d: 2,
+                    },
                 ],
                 1,
             ),
@@ -105,7 +132,11 @@ fn fstats_are_identical_across_thread_counts() {
         )
         .expect("invariant: run");
         let rows = report.fstats.expect("invariant: f-stats").rows;
-        values.push(rows.iter().map(|r| (r.estimate, r.se, r.n_blocks)).collect::<Vec<_>>());
+        values.push(
+            rows.iter()
+                .map(|r| (r.estimate, r.se, r.n_blocks))
+                .collect::<Vec<_>>(),
+        );
     }
     assert!(values.windows(2).all(|w| w[0] == w[1]), "{values:?}");
 
@@ -118,14 +149,26 @@ fn f4_ratio_divides_the_two_f4_estimates() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("fstats.vcf");
     std::fs::write(&vcf, VCF).expect("invariant: fixture write");
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
     // f4-ratio = Σf4(A, O; X, C) / Σf4(A, O; B, C) with A = popA, O = popB,
     // X = popC, B = popA, C = popC. The two f4 sums come from independent
     // F4 tests over the same data, so the ratio is checkable by construction.
     let ratio = run_stats(
         Some(&vcf),
-        request(vec![FStatTest::F4Ratio { o: 1, a: 0, x: 2, b: 0, c: 2 }], 1),
+        request(
+            vec![FStatTest::F4Ratio {
+                o: 1,
+                a: 0,
+                x: 2,
+                b: 0,
+                c: 2,
+            }],
+            1,
+        ),
         &budget,
     )
     .expect("invariant: run");
@@ -136,8 +179,18 @@ fn f4_ratio_divides_the_two_f4_estimates() {
         Some(&vcf),
         request(
             vec![
-                FStatTest::F4 { a: 0, b: 1, c: 2, d: 2 },
-                FStatTest::F4 { a: 0, b: 1, c: 0, d: 2 },
+                FStatTest::F4 {
+                    a: 0,
+                    b: 1,
+                    c: 2,
+                    d: 2,
+                },
+                FStatTest::F4 {
+                    a: 0,
+                    b: 1,
+                    c: 0,
+                    d: 2,
+                },
             ],
             1,
         ),

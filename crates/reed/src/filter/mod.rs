@@ -20,33 +20,33 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use noodles::vcf;
+use reed_core::ChunkId;
 use reed_core::sample::SampleMask;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, OrderedSink};
+use reed_engine::pipeline::{OrderedSink, run};
+use reed_filter::FilterError;
 use reed_filter::funnel::{FilterReport, FunnelPartial};
 use reed_filter::plan::{ExecStrategy, HeadRule};
 use reed_filter::spec::{FilterSpec, SampleList};
-use reed_filter::FilterError;
-use reed_core::ChunkId;
-use noodles::vcf as vcf;
 use reed_io::write::index::Indexer;
 use reed_io::write::ordered_output::OrderedOutput;
 
 mod emit;
+mod ld_prune;
 mod mid_stage;
 pub(crate) mod record_pipeline;
 mod reduce;
 mod report;
 mod single_pass;
-mod ld_prune;
 mod sketch;
 
 use emit::EmitJob;
-use sketch::estimate_records;
-use mid_stage::{mid_stage, ChunkDecision};
+use mid_stage::{ChunkDecision, mid_stage};
 use reduce::run_missing_pass;
 use single_pass::{FilterJob, FilterPartial};
+use sketch::estimate_records;
 use sketch::run_sketch_pass;
 
 // Re-exported so `reed::filter::WriteIndex` keeps working (the type lives in
@@ -165,8 +165,7 @@ pub fn run_filter(
             _spill = None;
         }
         None if spec.mind.is_some() => {
-            let guard =
-                crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
+            let guard = crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
             let path = guard.path().to_path_buf();
             first = Some(crate::input::open_regions(Some(&path), &opts.regions).map_err(io_err)?);
             replay_path = Some(path);
@@ -214,9 +213,8 @@ pub fn run_filter(
                 // §11.4: the sketch path when the upper-bounded sketch fits
                 // the memory budget (records extrapolated from the first
                 // chunk's records/byte density).
-                let estimated = estimate_records(
-                    replay_path.as_deref().expect("invariant: guarded above"),
-                )?;
+                let estimated =
+                    estimate_records(replay_path.as_deref().expect("invariant: guarded above"))?;
                 reed_filter::plan::strategy::choose_for_mind(
                     estimated,
                     n_samples_in,
@@ -233,7 +231,9 @@ pub fn run_filter(
     // mid stage turns into emit decisions) ----
     let pass0_start = Instant::now();
     let sketch_pass = if strategy == ExecStrategy::SketchThenEmit {
-        let opened = first.take().expect("invariant: pass0 consumes the first open");
+        let opened = first
+            .take()
+            .expect("invariant: pass0 consumes the first open");
         let pass = run_sketch_pass(opened, n_samples_in, &plan, opts)?;
         timing_engine.merge(&pass.metrics);
         Some(pass)
@@ -282,7 +282,9 @@ pub fn run_filter(
         let (n_records, called): (u64, &[u64]) = match &sketch_pass {
             Some(sketch) => (sketch.n_records, &sketch.cohort_called),
             None => {
-                let opened = first.take().expect("invariant: pass0 consumes the first open");
+                let opened = first
+                    .take()
+                    .expect("invariant: pass0 consumes the first open");
                 missing_partial = run_missing_pass(opened, &plan, opts, native_bcf)?;
                 timing_engine.merge(&missing_partial.metrics);
                 (missing_partial.n_records, &missing_partial.called)
@@ -342,7 +344,9 @@ pub fn run_filter(
     // order-dependent. Runs after the sample bitmap (it prunes the sites
     // that survived every other rule) and before the mid stage/emit. ----
     let site_keep = if let Some(prune) = &spec.ld_prune {
-        let opened = first.take().expect("invariant: pass0 consumes the first open");
+        let opened = first
+            .take()
+            .expect("invariant: pass0 consumes the first open");
         let config = ld_prune::PruneConfig {
             threshold: prune.r2,
             window: if prune.kb {
@@ -355,8 +359,7 @@ pub fn run_filter(
             step: prune.step,
         };
         let pass_start = Instant::now();
-        let result =
-            ld_prune::run_ld_prune_pass(opened, &plan, &keep, config, opts, native_bcf)?;
+        let result = ld_prune::run_ld_prune_pass(opened, &plan, &keep, config, opts, native_bcf)?;
         timing_engine.merge(&result.metrics);
         timing_phases.push(("pass0_ld", pass_start.elapsed().as_secs_f64()));
         ld_prune_report = Some((result.n_survivors, result.n_pruned));
@@ -367,12 +370,14 @@ pub fn run_filter(
 
     // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions ----
     let mid_start = Instant::now();
-    let sketch_out: Option<(FunnelPartial, std::collections::HashMap<u64, Arc<ChunkDecision>>)> =
-        sketch_pass.map(|sketch| {
-            let mut funnel = sketch.funnel;
-            let map = mid_stage(&sketch.sketches, &keep, &plan, n_samples_out, &mut funnel);
-            (funnel, map)
-        });
+    let sketch_out: Option<(
+        FunnelPartial,
+        std::collections::HashMap<u64, Arc<ChunkDecision>>,
+    )> = sketch_pass.map(|sketch| {
+        let mut funnel = sketch.funnel;
+        let map = mid_stage(&sketch.sketches, &keep, &plan, n_samples_out, &mut funnel);
+        (funnel, map)
+    });
     if sketch_out.is_some() {
         timing_phases.push(("mid", mid_start.elapsed().as_secs_f64()));
     }
@@ -391,7 +396,10 @@ pub fn run_filter(
         !(opts.no_command && k == "reed_command")
     }) {
         out_header
-            .insert(key.as_str().parse().expect("invariant: valid key"), value.into())
+            .insert(
+                key.as_str().parse().expect("invariant: valid key"),
+                value.into(),
+            )
             .map_err(|e| FilterError::Spec(format!("header insert {key}: {e}")))?;
     }
     let mut header_bytes = Vec::new();
@@ -399,8 +407,9 @@ pub fn run_filter(
     let bcf_level = match opts.output_bcf {
         Some(level) => Some(level),
         None => match &opts.output {
-            Some(p) if p.extension().and_then(|e| e.to_str()) == Some("bcf")
-                && opts.output_compressed.is_none() =>
+            Some(p)
+                if p.extension().and_then(|e| e.to_str()) == Some("bcf")
+                    && opts.output_compressed.is_none() =>
             {
                 Some(6)
             }
@@ -448,10 +457,17 @@ pub fn run_filter(
             },
         },
     };
-    let header_level = if bcf_level == Some(0) { 0 } else { opts.compress_level };
+    let header_level = if bcf_level == Some(0) {
+        0
+    } else {
+        opts.compress_level
+    };
     let _ = header_level;
     let writer: Box<dyn Write + Send> = match &opts.output {
-        None => Box::new(std::io::BufWriter::with_capacity(1 << 20, std::io::stdout())),
+        None => Box::new(std::io::BufWriter::with_capacity(
+            1 << 20,
+            std::io::stdout(),
+        )),
         Some(p) => Box::new(std::io::BufWriter::with_capacity(
             1 << 20,
             std::fs::File::create(p).map_err(FilterError::from)?,
@@ -490,9 +506,10 @@ pub fn run_filter(
         .map(|p| opts.write_index.path_for(p));
     let budget = ThreadBudget {
         threads: opts.threads.max(1),
-        mem: opts
-            .mem_bytes
-            .map_or_else(reed_engine::budget::MemBudget::default_half_memory, reed_engine::budget::MemBudget::from_bytes),
+        mem: opts.mem_bytes.map_or_else(
+            reed_engine::budget::MemBudget::default_half_memory,
+            reed_engine::budget::MemBudget::from_bytes,
+        ),
     };
 
     // The report funnel: the FilterJob paths collect it in the sink slot;
@@ -530,7 +547,8 @@ pub fn run_filter(
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
         timing_engine.merge(&report.metrics);
         timing_chunks = report.n_chunks;
-        job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
+        job.finish(report.n_chunks, opts.regions.is_empty())
+            .map_err(ferr)?;
         sketch_funnel
     } else {
         let bcf = bcf_level.map(|_| Arc::new(out_header.clone()));
@@ -585,9 +603,9 @@ pub fn run_filter(
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
         timing_engine.merge(&report.metrics);
         timing_chunks = report.n_chunks;
-        job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
-        slot
-            .lock()
+        job.finish(report.n_chunks, opts.regions.is_empty())
+            .map_err(ferr)?;
+        slot.lock()
             .expect("invariant: funnel slot not poisoned")
             .take()
             .expect("invariant: sink finish stored the funnel")
@@ -653,10 +671,10 @@ fn build_keep(
     let mask = if ids.len() == n {
         None
     } else {
-        Some(SampleMask::from_ids(
-            n,
-            ids.iter().copied().map(reed_core::SampleId),
-        ).map_err(|e| FilterError::Spec(e.to_string()))?)
+        Some(
+            SampleMask::from_ids(n, ids.iter().copied().map(reed_core::SampleId))
+                .map_err(|e| FilterError::Spec(e.to_string()))?,
+        )
     };
     Ok((Arc::from(keep), mask))
 }
@@ -704,7 +722,9 @@ fn keep_list_from_names(
             Some(&i) => keep[i] = true,
             None if force => tracing::warn!("sample {name:?} is not in the header"),
             None => {
-                return Err(FilterError::Spec(format!("sample {name:?} is not in the header")))
+                return Err(FilterError::Spec(format!(
+                    "sample {name:?} is not in the header"
+                )));
             }
         }
     }
@@ -713,9 +733,13 @@ fn keep_list_from_names(
 
 /// Adds header definitions for recomputed tags the input lacks (§11.6:
 /// canonical Numbers — AC/HWE are `A`).
-fn ensure_info_defs(mut header: vcf::Header, recompute: &reed_filter::plan::RecomputeFlags) -> vcf::Header {
+fn ensure_info_defs(
+    mut header: vcf::Header,
+    recompute: &reed_filter::plan::RecomputeFlags,
+) -> vcf::Header {
     use noodles::vcf::header::record::value::map::info::{Number, Type};
-    type InfoMap = noodles::vcf::header::record::value::Map<noodles::vcf::header::record::value::map::Info>;
+    type InfoMap =
+        noodles::vcf::header::record::value::Map<noodles::vcf::header::record::value::map::Info>;
     let add = |header: &mut vcf::Header, id: &str, number: Number, ty: Type, desc: &str| {
         if !header.infos().iter().any(|(k, _)| k.as_str() == id) {
             header
@@ -724,19 +748,49 @@ fn ensure_info_defs(mut header: vcf::Header, recompute: &reed_filter::plan::Reco
         }
     };
     if recompute.ac {
-        add(&mut header, "AC", Number::A, Type::Integer, "Allele count in genotypes");
+        add(
+            &mut header,
+            "AC",
+            Number::A,
+            Type::Integer,
+            "Allele count in genotypes",
+        );
     }
     if recompute.an {
-        add(&mut header, "AN", Number::Count(1), Type::Integer, "Total number of alleles in called genotypes");
+        add(
+            &mut header,
+            "AN",
+            Number::Count(1),
+            Type::Integer,
+            "Total number of alleles in called genotypes",
+        );
     }
     if recompute.ns {
-        add(&mut header, "NS", Number::Count(1), Type::Integer, "Number of samples with data");
+        add(
+            &mut header,
+            "NS",
+            Number::Count(1),
+            Type::Integer,
+            "Number of samples with data",
+        );
     }
     if recompute.maf {
-        add(&mut header, "MAF", Number::Count(1), Type::Float, "Frequency of the second most common allele");
+        add(
+            &mut header,
+            "MAF",
+            Number::Count(1),
+            Type::Float,
+            "Frequency of the second most common allele",
+        );
     }
     if recompute.hwe {
-        add(&mut header, "HWE", Number::A, Type::Float, "HWE test (PMID:15789306); 1=good, 0=bad");
+        add(
+            &mut header,
+            "HWE",
+            Number::A,
+            Type::Float,
+            "HWE test (PMID:15789306); 1=good, 0=bad",
+        );
     }
     header
 }
@@ -749,7 +803,6 @@ struct OutputSink {
     slot: Arc<Mutex<Option<FunnelPartial>>>,
 }
 
-
 impl OrderedSink<FilterPartial> for OutputSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut FilterPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
@@ -757,10 +810,15 @@ impl OrderedSink<FilterPartial> for OutputSink {
     }
 
     fn finish(self) -> Result<u64, EngineError> {
-        let OutputSink { out, mut funnel, slot } = self;
+        let OutputSink {
+            out,
+            mut funnel,
+            slot,
+        } = self;
         out.finish().map_err(job_err)?;
         let n_output = funnel.n_output;
-        *slot.lock().expect("invariant: funnel slot not poisoned") = Some(std::mem::take(&mut funnel));
+        *slot.lock().expect("invariant: funnel slot not poisoned") =
+            Some(std::mem::take(&mut funnel));
         Ok(n_output)
     }
 }

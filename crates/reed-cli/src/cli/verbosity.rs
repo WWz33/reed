@@ -33,9 +33,10 @@ impl Verbosity {
     ///
     /// A message naming the supported range (clap turns it into exit code 2).
     pub(crate) fn parse(text: &str) -> Result<Self, String> {
-        let level: u8 = text.trim().parse().map_err(|_| {
-            format!("invalid --verbosity {text:?}: expected an integer 0-3")
-        })?;
+        let level: u8 = text
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid --verbosity {text:?}: expected an integer 0-3"))?;
         match level {
             0 => Ok(Self::Silent),
             1 => Ok(Self::Summary),

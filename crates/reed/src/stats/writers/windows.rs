@@ -1,15 +1,17 @@
-//! pixy-layout window writers (02-cli.md §5.4): `PREFIX_pi.txt`,
-//! `PREFIX_dxy.txt`, `PREFIX.log`. Columns follow pixy so downstream pixy
-//! plotting scripts work unchanged; missing values print `NA`.
+//! Window-layout writers (02-cli.md §5.4): `PREFIX_pi.txt`,
+//! `PREFIX_dxy.txt`, `PREFIX.log`. The column layout is the one the
+//! reference implementation emits — verified column by column in
+//! `gold/popgen/compare.py` — so downstream scripts written for that
+//! layout work unchanged; missing values print `NA`.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
 use reed_stats::request::StatKind;
 
-use crate::stats::{InvariantMode, PixyOptions, StatsReport};
+use crate::stats::{InvariantMode, StatsReport, WindowLayoutOptions};
 
-/// Writes the requested pixy-layout files plus the run log.
+/// Writes the requested window-layout files plus the run log.
 ///
 /// # Errors
 ///
@@ -19,7 +21,7 @@ pub fn write(
     report: &StatsReport,
     group_names: &[String],
     kinds: &[StatKind],
-    pixy: PixyOptions,
+    layout: WindowLayoutOptions,
     command: &str,
     version: &str,
 ) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
@@ -35,12 +37,9 @@ pub fn write(
     let mut tajima_rows = String::from(
         "pop\tchromosome\twindow_pos_1\twindow_pos_2\ttajima_d\tno_sites\traw_pi\traw_watterson_theta\ttajima_d_stdev\n",
     );
-    // pixy prints `avg_wc_fst` / `avg_hudson_fst` (02-cli.md §5.4 lists the
-    // column as avg_wc84_fst; pixy's own name wins so downstream pixy
-    // scripts keep working).
-    // pixy's own column token: `avg_wc_fst` for Weir & Cockerham 1984 and
-    // `avg_hudson_fst` for Hudson, so downstream pixy scripts work unchanged
-    // (02-cli.md §5.4 spells the WC column avg_wc84_fst; pixy's name wins).
+    // The reference layout prints `avg_wc_fst` / `avg_hudson_fst`
+    // (02-cli.md §5.4 spells the WC column avg_wc84_fst; the layout's own
+    // name wins so downstream scripts work unchanged).
     let fst_method = kinds.iter().find_map(|kind| match kind {
         StatKind::Fst { kind, .. } => Some(match kind {
             reed_stats::fst::FstKind::Hudson => "hudson",
@@ -78,7 +77,7 @@ pub fn write(
     } else {
         String::new()
     };
-    let variant_only = pixy.invariant == InvariantMode::VariantOnly;
+    let variant_only = layout.invariant == InvariantMode::VariantOnly;
     for row in &report.windows {
         for (kind, acc) in kinds.iter().zip(&row.accs) {
             match kind {
@@ -89,7 +88,7 @@ pub fn write(
                         continue;
                     };
                     // Empty windows (no site of the file falls in them) print
-                    // NA, like pixy (04-algorithms.md §4).
+                    // NA, like the reference layout (04-algorithms.md §4).
                     let value = if n_sites == 0 {
                         "NA".to_string()
                     } else {
@@ -212,7 +211,9 @@ pub fn write(
                         cell(f_bc)
                     );
                 }
-                _ => {}
+                // The window layout carries pi/dxy plus the extended columns
+                // handled above; the SFS accumulator has no window row.
+                StatKind::Sfs { .. } => {}
             }
         }
     }
@@ -254,9 +255,9 @@ pub fn write(
     }
     let log = format!(
         "reed {version}\ncommand: {command}\ninvariant-sites: {:?}\nwindows: {}\nrecords: {}\n\
-         invariant sites seen: {}\nmethods:\n  pi   Nei & Li 1979; missing data: Korunes & Samuk 2021 (pixy)\n  \
-         dxy  Nei 1987; missing data: Korunes & Samuk 2021 (pixy)\n",
-        pixy.invariant, report.n_windows, report.n_records, report.n_invariant_sites
+         invariant sites seen: {}\nmethods:\n  pi   Nei & Li 1979; missing data: Korunes & Samuk 2021\n  \
+         dxy  Nei 1987; missing data: Korunes & Samuk 2021\n",
+        layout.invariant, report.n_windows, report.n_records, report.n_invariant_sites
     );
     let path = with_suffix(prefix, ".log");
     std::fs::write(&path, log)?;

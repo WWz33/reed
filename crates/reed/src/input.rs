@@ -12,12 +12,12 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use reed_io::IoError;
 use reed_io::chunk::plain::PlainChunkSource;
 use reed_io::chunk::region::{FileIndex, Region, RegionChunkSource};
 use reed_io::chunk::{BgzfChunkSource, ChunkSource};
 use reed_io::format::Format;
 use reed_io::header::HeaderFacts;
-use reed_io::IoError;
 
 /// An opened input: the chunk source plus the header facts that were parsed
 /// while locating the first record.
@@ -41,7 +41,7 @@ pub fn open(path: Option<&Path>) -> Result<OpenedInput, IoError> {
     open_regions(path, &[])
 }
 
-/// Like [`open`], but with an index-accelerated region restriction
+/// Like `open`, but with an index-accelerated region restriction
 /// (`-r/-R`): the reader seeks to the compressed range the index maps the
 /// regions to. Records outside the regions are the caller's predicate to
 /// drop (the same rule `-t` uses).
@@ -50,15 +50,14 @@ pub fn open(path: Option<&Path>) -> Result<OpenedInput, IoError> {
 ///
 /// [`IoError`] when the stream has no valid header, and region errors when
 /// an index is required but missing.
-pub fn open_regions(
-    path: Option<&Path>,
-    regions: &[Region],
-) -> Result<OpenedInput, IoError> {
+pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInput, IoError> {
     if regions.is_empty() {
         return open_all(path);
     }
     let Some(p) = path else {
-        return Err(IoError::UnsupportedInput("regions need a seekable file, not stdin"));
+        return Err(IoError::UnsupportedInput(
+            "regions need a seekable file, not stdin",
+        ));
     };
     let format = {
         let mut probe = std::fs::File::open(p)?;
@@ -89,11 +88,17 @@ pub fn open_regions(
         &facts.contig_names,
     )?;
     let bcf = if format == Format::Bcf {
-        Some(std::sync::Arc::new(reed_io::bcf::BcfDict::from_header(&facts.text)?))
+        Some(std::sync::Arc::new(reed_io::bcf::BcfDict::from_header(
+            &facts.text,
+        )?))
     } else {
         None
     };
-    Ok(OpenedInput { source: Box::new(source), facts, bcf })
+    Ok(OpenedInput {
+        source: Box::new(source),
+        facts,
+        bcf,
+    })
 }
 
 /// Reads enough of the stream to detect its format: the whole first BGZF
@@ -193,25 +198,41 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
     match Format::detect(&prefix, inflated.as_deref())? {
         Format::VcfBgzf => {
             let (source, facts) = open_bgzf(p)?;
-            Ok(OpenedInput { source, facts, bcf: None })
+            Ok(OpenedInput {
+                source,
+                facts,
+                bcf: None,
+            })
         }
         Format::Vcf => {
             let file = std::fs::File::open(p)?;
             let (source, facts) = PlainChunkSource::open_vcf(file)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
+            Ok(OpenedInput {
+                source: Box::new(source),
+                facts,
+                bcf: None,
+            })
         }
         Format::VcfGzip => {
             let file = std::fs::File::open(p)?;
             warn_serial_gzip();
             let (source, facts) = PlainChunkSource::open_gzip(file)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
+            Ok(OpenedInput {
+                source: Box::new(source),
+                facts,
+                bcf: None,
+            })
         }
         Format::Bcf => {
             // BCF shares the BGZF chunk source; the dictionaries come from
             // the header text embedded in the file.
             let (source, facts) = open_bgzf(p)?;
             let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
-            Ok(OpenedInput { source, facts, bcf: Some(std::sync::Arc::new(dict)) })
+            Ok(OpenedInput {
+                source,
+                facts,
+                bcf: Some(std::sync::Arc::new(dict)),
+            })
         }
     }
 }
@@ -219,9 +240,7 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
 /// Opens a BGZF file: memory-mapped when possible (doc_v4 03 §3.4 step 3 —
 /// no copies, no read syscalls), else the streaming reader. Both cut chunks
 /// by the same rule, so the choice cannot change the output.
-fn open_bgzf(
-    p: &Path,
-) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
+fn open_bgzf(p: &Path) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
     match reed_io::chunk::bgzf::MmapChunkSource::open(std::fs::File::open(p)?) {
         Ok((source, facts)) => Ok((Box::new(source), facts)),
         Err(_) => {
@@ -241,16 +260,28 @@ fn open_stdin() -> Result<OpenedInput, IoError> {
     match format {
         Format::VcfBgzf => {
             let (source, facts) = BgzfChunkSource::open(reader)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
+            Ok(OpenedInput {
+                source: Box::new(source),
+                facts,
+                bcf: None,
+            })
         }
         Format::Vcf => {
             let (source, facts) = PlainChunkSource::open_vcf(reader)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
+            Ok(OpenedInput {
+                source: Box::new(source),
+                facts,
+                bcf: None,
+            })
         }
         Format::VcfGzip => {
             warn_serial_gzip();
             let (source, facts) = PlainChunkSource::open_gzip(reader)?;
-            Ok(OpenedInput { source: Box::new(source), facts, bcf: None })
+            Ok(OpenedInput {
+                source: Box::new(source),
+                facts,
+                bcf: None,
+            })
         }
         Format::Bcf => {
             let (source, facts) = BgzfChunkSource::open(reader)?;

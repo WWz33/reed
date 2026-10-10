@@ -10,7 +10,6 @@ use clap::Parser;
 
 use cli::{Cli, Command};
 
-
 fn main() {
     if let Err(err) = run() {
         // Display, not Debug: a `String` error would otherwise print its

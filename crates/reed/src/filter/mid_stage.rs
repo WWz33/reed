@@ -39,12 +39,16 @@ pub(super) struct ChunkDecision {
 impl ChunkDecision {
     /// Whether record `r` passed the head rules.
     pub(super) fn head_passed(&self, r: usize) -> bool {
-        self.head_bits.get(r / 64).is_some_and(|word| word >> (r % 64) & 1 == 1)
+        self.head_bits
+            .get(r / 64)
+            .is_some_and(|word| word >> (r % 64) & 1 == 1)
     }
 
     /// Whether site `s` survived the tail rules.
     pub(super) fn survivor(&self, s: usize) -> bool {
-        self.survivor_bits.get(s / 64).is_some_and(|word| word >> (s % 64) & 1 == 1)
+        self.survivor_bits
+            .get(s / 64)
+            .is_some_and(|word| word >> (s % 64) & 1 == 1)
     }
 }
 
@@ -131,8 +135,9 @@ fn decide_chunk_inner(
     for s in 0..frag.n_sites {
         let c = reed_filter::sketch::count_site_sketch(frag, s, keep_words);
         funnel.masked_gt += c.masked_gt;
-        for (r, hits) in
-            reed_filter::sketch::rule_hits_of(frag, s, keep_words).into_iter().enumerate()
+        for (r, hits) in reed_filter::sketch::rule_hits_of(frag, s, keep_words)
+            .into_iter()
+            .enumerate()
         {
             if let Some(slot) = funnel.mask_hits.get_mut(r) {
                 *slot += hits;
@@ -153,7 +158,13 @@ fn decide_chunk_inner(
             n_missing: counts.n_missing,
             n_samples: n_samples_out as u64,
         });
-        if eval_tail(&tail_values, &counts, n_samples_out, &plan.tail, &mut funnel.tail_hits) {
+        if eval_tail(
+            &tail_values,
+            &counts,
+            n_samples_out,
+            &plan.tail,
+            &mut funnel.tail_hits,
+        ) {
             survivor_bits[s / 64] |= 1 << (s % 64);
             let mut infos = Vec::new();
             fill_info_set(&counts, &plan.recompute, &mut infos);

@@ -19,15 +19,15 @@
 
 use std::sync::Arc;
 
-use reed_core::genotype::GtCode;
 use reed_core::ChunkId;
+use reed_core::genotype::GtCode;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::ChunkJob;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::chunk::ChunkBytes;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan};
+use reed_io::vcf::line_edit::{EditPlan, edit_vcf_line};
 
 use crate::filter::record_pipeline::{PipelineOptions, RecordPipeline};
 
@@ -44,8 +44,11 @@ pub struct ScannedRecord<'a> {
 /// [`FilteredJob::with_records`] counterpart of [`ChunkJob::run_chunk`]).
 /// Both the chunk body and the seam arrive through it, so there is no chunk
 /// parameter — the consumer must not key state on chunk identity.
-pub type ScannedRecordFn<J> =
-    fn(&J, &[ScannedRecord<'_>], &mut <J as ChunkJob>::Scratch) -> Result<<J as ChunkJob>::Partial, EngineError>;
+pub type ScannedRecordFn<J> = fn(
+    &J,
+    &[ScannedRecord<'_>],
+    &mut <J as ChunkJob>::Scratch,
+) -> Result<<J as ChunkJob>::Partial, EngineError>;
 
 /// Wraps an inner job with the filter's per-record stages; `plan = None`
 /// passes every record through untouched (no buffering, no pipeline).
@@ -109,7 +112,13 @@ impl<J: ChunkJob> FilteredJob<J> {
         inner: J,
     ) -> Self {
         let n_out = u64::try_from(keep.iter().filter(|k| **k).count()).unwrap_or(u64::MAX);
-        Self { plan, keep, n_out, records, inner }
+        Self {
+            plan,
+            keep,
+            n_out,
+            records,
+            inner,
+        }
     }
 
     fn build_scratch(&self) -> FilteredScratch<J::Scratch> {
@@ -118,13 +127,8 @@ impl<J: ChunkJob> FilteredJob<J> {
         };
         let int_keys: Vec<&[u8]> = plan.int_fields.iter().map(Vec::as_slice).collect();
         let float_keys: Vec<&[u8]> = plan.float_fields.iter().map(Vec::as_slice).collect();
-        let mut pipeline = RecordPipeline::new(
-            self.keep.len(),
-            &int_keys,
-            &float_keys,
-            plan.policies,
-            &[],
-        );
+        let mut pipeline =
+            RecordPipeline::new(self.keep.len(), &int_keys, &float_keys, plan.policies, &[]);
         pipeline.resize_for(plan);
         FilteredScratch {
             pipeline: Some(pipeline),
@@ -143,8 +147,16 @@ impl<J: ChunkJob> FilteredJob<J> {
         line: &[u8],
         scratch: &mut FilteredScratch<J::Scratch>,
     ) -> Result<(), EngineError> {
-        let plan = self.plan.as_ref().expect("invariant: guarded by the caller");
-        let FilteredScratch { pipeline, buffer, funnel, .. } = scratch;
+        let plan = self
+            .plan
+            .as_ref()
+            .expect("invariant: guarded by the caller");
+        let FilteredScratch {
+            pipeline,
+            buffer,
+            funnel,
+            ..
+        } = scratch;
         let pipeline = pipeline.as_mut().expect("invariant: start_chunk built it");
         let opts = self.pipeline_options();
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
@@ -175,15 +187,29 @@ impl<J: ChunkJob> FilteredJob<J> {
         line: &[u8],
         scratch: &mut FilteredScratch<J::Scratch>,
     ) -> Result<(), EngineError> {
-        let plan = self.plan.as_ref().expect("invariant: guarded by the caller");
-        let FilteredScratch { pipeline, buffer, codes, spans, funnel, .. } = scratch;
+        let plan = self
+            .plan
+            .as_ref()
+            .expect("invariant: guarded by the caller");
+        let FilteredScratch {
+            pipeline,
+            buffer,
+            codes,
+            spans,
+            funnel,
+            ..
+        } = scratch;
         let pipeline = pipeline.as_mut().expect("invariant: start_chunk built it");
         let opts = self.pipeline_options();
         let line_start = buffer.len();
         let code_start = codes.len();
         let processed = pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             for (i, &code) in view.scan.codes.iter().enumerate() {
-                codes.push(if view.masked.get(i) { code.masked() } else { code });
+                codes.push(if view.masked.get(i) {
+                    code.masked()
+                } else {
+                    code
+                });
             }
             buffer.extend_from_slice(line);
             Ok(())
@@ -221,7 +247,13 @@ impl<J: ChunkJob> FilteredJob<J> {
         scratch: &mut FilteredScratch<J::Scratch>,
     ) -> Result<J::Partial, EngineError> {
         let f = self.records.expect("invariant: the record path is guarded");
-        let FilteredScratch { buffer, codes, spans, inner, .. } = scratch;
+        let FilteredScratch {
+            buffer,
+            codes,
+            spans,
+            inner,
+            ..
+        } = scratch;
         let n_samples = self.keep.len();
         let mut views: Vec<ScannedRecord<'_>> = Vec::with_capacity(spans.len());
         for &(line_off, line_len, code_off) in spans.iter() {
@@ -243,7 +275,9 @@ impl<J: ChunkJob> FilteredJob<J> {
             scratch.codes = Vec::new();
             scratch.spans = Vec::new();
         }
-        scratch.funnel.reset(plan.head.len(), plan.tail.len(), plan.mask.len());
+        scratch
+            .funnel
+            .reset(plan.head.len(), plan.tail.len(), plan.mask.len());
         scratch.buffer.clear();
         scratch.codes.clear();
         scratch.spans.clear();

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{run_stats, Levels, SfsRequest, StatsRequest};
+use reed::{Levels, SfsRequest, StatsRequest, run_stats};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -51,16 +51,23 @@ fn request(folded: bool) -> StatsRequest {
         gt_groups: vec![Some(0); 4],
         window_size: 1000,
         step: 1000,
-        levels: Levels { window: false, contig: false, genome: true },
+        levels: Levels {
+            window: false,
+            contig: false,
+            genome: true,
+        },
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
-        pixy: None,
+        layout: None,
         regions: Vec::new(),
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         keep_samples: None,
         filter: None,
-        sfs: Some(SfsRequest { projections: vec![6], folded }),
+        sfs: Some(SfsRequest {
+            projections: vec![6],
+            folded,
+        }),
         fstats: None,
         ld: None,
     }
@@ -71,7 +78,10 @@ fn projected_sfs_matches_the_hand_computed_spectrum() {
     let dir = std::env::temp_dir().join(format!("reed-sfs-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = fixture(&dir);
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
     let report = run_stats(Some(&vcf), request(false), &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
@@ -81,18 +91,16 @@ fn projected_sfs_matches_the_hand_computed_spectrum() {
     assert_eq!(sfs.n_skipped_m_lt_n, vec![0]);
     assert_eq!(sfs.spectra.len(), 1);
     for (got, want) in sfs.spectra[0].iter().zip(&EXPECTED) {
-        assert!((got - want).abs() <= 1e-12 * want.max(1.0), "got {got} want {want}");
+        assert!(
+            (got - want).abs() <= 1e-12 * want.max(1.0),
+            "got {got} want {want}"
+        );
     }
 
     // The dadi/fastsimcoal2 files: header, values and mask.
     let prefix = dir.join("out");
-    let files = reed::sfs::write_projected_sfs(
-        &prefix,
-        &["pop1".to_string()],
-        &sfs,
-        false,
-    )
-    .expect("invariant: write");
+    let files = reed::sfs::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
+        .expect("invariant: write");
     assert_eq!(files.len(), 2);
     let dadi = std::fs::read_to_string(format!("{}_sfs/dadi/pop1-6.sfs", prefix.display()))
         .expect("invariant: dadi file");
@@ -100,9 +108,11 @@ fn projected_sfs_matches_the_hand_computed_spectrum() {
     assert_eq!(lines[0], "7 unfolded");
     assert_eq!(lines[2], "1 0 0 0 0 0 1");
     assert_eq!(lines[1].split(' ').count(), 7);
-    let fsc2 =
-        std::fs::read_to_string(format!("{}_sfs/fastsimcoal2/pop1_DAFpop0.obs", prefix.display()))
-            .expect("invariant: fsc2 file");
+    let fsc2 = std::fs::read_to_string(format!(
+        "{}_sfs/fastsimcoal2/pop1_DAFpop0.obs",
+        prefix.display()
+    ))
+    .expect("invariant: fsc2 file");
     assert!(fsc2.starts_with("1 observation\nd0_0\td0_1\td0_2\td0_3\td0_4\td0_5\td0_6\n"));
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -113,7 +123,10 @@ fn folded_spectrum_pads_the_upper_half_and_masks_it() {
     let dir = std::env::temp_dir().join(format!("reed-sfs-fold-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = fixture(&dir);
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
 
     let report = run_stats(Some(&vcf), request(true), &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
@@ -132,10 +145,13 @@ fn folded_spectrum_pads_the_upper_half_and_masks_it() {
     }
 
     let prefix = dir.join("out");
-    let files =
-        reed::sfs::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
-            .expect("invariant: write");
-    assert!(files.iter().any(|p| p.to_string_lossy().ends_with("pop1_MAFpop0.obs")));
+    let files = reed::sfs::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
+        .expect("invariant: write");
+    assert!(
+        files
+            .iter()
+            .any(|p| p.to_string_lossy().ends_with("pop1_MAFpop0.obs"))
+    );
     let dadi = std::fs::read_to_string(format!("{}_sfs/dadi/pop1-6.sfs", prefix.display()))
         .expect("invariant: dadi file");
     let lines: Vec<&str> = dadi.lines().collect();
@@ -155,7 +171,10 @@ fn spectra_are_identical_across_thread_counts() {
     let vcf = fixture(&dir);
     let mut digests = Vec::new();
     for threads in [1_usize, 3, 7] {
-        let budget = ThreadBudget { threads, mem: MemBudget::from_bytes(u64::MAX) };
+        let budget = ThreadBudget {
+            threads,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
         let report = run_stats(Some(&vcf), request(false), &budget).expect("invariant: run");
         let sfs = report.sfs.expect("invariant: SFS requested");
         digests.push(sfs.spectra[0].clone());
@@ -175,11 +194,13 @@ fn missing_chromosomes_are_skipped_and_counted() {
         VCF.replace(
             "chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/0\t0/1",
             "chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t./.\t./.\t0/1",
-        )
-        .replace("\nchr1\t", "\nchr1\t"), // no-op; keeps the literal obvious
+        ),
     )
     .expect("invariant: fixture write");
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::from_bytes(u64::MAX) };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
     let report = run_stats(Some(&vcf), request(false), &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
     assert_eq!(sfs.n_skipped_m_lt_n, vec![1]);

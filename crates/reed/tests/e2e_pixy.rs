@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use reed::{pixy_kinds, run_stats, InvariantMode, Levels, PixyOptions, StatsRequest};
+use reed::{InvariantMode, Levels, StatsRequest, WindowLayoutOptions, run_stats, window_kinds};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::request::StatKind;
 
@@ -14,7 +14,9 @@ fn bgzf(text: &str) -> Vec<u8> {
         reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(64) {
-        deflater.deflate_block(block, &mut out).expect("invariant: block fits");
+        deflater
+            .deflate_block(block, &mut out)
+            .expect("invariant: block fits");
     }
     out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
     out
@@ -45,20 +47,27 @@ chr1\t25\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t1/1\t0/0
 
 fn request(invariant: InvariantMode) -> StatsRequest {
     StatsRequest {
-        kinds: pixy_kinds(2, true, true, false, false, None, None),
+        kinds: window_kinds(2, true, true, false, false, None, None),
         gt_groups: vec![Some(0), Some(0), Some(1), Some(1)],
         window_size: 10,
         step: 10,
-        levels: Levels { window: true, contig: false, genome: false },
+        levels: Levels {
+            window: true,
+            contig: false,
+            genome: false,
+        },
         skip_empty: false,
         contig_lengths: HashMap::new(),
-        pixy: Some(PixyOptions { invariant }),
+        layout: Some(WindowLayoutOptions { invariant }),
         ..StatsRequest::default()
     }
 }
 
 fn budget() -> ThreadBudget {
-    ThreadBudget { threads: 2, mem: MemBudget::from_half_memory_for_tests() }
+    ThreadBudget {
+        threads: 2,
+        mem: MemBudget::default_half_memory(),
+    }
 }
 
 #[test]
@@ -76,15 +85,24 @@ fn variant_only_pi_dxy_hand_computed() {
     //   → 6 / (32 + 8·16) = 6/160 = 0.0375
     let w0 = &report.windows[0];
     let pi = |g: usize| {
-        let kind = StatKind::Pi { group: g, per_bp: false };
+        let kind = StatKind::Pi {
+            group: g,
+            per_bp: false,
+        };
         w0.accs[g].value_variant_only(&kind, w0.bp)
     };
     assert_eq!(w0.start1, 1);
     assert_eq!(w0.end0, 10);
     assert!((pi(0).expect("pi") - 0.05).abs() < 1e-15, "{:?}", pi(0));
     assert!((pi(1).expect("pi") - 0.05).abs() < 1e-15, "{:?}", pi(1));
-    let dxy_kind = StatKind::Dxy { a: 0, b: 1, per_bp: false };
-    let dxy = w0.accs[2].value_variant_only(&dxy_kind, w0.bp).expect("dxy");
+    let dxy_kind = StatKind::Dxy {
+        a: 0,
+        b: 1,
+        per_bp: false,
+    };
+    let dxy = w0.accs[2]
+        .value_variant_only(&dxy_kind, w0.bp)
+        .expect("dxy");
     assert!((dxy - 0.0375).abs() < 1e-15, "{dxy}");
     // Window [11,20] has no site: 8→ absent 10 → π = 0/60 = 0 for present
     // sites absent... the accumulator is empty, so the completed value is 0
@@ -105,7 +123,13 @@ fn all_sites_default_matches_the_all_sites_definition() {
     // Window [1,10] with invariant site 5 counted: comps 12 (unchanged),
     // diffs 3 → π = 0.25 for pop1 (no completion: the file is all-sites).
     let w0 = &report.windows[0];
-    let pi = w0.accs[0].value(&StatKind::Pi { group: 0, per_bp: false }, w0.bp);
+    let pi = w0.accs[0].value(
+        &StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        },
+        w0.bp,
+    );
     assert!((pi.expect("pi") - 0.25).abs() < 1e-15, "{pi:?}");
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
@@ -130,13 +154,15 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     let report = run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: run");
     let prefix = path.parent().expect("invariant: temp dir path").join("out");
-    let kinds = pixy_kinds(2, true, true, false, false, None, None);
-    reed::pixy::write(
+    let kinds = window_kinds(2, true, true, false, false, None, None);
+    reed::windows::write(
         &prefix,
         &report,
         &["pop1".to_string(), "pop2".to_string()],
         &kinds,
-        PixyOptions { invariant: InvariantMode::VariantOnly },
+        WindowLayoutOptions {
+            invariant: InvariantMode::VariantOnly,
+        },
         "reed stats test",
         "test",
     )
@@ -175,26 +201,32 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
 fn watterson_theta_and_tajima_d_hand_computed() {
     let path = write_fixture("theta", FIXTURE);
     let mut request = request(InvariantMode::Bypass);
-    request.kinds = pixy_kinds(2, false, false, true, true, None, None);
+    request.kinds = window_kinds(2, false, false, true, true, None, None);
     let report = run_stats(Some(&path), request, &budget()).expect("invariant: theta run");
 
     let w0 = &report.windows[0];
-    let theta_kind = StatKind::ThetaW { group: 0, per_bp: false };
+    let theta_kind = StatKind::ThetaW {
+        group: 0,
+        per_bp: false,
+    };
     let theta = w0.accs[0].value(&theta_kind, w0.bp).expect("theta");
     assert!((theta - 3.0 / 11.0).abs() < 1e-15, "{theta}");
     let (raw, no_sites, no_var, _weighted) = w0.accs[0].theta_columns().expect("columns");
     assert!((raw - 6.0 / 11.0).abs() < 1e-15, "{raw}");
     assert_eq!((no_sites, no_var), (2, 1));
 
-    let tajima_kind = StatKind::TajimaD { group: 0, min_sites: 0 };
+    let tajima_kind = StatKind::TajimaD {
+        group: 0,
+        min_sites: 0,
+    };
     // kinds = [theta pop1, theta pop2, tajima pop1, tajima pop2].
     let d = w0.accs[2].value(&tajima_kind, w0.bp).expect("tajima");
-    let expected = (0.5 - 6.0 / 11.0) / 0.07422696190252039;
+    let expected = (0.5 - 6.0 / 11.0) / 0.074_226_961_902_520_39;
     assert!((d - expected).abs() < 1e-12, "{d} vs {expected}");
     let (raw_pi, raw_theta, stdev, sites) = w0.accs[2].tajima_columns().expect("columns");
     assert!((raw_pi.expect("raw_pi") - 0.5).abs() < 1e-15);
     assert!((raw_theta.expect("raw_theta") - 6.0 / 11.0).abs() < 1e-15);
-    assert!((stdev.expect("stdev") - 0.07422696190252039).abs() < 1e-15);
+    assert!((stdev.expect("stdev") - 0.074_226_961_902_520_39).abs() < 1e-15);
     assert_eq!(sites, 2);
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
@@ -218,7 +250,7 @@ fn fst_hudson_and_wc84_hand_computed() {
         (reed::FstKind::WeirCockerham84, "wc84"),
     ] {
         let mut request = request(InvariantMode::Bypass);
-        request.kinds = pixy_kinds(2, false, false, false, false, Some(kind), None);
+        request.kinds = window_kinds(2, false, false, false, false, Some(kind), None);
         let report = run_stats(Some(&path), request, &budget()).expect("invariant: fst run");
         let w0 = &report.windows[0];
         let fst_kind = StatKind::Fst { a: 0, b: 1, kind };
@@ -258,18 +290,34 @@ fn pbs_matches_scikit_allel_reference() {
     for (kind, expected, expected_fst) in [
         (
             reed::PbsKind::Yi2010,
-            [0.002309472928147316_f64, -0.051839214737420786],
+            [0.002_309_472_928_147_316_f64, -0.051_839_214_737_420_786],
             [
-                (0.1428571428571429, 0.004608294930875617, 0.1428571428571429),
-                (0.05882352941176473, -0.12442396313364051, 0.15151515151515155),
+                (
+                    0.142_857_142_857_142_9,
+                    0.004_608_294_930_875_617,
+                    0.142_857_142_857_142_9,
+                ),
+                (
+                    0.058_823_529_411_764_73,
+                    -0.124_423_963_133_640_51,
+                    0.151_515_151_515_151_55,
+                ),
             ],
         ),
         (
             reed::PbsKind::PbsN1,
-            [0.001997019026245494, -0.046598561709660744],
+            [0.001_997_019_026_245_494, -0.046_598_561_709_660_744],
             [
-                (0.1428571428571429, 0.004608294930875617, 0.1428571428571429),
-                (0.05882352941176473, -0.12442396313364051, 0.15151515151515155),
+                (
+                    0.142_857_142_857_142_9,
+                    0.004_608_294_930_875_617,
+                    0.142_857_142_857_142_9,
+                ),
+                (
+                    0.058_823_529_411_764_73,
+                    -0.124_423_963_133_640_51,
+                    0.151_515_151_515_151_55,
+                ),
             ],
         ),
     ] {
@@ -277,11 +325,19 @@ fn pbs_matches_scikit_allel_reference() {
         request.gt_groups = gt_groups.clone();
         request.window_size = 100;
         request.step = 100;
-        request.kinds = pixy_kinds(3, false, false, false, false, None, Some(kind));
+        request.kinds = window_kinds(3, false, false, false, false, None, Some(kind));
         let report = run_stats(Some(&path), request, &budget()).expect("invariant: pbs run");
         assert_eq!(report.windows.len(), 2);
-        let pbs_kind = StatKind::Pbs { a: 0, b: 1, c: 2, kind };
-        for (row, (want, want_fst)) in report.windows.iter().zip(expected.iter().zip(&expected_fst))
+        let pbs_kind = StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 2,
+            kind,
+        };
+        for (row, (want, want_fst)) in report
+            .windows
+            .iter()
+            .zip(expected.iter().zip(&expected_fst))
         {
             let (value, no_snps, (f_ab, f_ac, f_bc)) =
                 row.accs[0].pbs_columns(&pbs_kind).expect("pbs columns");
@@ -291,8 +347,15 @@ fn pbs_matches_scikit_allel_reference() {
                 value.expect("pbs")
             );
             assert_eq!(no_snps, 3);
-            let got = (f_ab.expect("f_ab"), f_ac.expect("f_ac"), f_bc.expect("f_bc"));
-            for (g, w) in [got.0, got.1, got.2].iter().zip([want_fst.0, want_fst.1, want_fst.2]) {
+            let got = (
+                f_ab.expect("f_ab"),
+                f_ac.expect("f_ac"),
+                f_bc.expect("f_bc"),
+            );
+            for (g, w) in [got.0, got.1, got.2]
+                .iter()
+                .zip([want_fst.0, want_fst.1, want_fst.2])
+            {
                 assert!((g - w).abs() < 1e-12, "pair Fst {g} vs {w}");
             }
         }

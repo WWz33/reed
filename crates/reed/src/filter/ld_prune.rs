@@ -4,9 +4,12 @@
 //! reducer feeds each contig's sites, in order, to one [`LdPruner`] and
 //! returns the global ordinals to keep. Pass1 then emits only those sites.
 //!
-//! The pruning is order-dependent, so it cannot run per chunk: contigs are
-//! pruned on their own thread, in parallel, but each contig's sites go
-//! through one pruner in arrival order. Only the current window's sites are
+//! The pruning is order-dependent, so it cannot run per chunk. Today one
+//! [`LdPruner`] runs inside the ordered reducer (`LdPruneSink`), i.e. all
+//! contigs are pruned serially on the reduce thread — the 66 s pass0 cost
+//! measured in docs/rounds/v6/04-performance.md §6. Per-contig parallel
+//! pruning is the Y1 matrix work (docs/rounds/v6/06-roadmap.md); the pruner
+//! itself is already contig-agnostic. Only the current window's sites are
 //! resident (P5-5: memory does not grow with contig length).
 
 use std::sync::{Arc, Mutex};
@@ -14,16 +17,16 @@ use std::sync::{Arc, Mutex};
 use reed_core::genotype::PlaneBlock;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
+use reed_filter::FilterError;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
-use reed_filter::FilterError;
 use reed_stats::ld::{LdPruner, LdWindow};
 
 use reed_core::ChunkId;
 
 use super::record_pipeline::{PipelineOptions, RecordPipeline};
-use super::{ferr, FilterOptions};
+use super::{FilterOptions, ferr};
 
 /// One surviving site handed to the reducer.
 pub(super) struct PruneSite {
@@ -105,7 +108,12 @@ impl LdPruneJob {
     ) -> Result<(), EngineError> {
         let plan = &self.plan;
         let keep = &self.keep;
-        let LdPruneScratch { pipeline, funnel, planes, .. } = scratch;
+        let LdPruneScratch {
+            pipeline,
+            funnel,
+            planes,
+            ..
+        } = scratch;
         let mut site = None;
         let processed = pipeline.process(line, plan, keep, OPTS, funnel, |view| {
             planes.push_codes(0, view.scan.codes);
@@ -134,7 +142,9 @@ impl LdPruneJob {
             Ok(())
         })?;
         // `emitted` is exactly "head passed and the inline tail passed".
-        if processed.emitted && let Some(site) = site {
+        if processed.emitted
+            && let Some(site) = site
+        {
             out.n_survivors += 1;
             out.sites.push(site);
         }
@@ -188,7 +198,7 @@ pub(super) fn site_prune_stats(
     let mut n_hom_ref = 0_u64;
     let mut n_hom_alt = 0_u64;
     let mut n_het = 0_u64;
-    for w in 0..planes[0].len() {
+    for (w, _) in planes[0].iter().enumerate() {
         let real = if (w + 1) * 64 <= n_samples {
             !0_u64
         } else {
@@ -216,7 +226,12 @@ pub(super) fn site_prune_stats(
         let alt_freq = alt as f64 / called as f64;
         alt_freq.max(1.0 - alt_freq)
     };
-    reed_stats::ld::SitePruneStats { maj_freq, n_hom_ref, n_hom_alt, n_het }
+    reed_stats::ld::SitePruneStats {
+        maj_freq,
+        n_hom_ref,
+        n_hom_alt,
+        n_het,
+    }
 }
 
 /// The prune configuration the sink needs.
@@ -304,7 +319,8 @@ pub(super) fn run_ld_prune_pass(
         out: Arc::clone(&total),
     };
     let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
-    job.finish(report.n_chunks, opts.regions.is_empty()).map_err(ferr)?;
+    job.finish(report.n_chunks, opts.regions.is_empty())
+        .map_err(ferr)?;
     let mut result = total
         .lock()
         .expect("invariant: prune slot not poisoned")
@@ -343,7 +359,7 @@ impl OrderedSink<LdPrunePartial> for LdPruneSink {
                     pruner.finish_contig();
                     self.absorb(&pruner);
                 }
-                self.current_contig = site.contig.clone();
+                self.current_contig.clone_from(&site.contig);
                 self.pruner = Some(LdPruner::new(
                     self.config.threshold,
                     self.config.window,

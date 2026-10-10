@@ -11,14 +11,14 @@ use reed_engine::pipeline::ChunkJob;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::line_edit::{edit_vcf_line, EditPlan};
+use reed_io::vcf::line_edit::{EditPlan, edit_vcf_line};
 use reed_io::vcf::site::{ContigTable, SiteView};
 use reed_io::write::block_writer::{BlockWriter, IndexKey};
 
+use super::job_err;
 use super::mid_stage::{ChunkDecision, SiteEmit};
 use super::record_pipeline::gt_subfield_index;
 use super::single_pass::FilterPartial;
-use super::job_err;
 
 pub(super) struct EmitJob {
     pub(super) plan: Arc<FilterPlan>,
@@ -47,10 +47,9 @@ impl ChunkJob for EmitJob {
         body: &[u8],
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        let dec = self
-            .decisions
-            .get(&chunk.id.0)
-            .ok_or_else(|| EngineError::job(format!("no emit decision for chunk {}", chunk.id.0)))?;
+        let dec = self.decisions.get(&chunk.id.0).ok_or_else(|| {
+            EngineError::job(format!("no emit decision for chunk {}", chunk.id.0))
+        })?;
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         let mut record = 0_usize;
         let mut site = 0_usize;
@@ -88,11 +87,10 @@ impl ChunkJob for EmitJob {
     ) -> Result<Self::Partial, EngineError> {
         // The seam record belongs to the previous chunk's stream; its
         // decision is that chunk's `seam` field.
-        let emitted = id
-            .0
-            .checked_sub(1)
-            .and_then(|prev| self.decisions.get(&prev))
-            .and_then(|dec| dec.seam.clone());
+        let emitted =
+            id.0.checked_sub(1)
+                .and_then(|prev| self.decisions.get(&prev))
+                .and_then(|dec| dec.seam.clone());
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         if let Some(emit) = emitted {
             self.emit_line(line, &emit, scratch)?;
@@ -127,12 +125,17 @@ impl EmitJob {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::job("survivor line has fewer than 9 columns"));
         };
-        let site = SiteView::parse_declared(&lr, &mut scratch.contigs)
-            .map_err(EngineError::from)?;
+        let site =
+            SiteView::parse_declared(&lr, &mut scratch.contigs).map_err(EngineError::from)?;
         let pos1 = site.pos1;
         let stale: Vec<&[u8]> = self.plan.stale_tags.iter().map(Vec::as_slice).collect();
         // Refresh the reusable mask bitset from the emit's words.
-        for (word, src) in scratch.mask_bitset.words_mut().iter_mut().zip(&emit.mask_words) {
+        for (word, src) in scratch
+            .mask_bitset
+            .words_mut()
+            .iter_mut()
+            .zip(&emit.mask_words)
+        {
             *word = *src;
         }
         scratch.mask_bitset.clear_padding();
@@ -143,8 +146,13 @@ impl EmitJob {
             info_set: &emit.infos,
         };
         scratch.edit_buf.clear();
-        edit_vcf_line(&lr, &edit_plan, gt_subfield_index(lr.format_text()), &mut scratch.edit_buf)
-            .map_err(EngineError::from)?;
+        edit_vcf_line(
+            &lr,
+            &edit_plan,
+            gt_subfield_index(lr.format_text()),
+            &mut scratch.edit_buf,
+        )
+        .map_err(EngineError::from)?;
         // Byte-boundary cutting, records may span blocks (as in
         // FilterJob::push_line).
         let key = IndexKey {
@@ -160,6 +168,4 @@ impl EmitJob {
             .map_err(job_err)?;
         Ok(())
     }
-
-
 }

@@ -2,6 +2,7 @@
 //! leaves no temporary file behind; multi-pass runs spill under `--tmp-dir`
 //! and delete the spill on exit (04 §C6).
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -20,15 +21,18 @@ fn fixture() -> Vec<u8> {
     let mut text = String::from(HEADER);
     for i in 0..10_u32 {
         let s2 = if i == 0 { "0/1" } else { "./." };
-        text.push_str(&format!(
-            "Chr01\t{}\t.\tA\tG\t50\tPASS\tQD=10\tGT:DP\t0/1:30\t0/1:30\t{s2}:30\n",
+        let _ = writeln!(
+            text,
+            "Chr01\t{}\t.\tA\tG\t50\tPASS\tQD=10\tGT:DP\t0/1:30\t0/1:30\t{s2}:30",
             i + 1
-        ));
+        );
     }
     let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(4096) {
-        deflater.deflate_block(block, &mut out).expect("invariant: block");
+        deflater
+            .deflate_block(block, &mut out)
+            .expect("invariant: block");
     }
     out.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
     out
@@ -56,7 +60,10 @@ fn record_lines(path: &std::path::Path) -> Vec<String> {
 
 fn run(args: &[&str], stdin_bytes: Option<&[u8]>) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_reed"));
-    command.args(args).stdin(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .args(args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = command.spawn().expect("invariant: spawn reed");
     if let Some(bytes) = stdin_bytes {
         child
@@ -84,27 +91,57 @@ fn single_pass_stdin_streams_and_leaves_nothing() {
     let p_file = dir.join("file");
     let p_stdin = dir.join("stdin");
     let file_out = run(
-        &["stats", input.to_str().unwrap(), "--summary", "-o", p_file.to_str().unwrap(), "--verbosity", "0"],
+        &[
+            "stats",
+            input.to_str().unwrap(),
+            "--summary",
+            "-o",
+            p_file.to_str().unwrap(),
+            "--verbosity",
+            "0",
+        ],
         None,
     );
-    assert!(file_out.status.success(), "{}", String::from_utf8_lossy(&file_out.stderr));
+    assert!(
+        file_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file_out.stderr)
+    );
     let stdin_out = run(
-        &["stats", "-", "--summary", "-o", p_stdin.to_str().unwrap(), "--verbosity", "0"],
+        &[
+            "stats",
+            "-",
+            "--summary",
+            "-o",
+            p_stdin.to_str().unwrap(),
+            "--verbosity",
+            "0",
+        ],
         Some(&fixture()),
     );
-    assert!(stdin_out.status.success(), "{}", String::from_utf8_lossy(&stdin_out.stderr));
+    assert!(
+        stdin_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stdin_out.stderr)
+    );
     let file_stats =
         std::fs::read_to_string(format!("{}.stats", p_file.display())).expect("invariant: stats");
     let stdin_stats =
         std::fs::read_to_string(format!("{}.stats", p_stdin.display())).expect("invariant: stats");
-    assert_eq!(file_stats, stdin_stats, "streamed stdin matches the file run");
+    assert_eq!(
+        file_stats, stdin_stats,
+        "streamed stdin matches the file run"
+    );
 
     let leftovers: Vec<_> = std::fs::read_dir(std::env::temp_dir())
         .expect("invariant: temp dir")
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("reed-stdin-"))
         .collect();
-    assert!(leftovers.is_empty(), "no spill for single-pass runs: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "no spill for single-pass runs: {leftovers:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -133,7 +170,11 @@ fn multi_pass_stdin_spills_and_cleans_up() {
         ],
         None,
     );
-    assert!(from_file.status.success(), "{}", String::from_utf8_lossy(&from_file.stderr));
+    assert!(
+        from_file.status.success(),
+        "{}",
+        String::from_utf8_lossy(&from_file.stderr)
+    );
     let from_stdin = run(
         &[
             "filter",
@@ -148,7 +189,11 @@ fn multi_pass_stdin_spills_and_cleans_up() {
         ],
         Some(&fixture()),
     );
-    assert!(from_stdin.status.success(), "{}", String::from_utf8_lossy(&from_stdin.stderr));
+    assert!(
+        from_stdin.status.success(),
+        "{}",
+        String::from_utf8_lossy(&from_stdin.stderr)
+    );
 
     // The provenance line records the command line, which differs; the
     // records (and the rest of the header) must be identical.
@@ -162,7 +207,10 @@ fn multi_pass_stdin_spills_and_cleans_up() {
         .filter_map(Result::ok)
         .map(|e| e.file_name())
         .collect();
-    assert!(leftovers.is_empty(), "the spill is deleted on exit: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "the spill is deleted on exit: {leftovers:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -195,7 +243,10 @@ fn spill_is_removed_on_error_exit() {
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("reed-stdin-"))
         .collect();
-    assert!(leftovers.is_empty(), "spill deleted on the error path: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "spill deleted on the error path: {leftovers:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -212,30 +263,65 @@ fn output_type_and_path_compose() {
 
     let plain = dir.join("out.vcf");
     let plain_run = run(
-        &["filter", input.to_str().unwrap(), "-Ov", "-o", plain.to_str().unwrap()],
+        &[
+            "filter",
+            input.to_str().unwrap(),
+            "-Ov",
+            "-o",
+            plain.to_str().unwrap(),
+        ],
         None,
     );
-    assert!(plain_run.status.success(), "{}", String::from_utf8_lossy(&plain_run.stderr));
+    assert!(
+        plain_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plain_run.stderr)
+    );
     assert!(plain_run.stdout.is_empty(), "-o redirects the output");
     let text = std::fs::read_to_string(&plain).expect("invariant: plain output");
     assert!(text.starts_with("##fileformat="), "{text:.80}");
 
     let compressed = dir.join("out.dat");
     let gz_run = run(
-        &["filter", input.to_str().unwrap(), "-Oz1", "-o", compressed.to_str().unwrap()],
+        &[
+            "filter",
+            input.to_str().unwrap(),
+            "-Oz1",
+            "-o",
+            compressed.to_str().unwrap(),
+        ],
         None,
     );
-    assert!(gz_run.status.success(), "{}", String::from_utf8_lossy(&gz_run.stderr));
-    assert_eq!(&std::fs::read(&compressed).expect("invariant: read")[..2], &[0x1f, 0x8b]);
+    assert!(
+        gz_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&gz_run.stderr)
+    );
+    assert_eq!(
+        &std::fs::read(&compressed).expect("invariant: read")[..2],
+        &[0x1f, 0x8b]
+    );
 
     // Without -O the extension still infers the format.
     let inferred = dir.join("out.vcf.gz");
     let inf_run = run(
-        &["filter", input.to_str().unwrap(), "-o", inferred.to_str().unwrap()],
+        &[
+            "filter",
+            input.to_str().unwrap(),
+            "-o",
+            inferred.to_str().unwrap(),
+        ],
         None,
     );
-    assert!(inf_run.status.success(), "{}", String::from_utf8_lossy(&inf_run.stderr));
-    assert_eq!(&std::fs::read(&inferred).expect("invariant: read")[..2], &[0x1f, 0x8b]);
+    assert!(
+        inf_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inf_run.stderr)
+    );
+    assert_eq!(
+        &std::fs::read(&inferred).expect("invariant: read")[..2],
+        &[0x1f, 0x8b]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -255,7 +341,11 @@ fn stats_accepts_filter_region_and_sample_flags() {
 
     // `-r` needs an index next to the input.
     let indexed = run(&["index", input.to_str().unwrap(), "-c"], None);
-    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
 
     let prefix = |name: &str| dir.join(name).display().to_string();
     let run_stats = |extra: &[&str], out: &str| {
@@ -271,7 +361,11 @@ fn stats_accepts_filter_region_and_sample_flags() {
         ];
         argv.extend_from_slice(extra);
         let output = run(&argv, None);
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         std::fs::read_to_string(format!("{out}_pi.txt")).expect("invariant: pi file")
     };
     let all = run_stats(&[], &prefix("all"));
@@ -286,7 +380,13 @@ fn stats_accepts_filter_region_and_sample_flags() {
         text.lines()
             .skip(1)
             .filter(|l| l.starts_with(pop))
-            .map(|l| l.split('\t').nth(7).expect("comparisons").parse::<u64>().expect("number"))
+            .map(|l| {
+                l.split('\t')
+                    .nth(7)
+                    .expect("comparisons")
+                    .parse::<u64>()
+                    .expect("number")
+            })
             .sum()
     };
     assert!(
@@ -295,8 +395,17 @@ fn stats_accepts_filter_region_and_sample_flags() {
     );
     // An unknown sample is an error, not a silent skip.
     let bad = run(
-        &["stats", input.to_str().unwrap(), "--pop", pops.to_str().unwrap(), "--pi", "-s", "nope",
-          "-o", &prefix("bad")],
+        &[
+            "stats",
+            input.to_str().unwrap(),
+            "--pop",
+            pops.to_str().unwrap(),
+            "--pi",
+            "-s",
+            "nope",
+            "-o",
+            &prefix("bad"),
+        ],
         None,
     );
     assert!(!bad.status.success());
@@ -345,7 +454,11 @@ fn stats_site_filters_match_the_filter_then_stats_composition() {
             ];
             argv.extend_from_slice(extra);
             let output = run(&argv, None);
-            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             std::fs::read_to_string(format!("{out}_pi.txt")).expect("invariant: pi file")
         };
         let composed = stats(filtered.to_str().unwrap(), &[], &prefix("composed"));

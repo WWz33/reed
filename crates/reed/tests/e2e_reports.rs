@@ -3,7 +3,7 @@
 
 use std::io::Write;
 
-use reed::reports::{run_reports, ReportRequest};
+use reed::reports::{ReportRequest, run_reports};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
 fn bgzf(text: &str) -> Vec<u8> {
@@ -11,7 +11,9 @@ fn bgzf(text: &str) -> Vec<u8> {
         reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(64) {
-        deflater.deflate_block(block, &mut out).expect("invariant: block fits");
+        deflater
+            .deflate_block(block, &mut out)
+            .expect("invariant: block fits");
     }
     out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
     out
@@ -65,10 +67,17 @@ fn reports_match_hand_computed_values() {
         targets_exclude: Vec::new(),
         prefix: prefix.clone(),
     };
-    let budget = ThreadBudget { threads: 2, mem: MemBudget::default_half_memory() };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::default_half_memory(),
+    };
     let outcome = run_reports(Some(&vcf), &request, &budget).expect("invariant: reports run");
     assert_eq!(outcome.n_records, 3);
-    assert_eq!(outcome.files.len(), 7, "afreq, hardy, vmiss, ldepth, het, smiss, idepth");
+    assert_eq!(
+        outcome.files.len(),
+        7,
+        "afreq, hardy, vmiss, ldepth, het, smiss, idepth"
+    );
 
     // afreq: ALT_FREQS = AC/AN, OBS_CT = AN.
     let afreq = lines(std::path::Path::new(&format!("{}.afreq", prefix.display())));
@@ -117,7 +126,10 @@ fn reports_match_hand_computed_values() {
     // s0: sites 1 (DP 10) and 5 (DP 5); site 25 has DP "." → 2 sites, mean 7.5.
     // s1: sites 1 (20) and 25 (50); site 5 has DP "." → mean 35.
     // s2: 3 sites (30 + 15 + 60 = 105) → 35. s3: 3 sites (135) → 45.
-    let idepth = lines(std::path::Path::new(&format!("{}.idepth", prefix.display())));
+    let idepth = lines(std::path::Path::new(&format!(
+        "{}.idepth",
+        prefix.display()
+    )));
     assert_eq!(&idepth[0][..], ["INDV", "N_SITES", "MEAN_DEPTH"]);
     assert_eq!(&idepth[1][..], ["s0", "2", "7.5"]);
     assert_eq!(&idepth[2][..], ["s1", "2", "35"]);
@@ -128,7 +140,10 @@ fn reports_match_hand_computed_values() {
     // Site 1: 10,20,30,40 → mean 25, var 500/3.
     // Site 5: s1 excluded → 5,15,25 → mean 15, var 100.
     // Site 25: s0 excluded → 50,60,70 → mean 60, var 100.
-    let ldepth = lines(std::path::Path::new(&format!("{}.ldepth.mean", prefix.display())));
+    let ldepth = lines(std::path::Path::new(&format!(
+        "{}.ldepth.mean",
+        prefix.display()
+    )));
     assert_eq!(&ldepth[0][..], ["CHROM", "POS", "MEAN_DEPTH", "VAR_DEPTH"]);
     assert_eq!(&ldepth[1][..3], ["chr1", "1", "25"]);
     assert!((ldepth[1][3].parse::<f64>().expect("var") - 500.0 / 3.0).abs() < 1e-3);

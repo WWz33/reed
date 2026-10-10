@@ -4,6 +4,7 @@
 //! Pruning moved to `reed filter --indep-pairwise` (docs/rounds/v5/05
 //! §3.4.1).
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use reed_engine::error::EngineError;
@@ -24,16 +25,15 @@ pub fn write_ld(prefix: &Path, report: &LdReport) -> Result<Vec<PathBuf>, Engine
                 Some(v) => format!("{v}"),
                 None => "NA".to_string(),
             };
-            out.push_str(&format!("{start}\t{end}\t{n}\t{cell}\n"));
+            writeln!(out, "{start}\t{end}\t{n}\t{cell}").expect("invariant: writing to String");
         }
         files.push(write(prefix, ".ld.decay", out)?);
     }
     if !report.pairs.is_empty() {
-        let mut out = String::from(
-            "#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n",
-        );
+        let mut out = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
         for (contig, a, b, r2) in &report.pairs {
-            out.push_str(&format!("{contig}\t{a}\t.\t{contig}\t{b}\t.\t{r2}\n"));
+            writeln!(out, "{contig}\t{a}\t.\t{contig}\t{b}\t.\t{r2}")
+                .expect("invariant: writing to String");
         }
         files.push(write(prefix, ".ld", out)?);
     }

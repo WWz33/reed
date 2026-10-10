@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use reed::{run_index, WriteIndex};
+use reed::{WriteIndex, run_index};
 
 use crate::cli::IndexCli;
 
@@ -12,8 +12,18 @@ use crate::cli::IndexCli;
 ///
 /// Unknown index types, stdin input (the index needs a seekable file),
 /// transport failures and unsorted input.
-pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let IndexCli { input, csi: _, tbi, output, force, threads, verbosity } = args;
+pub(crate) fn run_index_cli(
+    args: IndexCli,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let IndexCli {
+        input,
+        csi: _,
+        tbi,
+        output,
+        force,
+        threads,
+        verbosity,
+    } = args;
     verbosity.init_tracing();
     // The index stores virtual offsets against the file's end and re-reads
     // the input; stdin can do neither (doc_v4 01 F4-4). Fail with the reason
@@ -25,7 +35,11 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), Box<dyn std::error::Er
                 .into(),
         );
     }
-    let flavor = if tbi { WriteIndex::Tbi } else { WriteIndex::Csi };
+    let flavor = if tbi {
+        WriteIndex::Tbi
+    } else {
+        WriteIndex::Csi
+    };
     let out = output.as_deref().map(Path::new);
     let index_path = match out {
         Some(p) => p.to_path_buf(),
@@ -39,9 +53,16 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), Box<dyn std::error::Er
         .into());
     }
     let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism().expect("invariant: parallelism").get()
+        std::thread::available_parallelism()
+            .expect("invariant: parallelism")
+            .get()
     });
-    tracing::debug!(flavor = flavor.suffix(), threads, input, "reed index starting");
+    tracing::debug!(
+        flavor = flavor.suffix(),
+        threads,
+        input,
+        "reed index starting"
+    );
     let started = std::time::Instant::now();
     let outcome = run_index(Path::new(&input), flavor, out, threads)?;
     if verbosity.shows_summary() {

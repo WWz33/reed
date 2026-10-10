@@ -8,15 +8,15 @@ use std::sync::{Arc, Mutex};
 
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
+use reed_filter::FilterError;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
-use reed_filter::FilterError;
 
 use reed_core::ChunkId;
 
 use super::record_pipeline::{PipelineOptions, RecordPipeline};
-use super::{ferr, io_err, FilterOptions};
+use super::{FilterOptions, ferr, io_err};
 
 pub(super) struct SketchPassOutput {
     /// Per-chunk sketches in chunk order.
@@ -178,7 +178,16 @@ impl SketchJob {
         fragment: &mut reed_filter::sketch::SketchFragment,
     ) -> Result<(), EngineError> {
         let plan = &self.plan;
-        let SketchScratch { pipeline, p0a, p0m, p1a, p1m, rule_bits, called, funnel } = scratch;
+        let SketchScratch {
+            pipeline,
+            p0a,
+            p0m,
+            p1a,
+            p1m,
+            rule_bits,
+            called,
+            funnel,
+        } = scratch;
         // The scan runs for EVERY record (the denominator counts every
         // head-surviving record); the plane/mask bitmaps and the cohort
         // counts are only filled for head survivors. The tail is the mid
@@ -261,7 +270,7 @@ pub(super) struct SketchSink {
 }
 
 impl OrderedSink<SketchPartial> for SketchSink {
-    fn accept(&mut self, _id: ChunkId, partial: &mut SketchPartial) -> Result<(), EngineError> {
+    fn accept(&mut self, id: ChunkId, partial: &mut SketchPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
         self.n_records += partial.n_head_passed;
         if self.cohort.len() < partial.cohort_called.len() {
@@ -275,24 +284,39 @@ impl OrderedSink<SketchPartial> for SketchSink {
             if let Some((cid, mut frag)) = self.open.take() {
                 let seam_site = (pre.n_sites > 0).then_some(frag.n_sites);
                 frag.append(&pre);
-                self.sketches.push(ChunkSketch { id: cid, fragment: frag, seam_site });
+                self.sketches.push(ChunkSketch {
+                    id: cid,
+                    fragment: frag,
+                    seam_site,
+                });
             }
         }
         // Open the new chunk with its body fragment (a stale open without a
         // seam would mean a missing seam partial — finalize defensively).
         if let Some((cid, frag)) = self.open.take() {
-            self.sketches.push(ChunkSketch { id: cid, fragment: frag, seam_site: None });
+            self.sketches.push(ChunkSketch {
+                id: cid,
+                fragment: frag,
+                seam_site: None,
+            });
         }
-        self.open = Some((_id.0, std::mem::take(&mut partial.fragment)));
+        self.open = Some((id.0, std::mem::take(&mut partial.fragment)));
         Ok(())
     }
 
     fn finish(mut self) -> Result<u64, EngineError> {
         if let Some((cid, frag)) = self.open.take() {
-            self.sketches.push(ChunkSketch { id: cid, fragment: frag, seam_site: None });
+            self.sketches.push(ChunkSketch {
+                id: cid,
+                fragment: frag,
+                seam_site: None,
+            });
         }
         let n_records = self.n_records;
-        *self.out.lock().expect("invariant: sketch slot not poisoned") = Some(SketchPassOutput {
+        *self
+            .out
+            .lock()
+            .expect("invariant: sketch slot not poisoned") = Some(SketchPassOutput {
             sketches: self.sketches,
             cohort_called: self.cohort,
             n_records,
@@ -318,7 +342,9 @@ pub(super) fn run_sketch_pass(
             reed_engine::budget::MemBudget::from_bytes,
         ),
     };
-    let crate::input::OpenedInput { mut source, facts, .. } = opened;
+    let crate::input::OpenedInput {
+        mut source, facts, ..
+    } = opened;
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
         facts
             .header
@@ -370,9 +396,10 @@ pub(super) fn estimate_records(input: &Path) -> Result<u64, FilterError> {
     };
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
     let mut scratch = Vec::new();
-    let view = reed_io::chunk::inflate_chunk(&chunk, &mut inflater, &mut scratch).map_err(io_err)?;
+    let view =
+        reed_io::chunk::inflate_chunk(&chunk, &mut inflater, &mut scratch).map_err(io_err)?;
     let body = view.body_bytes(view.text);
-    let n_lines = u64::try_from(body.iter().filter(|&&b| b == b'\n').count()).unwrap_or(0);
+    let n_lines = u64::try_from(memchr::memchr_iter(b'\n', body).count()).unwrap_or(0);
     let compressed = u64::try_from(chunk.compressed.len()).unwrap_or(1).max(1);
     if n_lines == 0 {
         return Ok(0);

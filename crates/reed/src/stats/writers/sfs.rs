@@ -9,6 +9,7 @@
 //!
 //! Values print at full round-trip precision; `--sfs-int` rounds them.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use reed_engine::error::EngineError;
@@ -36,15 +37,31 @@ pub fn write_projected_sfs(
         )));
     }
     let mut files = Vec::new();
-    for (name, (spectrum, &n)) in group_names.iter().zip(report.spectra.iter().zip(&report.projections))
+    for (name, (spectrum, &n)) in group_names
+        .iter()
+        .zip(report.spectra.iter().zip(&report.projections))
     {
         // easySFS keeps the full n+1 length for folded spectra.
         let mut values = spectrum.clone();
         if report.folded {
             values.resize(n as usize + 1, 0.0);
         }
-        files.push(write_dadi(prefix, name, n, report.folded, &values, int_dtype)?);
-        files.push(write_fsc2(prefix, name, n, report.folded, &values, int_dtype)?);
+        files.push(write_dadi(
+            prefix,
+            name,
+            n,
+            report.folded,
+            &values,
+            int_dtype,
+        )?);
+        files.push(write_fsc2(
+            prefix,
+            name,
+            n,
+            report.folded,
+            &values,
+            int_dtype,
+        )?);
     }
     Ok(files)
 }
@@ -59,12 +76,23 @@ fn write_dadi(
 ) -> Result<PathBuf, EngineError> {
     let path = prefixed(prefix, &format!("_sfs/dadi/{name}-{n}.sfs"));
     let mut out = String::new();
-    out.push_str(&format!("{} {}\n", n + 1, if folded { "folded" } else { "unfolded" }));
+    writeln!(
+        out,
+        "{} {}",
+        n + 1,
+        if folded { "folded" } else { "unfolded" }
+    )
+    .expect("invariant: writing to String");
     out.push_str(&line(values, int_dtype));
     out.push('\n');
     let mask: Vec<&str> = (0..=n as usize)
         .map(|k| {
-            let non_seg = k == 0 || if folded { k > n as usize / 2 } else { k == n as usize };
+            let non_seg = k == 0
+                || if folded {
+                    k > n as usize / 2
+                } else {
+                    k == n as usize
+                };
             if non_seg { "1" } else { "0" }
         })
         .collect();
@@ -101,7 +129,11 @@ fn line(values: &[f64], int_dtype: bool) -> String {
         .iter()
         .map(|v| {
             if int_dtype {
-                format!("{}", v.round() as i64)
+                // Projected spectrum values are non-negative counts bounded
+                // by the projection sample size; the cast is exact.
+                #[allow(clippy::cast_possible_truncation)]
+                let n = v.round() as i64;
+                format!("{n}")
             } else {
                 format!("{v}")
             }
