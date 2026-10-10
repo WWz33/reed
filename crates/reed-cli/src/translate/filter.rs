@@ -42,10 +42,12 @@ fn parse_indep_pairwise(args: &[String]) -> Result<Option<reed::spec::LdPruneSpe
         .ok_or("--indep-pairwise needs an r² threshold (W[kb] [S] R2)")?
         .parse()
         .map_err(|_| "--indep-pairwise r² must be a number".to_string())?;
-    let (window, kb) = match window_token.strip_suffix("kb") {
-        Some(w) => (crate::units::parse_size(w)?, true),
-        None => (crate::units::parse_size(&window_token)?, false),
-    };
+    // `parse_size` scales the full token itself (`50kb` → 50,000); stripping
+    // the suffix first would silently read the window as bare bp. A suffixed
+    // token is a bp window (plink2's `kb` form, extended to reed's other
+    // length suffixes); a bare number is a variant count.
+    let kb = !window_token.bytes().all(|b| b.is_ascii_digit());
+    let window = crate::units::parse_size(&window_token)?;
     if kb && step != 1 {
         return Err("--indep-pairwise with a kb window requires step 1".into());
     }

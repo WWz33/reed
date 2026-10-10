@@ -302,3 +302,63 @@ fn pruner_window_advances_by_step() {
     assert_eq!(pruner.pruned_sites(), vec![1, 3]);
     assert!(pruner.kept_sites().contains(&0));
 }
+
+/// One site's four planes from a per-sample dosage pattern, padded to the
+/// word count the pruner expects.
+fn dosage_planes(dosages: &[u8]) -> (Vec<Vec<u64>>, usize) {
+    let n = dosages.len();
+    let mut p: Vec<Vec<u64>> = vec![vec![0; n.div_ceil(64)]; 4];
+    for (i, &d) in dosages.iter().enumerate() {
+        let bit = 1_u64 << (i % 64);
+        if d > 0 {
+            p[0][i / 64] |= bit;
+        }
+        if d > 1 {
+            p[2][i / 64] |= bit;
+        }
+    }
+    (p, n)
+}
+
+#[test]
+fn pruner_bp_window_matches_plink2_minimal_case() {
+    // plink2 reference: 12 identical (r² = 1) sites 10 kb apart, window
+    // `50kb` → 10 of 12 removed, keeping positions 1000 and 61000.
+    // (`plink2 --vcf t.vcf --indep-pairwise 50kb 0.2 --bad-ld`.)
+    let dosages: Vec<u8> = (0..60).map(|i| (i % 3) as u8).collect();
+    let (p, n) = dosage_planes(&dosages);
+    let planes: [&[u64]; 4] = [&p[0], &p[1], &p[2], &p[3]];
+    let w = p[0].len();
+    let mut pruner = LdPruner::new(0.2, LdWindow::Bp(50_000), 1, w, n);
+    for i in 0..12_u64 {
+        pruner.push(
+            usize::try_from(i).expect("invariant: fits"),
+            1000 + 10_000 * i,
+            planes,
+            poly(0.5),
+        );
+    }
+    pruner.finish_contig();
+    assert_eq!(pruner.kept_sites(), vec![0, 6]);
+    assert_eq!(pruner.pruned_sites(), vec![1, 2, 3, 4, 5, 7, 8, 9, 10, 11]);
+}
+
+#[test]
+fn pruner_bp_window_advances_past_the_trigger() {
+    // A gap wider than the window splits the sites into independent
+    // windows: nothing in the first group can prune anything in the second.
+    // 4 identical sites at 0/1/2/3 kb (window 50 kb) then a gap to 500 kb.
+    let dosages: Vec<u8> = (0..60).map(|i| (i % 3) as u8).collect();
+    let (p, n) = dosage_planes(&dosages);
+    let planes: [&[u64]; 4] = [&p[0], &p[1], &p[2], &p[3]];
+    let w = p[0].len();
+    let mut pruner = LdPruner::new(0.2, LdWindow::Bp(50_000), 1, w, n);
+    let positions = [0_u64, 1_000, 2_000, 3_000, 500_000, 501_000, 502_000];
+    for (i, &pos) in positions.iter().enumerate() {
+        pruner.push(i, pos, planes, poly(0.5));
+    }
+    pruner.finish_contig();
+    // Each group keeps its first member (the rest are pruned by r² = 1
+    // against it): ordinals 0 and 4.
+    assert_eq!(pruner.kept_sites(), vec![0, 4]);
+}

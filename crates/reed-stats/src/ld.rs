@@ -188,13 +188,16 @@ pub enum LdWindow {
 }
 
 /// plink2 `--indep-pairwise` pruning (docs/rounds/v5/05-algorithms.md
-/// §3.4.1; `plink2_ld.cc` `IndepPairwiseThread`, read 2026-10-10).
+/// §3.4.1; `plink2_ld.cc` `IndepPairwiseThread` + `LdPruneNextWindow`, read
+/// 2026-10-10).
 ///
-/// Sites arrive in contig/position order. The window spans `window` (a
-/// variant count, or bp) **in arrival space**: every arriving variant
-/// occupies a slot, including the monomorphic ones (pruned on arrival, like
-/// plink2's `FillVaggs` check) and the ones pruned earlier. After each
-/// window the start advances by `step` variants and the pruned slots leave.
+/// Sites arrive in contig/position order. A variant-count window covers
+/// `W` arrivals and advances by `step`; a bp window covers every variant
+/// within `[bp[start], bp[start] + W]` and closes when the first variant
+/// beyond that span arrives (that variant opens the next window, plink2's
+/// `next_window_end_tvidx`). Monomorphic variants occupy an arrival slot
+/// (pruned on arrival, like plink2's `FillVaggs` check) but never a scan
+/// slot.
 ///
 /// Within a window every surviving pair is tested with the exact integer
 /// judgment `cov² > R2 · var1 · var2` (strictly greater, so a pair with no
@@ -225,8 +228,14 @@ pub struct LdPruner {
     pruned: Vec<usize>,
     /// Position of the last arrival (the bp window's right edge).
     last_pos0: u64,
-    /// The bp window's start position (0 until the first evaluation).
+    /// The bp window's start position (`bp[window_start]`).
     window_start_bp: u64,
+    /// Whether a bp window start is established (the first push).
+    bp_started: bool,
+    /// Every arrival's position, indexed by arrival — the bp window's start
+    /// advance walks all variants (plink2's `variant_include` bits), not
+    /// only the slotted ones.
+    pos_log: Vec<u64>,
 }
 
 /// The per-site aggregates plink2's `FillVaggs` produces.
@@ -263,10 +272,13 @@ struct PruneSite {
     ordinal: usize,
     /// The arrival index (window slots are counted in arrival space).
     arrival: usize,
-    pos0: u64,
     planes: Vec<u64>,
     maj_freq: f64,
 }
+
+/// plink2's `kSmallEpsilon` (`plink2_float.h`: 2⁻⁴⁴): the frequency-tie
+/// tolerance in the prune decision.
+const TIE_EPSILON: f64 = 1.0 / (1_u64 << 44) as f64;
 
 impl LdPruner {
     /// A pruner at `threshold` (r²) over `window`, stepping `step` variants
@@ -287,6 +299,8 @@ impl LdPruner {
             pruned: Vec::new(),
             last_pos0: 0,
             window_start_bp: 0,
+            bp_started: false,
+            pos_log: Vec::new(),
         }
     }
 
@@ -300,13 +314,31 @@ impl LdPruner {
         planes: [&[u64]; 4],
         stats: SitePruneStats,
     ) -> bool {
+        let arrival = self.seen;
         self.seen += 1;
         self.last_pos0 = pos0;
-        // plink2 prunes monomorphic variants on arrival: they occupy a slot
-        // and never enter the pair scan.
+        self.pos_log.push(pos0);
+        if !self.bp_started {
+            self.bp_started = true;
+            self.window_start_bp = pos0;
+        }
+        // bp window: the first arrival beyond the span closes the window
+        // BEFORE joining it (plink2 evaluates after the last in-window
+        // variant loads; streaming detects the close at the trigger's
+        // arrival, so the trigger must not enter the closing scan).
+        if let LdWindow::Bp(bp) = self.window
+            && arrival > 0
+            && pos0 > self.window_start_bp.saturating_add(bp)
+        {
+            self.evaluate_window_bp(bp);
+        }
+        // plink2 prunes monomorphic variants on arrival: they occupy an
+        // arrival slot but never a scan slot.
         if stats.monomorphic() {
             self.pruned.push(ordinal);
-            self.maybe_evaluate();
+            if let LdWindow::Variants(max) = self.window {
+                self.maybe_evaluate_variants(max);
+            }
             return false;
         }
         let mut flat = Vec::with_capacity(4 * self.w);
@@ -315,8 +347,7 @@ impl LdPruner {
         }
         self.sites.push(PruneSite {
             ordinal,
-            arrival: self.seen - 1,
-            pos0,
+            arrival,
             planes: flat,
             maj_freq: stats.maj_freq,
         });
@@ -324,29 +355,42 @@ impl LdPruner {
         // only grows by appending, so the newly appended entries are the
         // whole answer — no scan over the history (that was O(n²)).
         let before = self.pruned.len();
-        self.maybe_evaluate();
+        if let LdWindow::Variants(max) = self.window {
+            self.maybe_evaluate_variants(max);
+        }
         !self.pruned[before..].contains(&ordinal)
     }
 
-    /// Evaluates the window once its span is complete, then advances it.
-    fn maybe_evaluate(&mut self) {
-        let full = match self.window {
-            LdWindow::Variants(max) => self.seen >= self.window_start + max,
-            // plink2's bp window: the end is the first variant whose position
-            // exceeds start_bp + W; the window is complete when such a
-            // variant arrives.
-            LdWindow::Bp(bp) => {
-                let start_bp = self.window_start_bp;
-                self.last_pos0 > start_bp.saturating_add(bp)
-            }
-        };
-        if full {
-            self.evaluate_window();
+    /// Variant-count window: evaluate once `max` arrivals accumulated.
+    fn maybe_evaluate_variants(&mut self, max: usize) {
+        if self.seen >= self.window_start + max {
+            self.evaluate_window(self.window_start + self.step);
         }
     }
 
-    /// Runs the window's pairwise scan, then advances the window by `step`.
-    fn evaluate_window(&mut self) {
+    /// bp window (`plink2_ld.cc` `LdPruneNextWindow`, bp branch): the span
+    /// is `[bp[start], bp[start] + W]`; the trigger (the first arrival
+    /// beyond) re-bases the start to the first variant with
+    /// `bp >= bp[trigger] − W` (always at most the trigger itself, so the
+    /// window keeps advancing).
+    fn evaluate_window_bp(&mut self, bp: u64) {
+        let floor = self.last_pos0.saturating_sub(bp);
+        let new_start = (self.window_start + 1..self.pos_log.len())
+            .find(|&i| self.pos_log[i] >= floor)
+            .unwrap_or(self.pos_log.len());
+        self.window_start_bp = self
+            .pos_log
+            .get(new_start)
+            .copied()
+            .unwrap_or(self.last_pos0);
+        self.evaluate_window(new_start);
+    }
+
+    /// Runs the window's pairwise scan, then advances it: slots below
+    /// `next_start` (arrival index) leave the window — pruned ones recorded,
+    /// the rest kept. plink2's `winpos_split` semantics: the surviving slots
+    /// become the "old" prefix, so an old pair is never tested twice.
+    fn evaluate_window(&mut self, next_start: usize) {
         let n = self.sites.len();
         let mut removed = vec![false; n];
         // Reverse scan over the NEW slots, nearest pairs first (plink2's
@@ -367,7 +411,9 @@ impl LdPruner {
                     continue;
                 }
                 if self.prunes(first, second) {
-                    if self.sites[first].maj_freq <= self.sites[second].maj_freq * (1.0 + 1e-6) {
+                    if self.sites[first].maj_freq
+                        <= self.sites[second].maj_freq * (1.0 + TIE_EPSILON)
+                    {
                         removed[second] = true;
                         break;
                     }
@@ -375,11 +421,6 @@ impl LdPruner {
                 }
             }
         }
-        // Record the decisions and drop every decided slot (kept ones leave
-        // the window too: they are behind the next window's start). The
-        // slot's arrival index — not its position in the compacted vec —
-        // decides which window it belongs to.
-        let next_start = self.window_start + self.step;
         let mut live = Vec::with_capacity(n);
         for (i, site) in self.sites.drain(..).enumerate() {
             if removed[i] {
@@ -388,25 +429,13 @@ impl LdPruner {
             }
             if site.arrival < next_start {
                 self.kept.push(site.ordinal);
-                continue;
+            } else {
+                live.push(site);
             }
-            live.push(site);
         }
         self.sites = live;
         self.new_from = self.sites.len();
         self.window_start = next_start;
-        // A bp window's start advances until the end can move by at least
-        // one variant (plink2's `LdPruneNextWindow`: the new start is the
-        // first variant whose position is >= end_bp − W).
-        if let LdWindow::Bp(bp) = self.window {
-            let floor = self.last_pos0.saturating_sub(bp);
-            let first_live = self
-                .sites
-                .iter()
-                .find(|s| s.pos0 >= floor)
-                .map_or(self.last_pos0, |s| s.pos0);
-            self.window_start_bp = first_live;
-        }
     }
 
     /// plink2's exact judgment: `cov² > R2 · var1 · var2` on integer
@@ -434,20 +463,21 @@ impl LdPruner {
         lhs > rhs
     }
 
-    /// Ends the current contig: the trailing partial window is scanned
-    /// (plink2 evaluates it when the subcontig's last variant arrives), then
-    /// every remaining live slot is kept.
+    /// Ends the current contig: the trailing window is scanned — plink2
+    /// evaluates the final window when the subcontig's last variant loads,
+    /// and the `LdPruneNextWindow` call that follows then drops every
+    /// remaining slot. When the last arrival already closed a window, no
+    /// slot holds the `second` role (plink2's `winpos_split` equals the
+    /// window size) and this scan is a no-op.
     pub fn finish_contig(&mut self) {
-        if !self.sites.is_empty() {
-            self.evaluate_window();
-        }
-        for site in self.sites.drain(..) {
-            self.kept.push(site.ordinal);
-        }
+        self.evaluate_window(usize::MAX);
+        debug_assert!(self.sites.is_empty());
         self.seen = 0;
         self.window_start = 0;
         self.new_from = 0;
         self.window_start_bp = 0;
+        self.bp_started = false;
+        self.pos_log.clear();
     }
 
     /// The kept global ordinals, ascending.
