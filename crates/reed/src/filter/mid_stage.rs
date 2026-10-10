@@ -277,6 +277,9 @@ fn decide_chunk_inner(
 ) -> ChunkDecision {
     let mut survivor_bits = vec![0_u64; chunk.n_sites.div_ceil(64)];
     let mut survivors: Vec<Option<SiteEmit>> = Vec::with_capacity(chunk.n_sites);
+    // Per-chunk HWE memo (A6-16): the decisions run in parallel, so the
+    // cache lives and dies with this chunk.
+    let mut hwe = reed_core::math::hwe::HweCache::new();
     for s in 0..chunk.n_sites {
         let (matrix, local) = resolve(matrices, contig_base, chunk.start + s);
         let planes = matrix.planes(local);
@@ -311,10 +314,11 @@ fn decide_chunk_inner(
             n_samples_out,
             &plan.tail,
             &mut funnel.tail_hits,
+            &mut hwe,
         ) {
             survivor_bits[s / 64] |= 1 << (s % 64);
             let mut infos = Vec::new();
-            fill_info_set(&counts, &plan.recompute, &mut infos);
+            fill_info_set(&counts, &plan.recompute, &mut hwe, &mut infos);
             let mask_words = mask_of(matrix, local, keep_words);
             survivors.push(Some(SiteEmit { mask_words, infos }));
             funnel.n_output += 1;

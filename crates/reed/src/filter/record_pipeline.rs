@@ -9,6 +9,7 @@
 
 use reed_core::Bitset;
 use reed_core::count::SiteCounts;
+use reed_core::math::hwe::HweCache;
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{HeadScratch, eval_head};
@@ -89,6 +90,8 @@ pub(crate) struct RecordPipeline {
     /// Reused per-sample `FORMAT` value table for `--set-gts .` expressions.
     fmt_values: Vec<FmtValue<'static>>,
     fmt_storage: Vec<(Vec<u8>, Option<f64>)>,
+    /// Memo for the exact HWE test behind the tail rules (A6-16).
+    hwe: HweCache,
     counts: SiteCounts,
 }
 
@@ -115,6 +118,7 @@ impl RecordPipeline {
             mask_rule: vec![u16::MAX; n_samples],
             fmt_values: Vec::new(),
             fmt_storage: Vec::new(),
+            hwe: HweCache::new(),
             counts: SiteCounts::default(),
         }
     }
@@ -207,6 +211,7 @@ impl RecordPipeline {
             &mut self.counts,
             &mut self.fmt_storage,
             &mut self.fmt_values,
+            &mut self.hwe,
             body,
         )
     }
@@ -289,6 +294,7 @@ impl RecordPipeline {
             &mut self.counts,
             &mut self.fmt_storage,
             &mut self.fmt_values,
+            &mut self.hwe,
             body,
         )
     }
@@ -414,16 +420,14 @@ fn run_stages<'a, F>(
     counts: &mut SiteCounts,
     fmt_storage: &mut [(Vec<u8>, Option<f64>)],
     fmt_values: &mut Vec<FmtValue<'static>>,
+    hwe: &mut HweCache,
     mut body: F,
 ) -> Result<Processed, EngineError>
 where
     F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
 {
     // ---- mask + count stage ----
-    masked.clear_padding();
-    for bit in 0..masked.len() {
-        masked.set(bit, false);
-    }
+    masked.clear();
     mask_rule.fill(u16::MAX);
     *counts = SiteCounts::default();
     let mask_rules = &plan.mask;
@@ -564,6 +568,7 @@ where
             usize::try_from(n_out).unwrap_or(usize::MAX),
             &plan.tail,
             &mut funnel.tail_hits,
+            hwe,
         ) {
             return Ok(Processed {
                 head_passed: true,

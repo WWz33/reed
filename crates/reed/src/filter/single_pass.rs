@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use reed_core::ChunkId;
+use reed_core::math::hwe::HweCache;
 use reed_core::sample::SampleMask;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::ChunkJob;
@@ -19,7 +20,7 @@ use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
 use super::job_err;
 use super::record_pipeline::{
-    NativeScan, NativeScratch, PipelineOptions, RecordPipeline, gt_subfield_index,
+    NativeScan, NativeScratch, PipelineOptions, RecordPipeline, RecordView, gt_subfield_index,
 };
 
 /// The BCF encoders a worker may use: the native B4 encoder by default,
@@ -111,6 +112,8 @@ pub(super) struct WorkerScratch {
     funnel: FunnelPartial,
     /// Native BCF input buffers (doc_v4 O-4).
     native: Option<NativeScratch>,
+    /// The HWE memo behind `--fill-tags HWE` (A6-16).
+    hwe: HweCache,
 }
 
 impl ChunkJob for FilterJob {
@@ -129,11 +132,13 @@ impl ChunkJob for FilterJob {
             self.plan.tail.len(),
             self.plan.mask.len(),
         );
+        // One build per chunk, not per surviving record (A6-15).
+        let stale = self.stale_refs();
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
             }
-            self.push_line(line, scratch)?;
+            self.push_line(line, scratch, &stale)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         let partial = FilterPartial {
@@ -155,13 +160,27 @@ impl ChunkJob for FilterJob {
             self.plan.tail.len(),
             self.plan.mask.len(),
         );
-        self.push_line(line, scratch)?;
+        let stale = self.stale_refs();
+        self.push_line(line, scratch, &stale)?;
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
             output,
             funnel: std::mem::take(&mut scratch.funnel),
         })
     }
+}
+
+/// The scratch pieces the survivor emitter touches. They are borrowed out
+/// of the worker scratch as one bundle (the record pipeline holds the rest),
+/// so the emit step is one call in both the text and the native path (A6-20).
+struct EmitScratchMut<'a> {
+    info_set: &'a mut Vec<(&'static [u8], InfoValueOut)>,
+    edit_buf: &'a mut Vec<u8>,
+    bcf_buf: &'a mut Vec<u8>,
+    bcf: &'a mut Option<BcfEncoders>,
+    writer: &'a mut BlockWriter,
+    /// The HWE memo behind `--fill-tags HWE` (A6-16).
+    hwe: &'a mut HweCache,
 }
 
 impl FilterJob {
@@ -205,6 +224,7 @@ impl FilterJob {
                 )),
                 _ => None,
             },
+            hwe: HweCache::new(),
         }
     }
 
@@ -221,6 +241,7 @@ impl FilterJob {
         &self,
         records: &[&[u8]],
         scratch: &mut WorkerScratch,
+        stale: &[&[u8]],
     ) -> Result<(), EngineError> {
         let dict = self
             .bcf_input
@@ -233,7 +254,7 @@ impl FilterJob {
                 .native
                 .take()
                 .expect("invariant: the native scratch exists with the dictionary");
-            let result = self.push_bcf_record(dict, bytes, scratch, &mut native);
+            let result = self.push_bcf_record(dict, bytes, scratch, &mut native, stale);
             scratch.native = Some(native);
             result?;
         }
@@ -258,12 +279,73 @@ impl FilterJob {
             self.plan.tail.len(),
             self.plan.mask.len(),
         );
-        self.push_bcf_records(records, scratch)?;
+        let stale = self.stale_refs();
+        self.push_bcf_records(records, scratch, &stale)?;
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
             output,
             funnel: std::mem::take(&mut scratch.funnel),
         })
+    }
+
+    /// The plan's stale INFO tags as borrowed slices; built once per chunk
+    /// by the callers (A6-15 — it used to be one `Vec` per surviving
+    /// record).
+    fn stale_refs(&self) -> Vec<&[u8]> {
+        self.plan.stale_tags.iter().map(Vec::as_slice).collect()
+    }
+
+    /// The one emit step shared by the text and native paths (A6-20): the
+    /// pass0 pruning rule, the recomputed INFO fill, the edit and the write.
+    /// `edit_line` is the line the edit runs on — the record itself on the
+    /// text path, the rendered full record on the native path.
+    fn emit_survivor(
+        &self,
+        emit: &mut EmitScratchMut<'_>,
+        stale: &[&[u8]],
+        view: &mut RecordView<'_, '_>,
+        edit_line: &LineRef<'_>,
+    ) -> Result<(), EngineError> {
+        // The LD-pruning rule (§3.4.1): pass0 removed this site.
+        if let Some(keep) = self.site_keep.as_deref()
+            && !keep.contains(view.site.contig_name, view.pos1.saturating_sub(1))
+        {
+            view.funnel.n_ld_pruned += 1;
+            return Ok(());
+        }
+        let counts = view.counts.expect("invariant: counts requested");
+        fill_info_set(counts, &self.plan.recompute, emit.hwe, emit.info_set);
+        let edit_plan = EditPlan {
+            keep_samples: self.keep_mask.as_ref(),
+            mask_gt: Some(view.masked),
+            info_remove: stale,
+            info_set: emit.info_set,
+        };
+        let gt_index = gt_subfield_index(edit_line.format_text());
+        emit.edit_buf.clear();
+        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf).map_err(job_err)?;
+        view.funnel.n_output += 1;
+        // Block boundaries are byte-based, not record-based (htslib): the
+        // record's index entry anchors at the block and offset where its
+        // bytes start, even when they span into the next block.
+        let key = IndexKey {
+            contig: view
+                .site
+                .contig
+                .expect("invariant: parse_declared resolved the contig"),
+            start1: view.pos1,
+            ref_len: u32::try_from(view.site.reference.len()).unwrap_or(1).max(1),
+        };
+        match emit.bcf {
+            None => emit.writer.push_record(emit.edit_buf, key).map_err(job_err),
+            // The edited text is encoded to BCF; the record's bytes then
+            // flow through the block writer like any other payload.
+            Some(encoders) => {
+                emit.bcf_buf.clear();
+                encoders.encode(emit.edit_buf, emit.bcf_buf).map_err(job_err)?;
+                emit.writer.push_record(emit.bcf_buf, key).map_err(job_err)
+            }
+        }
     }
 
     fn push_bcf_record(
@@ -272,6 +354,7 @@ impl FilterJob {
         bytes: &[u8],
         scratch: &mut WorkerScratch,
         native: &mut NativeScratch,
+        stale: &[&[u8]],
     ) -> Result<(), EngineError> {
         native.decode(
             dict,
@@ -310,7 +393,15 @@ impl FilterJob {
             funnel,
             ..
         } = scratch;
-        let site_keep = self.site_keep.as_deref();
+        let WorkerScratch { hwe, .. } = scratch;
+        let mut emit = EmitScratchMut {
+            info_set,
+            edit_buf,
+            bcf_buf,
+            bcf,
+            writer,
+            hwe,
+        };
         pipeline.process_scanned(
             site_line,
             plan,
@@ -324,48 +415,13 @@ impl FilterJob {
                 counters,
             },
             |view| {
-                // The LD-pruning rule (§3.4.1): pass0 removed this site.
-                if let Some(keep) = site_keep
-                    && !keep.contains(view.site.contig_name, view.pos1.saturating_sub(1))
-                {
-                    view.funnel.n_ld_pruned += 1;
-                    return Ok(());
-                }
-                // Survivor: render the full record, edit it, write it.
+                // Survivor: render the full record, then the shared emit step.
                 let rec = record_ref(bytes).map_err(EngineError::from)?;
                 full.clear();
                 render_record(&rec, dict, &mut full).map_err(EngineError::from)?;
                 let full_lr = LineRef::parse(&full)
                     .ok_or_else(|| EngineError::job("rendered record has fewer than 9 columns"))?;
-                let site = view.site;
-                let counts = view.counts.expect("invariant: counts requested");
-                fill_info_set(counts, &plan.recompute, info_set);
-                let stale: Vec<&[u8]> = plan.stale_tags.iter().map(Vec::as_slice).collect();
-                let edit_plan = EditPlan {
-                    keep_samples: self.keep_mask.as_ref(),
-                    mask_gt: Some(view.masked),
-                    info_remove: &stale,
-                    info_set,
-                };
-                let gt_index = gt_subfield_index(full_lr.format_text());
-                edit_buf.clear();
-                edit_vcf_line(&full_lr, &edit_plan, gt_index, edit_buf).map_err(job_err)?;
-                view.funnel.n_output += 1;
-                let key = IndexKey {
-                    contig: site
-                        .contig
-                        .expect("invariant: parse_declared resolved the contig"),
-                    start1: view.pos1,
-                    ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
-                };
-                match bcf {
-                    None => writer.push_record(edit_buf, key).map_err(job_err),
-                    Some(encoders) => {
-                        bcf_buf.clear();
-                        encoders.encode(edit_buf, bcf_buf).map_err(job_err)?;
-                        writer.push_record(bcf_buf, key).map_err(job_err)
-                    }
-                }
+                self.emit_survivor(&mut emit, stale, view, &full_lr)
             },
         )?;
         *full_slot = full;
@@ -374,7 +430,12 @@ impl FilterJob {
 
     /// Runs the shared record pipeline and writes the survivors: head →
     /// decode → mask → count → tail → edit → worker-local deflate.
-    fn push_line(&self, line: &[u8], scratch: &mut WorkerScratch) -> Result<(), EngineError> {
+    fn push_line(
+        &self,
+        line: &[u8],
+        scratch: &mut WorkerScratch,
+        stale: &[&[u8]],
+    ) -> Result<(), EngineError> {
         let plan = &self.plan;
         let opts = PipelineOptions {
             // Head-failed records are never scanned on this path.
@@ -395,52 +456,18 @@ impl FilterJob {
             funnel,
             ..
         } = scratch;
-        let site_keep = self.site_keep.as_deref();
+        let WorkerScratch { hwe, .. } = scratch;
+        let mut emit = EmitScratchMut {
+            info_set,
+            edit_buf,
+            bcf_buf,
+            bcf,
+            writer,
+            hwe,
+        };
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
-            let site = view.site;
-            // The LD-pruning rule (§3.4.1): pass0 removed this site.
-            if let Some(keep) = site_keep
-                && !keep.contains(site.contig_name, view.pos1.saturating_sub(1))
-            {
-                view.funnel.n_ld_pruned += 1;
-                return Ok(());
-            }
-            let counts = view.counts.expect("invariant: counts requested");
-
-            // ---- edit + emit ----
-            fill_info_set(counts, &plan.recompute, info_set);
-            let stale: Vec<&[u8]> = plan.stale_tags.iter().map(Vec::as_slice).collect();
-            let edit_plan = EditPlan {
-                keep_samples: self.keep_mask.as_ref(),
-                mask_gt: Some(view.masked),
-                info_remove: &stale,
-                info_set,
-            };
-            let gt_index = gt_subfield_index(view.line.format_text());
-            edit_buf.clear();
-            edit_vcf_line(view.line, &edit_plan, gt_index, edit_buf).map_err(job_err)?;
-
-            view.funnel.n_output += 1;
-            // Block boundaries are byte-based, not record-based (htslib): the
-            // record's index entry anchors at the block and offset where its
-            // bytes start, even when they span into the next block.
-            let key = IndexKey {
-                contig: site
-                    .contig
-                    .expect("invariant: parse_declared resolved the contig"),
-                start1: view.pos1,
-                ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
-            };
-            match bcf {
-                None => writer.push_record(edit_buf, key).map_err(job_err),
-                // The edited text is encoded to BCF; the record's bytes then
-                // flow through the block writer like any other payload.
-                Some(encoders) => {
-                    bcf_buf.clear();
-                    encoders.encode(edit_buf, bcf_buf).map_err(job_err)?;
-                    writer.push_record(bcf_buf, key).map_err(job_err)
-                }
-            }
+            let edit_line = view.line;
+            self.emit_survivor(&mut emit, stale, view, &edit_line)
         })?;
         Ok(())
     }

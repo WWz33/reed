@@ -7,6 +7,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use reed_core::count::SiteCounts;
+use reed_core::math::hwe::HweCache;
 use reed_io::vcf::line_edit::InfoValueOut;
 
 use crate::plan::RecomputeFlags;
@@ -14,10 +15,13 @@ use crate::plan::RecomputeFlags;
 /// Fills the worker's reusable `info_set` with this site's recomputed
 /// values (fill-tags order: AC, AN, NS, MAF, HWE). `L_tags` compares
 /// values, not byte positions, but a stable order keeps outputs
-/// reproducible.
+/// reproducible. `hwe` memoizes the exact-test distribution per
+/// `(n_called, mac)` (A6-16); the p-values are identical to the uncached
+/// `SiteCounts::hwe_p`.
 pub fn fill_info_set(
     counts: &SiteCounts,
     recompute: &RecomputeFlags,
+    hwe: &mut HweCache,
     info_set: &mut Vec<(&'static [u8], InfoValueOut)>,
 ) {
     info_set.clear();
@@ -34,9 +38,9 @@ pub fn fill_info_set(
         info_set.push((b"MAF".as_slice(), InfoValueOut::Float(counts.maf() as f32)));
     }
     if recompute.hwe {
-        info_set.push((
-            b"HWE".as_slice(),
-            InfoValueOut::Float(counts.hwe_p() as f32),
-        ));
+        let p = counts
+            .hwe_test_input()
+            .map_or(1.0, |(n, mac, het)| hwe.p_exact(n, mac, het));
+        info_set.push((b"HWE".as_slice(), InfoValueOut::Float(p as f32)));
     }
 }

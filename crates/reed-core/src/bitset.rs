@@ -89,6 +89,12 @@ impl Bitset {
         &mut self.words
     }
 
+    /// Clears every bit (word-at-a-time; padding stays zero per the
+    /// invariant).
+    pub fn clear(&mut self) {
+        self.words.fill(0);
+    }
+
     /// Forces trailing padding bits to zero, restoring the type invariant.
     pub fn clear_padding(&mut self) {
         let used = self.len % 64;

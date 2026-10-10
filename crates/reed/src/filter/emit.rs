@@ -54,6 +54,7 @@ impl ChunkJob for EmitJob {
             EngineError::job(format!("no emit decision for chunk {}", chunk.id.0))
         })?;
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
+        let stale = self.stale_refs();
         let mut record = 0_usize;
         let mut site = 0_usize;
         for line in body.split(|&b| b == b'\n') {
@@ -73,7 +74,7 @@ impl ChunkJob for EmitJob {
             let Some(emit) = dec.survivors.get(s).and_then(|e| e.as_ref()) else {
                 continue;
             };
-            self.emit_line(line, emit, scratch)?;
+            self.emit_line(line, emit, scratch, &stale)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
@@ -96,7 +97,8 @@ impl ChunkJob for EmitJob {
                 .and_then(|dec| dec.seam.clone());
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         if let Some(emit) = emitted {
-            self.emit_line(line, &emit, scratch)?;
+            let stale = self.stale_refs();
+            self.emit_line(line, &emit, scratch, &stale)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
@@ -107,6 +109,11 @@ impl ChunkJob for EmitJob {
 }
 
 impl EmitJob {
+    /// The plan's stale INFO tags as borrowed slices; built once per chunk
+    /// by the callers (A6-15).
+    fn stale_refs(&self) -> Vec<&[u8]> {
+        self.plan.stale_tags.iter().map(Vec::as_slice).collect()
+    }
     fn build_scratch(&self) -> EmitScratch {
         EmitScratch {
             edit_buf: Vec::new(),
@@ -124,6 +131,7 @@ impl EmitJob {
         line: &[u8],
         emit: &SiteEmit,
         scratch: &mut EmitScratch,
+        stale: &[&[u8]],
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::job("survivor line has fewer than 9 columns"));
@@ -137,7 +145,6 @@ impl EmitJob {
         {
             return Ok(());
         }
-        let stale: Vec<&[u8]> = self.plan.stale_tags.iter().map(Vec::as_slice).collect();
         // Refresh the reusable mask bitset from the emit's words.
         for (word, src) in scratch
             .mask_bitset

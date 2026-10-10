@@ -2,6 +2,7 @@
 //! MAC → HWE; HWE is last because it is the most expensive).
 
 use reed_core::count::SiteCounts;
+use reed_core::math::hwe::HweCache;
 
 use crate::plan::TailRule;
 
@@ -13,6 +14,7 @@ pub fn eval_tail(
     n_samples_out: usize,
     rules: &[TailRule],
     hits: &mut [u64],
+    hwe: &mut HweCache,
 ) -> bool {
     // A short counter slice would silently skip rules (caller invariant).
     assert_eq!(
@@ -50,7 +52,13 @@ pub fn eval_tail(
                 let minor = counts.ac.min(counts.an.saturating_sub(counts.ac));
                 minor <= u64::from(*mac)
             }
-            TailRule::MinHweP(p) => counts.hwe_p() >= *p,
+            // Cached exact test (A6-16); the degenerate sentinel stays 1.0.
+            TailRule::MinHweP(p) => {
+                counts
+                    .hwe_test_input()
+                    .map_or(1.0, |(n, mac, het)| hwe.p_exact(n, mac, het))
+                    >= *p
+            }
         };
         if !ok {
             return false;
@@ -150,7 +158,7 @@ mod tests {
         let v = values(&c);
         let run = |rules: &[TailRule]| {
             let mut hits = vec![0_u64; rules.len()];
-            eval_tail(&v, &c, 5, rules, &mut hits)
+            eval_tail(&v, &c, 5, rules, &mut hits, &mut HweCache::new())
         };
         assert!(run(&[TailRule::MinMaf(0.4)]));
         assert!(run(&[TailRule::MaxMaf(0.4)]));
@@ -179,7 +187,7 @@ mod tests {
         let v = values(&c);
         let run = |rules: &[TailRule]| {
             let mut hits = vec![0_u64; rules.len()];
-            eval_tail(&v, &c, 10, rules, &mut hits)
+            eval_tail(&v, &c, 10, rules, &mut hits, &mut HweCache::new())
         };
         assert!(run(&[TailRule::MaxMissing(
             MissingRate::parse("0.2").expect("valid")
@@ -197,7 +205,8 @@ mod tests {
             &[TailRule::MaxMissing(
                 MissingRate::parse("0.3").expect("valid")
             )],
-            &mut [0]
+            &mut [0],
+            &mut HweCache::new()
         ));
         assert!(!eval_tail(
             &v,
@@ -206,7 +215,8 @@ mod tests {
             &[TailRule::MaxMissing(
                 MissingRate::parse("0.1").expect("valid")
             )],
-            &mut [0]
+            &mut [0],
+            &mut HweCache::new()
         ));
     }
 
@@ -216,7 +226,7 @@ mod tests {
         let rules = [TailRule::MinMaf(0.2), TailRule::MaxMaf(0.3)];
         let inside = counts(4, 20, 8, 0, 2); // MAF = 0.2
         let mut hits = vec![0_u64; rules.len()];
-        assert!(eval_tail(&values(&inside), &inside, 10, &rules, &mut hits));
+        assert!(eval_tail(&values(&inside), &inside, 10, &rules, &mut hits, &mut HweCache::new()));
         assert_eq!(hits, vec![1, 1]);
         let outside = counts(6, 20, 7, 0, 3); // MAF = 0.3
         let mut hits = vec![0_u64; rules.len()];
@@ -225,7 +235,8 @@ mod tests {
             &outside,
             10,
             &rules,
-            &mut hits
+            &mut hits,
+            &mut HweCache::new()
         ));
         let too_common = counts(10, 20, 5, 0, 5); // MAF = 0.5
         let mut hits = vec![0_u64; rules.len()];
@@ -234,7 +245,8 @@ mod tests {
             &too_common,
             10,
             &rules,
-            &mut hits
+            &mut hits,
+            &mut HweCache::new()
         ));
     }
 }

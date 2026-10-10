@@ -60,6 +60,25 @@ impl SiteCounts {
         self.an == 0 || self.ac == 0 || nref == 0
     }
 
+    /// The exact-test inputs `(n_called, n_minor, n_het)` behind
+    /// [`Self::hwe_p`], `None` for the degenerate sites that report the
+    /// fill-tags sentinel `p = 1`. Cached consumers (the `--fill-tags HWE`
+    /// fill, the `--hwe` tail rule, the `--hardy` report) feed these to
+    /// [`crate::math::hwe::HweCache`] instead of paying the full
+    /// distribution per site (A6-16).
+    #[must_use]
+    pub fn hwe_test_input(&self) -> Option<(u32, u32, u32)> {
+        if self.hwe_is_degenerate() {
+            return None;
+        }
+        let n_called = self.hom_ref + self.het + self.hom_alt;
+        // Minor allele count = 2·(rarer homozygote) + hets.
+        let minor_hom = self.hom_ref.min(self.hom_alt);
+        let mac = 2 * minor_hom + self.het;
+        let cast = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        Some((cast(n_called), cast(mac), cast(self.het)))
+    }
+
     /// Per-site exact HWE p-value, paired with
     /// [`crate::math::hwe::hwe_exact_p`]
     /// (Wigginton, Cutler & Abecasis 2005) over the genotype classes.
@@ -69,15 +88,10 @@ impl SiteCounts {
     /// raw test would return NaN. Half-calls contribute to AC/AN but not to
     /// the genotype classes, so they never enter the test.
     pub fn hwe_p(&self) -> f64 {
-        if self.hwe_is_degenerate() {
-            return 1.0;
+        match self.hwe_test_input() {
+            None => 1.0,
+            Some((n_called, mac, het)) => hwe_exact_p(n_called, mac, het),
         }
-        let n_called = self.hom_ref + self.het + self.hom_alt;
-        // Minor allele count = 2·(rarer homozygote) + hets.
-        let minor_hom = self.hom_ref.min(self.hom_alt);
-        let mac = 2 * minor_hom + self.het;
-        let cast = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
-        hwe_exact_p(cast(n_called), cast(mac), cast(self.het))
     }
 }
 

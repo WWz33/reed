@@ -22,7 +22,7 @@ use reed_core::count::SiteGroupCounts;
 use reed_core::genotype::{
     GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters,
 };
-use reed_core::math::hwe::hwe_exact_p;
+use reed_core::math::hwe::HweCache;
 use reed_core::sample::SampleMask;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
@@ -152,6 +152,8 @@ struct ReportScratch {
     mask: SampleMask,
     /// The QC summary accumulator (`--summary`, doc_v4 O-1).
     qc: Option<crate::stats::writers::summary::QcAccumulator>,
+    /// HWE memo behind the `--hardy` p column (A6-16).
+    hwe: HweCache,
 }
 
 impl ReportScratch {
@@ -182,6 +184,7 @@ impl ReportScratch {
             counters: PolicyCounters::default(),
             mask: SampleMask::all(n_samples),
             qc: summary.then(|| crate::stats::writers::summary::QcAccumulator::new(n_samples)),
+            hwe: HweCache::new(),
         }
     }
 }
@@ -354,7 +357,16 @@ impl ReportJob {
         }
 
         if self.plan.sites() {
-            self.render_site(&lr, &site, pos1, &counts, n_missing, site_depth, partial);
+            self.render_site(
+                &lr,
+                &site,
+                pos1,
+                &counts,
+                n_missing,
+                site_depth,
+                &mut scratch.hwe,
+                partial,
+            );
         }
         // The QC summary consumes the scan above (doc_v5 03 §5): the reports
         // scanner already carries the raw allele indices and the DP column,
@@ -379,6 +391,7 @@ impl ReportJob {
         counts: &SiteGroupCounts,
         n_missing: u32,
         depth: (f64, f64, u64),
+        hwe: &mut HweCache,
         partial: &mut ReportPartial,
     ) {
         let chrom = site.contig_name;
@@ -453,7 +466,7 @@ impl ReportJob {
             if called == 0 {
                 out.extend_from_slice(b"NA");
             } else {
-                g6_into(out, hwe_exact_p(called, mac, het));
+                g6_into(out, hwe.p_exact(called, mac, het));
             }
             out.push(b'\n');
         }
