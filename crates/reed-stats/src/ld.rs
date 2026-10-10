@@ -105,6 +105,17 @@ impl PairSums {
         let cov = i128::from(self.sum_xy) * n - i128::from(self.sum_x) * i128::from(self.sum_y);
         Some(cov as f64 / (n * n) as f64)
     }
+
+    /// Adds another site set's sums component-wise — exact, because a
+    /// disjoint-sample partition's group sums add back to the whole.
+    pub fn add_assign(&mut self, other: &Self) {
+        self.n += other.n;
+        self.sum_x += other.sum_x;
+        self.sum_x2 += other.sum_x2;
+        self.sum_y += other.sum_y;
+        self.sum_y2 += other.sum_y2;
+        self.sum_xy += other.sum_xy;
+    }
 }
 
 /// LD-decay bins: Σr² and counts by distance (additive; §9.7's decay
@@ -141,12 +152,27 @@ impl LdDecayAcc {
         }
     }
 
+    /// The bin index for a distance (the caller may compute it once and
+    /// share it across accumulators built on the same edges).
+    #[must_use]
+    pub fn bin_index(&self, distance: u64) -> usize {
+        self.bin_of(distance)
+    }
+
     /// Absorbs one pair's (distance, r²).
     pub fn push(&mut self, distance: u64, r2: f64) {
         let b = self.bin_of(distance);
         if b < self.counts.len() {
             self.sum_r2[b].add(r2);
             self.counts[b] += 1;
+        }
+    }
+
+    /// Absorbs one pair's r² into a precomputed [`bin_index`](Self::bin_index).
+    pub fn push_bin(&mut self, bin: usize, r2: f64) {
+        if bin < self.counts.len() {
+            self.sum_r2[bin].add(r2);
+            self.counts[bin] += 1;
         }
     }
 

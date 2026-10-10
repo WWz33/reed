@@ -103,8 +103,10 @@ check "the summary has no second scanner (doc_v5 X3)" \
 
 # doc_v5 05 §3.4 / X4.4: the LD path is chunk-boundary independent — the
 # worker carry resets per chunk and the sink owns every cross-chunk pair.
-check "the LD carry resets per chunk (doc_v5 X4.4)" \
-    grep -q 'The LD carry is per chunk' crates/reed/src/stats/job.rs
+# doc_v6 02 §2.2 / 06 Y1: the stats LD path collects the site-major matrix
+# (the reducer only concatenates runs); the head/tail carry is retired.
+check "the stats LD path is matrix-based, carry retired (doc_v6 06 Y1)" \
+    bash -c '! grep -q "The LD carry is per chunk" crates/reed/src/stats/job.rs && grep -q "ld_matrix" crates/reed/src/stats/job.rs' 
 
 # doc_v6 06 Y0 / E6-13: vendor vocabulary is out of the production code
 # (test directories keep the reference-tool names, naming.md §2.5).

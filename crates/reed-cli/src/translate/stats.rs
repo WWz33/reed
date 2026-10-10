@@ -622,7 +622,11 @@ pub(crate) fn run_stats_cli(
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
         if let Some(ld_report) = &report.ld {
-            files.extend(reed::ld::write_ld(Path::new(&prefix), ld_report)?);
+            files.extend(reed::ld::write_ld(
+                Path::new(&prefix),
+                ld_report,
+                &group_names,
+            )?);
         }
         if let Some(fstats_report) = &report.fstats {
             files.extend(reed::fstats::write_fstats(

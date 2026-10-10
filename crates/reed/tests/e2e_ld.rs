@@ -171,9 +171,51 @@ fn ld_is_identical_across_thread_counts() {
         )
         .expect("invariant: run");
         let ld = report.ld.expect("invariant: LD requested");
-        values.push(ld.pairs.clone());
+        values.push((ld.pairs.clone(), ld.decay.clone(), ld.group_decay.clone()));
     }
     assert!(values.windows(2).all(|w| w[0] == w[1]), "{values:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With `--pop`, the report carries one decay curve per population next to
+/// the cohort's: each population counts a pair only when the pair is
+/// defined over that population's samples, so its counts never exceed the
+/// cohort's (docs/rounds/v6/02-models.md §2.2's group-major matrix).
+#[test]
+fn ld_decay_carries_per_population_curves() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-pop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, VCF).expect("invariant: fixture write");
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+
+    let mut req = request(LdRequest {
+        decay_max_bp: Some(100_000),
+        decay_bin_bp: 1000,
+        pairs: false,
+    });
+    // Two populations of three samples each.
+    req.gt_groups = vec![Some(0), Some(0), Some(0), Some(1), Some(1), Some(1)];
+    let report = run_stats(Some(&vcf), req, &budget).expect("invariant: run");
+    let ld = report.ld.expect("invariant: LD requested");
+
+    assert_eq!(ld.group_decay.len(), 2, "one curve per population");
+    for (bin, cohort) in ld.decay.iter().enumerate() {
+        for pop in &ld.group_decay {
+            let n = pop[bin].2;
+            assert!(
+                n <= cohort.2,
+                "bin {bin}: population count {n} exceeds the cohort's {}",
+                cohort.2
+            );
+        }
+    }
+    // The cohort pools every sample, so its bin holds all 15 pairs.
+    assert_eq!(ld.decay[0].2, 15);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

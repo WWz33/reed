@@ -24,7 +24,7 @@ use std::time::Duration;
 use reed_core::ChunkId;
 use reed_core::count::SiteGroupCounts;
 use reed_core::count::code_has_alt;
-use reed_core::genotype::PlaneBlock;
+
 use reed_core::genotype::{
     GenotypePolicies, GtCode, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
 };
@@ -326,11 +326,22 @@ pub struct LdRequest {
     pub pairs: bool,
 }
 
-/// The LD output.
+/// One decay bin: `(bin_start_bp, bin_end_bp, n_pairs, mean_r2)`.
+pub type DecayBin = (u64, u64, u64, Option<f64>);
+
+/// The LD output (`--ld-decay` / `--ld-pairs`).
+///
+/// The cohort curve pools every stored sample (one r² per pair); the
+/// per-population curves restrict each pair to that population's samples.
+/// `.ld.decay` writes the cohort under `pop = all` and then, when more than
+/// one population is named, one block per population.
 #[derive(Clone, Debug, Default)]
 pub struct LdReport {
-    /// Decay bins: `(bin_start_bp, bin_end_bp, n_pairs, mean_r2)`.
-    pub decay: Vec<(u64, u64, u64, Option<f64>)>,
+    /// The cohort's decay bins.
+    pub decay: Vec<DecayBin>,
+    /// One decay curve per named group, in group order (`--pop`): bins in
+    /// the cohort's shape. Empty without a populations file.
+    pub group_decay: Vec<Vec<DecayBin>>,
     /// Per-pair rows: `(contig, pos1_a, pos1_b, r2)`.
     pub pairs: Vec<(String, u64, u64, f64)>,
 }
@@ -344,11 +355,6 @@ struct LdPlan {
 }
 
 impl LdPlan {
-    /// The widest bp window the tail must span.
-    fn window_bp(&self) -> Option<u64> {
-        self.decay_max_bp
-    }
-
     /// Decay bin edges: `[0, bin), [bin, 2·bin), …` up to `decay_max_bp`.
     fn decay_edges(&self) -> Vec<u64> {
         let bin = self.decay_bin_bp.max(1);
@@ -363,23 +369,22 @@ impl LdPlan {
     }
 }
 
-/// Per-chunk LD partials: the decay accumulator, the pair rows, and the two
-/// site windows a chunk boundary needs.
-///
-/// A pair spanning a boundary has its earlier site in the previous chunk's
-/// *tail* (the last `max_bp` sites) and its later site in this chunk's
-/// *head* (the first `max_bp` sites). The worker computes the pairs inside
-/// one chunk; the sink completes the boundary ones from these windows.
+/// One pass0 run: a contig's consecutive surviving sites as flat site-major
+/// planes (4·w words per site, `[slot0_alt, slot0_miss, slot1_alt,
+/// slot1_miss]`) plus their positions.
 #[derive(Clone, Debug)]
+struct LdRun {
+    contig: Vec<u8>,
+    flat: Vec<u64>,
+    pos0: Vec<u64>,
+}
+
+/// Per-chunk LD partial: the runs the worker filled. The pairs are computed
+/// position-block parallel from the accumulated matrices after the stream
+/// ends (docs/rounds/v6/02-models.md §2.2), so no head/tail carry exists.
+#[derive(Clone, Debug, Default)]
 struct LdPartial {
-    /// The chunk's first sites, up to `max_bp` past the first position.
-    head: Vec<(Vec<u8>, u64, Vec<u64>)>,
-    /// The chunk's last sites, up to `max_bp` before the last position.
-    tail: Vec<(Vec<u8>, u64, Vec<u64>)>,
-    /// Decay sums for pairs with both sites inside this chunk.
-    decay: Option<LdDecayAcc>,
-    /// Pairs written (`--ld-pairs`) with both sites inside this chunk.
-    pairs: Vec<(Vec<u8>, u64, u64, f64)>,
+    runs: Vec<LdRun>,
 }
 
 /// A projected site-frequency-spectrum request (docs/rounds/v5/05-algorithms.md
@@ -799,8 +804,8 @@ pub struct StatsJob {
     sfs: Option<SfsPlan>,
     /// The genome-wide f-statistics plan; `None` = not requested.
     fstats: Option<FStatsPlan>,
-    /// The LD plan; `None` = not requested.
-    ld: Option<LdPlan>,
+    /// The LD plane layout (group-major); present only with an LD request.
+    ld_layout: Option<Arc<reed_stats::SampleLayout>>,
 }
 
 /// The BCF fast path's shared state: the dictionaries, the FORMAT index of
@@ -811,24 +816,70 @@ struct BcfNative {
     table: reed_io::bcf::GtTable,
 }
 
-/// Worker-local LD state: the current contig, the planes still inside the
-/// window, and the reusable one-site plane block.
+/// Worker-local LD state: the run being filled for the current contig.
 #[derive(Default)]
 pub struct LdScratch {
     contig: Vec<u8>,
-    carry: Vec<(u64, Vec<u64>)>,
-    planes: Option<PlaneBlock>,
-    w: usize,
+    /// The run's site-major planes (4·w words per site).
+    flat: Vec<u64>,
+    /// The run's site positions.
+    pos0: Vec<u64>,
 }
 
 impl LdScratch {
-    fn reset(&mut self, contig: &[u8], w: usize) {
-        if self.contig != contig {
-            self.contig = contig.to_vec();
-            self.carry.clear();
+    /// Moves the open run into the chunk partial (a no-op on an empty run).
+    fn flush(&mut self, partial: &mut StatsPartial) {
+        if self.pos0.is_empty() {
+            return;
         }
-        self.w = w;
+        let run = LdRun {
+            contig: std::mem::take(&mut self.contig),
+            flat: std::mem::take(&mut self.flat),
+            pos0: std::mem::take(&mut self.pos0),
+        };
+        partial
+            .ld
+            .get_or_insert_with(LdPartial::default)
+            .runs
+            .push(run);
     }
+}
+
+/// The positional-block size of the parallel decay scan: coarse enough that
+/// the per-block lookback span stays a small multiple of the block, fine
+/// enough to fill every thread.
+const LD_BLOCK: usize = 4096;
+
+/// Positional-block parallel decay over one contig's matrix
+/// (docs/rounds/v6/02-models.md §2.2). Each block pairs its sites with
+/// every predecessor within `max_bp` — read-only, so the blocks are
+/// independent; the results merge in block order, which is the serial
+/// `(later site, earlier site)` order, keeping the output deterministic
+/// across thread counts.
+fn decay_contig(
+    m: &reed_stats::ContigMatrix,
+    max_bp: u64,
+    edges: &[u64],
+    collect_pairs: bool,
+) -> reed_stats::LdDecaySet {
+    use rayon::prelude::*;
+    let n = m.n_sites();
+    if n < 2 {
+        return reed_stats::LdDecaySet::new(edges, m.layout().n_groups());
+    }
+    let ranges: Vec<std::ops::Range<usize>> = (0..n)
+        .step_by(LD_BLOCK)
+        .map(|s| s..(s + LD_BLOCK).min(n))
+        .collect();
+    let parts: Vec<reed_stats::LdDecaySet> = ranges
+        .par_iter()
+        .map(|r| reed_stats::decay_range(m, r.clone(), max_bp, edges, collect_pairs))
+        .collect();
+    let mut set = reed_stats::LdDecaySet::new(edges, m.layout().n_groups());
+    for part in &parts {
+        set.merge(part);
+    }
+    set
 }
 
 /// Worker scratch: the group count row, the shared record decoder and its
@@ -870,9 +921,6 @@ impl ChunkJob for StatsJob {
         let mut partial = StatsPartial::default();
         let mut current: Option<SegmentPartial> = None;
         self.reset_row(scratch);
-        // The LD carry is per chunk: cross-chunk pairs belong to the sink
-        // (its head x carried-tail pass), so a chunk never pairs twice.
-        scratch.ld.carry.clear();
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
@@ -882,6 +930,7 @@ impl ChunkJob for StatsJob {
         if let Some(segment) = current.take() {
             partial.segments.push(segment);
         }
+        scratch.ld.flush(&mut partial);
         Ok(partial)
     }
 
@@ -894,11 +943,11 @@ impl ChunkJob for StatsJob {
         let mut partial = StatsPartial::default();
         let mut current: Option<SegmentPartial> = None;
         self.reset_row(scratch);
-        scratch.ld.carry.clear();
         self.push_line(line, &mut current, &mut partial, scratch)?;
         if let Some(segment) = current.take() {
             partial.segments.push(segment);
         }
+        scratch.ld.flush(&mut partial);
         Ok(partial)
     }
 }
@@ -1025,91 +1074,53 @@ impl StatsJob {
         }
         self.push_sfs(row, partial, sfs_caches);
         self.push_fstats(&segment.contig.clone(), pos0, row, partial);
-        self.push_ld(pos0, codes, partial, ld_scratch);
+        self.push_ld(&segment.contig, pos0, codes, partial, ld_scratch);
         partial.n_records += 1;
         Ok(())
     }
 
-    /// Feeds the LD path for one site (docs/rounds/v5/05-algorithms.md
-    /// §3.4): pairs against the carried tail, then the site joins the tail.
-    fn push_ld(&self, pos0: u64, codes: &[GtCode], partial: &mut StatsPartial, ld: &mut LdScratch) {
-        let Some(plan) = &self.ld else { return };
-        let contig = &ld.contig;
-        let window_bp = plan.window_bp();
-        // The site's four planes (one-site block, reused).
-        let block = ld
-            .planes
-            .get_or_insert_with(|| PlaneBlock::new(1, self.n_samples, false));
-        block.push_codes(0, codes);
-        let site = block.site_planes(0);
-        let planes: [&[u64]; 4] = [
-            site.slot0_alt,
-            site.slot0_miss,
-            site.slot1_alt,
-            site.slot1_miss,
-        ];
-
-        let ld_partial = partial.ld.get_or_insert_with(|| LdPartial {
-            head: Vec::new(),
-            tail: Vec::new(),
-            decay: plan
-                .decay_max_bp
-                .map(|_| LdDecayAcc::new(plan.decay_edges())),
-            pairs: Vec::new(),
-        });
-        // In-chunk pairs come from the worker-local carry. Cross-chunk
-        // pairs are completed at the sink from the carried tail, so a chunk
-        // boundary never changes the result set.
-        for (carry_pos0, carry_flat) in &ld.carry {
-            let dist = pos0.saturating_sub(*carry_pos0);
-            if let Some(max) = plan.decay_max_bp
-                && dist <= max
-            {
-                let kp: [&[u64]; 4] = [
-                    &carry_flat[0..ld.w],
-                    &carry_flat[ld.w..2 * ld.w],
-                    &carry_flat[2 * ld.w..3 * ld.w],
-                    &carry_flat[3 * ld.w..4 * ld.w],
-                ];
-                if let Some(r2) = reed_stats::ld::pair_sums(planes, kp, self.n_samples).r2() {
-                    if let Some(decay) = &mut ld_partial.decay {
-                        decay.push(dist, r2);
-                    }
-                    if plan.pairs {
-                        ld_partial
-                            .pairs
-                            .push((contig.clone(), *carry_pos0 + 1, pos0 + 1, r2));
-                    }
-                }
+    /// Feeds the LD path for one site (docs/rounds/v6/02-models.md §2.2):
+    /// the site's planes join the worker's contig run in the group-major
+    /// layout; the pairs are computed position-block parallel after the
+    /// stream ends, so no carry or head/tail windows exist here.
+    fn push_ld(
+        &self,
+        contig: &[u8],
+        pos0: u64,
+        codes: &[GtCode],
+        partial: &mut StatsPartial,
+        ld: &mut LdScratch,
+    ) {
+        let Some(layout) = &self.ld_layout else {
+            return;
+        };
+        if ld.contig != contig {
+            ld.flush(partial);
+            ld.contig.clear();
+            ld.contig.extend_from_slice(contig);
+        }
+        let w = layout.w();
+        let base = ld.flat.len();
+        ld.flat.resize(base + 4 * w, 0);
+        for (sample, &code) in codes.iter().enumerate() {
+            let Some(bit) = layout.bit_of(sample) else {
+                continue;
+            };
+            let (word, mask) = (bit / 64, 1_u64 << (bit % 64));
+            if code.slot_alt(0) {
+                ld.flat[base + word] |= mask;
+            }
+            if code.slot_missing(0) {
+                ld.flat[base + w + word] |= mask;
+            }
+            if code.slot_alt(1) {
+                ld.flat[base + 2 * w + word] |= mask;
+            }
+            if code.slot_missing(1) {
+                ld.flat[base + 3 * w + word] |= mask;
             }
         }
-        // This site joins both the worker carry and the chunk tail.
-        let mut flat = Vec::with_capacity(4 * ld.w);
-        for p in planes {
-            flat.extend_from_slice(p);
-        }
-        ld.carry.push((pos0, flat.clone()));
-        if let Some(max) = window_bp {
-            ld.carry.retain(|(p, _)| pos0.saturating_sub(*p) <= max);
-        }
-        ld_partial.tail.push((contig.clone(), pos0, flat.clone()));
-        if let Some(max) = window_bp {
-            ld_partial
-                .tail
-                .retain(|(_, p, _)| pos0.saturating_sub(*p) <= max);
-        }
-        // The head is the chunk's first `max_bp`; once the chunk runs past
-        // that, no later site joins it.
-        match ld_partial.head.last() {
-            Some((head_contig, head_pos, _)) => {
-                let within = head_contig == contig
-                    && window_bp.is_none_or(|max| pos0.saturating_sub(*head_pos) <= max);
-                if within {
-                    ld_partial.head.push((contig.clone(), pos0, flat.clone()));
-                }
-            }
-            None => ld_partial.head.push((contig.clone(), pos0, flat.clone())),
-        }
+        ld.pos0.push(pos0);
     }
 
     /// Feeds the genome-wide f-statistics for one site (docs/rounds/v5/05
@@ -1191,7 +1202,6 @@ impl StatsJob {
             ld,
             ..
         } = scratch;
-        ld.reset(site.contig_name, self.n_samples.div_ceil(64));
         *counters = PolicyCounters::default();
         let n_samples = self.n_samples;
         let scanner = scanner
@@ -1247,6 +1257,7 @@ impl StatsJob {
         if let Some(segment) = current.take() {
             partial.segments.push(segment);
         }
+        scratch.ld.flush(&mut partial);
         Ok(partial)
     }
 
@@ -1279,6 +1290,7 @@ impl StatsJob {
         if let Some(segment) = current.take() {
             partial.segments.push(segment);
         }
+        scratch.ld.flush(&mut partial);
         Ok(partial)
     }
 
@@ -1336,6 +1348,14 @@ impl StatsJob {
     }
 }
 
+/// The LD analysis results the sink accumulated across contigs: the cohort
+/// curve, one curve per named group, and the cohort pair rows.
+struct LdResult {
+    cohort: LdDecayAcc,
+    groups: Vec<LdDecayAcc>,
+    pairs: Vec<(Vec<u8>, u64, u64, f64)>,
+}
+
 /// Everything the sink hands back through the shared slot at `finish`.
 struct SinkOutput {
     rows: String,
@@ -1344,8 +1364,8 @@ struct SinkOutput {
     sfs: Option<SfsPartial>,
     /// Genome-wide f-statistics.
     fstats: Option<FStatsPartial>,
-    /// LD partials.
-    ld: Option<LdPartial>,
+    /// LD results (the parallel matrix analysis).
+    ld: Option<LdResult>,
     n_invariant_sites: u64,
     n_no_alt_records: u64,
     n_windows: u64,
@@ -1398,15 +1418,15 @@ struct StatsSink {
     sfs: Option<SfsPartial>,
     /// Merged genome-wide f-statistics.
     fstats: Option<FStatsPartial>,
-    /// Merged LD partial (decay sums and pair rows).
-    ld_partial: Option<LdPartial>,
-    /// The carried tail planes across chunk boundaries.
-    ld_tail: Vec<(Vec<u8>, u64, Vec<u64>)>,
-    /// The LD plan (the sink needs the window for the tail and the prune).
+    /// The LD plane layout (group-major); present only with an LD request.
+    ld_layout: Option<Arc<reed_stats::SampleLayout>>,
+    /// The matrix being accumulated for the pending contig.
+    ld_matrix: Option<reed_stats::ContigMatrix>,
+    /// Per-contig decay jobs in contig order (joined at `finish`, so the
+    /// analysis overlaps the decode instead of stalling the reducer).
+    ld_jobs: Vec<std::thread::JoinHandle<LdResult>>,
+    /// The LD plan (the analysis needs the window and the bin edges).
     ld: Option<LdPlan>,
-    /// LD plane width in words and the sample count (the sink's pair math).
-    ld_w: usize,
-    ld_n_samples: usize,
     genome_span: u64,
     rows: String,
     n_windows: u64,
@@ -1433,77 +1453,28 @@ impl OrderedSink<StatsPartial> for StatsSink {
                 None => self.fstats = Some(src.clone()),
             }
         }
-        if let (Some(plan), Some(src)) = (&self.ld, &partial.ld) {
-            // Cross-chunk pairs: this chunk's HEAD sites against the tail
-            // carried from earlier chunks (never the same chunk twice).
-            for (contig, pos0, flat) in &src.head {
-                for (tail_contig, tail_pos0, tail_flat) in &self.ld_tail {
-                    if tail_contig != contig {
-                        continue;
+        if let Some(layout) = self.ld_layout.clone() {
+            // The worker's runs append to the pending contig's matrix; a
+            // contig change finalizes it (the analysis runs per contig, so
+            // at most one contig's matrix is resident).
+            if let Some(src) = partial.ld.take() {
+                for run in src.runs {
+                    let same = self
+                        .ld_matrix
+                        .as_ref()
+                        .is_some_and(|m| m.contig() == run.contig.as_slice());
+                    if !same {
+                        self.finalize_ld();
+                        self.ld_matrix = Some(reed_stats::ContigMatrix::new(
+                            run.contig,
+                            Arc::clone(&layout),
+                        ));
                     }
-                    let dist = pos0.saturating_sub(*tail_pos0);
-                    if let Some(max) = plan.decay_max_bp
-                        && dist <= max
-                    {
-                        let w = self.ld_w;
-                        let a: [&[u64]; 4] = [
-                            &flat[0..w],
-                            &flat[w..2 * w],
-                            &flat[2 * w..3 * w],
-                            &flat[3 * w..4 * w],
-                        ];
-                        let b: [&[u64]; 4] = [
-                            &tail_flat[0..w],
-                            &tail_flat[w..2 * w],
-                            &tail_flat[2 * w..3 * w],
-                            &tail_flat[3 * w..4 * w],
-                        ];
-                        if let Some(r2) = reed_stats::ld::pair_sums(a, b, self.ld_n_samples).r2() {
-                            let entry = self.ld_partial.get_or_insert_with(|| LdPartial {
-                                head: Vec::new(),
-                                tail: Vec::new(),
-                                decay: Some(LdDecayAcc::new(plan.decay_edges())),
-                                pairs: Vec::new(),
-                            });
-                            if let Some(decay) = &mut entry.decay {
-                                decay.push(dist, r2);
-                            }
-                            if plan.pairs {
-                                entry
-                                    .pairs
-                                    .push((contig.clone(), *tail_pos0 + 1, pos0 + 1, r2));
-                            }
-                        }
+                    if let Some(matrix) = self.ld_matrix.as_mut() {
+                        matrix.push_run(run.flat, run.pos0);
                     }
                 }
             }
-            // Merge the chunk's own decay sums and pair rows.
-            let entry = self.ld_partial.get_or_insert_with(|| LdPartial {
-                head: Vec::new(),
-                tail: Vec::new(),
-                decay: None,
-                pairs: Vec::new(),
-            });
-            if let Some(src_decay) = &src.decay {
-                match &mut entry.decay {
-                    Some(dst) => dst.merge(src_decay),
-                    None => entry.decay = Some(src_decay.clone()),
-                }
-            }
-            entry.pairs.extend(src.pairs.iter().cloned());
-            // Carry this chunk's tail forward, evicting out-of-window sites.
-            if let Some(max) = plan.window_bp() {
-                let last = src.tail.last().map_or(0, |(_, p, _)| *p);
-                self.ld_tail.retain(|(c, p, _)| {
-                    c != &src
-                        .tail
-                        .last()
-                        .map(|(c, _, _)| c.clone())
-                        .unwrap_or_default()
-                        || last.saturating_sub(*p) <= max
-                });
-            }
-            self.ld_tail.extend(src.tail.iter().cloned());
         }
         for mut segment in std::mem::take(&mut partial.segments) {
             let mut current = match self.current.take() {
@@ -1538,6 +1509,9 @@ impl OrderedSink<StatsPartial> for StatsSink {
     }
 
     fn finish(mut self) -> Result<u64, EngineError> {
+        self.finalize_ld();
+        let mut ld = None;
+        self.join_ld(&mut ld)?;
         if let Some(current) = self.current.take() {
             self.close_contig(current)?;
         }
@@ -1564,7 +1538,7 @@ impl OrderedSink<StatsPartial> for StatsSink {
             )));
         }
         *self.out.lock().expect("invariant: stats slot not poisoned") = Some(SinkOutput {
-            ld: self.ld_partial.take(),
+            ld,
             rows: self.rows,
             windows: std::mem::take(&mut self.windows),
             sfs: self.sfs.take(),
@@ -1580,6 +1554,56 @@ impl OrderedSink<StatsPartial> for StatsSink {
 }
 
 impl StatsSink {
+    /// Hands the pending contig's matrix to a decay worker: the analysis
+    /// runs off the reducer thread (it overlaps the decode), and `finish`
+    /// joins the jobs in contig order — the merge order the deterministic
+    /// output requires (docs/rounds/v6/02-models.md §2.2).
+    fn finalize_ld(&mut self) {
+        let Some(matrix) = self.ld_matrix.take() else {
+            return;
+        };
+        let Some(plan) = &self.ld else { return };
+        let edges = plan.decay_edges();
+        let max_bp = plan.decay_max_bp.unwrap_or(100_000);
+        let collect = plan.pairs;
+        self.ld_jobs.push(std::thread::spawn(move || {
+            let set = decay_contig(&matrix, max_bp, &edges, collect);
+            LdResult {
+                cohort: set.cohort,
+                groups: set.groups,
+                pairs: set
+                    .pairs
+                    .into_iter()
+                    .map(|(a, b, r2)| (matrix.contig().to_vec(), a, b, r2))
+                    .collect(),
+            }
+        }));
+    }
+
+    /// Joins the per-contig decay jobs in contig order.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Job`] when a decay worker panicked.
+    fn join_ld(&mut self, out: &mut Option<LdResult>) -> Result<(), EngineError> {
+        for handle in self.ld_jobs.drain(..) {
+            let set = handle
+                .join()
+                .map_err(|_| EngineError::job("the LD decay worker panicked"))?;
+            match out {
+                Some(dst) => {
+                    dst.cohort.merge(&set.cohort);
+                    for (dst, src) in dst.groups.iter_mut().zip(&set.groups) {
+                        dst.merge(src);
+                    }
+                    dst.pairs.extend(set.pairs);
+                }
+                None => *out = Some(set),
+            }
+        }
+        Ok(())
+    }
+
     /// Opens a contig's state and absorbs its first segment (folding the
     /// segment's bins into the contig totals and the bin map).
     fn open_and_absorb(
@@ -1848,6 +1872,14 @@ pub fn run_stats_opened(
     for group in gt_groups.iter().flatten() {
         group_sizes[*group as usize] += 1;
     }
+    // The LD plane layout: samples packed group-major (word-aligned), so a
+    // group's pair sums read one contiguous slice and the cohort sums are
+    // the exact sum of the group sums (docs/rounds/v6/02-models.md §2.2).
+    let ld_layout = ld_plan.is_some().then(|| {
+        Arc::new(reed_stats::SampleLayout::from_assignments(
+            &gt_groups, n_groups,
+        ))
+    });
     let accs = build_accs(&request.kinds, &group_sizes)
         .map_err(|err| EngineError::job(format!("invalid stats request: {err}")))?;
     let keys: Vec<StatKey> = request.kinds.iter().map(StatKind::key).collect();
@@ -1901,17 +1933,16 @@ pub fn run_stats_opened(
         }),
         sfs: sfs_plan,
         fstats: fstats_plan,
-        ld: ld_plan.clone(),
+        ld_layout: ld_layout.clone(),
     };
     let out = Arc::new(std::sync::Mutex::new(None));
     let sink = StatsSink {
         sfs: None,
         fstats: None,
-        ld_partial: None,
-        ld_tail: Vec::new(),
+        ld_layout,
+        ld_matrix: None,
+        ld_jobs: Vec::new(),
         ld: ld_plan,
-        ld_w: header.n_samples().div_ceil(64),
-        ld_n_samples: header.n_samples(),
         size: request.window_size,
         step: request.step,
         width: binning.width(),
@@ -1985,11 +2016,11 @@ pub fn run_stats_opened(
     Ok(StatsReport {
         tsv,
         windows: output.windows,
-        ld: output.ld.map(|partial| {
-            let decay = partial.decay.as_ref().map_or_else(Vec::new, |acc| {
+        ld: output.ld.map(|ld| {
+            let bin = request.ld.as_ref().map_or(1000, |l| l.decay_bin_bp.max(1));
+            let bins = |acc: &reed_stats::LdDecayAcc| {
                 let means = acc.mean_r2();
                 let counts = acc.counts().to_vec();
-                let bin = request.ld.as_ref().map_or(1000, |l| l.decay_bin_bp.max(1));
                 counts
                     .iter()
                     .zip(&means)
@@ -1998,11 +2029,12 @@ pub fn run_stats_opened(
                         let start = (i as u64) * bin;
                         (start, start + bin, n, *m)
                     })
-                    .collect()
-            });
+                    .collect::<Vec<_>>()
+            };
             LdReport {
-                decay,
-                pairs: partial
+                decay: bins(&ld.cohort),
+                group_decay: ld.groups.iter().map(bins).collect(),
+                pairs: ld
                     .pairs
                     .iter()
                     .map(|(c, a, b, r2)| (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2))
