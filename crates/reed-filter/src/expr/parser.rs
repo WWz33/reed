@@ -116,6 +116,80 @@ pub enum Subscript {
     Any,
 }
 
+/// A comparison operator, resolved at parse time — the hot path never
+/// re-matches the operator text (A6-18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CmpOp {
+    /// `==`/`=`
+    Eq,
+    /// `!=`
+    Ne,
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `>`
+    Gt,
+    /// `>=`
+    Ge,
+    /// `~` (literal pattern match)
+    Match,
+    /// `!~` (literal pattern non-match)
+    NotMatch,
+}
+
+impl CmpOp {
+    /// The operator as written (error messages).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Eq => "==",
+            Self::Ne => "!=",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+            Self::Match => "~",
+            Self::NotMatch => "!~",
+        }
+    }
+}
+
+/// A logical connective, resolved at parse time (A6-18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogicOp {
+    /// `&&`/`&`
+    And,
+    /// `||`/`|`
+    Or,
+}
+
+impl LogicOp {
+    /// The operator as written (error messages).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::And => "&&",
+            Self::Or => "||",
+        }
+    }
+}
+
+/// Maps the lexer's operator token text to its [`CmpOp`].
+fn cmp_op(text: &str) -> CmpOp {
+    match text {
+        "==" | "=" => CmpOp::Eq,
+        "!=" => CmpOp::Ne,
+        "<" => CmpOp::Lt,
+        "<=" => CmpOp::Le,
+        ">" => CmpOp::Gt,
+        ">=" => CmpOp::Ge,
+        "~" => CmpOp::Match,
+        "!~" => CmpOp::NotMatch,
+        _ => unreachable!("the lexer only produces the operators above"),
+    }
+}
+
 /// One expression node.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
@@ -134,9 +208,9 @@ pub enum Expr {
     /// A bare identifier: INFO first, then the built-in names.
     Bare(String),
     /// Comparison or regex match.
-    Cmp(&'static str, Box<Expr>, Box<Expr>),
+    Cmp(CmpOp, Box<Expr>, Box<Expr>),
     /// Logical and/or.
-    Logic(&'static str, Box<Expr>, Box<Expr>),
+    Logic(LogicOp, Box<Expr>, Box<Expr>),
     /// `!expr`
     Not(Box<Expr>),
     /// `value[subscript]`
@@ -220,22 +294,20 @@ impl Parser {
 
     fn logic_or(&mut self) -> Result<Expr, String> {
         let mut left = self.logic_and()?;
-        while let Some(Token::Logic(op @ ("||" | "|"))) = self.peek() {
-            let op = *op;
+        while let Some(Token::Logic("||" | "|")) = self.peek() {
             self.next();
             let right = self.logic_and()?;
-            left = Expr::Logic(op, Box::new(left), Box::new(right));
+            left = Expr::Logic(LogicOp::Or, Box::new(left), Box::new(right));
         }
         Ok(left)
     }
 
     fn logic_and(&mut self) -> Result<Expr, String> {
         let mut left = self.unary()?;
-        while let Some(Token::Logic(op @ ("&&" | "&"))) = self.peek() {
-            let op = *op;
+        while let Some(Token::Logic("&&" | "&")) = self.peek() {
             self.next();
             let right = self.unary()?;
-            left = Expr::Logic(op, Box::new(left), Box::new(right));
+            left = Expr::Logic(LogicOp::And, Box::new(left), Box::new(right));
         }
         Ok(left)
     }
@@ -254,7 +326,7 @@ impl Parser {
         let Some(Token::Cmp(op)) = self.peek() else {
             return Ok(left);
         };
-        let op = *op;
+        let op = cmp_op(op);
         self.next();
         let right = self.primary()?;
         Ok(Expr::Cmp(op, Box::new(left), Box::new(right)))
@@ -316,13 +388,13 @@ mod tests {
     fn parses_precedence_and_fields() {
         let e = parse("QD<4 || FS>50 && MQ>=40").expect("invariant");
         // && binds tighter than ||.
-        let Expr::Logic("||", _, right) = &e else {
+        let Expr::Logic(LogicOp::Or, _, right) = &e else {
             panic!("{e:?}")
         };
-        assert!(matches!(**right, Expr::Logic("&&", _, _)));
+        assert!(matches!(**right, Expr::Logic(LogicOp::And, _, _)));
 
         let e = parse("QUAL>=30").expect("invariant");
-        assert!(matches!(e, Expr::Cmp(">=", _, _)));
+        assert!(matches!(e, Expr::Cmp(CmpOp::Ge, _, _)));
         assert!(!e.references_genotypes());
 
         let e = parse("F_MISSING<0.1 || INFO/DP>10").expect("invariant");

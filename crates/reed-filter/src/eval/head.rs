@@ -4,22 +4,23 @@
 
 use reed_core::site::{VariantClass, classify_variant};
 use reed_io::vcf::fixed::parse_qual;
-use reed_io::vcf::info::info_fragments;
+use reed_io::vcf::info::{InfoIndex, info_fragments};
 use reed_io::vcf::line::LineRef;
 
 use crate::plan::{HeadRule, InfoRule};
 
-/// Per-worker scratch: the INFO fragment ranges of the current record
-/// (offsets into the record's INFO text — no per-record allocation).
+/// Per-worker scratch: the INFO fragment index of the current record, built
+/// once per record and shared by the typed INFO rules and the expressions
+/// (A6-18 — the expression path used to re-scan the INFO text per tag).
 #[derive(Default)]
 pub struct HeadScratch {
-    fragments: Vec<FragRange>,
-}
-
-#[derive(Clone)]
-struct FragRange {
-    tag: std::ops::Range<usize>,
-    value: Option<std::ops::Range<usize>>,
+    /// The current record's INFO ranges (valid exactly when
+    /// [`Self::index_current`] holds).
+    pub index: InfoIndex,
+    /// Whether `index` belongs to the record being evaluated right now
+    /// (rebuilt by [`eval_head`] when any head rule reads INFO; consumers
+    /// outside the head stage check this before reusing the ranges).
+    pub index_current: bool,
 }
 
 impl HeadScratch {
@@ -50,6 +51,13 @@ pub fn eval_head(
     let chrom = line.chrom();
     let reference = line.reference();
     let alts = line.alts();
+    // One fragment walk per record serves every INFO reader (A6-18).
+    scratch.index_current = rules
+        .iter()
+        .any(|r| matches!(r, HeadRule::Info(_) | HeadRule::Expr { .. }));
+    if scratch.index_current {
+        scratch.index.build(line.info_text());
+    }
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
             HeadRule::Regions { include, exclude } => {
@@ -98,7 +106,8 @@ pub fn eval_head(
             }
             HeadRule::Info(rule) => eval_info(line, rule, scratch),
             HeadRule::Expr { include, expr, .. } => {
-                let values = crate::expr::SiteValues::from_line(line, pos1, None);
+                let mut values = crate::expr::SiteValues::from_line(line, pos1, None);
+                values.info_index = Some(&scratch.index);
                 let truth = crate::expr::eval(expr, &values);
                 if *include { truth } else { !truth }
             }
@@ -191,33 +200,12 @@ fn class_matches(class: VariantClass, wanted: &str) -> bool {
 
 fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> bool {
     let info = line.info_text();
-    // One fragment walk per record serves every rule; the ranges are
-    // rebuilt per record (INFO text changes from record to record).
-    scratch.fragments.clear();
-    if info != b"." {
-        for (tag, value) in info_fragments(info) {
-            let tag_start = tag.as_ptr() as usize - info.as_ptr() as usize;
-            let value = value.map(|v| {
-                let start = v.as_ptr() as usize - info.as_ptr() as usize;
-                start..start + v.len()
-            });
-            scratch.fragments.push(FragRange {
-                tag: tag_start..tag_start + tag.len(),
-                value,
-            });
-        }
-    }
-    let Some(frag) = scratch
-        .fragments
-        .iter()
-        .find(|f| info[f.tag.clone()] == *rule.tag)
-    else {
+    let Some(value) = scratch.index.get(info, &rule.tag) else {
         return rule.on_missing == crate::spec::OnMissing::Pass;
     };
-    let Some(value) = frag.value.clone() else {
+    let Some(value) = value else {
         return rule.on_missing == crate::spec::OnMissing::Pass;
     };
-    let value = &info[value];
     if rule.number_a {
         // Comma-separated per-ALT values with a quantifier.
         let mut any = false;

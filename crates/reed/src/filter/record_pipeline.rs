@@ -13,6 +13,7 @@ use reed_core::math::hwe::HweCache;
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{HeadScratch, eval_head};
+use reed_io::vcf::info::InfoIndex;
 use reed_filter::eval::tail::eval_tail;
 use reed_filter::expr;
 use reed_filter::funnel::FunnelPartial;
@@ -204,6 +205,7 @@ impl RecordPipeline {
             &mut self.counts,
             &mut self.fmt_storage,
             &mut self.hwe,
+            self.head.index_current.then(|| &self.head.index),
             body,
         )
     }
@@ -285,6 +287,7 @@ impl RecordPipeline {
             &mut self.counts,
             &mut self.fmt_storage,
             &mut self.hwe,
+            self.head.index_current.then(|| &self.head.index),
             body,
         )
     }
@@ -409,6 +412,7 @@ fn run_stages<'a, F>(
     counts: &mut SiteCounts,
     fmt_storage: &mut [(Vec<u8>, Option<f64>)],
     hwe: &mut HweCache,
+    info_index: Option<&InfoIndex>,
     mut body: F,
 ) -> Result<Processed, EngineError>
 where
@@ -425,7 +429,8 @@ where
         |i: usize| opts.mask_all_samples || keep.get(i).copied().unwrap_or(true);
     // Site context for the `--set-gts .` expressions (no genotype-derived
     // fields: the plan rejects those, so the counts are not needed).
-    let expr_site = expr::SiteValues::from_line(lr, pos1, None);
+    let mut expr_site = expr::SiteValues::from_line(lr, pos1, None);
+    expr_site.info_index = info_index;
 
     // Expression rules first (declaration order among themselves), one
     // sample at a time: the FORMAT slots update in place and the
@@ -548,7 +553,7 @@ where
 
     // ---- tail stage (single pass; the sketch path defers it) ----
     if let Some(n_out) = opts.tail_n_samples.filter(|_| head_passed) {
-        let values = reed_filter::expr::SiteValues::from_line(
+        let mut values = reed_filter::expr::SiteValues::from_line(
             lr,
             pos1,
             Some(reed_filter::expr::GtCounts {
@@ -558,6 +563,7 @@ where
                 n_samples: n_out,
             }),
         );
+        values.info_index = info_index;
         if !eval_tail(
             &values,
             counts,

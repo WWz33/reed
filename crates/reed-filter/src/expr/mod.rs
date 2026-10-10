@@ -22,7 +22,7 @@ pub mod parser;
 
 use reed_io::vcf::info::info_fragments;
 
-pub use parser::{Expr, Field, Subscript};
+pub use parser::{CmpOp, Expr, Field, LogicOp, Subscript};
 
 /// Genotype-derived counts for a site (available after the mask stage).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,6 +58,9 @@ pub struct SiteValues<'a> {
     pub n_samples: u64,
     /// Raw INFO text.
     pub info: &'a [u8],
+    /// This record's INFO fragment index (A6-18): set by callers that built
+    /// one for the record — `None` falls back to a per-tag scan.
+    pub info_index: Option<&'a reed_io::vcf::info::InfoIndex>,
     /// Genotype-derived counts (`None` before the mask stage).
     pub gt: Option<GtCounts>,
     /// The current sample's `FORMAT` values, present when the caller
@@ -106,6 +109,7 @@ impl<'a> SiteValues<'a> {
             n_alt: u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX),
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
+            info_index: None,
             gt,
             fmt: None,
         }
@@ -130,6 +134,7 @@ impl SiteValues<'static> {
             n_alt: 0,
             n_samples: gt.n_samples,
             info: b".",
+            info_index: None,
             gt: Some(gt),
             fmt: None,
         }
@@ -224,10 +229,11 @@ pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Resul
                     .to_string(),
             )
         }
-        Expr::Cmp(op @ ("~" | "!~"), lhs, rhs) => {
+        Expr::Cmp(op @ (CmpOp::Match | CmpOp::NotMatch), lhs, rhs) => {
             let Expr::Str(pattern) = &**rhs else {
                 return Err(format!(
-                    "the right-hand side of {op} must be a string literal"
+                    "the right-hand side of {} must be a string literal",
+                    op.as_str()
                 ));
             };
             check_pattern(pattern)?;
@@ -253,7 +259,7 @@ pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Resul
 #[must_use]
 pub fn eval(expr: &Expr, site: &SiteValues<'_>) -> bool {
     match expr {
-        Expr::Cmp(op @ ("~" | "!~"), a, b) => {
+        Expr::Cmp(op @ (CmpOp::Match | CmpOp::NotMatch), a, b) => {
             let (Some(left), Some(Expr::Str(pattern))) = (value(a, site), Some(&**b)) else {
                 return false;
             };
@@ -261,7 +267,7 @@ pub fn eval(expr: &Expr, site: &SiteValues<'_>) -> bool {
                 return false;
             }
             let hit = matches_pattern(pattern, &left.as_text());
-            if *op == "~" { hit } else { !hit }
+            if *op == CmpOp::Match { hit } else { !hit }
         }
         Expr::Cmp(op, a, b) => {
             let (Some(left), Some(right)) = (value(a, site), value(b, site)) else {
@@ -270,12 +276,11 @@ pub fn eval(expr: &Expr, site: &SiteValues<'_>) -> bool {
             if matches!(left, Val::Missing) || matches!(right, Val::Missing) {
                 return false;
             }
-            compare(op, &left, &right)
+            compare(*op, &left, &right)
         }
         Expr::Logic(op, a, b) => match *op {
-            "&&" | "&" => eval(a, site) && eval(b, site),
-            "||" | "|" => eval(a, site) || eval(b, site),
-            _ => false,
+            LogicOp::And => eval(a, site) && eval(b, site),
+            LogicOp::Or => eval(a, site) || eval(b, site),
         },
         Expr::Not(e) => !eval(e, site),
         // A bare expression (no comparison) is true when it is a non-zero
@@ -305,7 +310,7 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
             if let Some(field) = Field::from_name(tag) {
                 return field_value(field, site);
             }
-            info_value(site.info, tag.as_bytes())
+            info_value(site.info, tag.as_bytes(), site.info_index)
         }
         Expr::Subscript(_, _) | Expr::Cmp(..) | Expr::Logic(..) | Expr::Not(_) => None,
     }
@@ -362,37 +367,46 @@ fn info_or_gt<'a>(
     tag: &[u8],
     from_gt: impl Fn(&GtCounts) -> f64,
 ) -> Option<Val<'a>> {
-    if let Some(Val::Num(_) | Val::Str(_)) = info_value(site.info, tag) {
-        return info_value(site.info, tag);
+    if let Some(Val::Num(_) | Val::Str(_)) = info_value(site.info, tag, site.info_index) {
+        return info_value(site.info, tag, site.info_index);
     }
     site.gt
         .map(|g| Val::Num(from_gt(&g)))
         .or(Some(Val::Missing))
 }
 
-/// Looks one tag up in the raw INFO text (first comma-separated element).
-fn info_value<'a>(info: &'a [u8], tag: &[u8]) -> Option<Val<'a>> {
-    for (name, value) in info_fragments(info) {
-        if name == tag {
-            let Some(value) = value else {
-                return Some(Val::Missing);
-            };
-            if value == b"." || value.is_empty() {
-                return Some(Val::Missing);
-            }
-            let first = value.split(|&b| b == b',').next().unwrap_or(value);
-            return Some(
-                match std::str::from_utf8(first)
-                    .ok()
-                    .and_then(|s| s.parse::<f64>().ok())
-                {
-                    Some(n) => Val::Num(n),
-                    None => Val::Str(first),
-                },
-            );
-        }
+/// Looks one tag up in the raw INFO text (first comma-separated element);
+/// through the record's fragment index when the caller built one (A6-18).
+fn info_value<'a>(
+    info: &'a [u8],
+    tag: &[u8],
+    index: Option<&reed_io::vcf::info::InfoIndex>,
+) -> Option<Val<'a>> {
+    let fragment = match index {
+        Some(index) => index.get(info, tag),
+        None => info_fragments(info)
+            .find(|(name, _)| *name == tag)
+            .map(|(_, value)| value),
+    };
+    let Some(value) = fragment else {
+        return None;
+    };
+    let Some(value) = value else {
+        return Some(Val::Missing);
+    };
+    if value == b"." || value.is_empty() {
+        return Some(Val::Missing);
     }
-    None
+    let first = value.split(|&b| b == b',').next().unwrap_or(value);
+    Some(
+        match std::str::from_utf8(first)
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+        {
+            Some(n) => Val::Num(n),
+            None => Val::Str(first),
+        },
+    )
 }
 
 /// Characters that turn a pattern into a general regular expression, which
@@ -438,28 +452,28 @@ pub fn matches_pattern(pattern: &str, text: &str) -> bool {
 /// evaluates the same operators on the same f64 values, so an epsilon here
 /// would change which records survive.
 #[allow(clippy::float_cmp)]
-fn compare(op: &str, left: &Val<'_>, right: &Val<'_>) -> bool {
+fn compare(op: CmpOp, left: &Val<'_>, right: &Val<'_>) -> bool {
     if let (Some(a), Some(b)) = (left.as_num(), right.as_num()) {
         return match op {
-            "==" | "=" => a == b,
-            "!=" => a != b,
-            "<" => a < b,
-            "<=" => a <= b,
-            ">" => a > b,
-            ">=" => a >= b,
-            _ => false,
+            CmpOp::Eq => a == b,
+            CmpOp::Ne => a != b,
+            CmpOp::Lt => a < b,
+            CmpOp::Le => a <= b,
+            CmpOp::Gt => a > b,
+            CmpOp::Ge => a >= b,
+            CmpOp::Match | CmpOp::NotMatch => false,
         };
     }
     let (a, b) = (left.as_text(), right.as_text());
     let (a, b) = (a.as_bytes(), b.as_bytes());
     match op {
-        "==" | "=" => a == b,
-        "!=" => a != b,
-        "<" => a < b,
-        "<=" => a <= b,
-        ">" => a > b,
-        ">=" => a >= b,
-        _ => false,
+        CmpOp::Eq => a == b,
+        CmpOp::Ne => a != b,
+        CmpOp::Lt => a < b,
+        CmpOp::Le => a <= b,
+        CmpOp::Gt => a > b,
+        CmpOp::Ge => a >= b,
+        CmpOp::Match | CmpOp::NotMatch => false,
     }
 }
 
@@ -478,6 +492,7 @@ mod tests {
             n_alt: 1,
             n_samples: 4,
             info,
+            info_index: None,
             gt,
             fmt: None,
         }
