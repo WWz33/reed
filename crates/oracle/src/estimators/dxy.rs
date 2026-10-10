@@ -11,7 +11,7 @@ use super::{samples_of, Unavailable};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DxyEstimator {
     /// Between-group pairwise differences over comparable cross-pairs at the
-    /// sites present (pixy semantics).
+    /// sites present (Korunes & Samuk 2021 semantics).
     PerPairComparable,
     /// Mean cross-pairwise difference per site, summed over sites and divided
     /// by the window length in base pairs (scikit-allel `sequence_divergence`
@@ -30,7 +30,7 @@ impl DxyEstimator {
     pub fn citation(self) -> &'static str {
         match self {
             DxyEstimator::PerPairComparable => {
-                "pixy, Korunes & Samuk 2023 eLife (between-group formulation)"
+                "Korunes & Samuk 2023 eLife (between-group formulation)"
             }
             DxyEstimator::AccessibleBp => {
                 "scikit-allel sequence_divergence (mean cross-pairwise difference per \

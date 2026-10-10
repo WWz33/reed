@@ -11,7 +11,8 @@ use super::{samples_of, Unavailable};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PiEstimator {
     /// Pairwise differences over comparable pairs at the sites present
-    /// (pixy semantics). Requires all-sites input for an exact denominator.
+    /// (Korunes & Samuk 2021 semantics). Requires all-sites input for an
+    /// exact denominator.
     PerPairComparable,
     /// Mean pairwise difference per site, summed over sites and divided by the
     /// window length in base pairs (scikit-allel `sequence_diversity`
@@ -33,7 +34,7 @@ impl PiEstimator {
     pub fn citation(self) -> &'static str {
         match self {
             PiEstimator::PerPairComparable => {
-                "pixy, Korunes & Samuk 2023 eLife; per-site counts as in scikit-allel \
+                "Korunes & Samuk 2023 eLife; per-site counts as in scikit-allel \
                  mean_pairwise_difference"
             }
             PiEstimator::AccessibleBp => {

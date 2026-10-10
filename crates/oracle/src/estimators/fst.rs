@@ -130,8 +130,9 @@ pub fn fst(
             // allel inclusion rule: `den` (between) accumulates whenever both
             // groups have ≥1 called allele; `num` also needs both within terms
             // (n ≥ 2 per group), otherwise it is NaN and allel's `nansum` skips
-            // it while keeping the site in the denominator. (pixy instead drops
-            // the site from both — we follow the cited allel semantics.)
+            // it while keeping the site in the denominator. (The reference
+            // tool instead drops the site from both — we follow the cited
+            // allel semantics.)
             let mpd_a = (n_a >= 2)
                 .then(|| a.ref_count as f64 * a.alt_count as f64 / (n_a * (n_a - 1) / 2) as f64);
             let mpd_b = (n_b >= 2)

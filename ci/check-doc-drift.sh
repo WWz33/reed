@@ -109,7 +109,7 @@ check "the LD carry resets per chunk (doc_v5 X4.4)" \
 # doc_v6 06 Y0 / E6-13: vendor vocabulary is out of the production code
 # (test directories keep the reference-tool names, naming.md §2.5).
 check "no pixy vocabulary in production src (doc_v6 E6-13)" \
-    bash -c '! grep -rniE "\bpixy" crates/reed/src crates/reed-cli/src crates/reed-core/src crates/reed-io/src crates/reed-engine/src crates/reed-stats/src crates/reed-filter/src --include=*.rs'
+    bash -c '! grep -rniE "\bpixy" crates/*/src --include=*.rs'
 
 # doc_v6 06 Y0 / E6-14: the non-standard `ponytail` markers are gone.
 check "no ponytail markers remain (doc_v6 E6-14)" \

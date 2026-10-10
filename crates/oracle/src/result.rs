@@ -5,7 +5,7 @@ use crate::estimators::fst::FstEstimator;
 use crate::estimators::pi::PiEstimator;
 use crate::window::ContigId;
 
-/// Pair-based accounting at a set of sites (pixy-style).
+/// Pair-based accounting at a set of sites (Korunes & Samuk 2021 style).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PairCounts {
     /// Pairwise differences summed over sites.

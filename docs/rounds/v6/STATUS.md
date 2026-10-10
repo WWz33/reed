@@ -72,6 +72,11 @@
 | 子集数字门 | `reed filter subset.Chr01-03.vcf.gz --min-dp 5 --min-gq 20 --geno 0.1`（与 `--geno 0.2`） | **263,420** / **381,672**（== 三家基线） |
 | 报告 md5 | `reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc` | 8 个文件逐一等于 v5 记录：afreq `b2884092…`、hardy `fd8fbf27…`、het `790293d9…`、smiss `5f4fe4f8…`、vmiss `7c325d64…`、idepth `a4b6dd3a…`、ldepth.mean `475ee083…`、stats `189e025b…` |
 
+### Y0-G oracle 引用词
+
+冻结 oracle（`crates/oracle`，仅测试用）的 6 处 `pixy` 引用改为论文引用（Korunes & Samuk 2021/2023），
+使 roadmap 的**字面**门 `! grep -rniE "\bpixy" crates/*/src --include=*.rs` 通过（无目录豁免）；守卫同步为字面形式。
+
 新增守卫（`ci/check-doc-drift.sh`）：unsafe 计数 2→1、无 `pixy` 词汇（生产 src）、无 `ponytail`、无 sibling 模块对、四个产品 crate 有 `error.rs`、`build.rs` 构建信息、两份 LICENSE 文本。
 
 **未纳入 Y0-F 的门（留 Y7 或需数据 runner）**：跨线程 sha256、跨格式 md5、BCF 输入全量、`cargo deny`、MSRV 构建、基准回归。
