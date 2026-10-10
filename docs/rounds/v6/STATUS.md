@@ -87,14 +87,34 @@
 |---|---|
 | fmt 门的既有偏差 | v6 05 §7.3 的 "`cargo fmt --all --check` 0 diff" 是在另一个 rustfmt 版本下得出的；固定工具链 1.99 下 pristine 树有 158 文件 diff。Y0 已全树格式化（`99cb913` 等），此后 fmt 门可信 |
 | `reed stats --indep-pairwise` | v5 遗留：stats 侧显式报错并指向 filter；规范 §3.4.1 的"filter/stats 共用"仍待 Y6 |
-| LD bp 窗口 | v5 遗留偏差（F6-10）：`--indep-pairwise Wkb` 与 plink2 的窗口推进未对齐；Y1 修 |
 | `v0.3.0` tag | 见下方"tag"行；tag 指向 Y0 完成的提交，其后的 Y1+ 提交在 tag 之外 |
+
+## Y1：全局分析矩阵化（进行中，2026-10-11）
+
+### Y1 已落地项
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| F6-9（Y1a） | `--ld-decay`/`--ld-pairs` 不再要求 `--pop`（无 `--pop` 时全体样本计为单群体 `all`；`--pop` 仍是可选项） | `d2f579e` | 夹具 + 区域命令退出 0 |
+| 剪枝 contig 并行（Y1c） | reducer 只按 contig 收集存活位点，`rayon` 每 contig 一个 `LdPruner`（plink2 的 subcontig 并行；contig 内严格 plink2 顺序语义） | `9bfffa1` | 全量 `--indep-pairwise 50 5 0.2 -Oz1` 235,403 保留 == plink2；1/8/56 线程正文逐字节相同 |
+| F6-10 kb 窗口（Y1g） | `LdWindow::Bp` 按 `plink2_ld.cc` `LdPruneNextWindow` 对齐：窗口在触发位点加入前闭合，start 推进到 `bp ≥ bp[触发] − W`；tie 判据用 plink2 的 `kSmallEpsilon`（2⁻⁴⁴）；并修 CLI 单位 bug（`50kb` 此前被读成 50 bp） | `a5cd8a2` | 区域 `50kb 0.2`：158 == plink2 对称差 0；`50 5 0.2`：277 == 277 对称差 0；全量 235,403（4.0 s，pass0_prune 147 ms）；`reed-stats` 9 项单测（2 项 plink2 实测 kb 用例） |
+| LD 矩阵化 + 位置区块并行（Y1b/Y1d） | stats 的 LD 不再走 head/tail 携带：worker 按 contig 填站点主序位平面矩阵（样本按群体主序、字对齐——群体对读连续字切片，cohort 和 = 群体和的整数精确相加）；每 contig 矩阵在独立线程做位置区块（4096）并行衰减，`finish` 按 contig 序合并 | `35444fd` | 全量 `--ld-decay 100k`：**8.4 s**（`--pop` 3 群体）/ **6.4 s**（无 `--pop`），门 ≤ 10 s（原 169 s）；cohort 衰减与串行实现逐位相同（区域 3,556,592 对、100/100 bin 全同；夹具 r² PASS）；1/8/56 线程 `.ld.decay`/`.ld` md5 相同（区域 + 全量）；BCF 输入与 VCF 逐对相同（顺带修了旧实现 BCF 路径 contig 不复位的缺陷） |
+| 每群体衰减曲线 | `.ld.decay` 增加首列 `pop`：cohort 记 `all`，`--pop` 命名多于一个群体时逐群体各一块；群体曲线只计在该群体样本上有定义的对（对按样本子集计，不按位点） | `35444fd` | `e2e_ld::ld_decay_carries_per_population_curves`（群体计数 ≤ cohort 计数、cohort bin = 15 对）；`.ld.decay` 400 行 = 100 bin ×（all + 3 群体） |
+
+### Y1 剩余
+
+| 项 | 说明 |
+|---|---|
+| Y1e | `--mind` 改从矩阵 miss 平面按列 popcount；删 `MissingJob`/`SketchJob`/`LdPruneJob`（三套 pass0 归一） |
+| Y1f | 矩阵内存估计进 `--memory` 预算；超预算按 contig 分段 |
+| Y1h | `--mind` 输出与 sketch/two-pass 逐字节相同的门；gold 正文 md5 复跑 |
 
 ## 未完成 / 偏差
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| Y1–Y7 | 待做 | 见 `06-roadmap.md`；Y1（矩阵化 pass0）是下一项，单独一个 PR |
+| Y1 剩余（Y1e/f/h） | 进行中 | 剪枝与衰减已矩阵化并过门（见上）；`--mind` 归一与内存估计待做 |
+| LD bp 窗口（F6-10） | **已修**（`a5cd8a2`） | 区域 `50kb 0.2` 158 == plink2 对称差 0；02 §3.2 的 M6-4 行随之关闭 |
 | C-5、联合 SFS、`--bed-file`/`--sites-file`、前后端收尾三项 | 待做 | 并入 Y6 |
 | `is_sequential` / 顺序模式（F6-6） | 待裁决 | Y5 实现或改规范 |
 | `JointSfsAcc` 仍 `#[doc(hidden)]` | 有意 | 无 CLI 出口；Y6 接入联合 SFS 时去掉 |
@@ -116,8 +136,8 @@
 | stats 边过滤 `--pi` | 3.09 s | 153.6 s |
 | index VCF / BCF | 1.63 / 1.12 s | 75 / 44.5 s |
 | `--sfs` / `--fst-global` / f 统计 | 1.60 / 1.52 / 1.56 s | 73 / 71 / 71.5 s |
-| `--ld-decay 100k` | 169 s | 343 s |
-| `filter --indep-pairwise 50 5 0.2 -Oz1` | 66.6 s | 289 s |
+| `--ld-decay 100k` | **8.4 s**（`--pop`）/ **6.4 s** | 413 / 337 s |
+| `filter --indep-pairwise 50 5 0.2 -Oz1` | **4.0 s** | 181 s |
 | plink2：pgen 导入 / 从 pgen 剪枝 / 从 pgen 报告 | 27.8 / 0.66 / 1.48 s | 105 / 1.5 / 2.75 s |
 
 > Y0 未触及计算路径（删除的死代码无生产调用者；`memchr` 与 `f64::midpoint` 的替换经 md5/对拍验证逐字节不变），故不重跑全量基准。Y1 起按 04 §9 的纪律重测。

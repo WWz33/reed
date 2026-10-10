@@ -71,7 +71,7 @@ v5 的路线几乎全部落地：X0–X3、X4.1–X4.4（含剪枝迁入 filter�
 | F6-7 | P2（性能） | `single_pass.rs:338-345`、`native_encode.rs:131-139` | `-Ob` 文本往返 +61 CPU-s；BCF 输入存活记录渲染→解析→编辑 | 04 §1 | 03 §8、06 Y4 |
 | F6-8 | P2（性能） | `deflate.rs:134-135`、`block_writer.rs:183`、`inflate.rs:36,49` | 每块 65 KiB 清零 + 分配，≈ 38 GB memset | 03 A6-5/6 | 06 Y2 |
 | F6-9 | P2（设计） | `reed-cli/src/translate/stats.rs:439-444` | `--ld-decay` 被当作窗口统计强制 `--pop` | 实测报错 | 06 Y1 |
-| F6-10 | P2（一致性） | `reed-stats/src/ld.rs` 窗口推进 | `--indep-pairwise Wkb` 与 plink2 不一致（131 vs 158） | v5 STATUS 偏差 | 06 Y1 |
+| ~~F6-10~~ | P2（一致性） | `reed-stats/src/ld.rs` 窗口推进 | ~~`--indep-pairwise Wkb` 与 plink2 不一致（131 vs 158）~~ **已修**（`a5cd8a2`：区域 158 == plink2 对称差 0） | v5 STATUS 偏差 | 06 Y1 ✅ |
 | F6-11 | P3（性能） | `single_pass.rs:290,332`；`record_pipeline.rs:345-348,357-372,395-399`；`site_counts.rs:71-81`；`line_edit.rs:123-124,250-302`；`record_pipeline.rs:330`；`chunk/mod.rs:231-246` | 每记录/每样本分配、f64 转换、逐位清零、未缓存 HWE、每 worker GT 表、标量 `rposition` | 03 §3–4 | 06 Y2/Y3 |
 | F6-12 | P3（架构） | `single_pass.rs:278-346` vs `:353-412`；`reduce.rs`/`sketch.rs`/`ld_prune.rs` | 两套几乎相同的发射闭包；三套 pass0 | 03 A6-20/21 | 06 Y1/Y3 |
 | F6-13 | P3（前后端） | `translate/stats.rs:330,438,507,660`；`main.rs:19`；`translate/filter.rs` 仅 3 个往返测试 | 后端逻辑在前端；无统一 `reed::Error`/`kind()`；stats/index 无往返测试 | v5 STATUS 遗留 | 06 Y6 |

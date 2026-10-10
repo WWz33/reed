@@ -158,7 +158,7 @@ pub fn ld_decay(m: &ContigMatrix, max_bp: u64, edges: &[u64], n: usize) -> LdDec
 | 项 | 性质 | 处理 |
 |---|---|---|
 | f 统计 SE：reed 按 bp 分块，allel 按变异数分块 | 定义不同，非错误 | 文档写明（已） |
-| `--indep-pairwise Wkb`：区域内 reed 保留 131 vs plink2 158 | **窗口推进语义未对齐**（plink2 `LdPruneNextWindow`：bp 窗口下 start 至少前进到 end 能前进一个位点） | M6-4 |
+| ~~`--indep-pairwise Wkb`：区域内 reed 保留 131 vs plink2 158~~ **已修**（`a5cd8a2`，Y1）：窗口在触发位点加入前闭合、start 推进到 `bp ≥ bp[触发] − W`、tie 判据 `kSmallEpsilon`；区域 158 == plink2 对称差 0 | ~~M6-4~~ 已关闭 |
 | `--ld-decay` 需要 `--pop` | LD 与群体无关，却被当作"窗口统计"要求 `--pop`（实测报错 `a windowed statistic needs --pop FILE`） | M6-3 |
 | `--sfs-int` 半整数取整与 easySFS 差 1 | 浮点噪声方向不同 | 对拍以取整前为准（已） |
 | 联合 SFS、多等位 | 未接 / 裁决不做 | — |
@@ -175,7 +175,7 @@ f64 累加 + `NeumaierSum`；INFO 浮点以 f32 读写（与 htslib 相同）；
 | M6-1 | **位平面矩阵成为全局分析的规范输入**（§2.2），`--mind`/`--indep-pairwise`/`--ld-decay` 共用一个 pass0 | 03 §7、06 Y1 |
 | M6-2 | `ContigId` 统一为 newtype | 06 Y3 |
 | M6-3 | `--ld-decay` 不要求 `--pop`（LD 与群体无关）；窗口统计与 genome-wide 量的 `--pop` 要求分开判定 | 06 Y2 |
-| M6-4 | LD kb 窗口按 plink2 `LdPruneNextWindow` 对齐并对拍 | 06 Y2 |
+| ~~M6-4~~ | LD kb 窗口按 plink2 `LdPruneNextWindow` 对齐并对拍 — **已修**（`a5cd8a2`，提前至 Y1） | 06 Y1 |
 | M6-5 | 表达式的 INFO 访问复用 head 阶段的片段索引（一记录一次解析），不要每个 tag 重扫（`expr/mod.rs` `info_value` vs `eval/head.rs:190-214` 的 `HeadScratch.fragments`） | 03 §4 |
 | M6-6 | `GtCode`/`SitePlanes` 维持；popcount 内核修 soundness 或删除（03 §5） | 06 Y3 |
 | M6-7 | 不做 2 位规范表示；若将来群体数 > 8 的计数成为瓶颈，再加派生的"2 位类平面" | 不排期 |
