@@ -14,12 +14,14 @@
 | CLI 参数语义 | `docs/spec/cli.md` | **合并版 CLI 规范**（= docs/rounds/v5/02），当前唯一有效；v4/v2 的 02 转为历史 |
 | 统计出口设计 | `docs/rounds/v5/05-algorithms.md` | SFS / `--fst-global` / f 统计 / LD 的出口形状；对齐台账在 v2/04 + v4/05 |
 | 统计与过滤算法 | `docs/rounds/v2/04-algorithms.md` + `docs/rounds/v4/05-algorithms.md` | 方法与文献定义在 v2；对齐状态与缺口台账在 v4/05 |
-| 架构 | `docs/spec/architecture.md`（v1 基础）+ `docs/rounds/v2/03-architecture.md` + `docs/rounds/v3/02-bcf.md` + `docs/rounds/v4/03-architecture.md` + `docs/rounds/v5/03-architecture.md` | v1 长期条款仍有效；BCF 在 v3/02；当前形态、`unsafe` 策略与前后端边界在 v5/03 |
-| 性能 | `docs/rounds/v4/04-performance.md` + `docs/rounds/v5/04-performance.md` | 优化清单与测量纪律；v5/04 是当前基线 |
+| 架构 | `docs/spec/architecture.md`（v1 基础）+ `docs/rounds/v2/03-architecture.md` + `docs/rounds/v3/02-bcf.md` + `docs/rounds/v4/03-architecture.md` + `docs/rounds/v5/03-architecture.md` + **`docs/rounds/v6/03-architecture.md`** | v1 长期条款仍有效；BCF 在 v3/02；`unsafe` 策略与前后端边界在 v5/03；**缺陷清单 A6-1…A6-25 与三个最优方案（矩阵化 pass0、`-Ob` 记录模型、列式掩码）在 v6/03** |
+| 模型（数据 / 执行 / 统计） | **`docs/rounds/v6/02-models.md`** | 基因型三种表示与 2 位编码的取舍、位平面矩阵作为全局分析的规范输入（含代码示意）、统计模型对拍与偏差台账、M6-1…M6-7 |
+| 工程（CI / 测试 / 依赖 / 文档漂移） | **`docs/rounds/v6/05-engineering.md`** | 健康状态、CI 缺项、测试缺口、漂移清单、E6-1…E6-9 |
+| 性能 | **`docs/rounds/v6/04-performance.md`**（当前基线）+ `docs/rounds/v5/04-performance.md` + `docs/rounds/v4/04-performance.md` | v6/04：3 次中位数基线、线程效率、deflate 级别研究、与 plink2/bcftools 对照、LD 执行模型问题、P6-1…P6-10；测量纪律在 v5/04 §4 + v6/04 §9 |
 | 命名 | `docs/spec/naming.md` + `docs/rounds/v2/05-naming.md` | 版本后缀禁令（v2 05 §4）由 `ci/check-doc-drift.sh` 守卫 |
 | 项目定位 | `docs/rounds/v5/08-api-surface.md` | 前后端形态（`reed-cli` 是唯一前端）与门面边界（§6） |
-| 路线与验收门 | `docs/rounds/v5/07-roadmap.md` | X0–X7；v4/06 的 W0–W6 已完成 |
-| 实施状态 | `docs/rounds/v5/STATUS.md` | 历史：`docs/rounds/v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
+| 路线与验收门 | **`docs/rounds/v6/06-roadmap.md`** | Y0–Y7；v5/07 的 X0–X7 已落地（未完成项并入 Y6），v4/06 的 W0–W6 已完成 |
+| 实施状态 | **`docs/rounds/v6/STATUS.md`** | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
 
 ## 历史文档（只作记录，不再修订）
 
