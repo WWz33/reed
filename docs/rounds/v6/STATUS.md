@@ -105,8 +105,8 @@
 
 | 项 | 说明 |
 |---|---|
-| Y1e | `--mind` 改从矩阵 miss 平面按列 popcount；删 `MissingJob`/`SketchJob`/`LdPruneJob`（三套 pass0 归一） |
-| Y1f | 矩阵内存估计进 `--memory` 预算；超预算按 contig 分段 |
+| Y1e | `--mind` 改从矩阵 miss 平面按列 popcount（called(s) = 2·sites − 列 popcount(slot0_miss) − 列 popcount(slot1_miss)）；删 `MissingJob`/`SketchJob`/`LdPruneJob`。**语义要点**：`--mind` 的分母是 head 幸存者（doc_v4 02 回退版 §3.2），而剪枝矩阵现按 head+tail 幸存者收集——归一的 pass0 矩阵须改收 head 幸存者并逐位点记 tail 是否通过（剪枝用该标志过滤），否则有 tail 规则时 `--mind` 计数会变。`mid_stage` 的 sketch 片段（头幸存位点平面 + 规则位图）随之被矩阵取代 |
+| Y1f | 矩阵内存估计进 `--memory` 预算；超预算按 contig 分段（衰减已是按 contig 分析，只差预算判断与提示） |
 | Y1h | `--mind` 输出与 sketch/two-pass 逐字节相同的门；gold 正文 md5 复跑 |
 
 ## 未完成 / 偏差
