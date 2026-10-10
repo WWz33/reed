@@ -34,20 +34,19 @@ use reed_io::write::index::Indexer;
 use reed_io::write::ordered_output::OrderedOutput;
 
 mod emit;
-mod ld_prune;
 mod mid_stage;
+pub(crate) mod pass0;
 pub(crate) mod record_pipeline;
-mod reduce;
 mod report;
 mod single_pass;
-mod sketch;
 
 use emit::EmitJob;
-use mid_stage::{ChunkDecision, mid_stage};
-use reduce::run_missing_pass;
+use mid_stage::mid_stage;
+use pass0::{
+    MatrixOutput, SiteMatrix, estimate_records, mind_keep, plan_mode, prune_config,
+    run_matrix_pass, survivor_words,
+};
 use single_pass::{FilterJob, FilterPartial};
-use sketch::estimate_records;
-use sketch::run_sketch_pass;
 
 // Re-exported so `reed::filter::WriteIndex` keeps working (the type lives in
 // reed-io's write layer, shared with `reed index`).
@@ -210,7 +209,7 @@ pub fn run_filter(
         None if is_bcf => ExecStrategy::TwoPassReparse,
         None => match &spec.mind {
             Some(_) if replay_path.is_some() => {
-                // §11.4: the sketch path when the upper-bounded sketch fits
+                // §11.4: the matrix path when the upper-bounded matrix fits
                 // the memory budget (records extrapolated from the first
                 // chunk's records/byte density).
                 let estimated =
@@ -225,29 +224,21 @@ pub fn run_filter(
             _ => plan.strategy,
         },
     };
+    // The matrix shape (pass0 matrices → mid stage → emit pass1) also
+    // covers `--mind` + `--indep-pairwise`: the pruner needs the planes and
+    // the survivors need the post-`--mind` keep, so no two-pass variant of
+    // that combination exists.
+    let sketch_shape = strategy == ExecStrategy::SketchThenEmit
+        || (spec.mind.is_some() && spec.ld_prune.is_some());
+    let strategy = if sketch_shape {
+        ExecStrategy::SketchThenEmit
+    } else {
+        strategy
+    };
     plan.strategy = strategy;
 
-    // ---- pass0 (the sketch path also captures the per-chunk sketches the
-    // mid stage turns into emit decisions) ----
-    let pass0_start = Instant::now();
-    let sketch_pass = if strategy == ExecStrategy::SketchThenEmit {
-        let opened = first
-            .take()
-            .expect("invariant: pass0 consumes the first open");
-        let pass = run_sketch_pass(opened, n_samples_in, &plan, opts)?;
-        timing_engine.merge(&pass.metrics);
-        Some(pass)
-    } else {
-        None
-    };
-    if sketch_pass.is_some() {
-        timing_phases.push(("pass0", pass0_start.elapsed().as_secs_f64()));
-    }
-
-    // ---- static subset (`-s/-S/--keep/--remove`), then the sample-level
-    // missing-rate rule (`--mind`, doc_v4 02 回退版 §3.2: counted after
-    // masking, over the records the head rules keep; the numerator is
-    // missing alleles, the denominator 2·records) ----
+    // ---- static subset (`-s/-S/--keep/--remove`): resolved first, the
+    // prune pass0's inline tail rules take its size as their denominator ----
     let mut keep_vec: Vec<bool> = match &spec.sample_select {
         None => vec![true; n_samples_in],
         Some(select) => {
@@ -276,31 +267,54 @@ pub fn run_filter(
             keep
         }
     };
+    let n_static_out = keep_vec.iter().filter(|&&k| k).count();
+
+    // ---- pass0: the unified matrix job. `--mind` counts from the miss
+    // planes, the prune pass0 fills the per-contig matrices, and the sketch
+    // shape records the rule bitmaps the mid stage reads back. ----
+    let pass0_start = Instant::now();
+    let mind_requested = spec.mind.is_some();
+    let indep_requested = spec.ld_prune.is_some();
+    let budget_bytes = opts
+        .mem_bytes
+        .unwrap_or_else(|| reed_engine::budget::MemBudget::default_half_memory().bytes);
+    let static_keep: Arc<[bool]> = Arc::from(keep_vec.clone());
+    let mut matrix: Option<MatrixOutput> = if mind_requested || indep_requested || sketch_shape {
+        let opened = first
+            .take()
+            .expect("invariant: pass0 consumes the first open");
+        let mode = plan_mode(mind_requested, sketch_shape, indep_requested);
+        let config = spec.ld_prune.as_ref().map(prune_config);
+        let pass = run_matrix_pass(
+            opened,
+            &plan,
+            mode,
+            mind_requested,
+            (!mind_requested).then_some(n_static_out as u64),
+            static_keep,
+            config,
+            budget_bytes,
+            opts,
+            native_bcf,
+        )?;
+        timing_engine.merge(&pass.metrics);
+        Some(pass)
+    } else {
+        None
+    };
+    if matrix.is_some() {
+        timing_phases.push(("pass0", pass0_start.elapsed().as_secs_f64()));
+    }
+
+    // ---- sample-level missing-rate rule (`--mind`, doc_v4 02 回退版 §3.2:
+    // counted after masking, over the records the head rules keep; the
+    // numerator is missing alleles, the denominator 2·records) ----
     let mut sample_rule = None;
     if let Some(rate) = spec.mind {
-        let missing_partial;
-        let (n_records, called): (u64, &[u64]) = match &sketch_pass {
-            Some(sketch) => (sketch.n_records, &sketch.cohort_called),
-            None => {
-                let opened = first
-                    .take()
-                    .expect("invariant: pass0 consumes the first open");
-                missing_partial = run_missing_pass(opened, &plan, opts, native_bcf)?;
-                timing_engine.merge(&missing_partial.metrics);
-                (missing_partial.n_records, &missing_partial.called)
-            }
-        };
-        // Keep iff `(2L − called) · 10^9 ≤ q · 2L` (exact integers). With
-        // no head-surviving record there is no evidence, so every sample
-        // stays (`tolerates(0, 0)` is vacuously true).
-        let total = 2 * n_records;
-        let mut n_dropped = 0_u64;
-        for (keep, &called) in keep_vec.iter_mut().zip(called) {
-            if *keep && !rate.tolerates(total.saturating_sub(called), total) {
-                *keep = false;
-                n_dropped += 1;
-            }
-        }
+        let matrix = matrix
+            .as_ref()
+            .expect("invariant: --mind always runs the matrix pass0");
+        let n_dropped = mind_keep(&rate, &matrix.called, matrix.n_head, &mut keep_vec);
         sample_rule = Some(reed_filter::funnel::SampleRuleReport {
             rule: reed_filter::funnel::SAMPLE_MIND.to_string(),
             threshold: rate.render(),
@@ -339,49 +353,79 @@ pub fn run_filter(
 
     let mut ld_prune_report: Option<(u64, u64)> = None;
 
-    // ---- LD pruning pass0 (docs/rounds/v5/05-algorithms.md §3.4.1): the
-    // site rule that needs a second pass, because the pruning is
-    // order-dependent. Runs after the sample bitmap (it prunes the sites
-    // that survived every other rule) and before the mid stage/emit. ----
-    let site_keep = if let Some(prune) = &spec.ld_prune {
-        let opened = first
-            .take()
-            .expect("invariant: pass0 consumes the first open");
-        let config = ld_prune::PruneConfig {
-            threshold: prune.r2,
-            window: if prune.kb {
-                reed_stats::ld::LdWindow::Bp(prune.window)
-            } else {
-                reed_stats::ld::LdWindow::Variants(
-                    usize::try_from(prune.window).unwrap_or(usize::MAX),
-                )
-            },
-            step: prune.step,
+    // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions.
+    // The tail rules run here (the keep set was dynamic until `--mind`
+    // resolved); the funnel folds the mid counters into the pass0's. ----
+    let mid_start = Instant::now();
+    let mut sketch_out: Option<(
+        FunnelPartial,
+        std::collections::HashMap<u64, Arc<mid_stage::ChunkDecision>>,
+    )> = None;
+    let mut staged: Option<(Vec<SiteMatrix>, Vec<usize>)> = None;
+    let mut survivor_chunks: Option<Vec<pass0::matrix::ChunkSites>> = None;
+    if let Some(m) = matrix.as_mut().filter(|m| !m.chunks.is_empty()) {
+        let chunks = std::mem::take(&mut m.chunks);
+        let matrices = std::mem::take(&mut m.matrices);
+        let bases = std::mem::take(&mut m.contig_base);
+        let mut funnel = std::mem::take(&mut m.funnel);
+        let map = mid_stage(
+            &chunks,
+            &matrices,
+            &bases,
+            &keep,
+            &plan,
+            n_samples_out,
+            &mut funnel,
+        );
+        timing_phases.push(("mid", mid_start.elapsed().as_secs_f64()));
+        sketch_out = Some((funnel, map));
+        staged = Some((matrices, bases));
+        survivor_chunks = Some(chunks);
+    }
+
+    // ---- LD pruning (docs/rounds/v5/05-algorithms.md §3.4.1): the site
+    // rule that runs after every other site rule. Without `--mind` the
+    // pass0 evaluated the tail inline and pruned per contig during the
+    // stream; with it the pruner sees the mid stage's survivors. ----
+    let site_keep = if indep_requested {
+        let m = matrix
+            .as_ref()
+            .expect("invariant: --indep-pairwise always runs the matrix pass0");
+        let result = if let Some((matrices, bases)) = staged.take() {
+            let decisions = &sketch_out
+                .as_ref()
+                .map(|(_, d)| d)
+                .expect("invariant: staged matrices imply the mid stage ran");
+            let chunks = survivor_chunks
+                .as_deref()
+                .expect("invariant: staged matrices imply chunk bookkeeping");
+            let words = survivor_words(chunks, m.total_sites, decisions);
+            pass0::prune::prune_matrices(
+                matrices,
+                Some(&words),
+                &bases,
+                &prune_config(
+                    spec.ld_prune
+                        .as_ref()
+                        .expect("invariant: guarded by indep_requested"),
+                ),
+                n_samples_in,
+            )
+        } else {
+            m.prune.clone().expect("invariant: the streaming prune ran")
         };
-        let pass_start = Instant::now();
-        let result = ld_prune::run_ld_prune_pass(opened, &plan, &keep, config, opts, native_bcf)?;
-        timing_engine.merge(&result.metrics);
-        timing_phases.push(("pass0_ld", pass_start.elapsed().as_secs_f64()));
         timing_phases.push(("pass0_prune", result.prune_secs));
-        ld_prune_report = Some((result.n_survivors, result.n_pruned));
+        ld_prune_report = Some((result.n_seen, result.n_pruned));
+        // The mid stage counted every tail survivor as output; the pruner
+        // removed `n_pruned` of exactly those sites.
+        if let Some((funnel, _)) = &mut sketch_out {
+            funnel.n_output = funnel.n_output.saturating_sub(result.n_pruned);
+            funnel.n_ld_pruned = result.n_pruned;
+        }
         Some(Arc::new(result.keep))
     } else {
         None
     };
-
-    // ---- mid stage (§11.4): keep ∧ planes → per-chunk emit decisions ----
-    let mid_start = Instant::now();
-    let sketch_out: Option<(
-        FunnelPartial,
-        std::collections::HashMap<u64, Arc<ChunkDecision>>,
-    )> = sketch_pass.map(|sketch| {
-        let mut funnel = sketch.funnel;
-        let map = mid_stage(&sketch.sketches, &keep, &plan, n_samples_out, &mut funnel);
-        (funnel, map)
-    });
-    if sketch_out.is_some() {
-        timing_phases.push(("mid", mid_start.elapsed().as_secs_f64()));
-    }
 
     // ---- output header: prune samples, add recompute defs, provenance ----
     let out_header = if subset {
@@ -524,6 +568,7 @@ pub fn run_filter(
             compressed,
             contig_names: Arc::clone(&contig_names),
             level: opts.compress_level,
+            site_keep: site_keep.clone(),
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
         let mut sink = OutputSink {

@@ -90,7 +90,7 @@ pub(super) struct FilterJob {
     /// `--indep-pairwise`: the kept sites, per contig, from pass0
     /// (docs/rounds/v5/05-algorithms.md §3.4.1). Pass1 drops a surviving
     /// record the pruner removed.
-    pub(super) site_keep: Option<Arc<super::ld_prune::SiteKeepSet>>,
+    pub(super) site_keep: Option<Arc<super::pass0::SiteKeepSet>>,
 }
 
 /// Worker scratch (reused across chunks).
@@ -278,7 +278,6 @@ impl FilterJob {
         )?;
         let plan = &self.plan;
         let opts = PipelineOptions {
-            scan_head_failures: false,
             mask_all_samples: false,
             require_contig: true,
             tail_n_samples: Some(self.n_samples_out as u64),
@@ -375,7 +374,6 @@ impl FilterJob {
         let plan = &self.plan;
         let opts = PipelineOptions {
             // Head-failed records are never scanned on this path.
-            scan_head_failures: false,
             mask_all_samples: false,
             // The contig table is the index's tid space: a record on an
             // undeclared contig has no addressable tid and must fail loudly.

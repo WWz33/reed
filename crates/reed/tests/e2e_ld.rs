@@ -3,6 +3,8 @@
 //! `gold/popgen/run_plink2_ld.sh` cross-checks both against plink2; the
 //! values here are plink2's (printed at six significant digits).
 
+use std::fmt::Write as _;
+
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{InvariantMode, LdRequest, Levels, StatsRequest, WindowLayoutOptions, run_stats};
 
@@ -217,5 +219,148 @@ fn ld_decay_carries_per_population_curves() {
     // The cohort pools every sample, so its bin holds all 15 pairs.
     assert_eq!(ld.decay[0].2, 15);
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The pruning runs after every site rule (02-cli §6 step 6b): the pruner
+/// sees only post-tail sites, so a tail-failing site neither pairs nor
+/// occupies a window slot (plink2 loads its filters before
+/// `--indep-pairwise`). Fixture: sites 1 and 3 are perfect complements
+/// (r² = 1, tied major frequency 0.5 → the later one prunes); site 2 is
+/// 60% missing (fails `--geno 0.5`) with an orthogonal called pattern, so
+/// no pair with it reaches the threshold.
+#[test]
+fn pruner_sees_only_post_tail_sites() {
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=100000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t\
+         s0\ts1\ts2\ts3\ts4\ts5\ts6\ts7\ts8\ts9\n",
+    );
+    // Site 1: alt on s0..s4 (MAF 0.5).
+    let site1 = "0/1\t0/1\t0/1\t0/1\t0/1\t0/0\t0/0\t0/0\t0/0\t0/0";
+    // Site 2: called only on s0..s3, alternating (fails max_missing 0.5).
+    let site2 = "1/1\t0/0\t1/1\t0/0\t./.\t./.\t./.\t./.\t./.\t./.";
+    // Site 3: the complement of site 1 (r² = 1, same MAF).
+    let site3 = "0/0\t0/0\t0/0\t0/0\t0/0\t0/1\t0/1\t0/1\t0/1\t0/1";
+    for (pos, gts) in [(1, site1), (2, site2), (3, site3)] {
+        let _ = writeln!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t{gts}");
+    }
+    let dir = std::env::temp_dir().join(format!("reed-ld-tail-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, text).expect("invariant: fixture write");
+    let spec_with = |max_missing: bool| reed::spec::FilterSpec {
+        site_after_mask: reed::spec::TailRules {
+            max_missing: max_missing.then(|| reed::spec::MissingRate::parse("0.5").expect("valid")),
+            ..reed::spec::TailRules::default()
+        },
+        ld_prune: Some(reed::spec::LdPruneSpec {
+            window: 3,
+            kb: false,
+            step: 1,
+            r2: 0.5,
+        }),
+        ..reed::spec::FilterSpec::default()
+    };
+    let out = |name: &str| dir.join(name);
+    let run = |spec: &reed::spec::FilterSpec, out: &std::path::Path| {
+        reed::run_filter(
+            Some(&vcf),
+            spec,
+            &reed::FilterOptions {
+                threads: 2,
+                output: Some(out.to_path_buf()),
+                ..reed::FilterOptions::default()
+            },
+        )
+        .expect("invariant: filter runs")
+    };
+    let positions = |out: &std::path::Path| -> Vec<u64> {
+        std::fs::read_to_string(out)
+            .expect("invariant: output")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| l.split('\t').nth(1).expect("POS").parse().expect("pos"))
+            .collect()
+    };
+
+    // Without the tail rule: all three sites reach the pruner; the (1,3)
+    // pair prunes site 3 (frequency tie → the later one).
+    let report = run(&spec_with(false), &out("plain.vcf"));
+    assert_eq!(report.ld_prune, Some((3, 1)), "3 seen, site 3 pruned");
+    assert_eq!(positions(&out("plain.vcf")), vec![1, 2]);
+
+    // With `--geno 0.5`: site 2 fails the tail and never reaches the
+    // pruner (the pre-Y1e pruner counted it: n_seen would stay 3).
+    let report = run(&spec_with(true), &out("tail.vcf"));
+    assert_eq!(report.ld_prune, Some((2, 1)), "only post-tail sites seen");
+    assert_eq!(positions(&out("tail.vcf")), vec![1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--mind` and `--indep-pairwise` share one pass0 (docs/rounds/v5/05
+/// §3.4.1): the sample rule resolves first, then the pruner works over the
+/// tail survivors, then pass1 emits both effects.
+#[test]
+fn mind_and_indep_pairwise_combine() {
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=100000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t\
+         s0\ts1\ts2\ts3\ts4\ts5\ts6\ts7\ts8\ts9\n",
+    );
+    // s0 is missing in 9 of 10 records (missing 0.9 > 0.5 → dropped).
+    // Sites 1-5 share one pattern, 6-10 an orthogonal one: within each
+    // group every pair has r² = 1 and tied frequencies, so the later
+    // member prunes; across groups r² = 0.
+    for i in 1..=10_u64 {
+        let s0 = if i <= 9 { "./." } else { "0/0" };
+        let (a, c) = if i <= 5 {
+            ("0/1", "0/0")
+        } else {
+            ("0/0", "0/1")
+        };
+        let gts = [s0, a, a, "0/0", "0/0", c, c, "0/0", "0/0", "0/0"];
+        let _ = writeln!(
+            text,
+            "chr1\t{i}\t.\tA\tG\t50\tPASS\t.\tGT\t{}",
+            gts.join("\t")
+        );
+    }
+    let dir = std::env::temp_dir().join(format!("reed-ld-mind-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, text).expect("invariant: fixture write");
+    let spec = reed::spec::FilterSpec {
+        mind: Some(reed::spec::MissingRate::parse("0.5").expect("valid")),
+        ld_prune: Some(reed::spec::LdPruneSpec {
+            window: 10,
+            kb: false,
+            step: 1,
+            r2: 0.5,
+        }),
+        ..reed::spec::FilterSpec::default()
+    };
+    let out = dir.join("pruned.vcf");
+    let report = reed::run_filter(
+        Some(&vcf),
+        &spec,
+        &reed::FilterOptions {
+            threads: 2,
+            output: Some(out.clone()),
+            ..reed::FilterOptions::default()
+        },
+    )
+    .expect("invariant: filter runs");
+    assert_eq!(report.n_samples_out, 9, "s0 dropped by --mind");
+    assert_eq!(report.ld_prune, Some((10, 8)), "one survivor per group");
+    let body: Vec<u64> = std::fs::read_to_string(&out)
+        .expect("invariant: output")
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').nth(1).expect("POS").parse().expect("pos"))
+        .collect();
+    assert_eq!(body, vec![1, 6], "the earliest site of each group");
     let _ = std::fs::remove_dir_all(&dir);
 }

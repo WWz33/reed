@@ -231,7 +231,6 @@ impl<J: ChunkJob> FilteredJob<J> {
 
     fn pipeline_options(&self) -> PipelineOptions {
         PipelineOptions {
-            scan_head_failures: false,
             mask_all_samples: true,
             require_contig: false,
             // The tail's missing-rate denominator is the retained sample set.

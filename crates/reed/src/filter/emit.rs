@@ -28,6 +28,9 @@ pub(super) struct EmitJob {
     pub(super) compressed: bool,
     pub(super) contig_names: Arc<[Vec<u8>]>,
     pub(super) level: u8,
+    /// `--indep-pairwise`: pass0 removed this site (docs/rounds/v5/05
+    /// §3.4.1). Present only when the run prunes.
+    pub(super) site_keep: Option<Arc<super::pass0::SiteKeepSet>>,
 }
 
 pub(super) struct EmitScratch {
@@ -128,6 +131,12 @@ impl EmitJob {
         let site =
             SiteView::parse_declared(&lr, &mut scratch.contigs).map_err(EngineError::from)?;
         let pos1 = site.pos1;
+        // The LD-pruning rule (§3.4.1): pass0 removed this site.
+        if let Some(keep) = &self.site_keep
+            && !keep.contains(site.contig_name, pos1.saturating_sub(1))
+        {
+            return Ok(());
+        }
         let stale: Vec<&[u8]> = self.plan.stale_tags.iter().map(Vec::as_slice).collect();
         // Refresh the reusable mask bitset from the emit's words.
         for (word, src) in scratch

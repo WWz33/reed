@@ -1189,3 +1189,54 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
     assert_eq!(report.n_samples_out, 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Y1e semantic lock: `--mind`'s denominator is the head-surviving record
+/// count (doc_v4 02 回退版 §3.2), so a tail rule must not shift it. s1 is
+/// missing only in records the tail rule keeps (8/20 = 0.4, kept at the
+/// 0.5 boundary over the head survivors); over the post-tail records its
+/// rate would be 0.8 and it would drop — the pre-Y1e prune matrices
+/// collected post-tail and would flip it.
+#[test]
+fn mind_counts_ignore_tail_rules() {
+    use reed_filter::spec::{MissingRate, TailRules};
+    let mut text = String::from(HEADER);
+    for i in 0..10_u32 {
+        // Records 1-5: s2 and s3 missing → missing-allele fraction 4/8
+        // fails `--geno 0.4`. Record 6: only s2 missing (tail passes).
+        // Records 7-10: only s1 missing (s2's only other missing record).
+        let row = |g: [&str; 4]| {
+            format!(
+                "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t{}\n",
+                i + 1,
+                g.join("\t")
+            )
+        };
+        let gts = match i {
+            0..=4 => ["0/1", "0/0", "./.", "./."],
+            5 => ["0/0", "0/0", "./.", "0/0"],
+            _ => ["0/0", "./.", "0/0", "0/0"],
+        };
+        text.push_str(&row(gts));
+    }
+    let dir = std::env::temp_dir().join(format!("reed-mind-tail-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&text, 256)).expect("invariant: write");
+    let spec_with = |geno: bool| FilterSpec {
+        mind: Some(MissingRate::parse("0.5").expect("valid")),
+        site_after_mask: TailRules {
+            max_missing: geno.then(|| MissingRate::parse("0.4").expect("valid")),
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    for (name, geno) in [("plain", false), ("tail", true)] {
+        let out = dir.join(format!("{name}.vcf.gz"));
+        let report = run_filter(Some(&path), &spec_with(geno), &options(None, &out))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let rule = report.sample_rule.as_ref().expect("sample rule reported");
+        assert_eq!(rule.n_dropped, 1, "{name}: only s2 crosses 0.5");
+        assert_eq!(report.n_samples_out, 3, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

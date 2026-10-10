@@ -27,11 +27,8 @@ use super::job_err;
 /// difference; the stages themselves have no branches on the strategy.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PipelineOptions {
-    /// Scan records whose head rules failed (the sketch pass needs their
-    /// missing calls for the cohort; the single pass skips the region).
-    pub(crate) scan_head_failures: bool,
-    /// Evaluate the mask for samples outside the keep list (the sketch pass
-    /// records all samples, the single pass masks kept samples only).
+    /// Evaluate the mask for samples outside the keep list (the matrix
+    /// pass0 records all samples, the single pass masks kept samples only).
     pub(crate) mask_all_samples: bool,
     /// Resolve CHROM to a header contig id; the index-writing path requires
     /// it (a record on an undeclared contig has no addressable tid).
@@ -61,15 +58,12 @@ pub(crate) struct RecordView<'r, 'l> {
     pub(crate) mask_rule: &'r [u16],
     /// 1-based record position.
     pub(crate) pos1: u64,
-    /// Whether the head rules passed (false only when
-    /// `scan_head_failures` hands the record over anyway).
-    pub(crate) head_passed: bool,
     /// Funnel counters: the body adds its own attribution here.
     pub(crate) funnel: &'r mut FunnelPartial,
 }
 
-/// Where one record ended up.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where one record ended up. The default is the head-failed outcome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Processed {
     /// Whether the head rules passed.
     pub(crate) head_passed: bool,
@@ -182,11 +176,8 @@ impl RecordPipeline {
 
         // ---- head stage (§11.2: order is semantics) ----
         let head_passed = eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
-        if !head_passed && !opts.scan_head_failures {
-            return Ok(Processed {
-                head_passed: false,
-                emitted: false,
-            });
+        if !head_passed {
+            return Ok(Processed::default());
         }
 
         // ---- scan stage (the one decoder; policies counted once) ----
@@ -270,11 +261,8 @@ impl RecordPipeline {
         .map_err(job_err)?;
         let pos1 = site.pos1;
         let head_passed = eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
-        if !head_passed && !opts.scan_head_failures {
-            return Ok(Processed {
-                head_passed: false,
-                emitted: false,
-            });
+        if !head_passed {
+            return Ok(Processed::default());
         }
         funnel.policy.add_decode(native.counters);
         let scan = ScanOutput {
@@ -591,7 +579,6 @@ where
         masked,
         mask_rule,
         pos1,
-        head_passed,
         funnel,
     };
     body(&mut view)?;
