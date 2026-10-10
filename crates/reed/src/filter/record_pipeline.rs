@@ -9,16 +9,16 @@
 
 use reed_core::Bitset;
 use reed_core::count::SiteCounts;
-use reed_core::math::hwe::HweCache;
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
+use reed_core::math::hwe::HweCache;
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{HeadScratch, eval_head};
-use reed_io::vcf::info::InfoIndex;
 use reed_filter::eval::tail::eval_tail;
 use reed_filter::expr;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
+use reed_io::vcf::info::InfoIndex;
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::{ContigTable, SiteView};
 
@@ -205,7 +205,7 @@ impl RecordPipeline {
             &mut self.counts,
             &mut self.fmt_storage,
             &mut self.hwe,
-            self.head.index_current.then(|| &self.head.index),
+            self.head.index_current.then_some(&self.head.index),
             body,
         )
     }
@@ -287,7 +287,7 @@ impl RecordPipeline {
             &mut self.counts,
             &mut self.fmt_storage,
             &mut self.hwe,
-            self.head.index_current.then(|| &self.head.index),
+            self.head.index_current.then_some(&self.head.index),
             body,
         )
     }
@@ -425,8 +425,7 @@ where
     masked.clear();
     mask_rule.fill(u16::MAX);
     *counts = SiteCounts::default();
-    let evaluated =
-        |i: usize| opts.mask_all_samples || keep.get(i).copied().unwrap_or(true);
+    let evaluated = |i: usize| opts.mask_all_samples || keep.get(i).copied().unwrap_or(true);
     // Site context for the `--set-gts .` expressions (no genotype-derived
     // fields: the plan rejects those, so the counts are not needed).
     let mut expr_site = expr::SiteValues::from_line(lr, pos1, None);
@@ -482,7 +481,7 @@ where
                 if masked.get(i)
                     || !evaluated(i)
                     || !(x.is_nan() && mask_on_missing)
-                        || (!x.is_nan() && !rule.cmp.apply_f64(f64::from(x)))
+                    || (!x.is_nan() && !rule.cmp.apply_f64(f64::from(x)))
                 {
                     continue;
                 }

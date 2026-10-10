@@ -226,7 +226,14 @@ mod tests {
         let rules = [TailRule::MinMaf(0.2), TailRule::MaxMaf(0.3)];
         let inside = counts(4, 20, 8, 0, 2); // MAF = 0.2
         let mut hits = vec![0_u64; rules.len()];
-        assert!(eval_tail(&values(&inside), &inside, 10, &rules, &mut hits, &mut HweCache::new()));
+        assert!(eval_tail(
+            &values(&inside),
+            &inside,
+            10,
+            &rules,
+            &mut hits,
+            &mut HweCache::new()
+        ));
         assert_eq!(hits, vec![1, 1]);
         let outside = counts(6, 20, 7, 0, 3); // MAF = 0.3
         let mut hits = vec![0_u64; rules.len()];

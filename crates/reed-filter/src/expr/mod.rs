@@ -12,7 +12,7 @@
 //! parentheses.
 //! `FMT/TAG` reads one sample's FORMAT value and is only meaningful through
 //! `--set-gts .` (02-cli.md §3.3), where the caller evaluates the
-//! expression per sample with a [`FmtValue`] table.
+//! expression per sample with the plan's scanned FORMAT table.
 //! Not yet supported: subscripts, general regular expressions (any pattern
 //! metacharacter beyond the anchors is reported, never reinterpreted),
 //! arithmetic.
@@ -388,10 +388,7 @@ fn info_value<'a>(
             .find(|(name, _)| *name == tag)
             .map(|(_, value)| value),
     };
-    let Some(value) = fragment else {
-        return None;
-    };
-    let Some(value) = value else {
+    let Some(value) = fragment? else {
         return Some(Val::Missing);
     };
     if value == b"." || value.is_empty() {

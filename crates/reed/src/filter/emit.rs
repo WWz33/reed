@@ -158,7 +158,7 @@ impl EmitJob {
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(&scratch.mask_bitset),
-            info_remove: &stale,
+            info_remove: stale,
             info_set: &emit.infos,
         };
         scratch.edit_buf.clear();

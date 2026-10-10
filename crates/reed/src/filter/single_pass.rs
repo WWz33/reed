@@ -342,7 +342,9 @@ impl FilterJob {
             // flow through the block writer like any other payload.
             Some(encoders) => {
                 emit.bcf_buf.clear();
-                encoders.encode(emit.edit_buf, emit.bcf_buf).map_err(job_err)?;
+                encoders
+                    .encode(emit.edit_buf, emit.bcf_buf)
+                    .map_err(job_err)?;
                 emit.writer.push_record(emit.bcf_buf, key).map_err(job_err)
             }
         }
@@ -467,7 +469,7 @@ impl FilterJob {
         };
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let edit_line = view.line;
-            self.emit_survivor(&mut emit, stale, view, &edit_line)
+            self.emit_survivor(&mut emit, stale, view, edit_line)
         })?;
         Ok(())
     }
