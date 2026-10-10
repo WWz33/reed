@@ -27,8 +27,7 @@ fn alt_freq(window: &WindowBuffer, samples: &[u32], site: usize) -> Option<f64> 
 
 /// Bias note for the site-mean statistics (f2/f3/f4) under any
 /// `VariantOnly` manifest.
-const FSTATS_BIAS: &str =
-    "variant-only input: monomorphic sites are absent, so this site mean is \
+const FSTATS_BIAS: &str = "variant-only input: monomorphic sites are absent, so this site mean is \
      inflated relative to all-sites semantics (site-density dependent); removed \
      true variants additionally bias the numerator";
 

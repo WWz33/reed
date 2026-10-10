@@ -31,8 +31,9 @@ pub fn allele_counts(
     pops: &PopulationView,
 ) -> Result<Vec<AlleleCountsResult>, Unavailable> {
     // The view must cover exactly the window's samples (§12.2-8).
-    pops.validate_against(window)
-        .map_err(|_| Unavailable { reason: ERR_POP_MISMATCH })?;
+    pops.validate_against(window).map_err(|_| Unavailable {
+        reason: ERR_POP_MISMATCH,
+    })?;
     Ok((0..pops.n_groups() as u32)
         .map(|group| {
             let samples = pops.samples(group);

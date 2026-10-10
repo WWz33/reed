@@ -23,19 +23,51 @@ pub struct ContigId(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowError {
     ZeroContigLength,
-    EmptyWindow { start: u64, end: u64 },
-    PositionCount { expected: usize, got: usize },
-    GenotypeCount { expected: usize, got: usize },
-    MissingCount { expected: usize, got: usize },
-    PhasedCount { expected: usize, got: usize },
-    PositionOutOfWindow { index: usize, pos: u32, start: u64, end: u64 },
-    MissingBitMismatch { index: usize },
+    EmptyWindow {
+        start: u64,
+        end: u64,
+    },
+    PositionCount {
+        expected: usize,
+        got: usize,
+    },
+    GenotypeCount {
+        expected: usize,
+        got: usize,
+    },
+    MissingCount {
+        expected: usize,
+        got: usize,
+    },
+    PhasedCount {
+        expected: usize,
+        got: usize,
+    },
+    PositionOutOfWindow {
+        index: usize,
+        pos: u32,
+        start: u64,
+        end: u64,
+    },
+    MissingBitMismatch {
+        index: usize,
+    },
     /// v0.1 rejects allele indices above 1 (biallelic) and below -1.
-    AlleleOutOfRange { index: usize, allele: i8 },
+    AlleleOutOfRange {
+        index: usize,
+        allele: i8,
+    },
     /// Window span extends past the declared contig length.
-    EndBeyondContigLength { end: u64, contig_len: u64 },
+    EndBeyondContigLength {
+        end: u64,
+        contig_len: u64,
+    },
     /// Positions must be strictly ascending.
-    PositionNotAscending { index: usize, prev: u32, pos: u32 },
+    PositionNotAscending {
+        index: usize,
+        prev: u32,
+        pos: u32,
+    },
 }
 
 impl fmt::Display for WindowError {

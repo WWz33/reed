@@ -6,7 +6,6 @@
 //! The `summary` section (§10.1): record and variant-class counts, the
 //! bcftools-stats `SN` analogue.
 
-
 pub mod histogram;
 pub mod report;
 
@@ -49,7 +48,7 @@ impl SummaryAcc {
             VariantClass::Indel => self.n_indel += 1,
             VariantClass::Symbolic => self.n_symbolic += 1,
             VariantClass::Ref => self.n_ref += 1,
-            VariantClass::Other => self.n_other += 1,
+            // `Other` plus any future `#[non_exhaustive]` class.
             _ => self.n_other += 1,
         }
         if n_alt > 1 {
@@ -95,8 +94,16 @@ mod tests {
 
     #[test]
     fn merge_is_addition() {
-        let mut a = SummaryAcc { n_records: 2, n_snv: 2, ..SummaryAcc::default() };
-        let b = SummaryAcc { n_records: 3, n_indel: 3, ..SummaryAcc::default() };
+        let mut a = SummaryAcc {
+            n_records: 2,
+            n_snv: 2,
+            ..SummaryAcc::default()
+        };
+        let b = SummaryAcc {
+            n_records: 3,
+            n_indel: 3,
+            ..SummaryAcc::default()
+        };
         a.merge(&b);
         assert_eq!(a.n_records, 5);
         assert_eq!(a.n_snv, 2);

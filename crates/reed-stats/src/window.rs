@@ -155,13 +155,20 @@ impl ContigBins {
 mod tests {
     use super::*;
     use crate::fst::FstKind;
-    use crate::request::{build_accs, StatKind};
+    use crate::request::{StatKind, build_accs};
 
     fn seed() -> Vec<StatAcc> {
         build_accs(
             &[
-                StatKind::Pi { group: 0, per_bp: false },
-                StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson },
+                StatKind::Pi {
+                    group: 0,
+                    per_bp: false,
+                },
+                StatKind::Fst {
+                    a: 0,
+                    b: 1,
+                    kind: FstKind::Hudson,
+                },
             ],
             &[2, 2],
         )
@@ -170,15 +177,26 @@ mod tests {
 
     fn row(refs: [u32; 2], alts: [u32; 2]) -> Vec<reed_core::count::SiteGroupCounts> {
         [
-            reed_core::count::SiteGroupCounts { n_ref_alleles: refs[0], n_alt_alleles: alts[0], ..Default::default() },
-            reed_core::count::SiteGroupCounts { n_ref_alleles: refs[1], n_alt_alleles: alts[1], ..Default::default() },
+            reed_core::count::SiteGroupCounts {
+                n_ref_alleles: refs[0],
+                n_alt_alleles: alts[0],
+                ..Default::default()
+            },
+            reed_core::count::SiteGroupCounts {
+                n_ref_alleles: refs[1],
+                n_alt_alleles: alts[1],
+                ..Default::default()
+            },
         ]
         .into()
     }
 
     #[test]
     fn bins_partition_sites_and_windows_merge_their_range() {
-        let grid = WindowGrid::Bp { size: 100, step: 100 };
+        let grid = WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        };
         let binning = BpBinning::from_grid(&grid).unwrap();
         let mut bins = ContigBins::new(binning, &seed());
         // Two sites in bin 0 (pos 0..50), one in bin 1 (pos 150).
@@ -192,14 +210,20 @@ mod tests {
         let w0 = bins.finish_window(&windows[0]);
         let w1 = bins.finish_window(&windows[1]);
         // Window 0 saw both groups' counts at two sites; window 1 at one.
-        let StatAcc::Pi(pi0) = &w0[0] else { panic!("pi first") };
-        let StatAcc::Pi(pi1) = &w1[0] else { panic!("pi first") };
+        let StatAcc::Pi(pi0) = &w0[0] else {
+            panic!("pi first")
+        };
+        let StatAcc::Pi(pi1) = &w1[0] else {
+            panic!("pi first")
+        };
         assert_eq!(pi0.counts().comparable, 6 + 6);
         assert_eq!(pi1.counts().comparable, 6);
         // Window 2 (beyond the last site) is all zeros → value None.
         let empty_window = grid.bp_windows(900, 950, 1000).unwrap();
         let w2 = bins.finish_window(&empty_window[0]);
-        let StatAcc::Pi(pi2) = &w2[0] else { panic!("pi first") };
+        let StatAcc::Pi(pi2) = &w2[0] else {
+            panic!("pi first")
+        };
         assert_eq!(pi2.counts().comparable, 0);
         assert!(pi2.value_per_pair().is_none());
     }
@@ -208,9 +232,11 @@ mod tests {
     fn merge_partitions_equal_whole() {
         let binning = BpBinning { width: 50 };
         let mut whole = ContigBins::new(binning, &seed());
-        for (pos, refs, alts) in
-            [(10_u64, [3_u32, 1], [1_u32, 3]), (60, [4, 0], [0, 0]), (70, [2, 2], [2, 2])]
-        {
+        for (pos, refs, alts) in [
+            (10_u64, [3_u32, 1], [1_u32, 3]),
+            (60, [4, 0], [0, 0]),
+            (70, [2, 2], [2, 2]),
+        ] {
             whole.push_site(pos, &row(refs, alts), true);
         }
         // Same sites split into two partials at an arbitrary point.
@@ -222,7 +248,10 @@ mod tests {
         part_a.merge_bins(&mut part_b);
         assert_eq!(part_a.n_sites(), whole.n_sites());
 
-        let grid = WindowGrid::Bp { size: 100, step: 100 };
+        let grid = WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        };
         let windows = grid.bp_windows(10, 70, 1000).unwrap();
         let merged = part_a.finish_window(&windows[0]);
         let direct = whole.finish_window(&windows[0]);

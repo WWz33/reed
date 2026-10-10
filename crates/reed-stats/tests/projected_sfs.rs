@@ -3,7 +3,7 @@
 //! accumulator laws on the weighted bins.
 
 use reed_core::math::sum::NeumaierSum;
-use reed_stats::sfs::{ProjectionCache, ProjectedSfsAcc, projection_weights};
+use reed_stats::sfs::{ProjectedSfsAcc, ProjectionCache, projection_weights};
 
 /// Exact hypergeometric P(k | n, m, alt) via f64 lgamma-summed binomial
 /// logs (an independent path from the ratio recursion; exact to ~1e−12 via
@@ -13,8 +13,8 @@ fn exact_p(k: u32, n: u32, m: u32, alt: u32) -> f64 {
         // ln C(nn, kk) via lgamma.
         crate_lgamma(nn + 1.0) - crate_lgamma(kk + 1.0) - crate_lgamma(nn - kk + 1.0)
     }
-    let ln_num = ln_choose(f64::from(alt), f64::from(k))
-        + ln_choose(f64::from(m - alt), f64::from(n - k));
+    let ln_num =
+        ln_choose(f64::from(alt), f64::from(k)) + ln_choose(f64::from(m - alt), f64::from(n - k));
     let ln_den = ln_choose(f64::from(m), f64::from(n));
     (ln_num - ln_den).exp()
 }
@@ -35,8 +35,7 @@ fn crate_lgamma(x: f64) -> f64 {
         1.505_632_735_149_311_6e-7,
     ];
     if x < 0.5 {
-        std::f64::consts::PI
-            / ((std::f64::consts::PI * x).sin() * crate_lgamma(1.0 - x))
+        std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * crate_lgamma(1.0 - x))
     } else {
         let x1 = x - 1.0;
         let mut a = COEF[0];
@@ -62,7 +61,10 @@ fn ratio_recursion_matches_exact_binomials() {
     ] {
         let w = projection_weights(m, alt, n);
         let total: f64 = w.iter().map(|(_, w)| w).sum();
-        assert!((total - 1.0).abs() < 1e-12, "m={m} alt={alt} n={n}: sum={total}");
+        assert!(
+            (total - 1.0).abs() < 1e-12,
+            "m={m} alt={alt} n={n}: sum={total}"
+        );
         // Retained ks stay within the true support and the retained mass
         // is ≈ 1 (the truncation is at the 1e−15×peak noise floor).
         let (k_lo, k_hi) = (n.saturating_sub(m - alt), n.min(alt));

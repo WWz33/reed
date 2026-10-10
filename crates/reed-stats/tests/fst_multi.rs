@@ -41,8 +41,7 @@ fn ref_wc84(inputs: &[(f64, f64, f64)]) -> (f64, f64, f64) {
         / (n_bar * (r - 1.0));
     let h_bar = inputs.iter().map(|(_, _, h)| h).sum::<f64>() / n_total;
     let a = (n_bar / n_c)
-        * (s2 - (1.0 / (n_bar - 1.0))
-            * (p_bar * (1.0 - p_bar) - (r - 1.0) * s2 / r - h_bar / 4.0));
+        * (s2 - (1.0 / (n_bar - 1.0)) * (p_bar * (1.0 - p_bar) - (r - 1.0) * s2 / r - h_bar / 4.0));
     let b = (n_bar / (n_bar - 1.0))
         * (p_bar * (1.0 - p_bar)
             - (r - 1.0) * s2 / r
@@ -76,7 +75,12 @@ fn wc84_three_populations_matches_reference() {
     }
     assert_eq!(acc.site_tally(), (4, 0));
     let (a_sum, b_sum, c_sum) = acc.components();
-    assert!((a_sum.value() - ra).abs() < 1e-12, "a: {} vs {}", a_sum.value(), ra);
+    assert!(
+        (a_sum.value() - ra).abs() < 1e-12,
+        "a: {} vs {}",
+        a_sum.value(),
+        ra
+    );
     assert!((b_sum.value() - rb).abs() < 1e-12);
     assert!((c_sum.value() - rc).abs() < 1e-12);
     assert!((acc.value().expect("invariant: sites") - ra / (ra + rb + rc)).abs() < 1e-12);
@@ -102,11 +106,6 @@ fn wc84_skips_degenerate_sites() {
     assert_eq!(acc.site_tally(), (0, 1));
     assert!(acc.value().is_none());
 }
-
-
-
-
-
 
 #[test]
 fn fst_matrix_covers_every_pair_once() {
@@ -147,7 +146,13 @@ fn fst_matrix_matches_individual_accumulators() {
         }
     }
     for (entry, (_, _, ref_acc)) in m.entries().into_iter().zip(&refs) {
-        assert_eq!(entry.value, ref_acc.value(FstKind::Hudson), "pair ({}, {})", entry.i, entry.j);
+        assert_eq!(
+            entry.value,
+            ref_acc.value(FstKind::Hudson),
+            "pair ({}, {})",
+            entry.i,
+            entry.j
+        );
     }
 }
 
@@ -160,13 +165,29 @@ fn pbs_pairs_are_independent_under_missing_data() {
     // three-way intersection is gone). The value stays undefined while two
     // pair denominators are empty.
     let row = vec![
-        SiteGroupCounts { n_ref_alleles: 4, n_alt_alleles: 2, ..Default::default() },
-        SiteGroupCounts { n_ref_alleles: 2, n_alt_alleles: 4, ..Default::default() },
-        SiteGroupCounts { n_ref_alleles: 0, n_alt_alleles: 0, ..Default::default() },
+        SiteGroupCounts {
+            n_ref_alleles: 4,
+            n_alt_alleles: 2,
+            ..Default::default()
+        },
+        SiteGroupCounts {
+            n_ref_alleles: 2,
+            n_alt_alleles: 4,
+            ..Default::default()
+        },
+        SiteGroupCounts {
+            n_ref_alleles: 0,
+            n_alt_alleles: 0,
+            ..Default::default()
+        },
     ];
     let mut per_pair = PbsAcc::new(0, 1, 2);
     per_pair.push(&row);
-    assert_eq!(per_pair.site_tally(), (1, 1), "site absorbed, one group uncovered");
+    assert_eq!(
+        per_pair.site_tally(),
+        (1, 1),
+        "site absorbed, one group uncovered"
+    );
     assert!(per_pair.value(PbsKind::Yi2010).is_none());
     let (f_ab, f_ac, f_bc) = per_pair.pair_fsts();
     assert!(f_ab.is_some() && f_ac.is_none() && f_bc.is_none());

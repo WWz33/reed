@@ -7,7 +7,7 @@
 // Casts in this file are bounded by construction: Subscript indices are bounded by the expression text length.
 #![allow(clippy::cast_possible_truncation)]
 
-use super::lexer::{tokenize, Token};
+use super::lexer::{Token, tokenize};
 
 /// A built-in site field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +73,13 @@ impl Field {
     pub const fn is_genotype_derived(self) -> bool {
         matches!(
             self,
-            Self::Ac | Self::An | Self::Af | Self::Mac | Self::Maf | Self::NMissing | Self::FMissing
+            Self::Ac
+                | Self::An
+                | Self::Af
+                | Self::Mac
+                | Self::Maf
+                | Self::NMissing
+                | Self::FMissing
         )
     }
 
@@ -310,7 +316,9 @@ mod tests {
     fn parses_precedence_and_fields() {
         let e = parse("QD<4 || FS>50 && MQ>=40").expect("invariant");
         // && binds tighter than ||.
-        let Expr::Logic("||", _, right) = &e else { panic!("{e:?}") };
+        let Expr::Logic("||", _, right) = &e else {
+            panic!("{e:?}")
+        };
         assert!(matches!(**right, Expr::Logic("&&", _, _)));
 
         let e = parse("QUAL>=30").expect("invariant");
@@ -321,7 +329,10 @@ mod tests {
         assert!(e.references_genotypes());
 
         let e = parse("AC > 1").expect("invariant");
-        assert!(e.references_genotypes(), "AC prefers INFO but can fall back to genotypes");
+        assert!(
+            e.references_genotypes(),
+            "AC prefers INFO but can fall back to genotypes"
+        );
 
         assert!(parse("QUAL >= 30 &&").is_err());
         assert!(parse("(QUAL >= 30").is_err());

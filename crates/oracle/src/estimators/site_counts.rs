@@ -55,8 +55,8 @@ impl SiteCounts {
     }
 
     /// Per-site exact HWE p-value, paired with
-    /// [`hardy_weinberg_p_value`](super::hwe::hardy_weinberg_p_value)
-    /// (Wigginton, Cutler & Abecasis 2005) over the genotype classes.
+    /// `hardy_weinberg_p_value` (Wigginton, Cutler & Abecasis 2005) over the
+    /// genotype classes.
     ///
     /// Degenerate sites (see [`SiteCounts::hwe_is_degenerate`]) return 1.0 —
     /// the fill-tags sentinel — which also covers the empty site, where the
@@ -206,7 +206,11 @@ mod tests {
         let c = count_site(&[0, 1, 1, 0], None);
         assert!((c.maf() - 0.5).abs() < 1e-12);
         // The filter layer's an = 10, ac = 5 boundary case.
-        let c = SiteCounts { ac: 5, an: 10, ..SiteCounts::default() };
+        let c = SiteCounts {
+            ac: 5,
+            an: 10,
+            ..SiteCounts::default()
+        };
         assert!((c.maf() - 0.5).abs() < 1e-12);
     }
 
@@ -214,7 +218,11 @@ mod tests {
     /// exactly when AN = 0 or an allele side is empty.
     #[test]
     fn hwe_degenerate_sentinels() {
-        let mut c = SiteCounts { ac: 0, an: 10, ..SiteCounts::default() };
+        let mut c = SiteCounts {
+            ac: 0,
+            an: 10,
+            ..SiteCounts::default()
+        };
         assert!(c.hwe_is_degenerate());
         c.ac = 10;
         assert!(c.hwe_is_degenerate());
@@ -253,7 +261,10 @@ mod tests {
         // genotype classes of the site.
         let gt = [0, 0, 0, 1, 1, 1, 1, 1]; // hom_ref = 1, het = 1, hom_alt = 2
         let c = count_site(&gt, None);
-        assert_eq!(c.hwe_p(), hardy_weinberg_p_value(c.het, c.hom_ref, c.hom_alt));
+        assert_eq!(
+            c.hwe_p(),
+            hardy_weinberg_p_value(c.het, c.hom_ref, c.hom_alt)
+        );
     }
 
     /// Edge inherited from the reference: a site whose only calls are

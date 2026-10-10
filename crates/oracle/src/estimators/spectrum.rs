@@ -97,7 +97,11 @@ pub fn sfs(
     let samples = samples_of(pops, window, group)?;
     let bias = super::monomorphic_invariant_note(window.manifest, SPECTRUM_BIAS);
     let n = 2 * samples.len() as u64;
-    let bins = if folded { (n / 2) as usize } else { n.saturating_sub(1) as usize };
+    let bins = if folded {
+        (n / 2) as usize
+    } else {
+        n.saturating_sub(1) as usize
+    };
     let mut counts = vec![0u64; bins];
     let (mut n_sites, mut n_skipped_missing) = (0u64, 0u64);
     if n >= 2 {
@@ -279,7 +283,11 @@ pub fn tajima_d(
 
     let a1n = a1(n);
     let a2n = a2(n);
-    let theta_w = if a1n > 0.0 { segregating as f64 / a1n } else { 0.0 };
+    let theta_w = if a1n > 0.0 {
+        segregating as f64 / a1n
+    } else {
+        0.0
+    };
 
     // Standard moment variance (Tajima 1989), computed once and shared by the
     // guard and the struct field (§12.1 降级项: v0.2 去重).
@@ -293,8 +301,8 @@ pub fn tajima_d(
         let e2 = c2 / (a1n * a1n + a2n);
         let s = segregating as f64;
         let variance = e1 * s + e2 * s * (s - 1.0);
-        let d = (segregating >= min_sites && variance > 0.0)
-            .then(|| (pi - theta_w) / variance.sqrt());
+        let d =
+            (segregating >= min_sites && variance > 0.0).then(|| (pi - theta_w) / variance.sqrt());
         (variance, d)
     } else {
         (0.0, None)

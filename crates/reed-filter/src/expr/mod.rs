@@ -80,8 +80,12 @@ impl<'a> SiteValues<'a> {
     /// Builds the context from a record line; `gt` carries the
     /// genotype-derived counts when they are known (after the mask stage).
     #[must_use]
-    pub fn from_line(line: &'a reed_io::vcf::line::LineRef<'a>, pos1: u64, gt: Option<GtCounts>) -> Self {
-        use reed_core::site::{classify_variant, VariantClass};
+    pub fn from_line(
+        line: &'a reed_io::vcf::line::LineRef<'a>,
+        pos1: u64,
+        gt: Option<GtCounts>,
+    ) -> Self {
+        use reed_core::site::{VariantClass, classify_variant};
         let reference = line.reference();
         let alts = line.alts();
         let primary = match memchr::memchr(b',', alts) {
@@ -113,8 +117,7 @@ impl<'a> SiteValues<'a> {
             chrom: line.chrom(),
             pos: pos1,
             variant_type,
-            n_alt: u32::try_from(alts.iter().filter(|&&b| b == b',').count() + 1)
-                .unwrap_or(u32::MAX),
+            n_alt: u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX),
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
             gt,
@@ -230,11 +233,16 @@ pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Resul
             // A subscript selects an element of a multi-valued value; the
             // planned columns carry single values only.
             check(inner, info_tags, format_tags)?;
-            Err("subscripts ([0], [*]) are not supported yet (multi-valued FORMAT tags)".to_string())
+            Err(
+                "subscripts ([0], [*]) are not supported yet (multi-valued FORMAT tags)"
+                    .to_string(),
+            )
         }
         Expr::Cmp(op @ ("~" | "!~"), lhs, rhs) => {
             let Expr::Str(pattern) = &**rhs else {
-                return Err(format!("the right-hand side of {op} must be a string literal"));
+                return Err(format!(
+                    "the right-hand side of {op} must be a string literal"
+                ));
             };
             check_pattern(pattern)?;
             check(lhs, info_tags, format_tags)
@@ -332,7 +340,11 @@ fn field_value<'a>(field: Field, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
         Field::Ac => info_or_gt(site, b"AC", |g| g.ac as f64),
         Field::An => info_or_gt(site, b"AN", |g| g.an as f64),
         Field::Af => info_or_gt(site, b"AF", |g| {
-            if g.an > 0 { g.ac as f64 / g.an as f64 } else { f64::NAN }
+            if g.an > 0 {
+                g.ac as f64 / g.an as f64
+            } else {
+                f64::NAN
+            }
         }),
         Field::Mac => info_or_gt(site, b"MAC", |g| {
             let major = g.ac.max(g.an.saturating_sub(g.ac));
@@ -383,10 +395,15 @@ fn info_value<'a>(info: &'a [u8], tag: &[u8]) -> Option<Val<'a>> {
                 return Some(Val::Missing);
             }
             let first = value.split(|&b| b == b',').next().unwrap_or(value);
-            return Some(match std::str::from_utf8(first).ok().and_then(|s| s.parse::<f64>().ok()) {
-                Some(n) => Val::Num(n),
-                None => Val::Str(first),
-            });
+            return Some(
+                match std::str::from_utf8(first)
+                    .ok()
+                    .and_then(|s| s.parse::<f64>().ok())
+                {
+                    Some(n) => Val::Num(n),
+                    None => Val::Str(first),
+                },
+            );
         }
     }
     None
@@ -415,7 +432,11 @@ pub fn matches_pattern(pattern: &str, text: &str) -> bool {
     let anchored_start = pattern.starts_with('^');
     let anchored_end = pattern.ends_with('$') && pattern.len() > usize::from(anchored_start);
     let body = pattern.strip_prefix('^').unwrap_or(pattern);
-    let body = if anchored_end { &body[..body.len() - 1] } else { body };
+    let body = if anchored_end {
+        &body[..body.len() - 1]
+    } else {
+        body
+    };
     match (anchored_start, anchored_end) {
         (true, true) => text == body,
         (true, false) => text.starts_with(body),
@@ -426,6 +447,11 @@ pub fn matches_pattern(pattern: &str, text: &str) -> bool {
 
 /// Comparison with bcftools' rules: numeric when both sides parse as
 /// numbers, otherwise byte-wise.
+///
+/// The float comparisons are exact (`==`, `<`, …), deliberately: bcftools
+/// evaluates the same operators on the same f64 values, so an epsilon here
+/// would change which records survive.
+#[allow(clippy::float_cmp)]
 fn compare(op: &str, left: &Val<'_>, right: &Val<'_>) -> bool {
     if let (Some(a), Some(b)) = (left.as_num(), right.as_num()) {
         return match op {
@@ -455,7 +481,7 @@ fn compare(op: &str, left: &Val<'_>, right: &Val<'_>) -> bool {
 mod tests {
     use super::*;
 
-    fn site<'a>(info: &'a [u8], qual: Option<f64>, gt: Option<GtCounts>) -> SiteValues<'a> {
+    fn site(info: &[u8], qual: Option<f64>, gt: Option<GtCounts>) -> SiteValues<'_> {
         SiteValues {
             qual,
             filter: b"PASS",
@@ -483,12 +509,23 @@ mod tests {
         // QUAL >= 30
         assert!(ev("QUAL>=30", &site(b".", Some(50.0), None), &tags));
         assert!(!ev("QUAL>=30", &site(b".", Some(10.0), None), &tags));
-        assert!(!ev("QUAL>=30", &site(b".", None, None), &tags), "missing QUAL fails");
+        assert!(
+            !ev("QUAL>=30", &site(b".", None, None), &tags),
+            "missing QUAL fails"
+        );
         // QD<4 || FS>50 || MQ<40 || SOR>3 (the gold exclusion)
         let bad = b"QD=2.0;FS=10.0;MQ=60.0;SOR=1.0";
-        assert!(ev("QD<4 || FS>50 || MQ<40 || SOR>3", &site(bad, Some(50.0), None), &tags));
+        assert!(ev(
+            "QD<4 || FS>50 || MQ<40 || SOR>3",
+            &site(bad, Some(50.0), None),
+            &tags
+        ));
         let good = b"QD=10.0;FS=10.0;MQ=60.0;SOR=1.0";
-        assert!(!ev("QD<4 || FS>50 || MQ<40 || SOR>3", &site(good, Some(50.0), None), &tags));
+        assert!(!ev(
+            "QD<4 || FS>50 || MQ<40 || SOR>3",
+            &site(good, Some(50.0), None),
+            &tags
+        ));
         // Missing INFO compares false (bcftools).
         assert!(!ev("QD<4", &site(b".", Some(50.0), None), &tags));
     }
@@ -497,18 +534,34 @@ mod tests {
     fn strings_logic_and_genotype_fallbacks() {
         let tags: [&str; 0] = [];
         assert!(ev("FILTER=\"PASS\"", &site(b".", Some(1.0), None), &tags));
-        assert!(!ev("FILTER=\"LowQual\"", &site(b".", Some(1.0), None), &tags));
-        assert!(ev("CHROM=\"chr1\" && POS==100", &site(b".", Some(1.0), None), &tags));
+        assert!(!ev(
+            "FILTER=\"LowQual\"",
+            &site(b".", Some(1.0), None),
+            &tags
+        ));
+        assert!(ev(
+            "CHROM=\"chr1\" && POS==100",
+            &site(b".", Some(1.0), None),
+            &tags
+        ));
         assert!(ev("TYPE=\"snp\"", &site(b".", Some(1.0), None), &tags));
         assert!(ev("!(QUAL<10)", &site(b".", Some(50.0), None), &tags));
 
         // AC from INFO when present, else from genotypes.
         assert!(ev("AC==5", &site(b"AC=5", Some(1.0), None), &["AC"]));
-        let gt = GtCounts { ac: 3, an: 8, n_missing: 2, n_samples: 4 };
+        let gt = GtCounts {
+            ac: 3,
+            an: 8,
+            n_missing: 2,
+            n_samples: 4,
+        };
         assert!(ev("AC==3", &site(b".", Some(1.0), Some(gt)), &[]));
         assert!(ev("AF==0.375", &site(b".", Some(1.0), Some(gt)), &[]));
         assert!(ev("F_MISSING==0.5", &site(b".", Some(1.0), Some(gt)), &[]));
-        assert!(!ev("F_MISSING==0.5", &site(b".", Some(1.0), None), &[]), "no counts yet");
+        assert!(
+            !ev("F_MISSING==0.5", &site(b".", Some(1.0), None), &[]),
+            "no counts yet"
+        );
         assert!(ev("MAF==0.375", &site(b".", Some(1.0), Some(gt)), &[]));
     }
 
@@ -520,10 +573,26 @@ mod tests {
                 .unwrap_err()
                 .contains("not declared")
         );
-        assert!(parse_and_check("INFO/AC[0]>1", &["AC".into()]).unwrap_err().contains("subscripts"));
-        assert!(parse_and_check("ID~\"rs[0-9]\"", &[]).unwrap_err().contains("metacharacter"));
-        assert!(parse_and_check("ID~QSOMETHING", &[]).unwrap_err().contains("string literal"));
-        assert!(parse_and_check("NOSUCH>1", &[]).unwrap_err().contains("not declared"));
+        assert!(
+            parse_and_check("INFO/AC[0]>1", &["AC".into()])
+                .unwrap_err()
+                .contains("subscripts")
+        );
+        assert!(
+            parse_and_check("ID~\"rs[0-9]\"", &[])
+                .unwrap_err()
+                .contains("metacharacter")
+        );
+        assert!(
+            parse_and_check("ID~QSOMETHING", &[])
+                .unwrap_err()
+                .contains("string literal")
+        );
+        assert!(
+            parse_and_check("NOSUCH>1", &[])
+                .unwrap_err()
+                .contains("not declared")
+        );
         assert!(parse_and_check("QUAL>", &[]).is_err());
     }
 
@@ -543,9 +612,25 @@ mod tests {
 
     #[test]
     fn genotype_dependence_placement() {
-        assert!(!parser::parse("QUAL>=30 && INFO/DP>10").expect("inv").references_genotypes());
-        assert!(parser::parse("F_MISSING<0.1").expect("inv").references_genotypes());
-        assert!(parser::parse("N_MISSING<2").expect("inv").references_genotypes());
-        assert!(!parser::parse("FILTER=\"PASS\"").expect("inv").references_genotypes());
+        assert!(
+            !parser::parse("QUAL>=30 && INFO/DP>10")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(
+            parser::parse("F_MISSING<0.1")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(
+            parser::parse("N_MISSING<2")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(
+            !parser::parse("FILTER=\"PASS\"")
+                .expect("inv")
+                .references_genotypes()
+        );
     }
 }

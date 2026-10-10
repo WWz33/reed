@@ -5,9 +5,9 @@
 //! into these types by `reed-cli`; tests construct it directly. There is no
 //! TOML or conf file format (02-cli.md §0).
 
-pub mod missing_rate;
 pub mod cohort;
 pub mod mask;
+pub mod missing_rate;
 pub mod predicate;
 pub mod recompute;
 pub mod region;
@@ -15,12 +15,12 @@ pub mod render;
 
 use serde::{Deserialize, Serialize};
 
-pub use missing_rate::MissingRate;
 pub use cohort::{SampleList, SampleSelect};
 pub use mask::GenotypeMaskRule;
+pub use missing_rate::MissingRate;
 pub use predicate::{Cmp, OnMissing, Quantifier, Typed};
-pub use region::{Region, RegionRule};
 pub use recompute::RecomputeSpec;
+pub use region::{Region, RegionRule};
 
 /// The filter specification (§11.1). One typed value; the flag vector is
 /// its other spelling (`to_args`, `spec/render.rs`).
@@ -92,7 +92,7 @@ impl AfKind {
                 return Err(format!(
                     "unknown allele-frequency type {other:?} \
                      (expected nref, alt1, minor, major or nonmajor)"
-                ))
+                ));
             }
         })
     }
@@ -299,5 +299,3 @@ pub enum MultiallelicPolicy {
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
-
-

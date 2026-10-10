@@ -21,7 +21,10 @@ impl IntHistogram {
     /// A histogram of `0..=max` with an overflow bucket.
     #[must_use]
     pub fn new(max: u32) -> Self {
-        Self { max, bins: vec![0; max as usize + 2] }
+        Self {
+            max,
+            bins: vec![0; max as usize + 2],
+        }
     }
 
     /// Absorbs one observation (values above `max` land in the overflow
@@ -80,10 +83,12 @@ impl IntHistogram {
         for (i, &n) in self.bins.iter().enumerate() {
             acc += n;
             if acc >= target {
-                let value = u32::try_from(i)
-                    .ok()
-                    .unwrap_or(self.max + 1);
-                return Some(value.min(if i + 1 == self.bins.len() { self.max + 1 } else { value }));
+                let value = u32::try_from(i).ok().unwrap_or(self.max + 1);
+                return Some(value.min(if i + 1 == self.bins.len() {
+                    self.max + 1
+                } else {
+                    value
+                }));
             }
         }
         None
@@ -141,15 +146,15 @@ impl QualDist {
     /// bcftools's `dist_get` range for a bin index: `[beg, end)` in iqual
     /// units (exact bins span one 0.1 QUAL step).
     #[must_use]
-    pub fn bin_range(idx: usize) -> (u32, u32) {
-        if idx < NEXACT {
+    pub fn bin_range(index: usize) -> (u32, u32) {
+        if index < NEXACT {
             return (
-                u32::try_from(idx).unwrap_or(u32::MAX),
-                u32::try_from(idx + 1).unwrap_or(u32::MAX),
+                u32::try_from(index).unwrap_or(u32::MAX),
+                u32::try_from(index + 1).unwrap_or(u32::MAX),
             );
         }
-        let level = (idx - NEXACT) / NLEVEL + 1;
-        let bin = idx - NEXACT - NLEVEL * (level - 1);
+        let level = (index - NEXACT) / NLEVEL + 1;
+        let bin = index - NEXACT - NLEVEL * (level - 1);
         let step = 10_u64.pow(u32::try_from(level).unwrap_or(0));
         let value = 10_u64.pow(u32::try_from(level + 4).unwrap_or(63)) + step * bin as u64;
         (
@@ -181,8 +186,8 @@ impl QualDist {
 
     /// Count at a bin index (`0` beyond the inserted range).
     #[must_use]
-    pub fn count_at(&self, idx: usize) -> u64 {
-        self.bins.get(&idx).copied().unwrap_or(0)
+    pub fn count_at(&self, index: usize) -> u64 {
+        self.bins.get(&index).copied().unwrap_or(0)
     }
 
     /// Number of bins (`nbins` = highest inserted index + 1, like

@@ -94,7 +94,7 @@ impl PairSums {
         Some(num / den)
     }
 
-    /// The covariance E[xy] − E[x]·E[y] over the valid samples (the
+    /// The covariance `E[xy] − E[x]·E[y]` over the valid samples (the
     /// sample-size-n denominator applies — Rogers-Huff D).
     #[must_use]
     pub fn covariance(&self) -> Option<f64> {
@@ -126,7 +126,9 @@ impl LdDecayAcc {
         let n = edges.len().max(1);
         Self {
             edges,
-            sum_r2: (0..n).map(|_| reed_core::math::sum::NeumaierSum::new()).collect(),
+            sum_r2: (0..n)
+                .map(|_| reed_core::math::sum::NeumaierSum::new())
+                .collect(),
             counts: vec![0; n],
         }
     }

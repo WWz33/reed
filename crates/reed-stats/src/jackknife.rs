@@ -5,7 +5,7 @@
 //! block partition (and therefore the SE) is independent of the chunk
 //! partition and thread count (§7.6). Blocks are fixed site counts
 //! (equal-sized), so the plain delete-1 jackknife applies; unequal blocks
-//! (Busing-weighted) are future work (# ponytail).
+//! (Busing-weighted) are future work (TODO).
 
 use reed_core::math::sum::NeumaierSum;
 
@@ -113,7 +113,7 @@ impl BlockJackknife {
         let mut vj = Vec::with_capacity(n_blocks);
         let iter_blocks = || -> Vec<(NeumaierSum, NeumaierSum, u64)> {
             let mut out: Vec<(NeumaierSum, NeumaierSum, u64)> =
-                self.blocks.values().cloned().collect();
+                self.blocks.values().copied().collect();
             if let Some((_, n, d, c)) = &self.open {
                 out.push((*n, *d, *c));
             }
@@ -175,9 +175,10 @@ impl BpBlockJackknife {
         self.total.0.add(num);
         self.total.1.add(den);
         self.n_sites += 1;
-        let entry = self.blocks.entry(key).or_insert_with(|| {
-            (NeumaierSum::new(), NeumaierSum::new(), 0)
-        });
+        let entry = self
+            .blocks
+            .entry(key)
+            .or_insert_with(|| (NeumaierSum::new(), NeumaierSum::new(), 0));
         entry.0.add(num);
         entry.1.add(den);
         entry.2 += 1;
@@ -234,9 +235,10 @@ impl BpBlockJackknife {
     pub fn merge(&mut self, other: &Self) {
         debug_assert_eq!(self.block_bp, other.block_bp, "invariant: same block size");
         for (key, (num, den, n)) in &other.blocks {
-            let entry = self.blocks.entry(key.clone()).or_insert_with(|| {
-                (NeumaierSum::new(), NeumaierSum::new(), 0)
-            });
+            let entry = self
+                .blocks
+                .entry(key.clone())
+                .or_insert_with(|| (NeumaierSum::new(), NeumaierSum::new(), 0));
             entry.0.merge(num);
             entry.1.merge(den);
             entry.2 += n;
@@ -257,14 +259,25 @@ mod tests {
         // at an arbitrary point (55) — the block grid is the global ordinal
         // grid, so the result matches the single-partial run exactly.
         let values: Vec<(f64, f64)> = (0..100)
-            .map(|i| ((f64::from(i) * 7.0 % 13.0) - 3.0, 5.0 + (f64::from(i) * 11.0 % 17.0)))
+            .map(|i| {
+                (
+                    (f64::from(i) * 7.0 % 13.0) - 3.0,
+                    5.0 + (f64::from(i) * 11.0 % 17.0),
+                )
+            })
             .collect();
         let mut whole = BlockJackknife::new(10);
-        whole.accept(&BlockPartial { values: values.clone() });
+        whole.accept(&BlockPartial {
+            values: values.clone(),
+        });
 
         let mut split = BlockJackknife::new(10);
-        split.accept(&BlockPartial { values: values[..55].to_vec() });
-        split.accept(&BlockPartial { values: values[55..].to_vec() });
+        split.accept(&BlockPartial {
+            values: values[..55].to_vec(),
+        });
+        split.accept(&BlockPartial {
+            values: values[55..].to_vec(),
+        });
 
         assert_eq!(split.n_blocks(), whole.n_blocks());
         let (est_w, se_w, vj_w) = whole.jackknife().expect("invariant: blocks");
@@ -279,7 +292,12 @@ mod tests {
     #[test]
     fn se_matches_brute_force_delete_one() {
         let values: Vec<(f64, f64)> = (0..200)
-            .map(|i| ((f64::from(i) * 7.0 % 13.0) - 3.0, 5.0 + (f64::from(i) * 11.0 % 17.0)))
+            .map(|i| {
+                (
+                    (f64::from(i) * 7.0 % 13.0) - 3.0,
+                    5.0 + (f64::from(i) * 11.0 % 17.0),
+                )
+            })
             .collect();
         let block_size = 20_u64;
         let mut jk = BlockJackknife::new(block_size);
@@ -287,10 +305,10 @@ mod tests {
             jk.push(*num, *den);
         }
         let (est, se, vj) = jk.jackknife().expect("invariant: ≥ 2 blocks");
-        let n_blocks = values.len().div_ceil(block_size as usize);
+        let n_blocks = values.len().div_ceil(usize::try_from(block_size).unwrap());
         let mut sums = vec![(0.0, 0.0); n_blocks];
         for (i, (num, den)) in values.iter().enumerate() {
-            let (n, d) = &mut sums[i / block_size as usize];
+            let (n, d) = &mut sums[i / usize::try_from(block_size).unwrap()];
             *n += num;
             *d += den;
         }
@@ -308,7 +326,10 @@ mod tests {
         let n = vj_brute.len() as f64;
         let mean = vj_brute.iter().sum::<f64>() / n;
         let se_brute = (((n - 1.0) / n)
-            * vj_brute.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>())
+            * vj_brute
+                .iter()
+                .map(|v| (v - mean) * (v - mean))
+                .sum::<f64>())
         .sqrt();
         assert_eq!(vj.len(), vj_brute.len());
         assert!((se - se_brute).abs() < 1e-9, "{se} vs {se_brute}");

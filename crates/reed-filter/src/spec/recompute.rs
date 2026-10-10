@@ -21,15 +21,28 @@ pub struct RecomputeSpec {
 
 impl Default for RecomputeSpec {
     fn default() -> Self {
-        Self { tags: Vec::new(), drop_stale: default_drop_stale(), no_update: false }
+        Self {
+            tags: Vec::new(),
+            drop_stale: default_drop_stale(),
+            no_update: false,
+        }
     }
 }
 
 fn default_drop_stale() -> Vec<String> {
-    ["AC", "AN", "AF", "MLEAC", "MLEAF", "ExcessHet", "InbreedingCoeff", "DP"]
-        .iter()
-        .map(ToString::to_string)
-        .collect()
+    [
+        "AC",
+        "AN",
+        "AF",
+        "MLEAC",
+        "MLEAF",
+        "ExcessHet",
+        "InbreedingCoeff",
+        "DP",
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect()
 }
 
 impl RecomputeSpec {
@@ -37,7 +50,10 @@ impl RecomputeSpec {
     #[must_use]
     pub fn all() -> Self {
         Self {
-            tags: ["AC", "AN", "NS", "MAF", "HWE"].iter().map(ToString::to_string).collect(),
+            tags: ["AC", "AN", "NS", "MAF", "HWE"]
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             drop_stale: default_drop_stale(),
             no_update: false,
         }
@@ -52,6 +68,10 @@ impl RecomputeSpec {
     /// The stale list as byte slices for the editor.
     #[must_use]
     pub fn stale_bytes(&self) -> Vec<Vec<u8>> {
-        self.drop_stale.iter().map(String::as_bytes).map(<[u8]>::to_vec).collect()
+        self.drop_stale
+            .iter()
+            .map(String::as_bytes)
+            .map(<[u8]>::to_vec)
+            .collect()
     }
 }

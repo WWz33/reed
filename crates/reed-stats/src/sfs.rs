@@ -127,8 +127,7 @@ pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
         // denominator's inner difference goes through i64 — the u64
         // intermediate (m−alt)−n can be negative before k is added.
         let num = (alt - k) as f64 * (n - k) as f64;
-        let den = (k + 1) as f64
-            * (m as i64 - alt as i64 - n as i64 + k as i64 + 1) as f64;
+        let den = (k + 1) as f64 * (m as i64 - alt as i64 - n as i64 + k as i64 + 1) as f64;
         w *= num / den;
         k += 1;
         out.push((u32::try_from(k).unwrap_or(u32::MAX), w));
@@ -150,7 +149,7 @@ pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
 }
 
 /// Worker-side memo for projection weights, keyed by `(m, alt)` for a
-/// fixed `n` (§9.4: LRU; # ponytail: clear-on-full like HweCache).
+/// fixed `n` (§9.4: LRU; TODO: clear-on-full like `HweCache`).
 /// A shared weight slice (the cache hands out `Arc`s so sites reuse one
 /// allocation).
 pub type WeightsArc = std::sync::Arc<Vec<(u32, f64)>>;
@@ -170,7 +169,10 @@ impl ProjectionCache {
     /// A cache for a fixed projection size `n`.
     #[must_use]
     pub fn new(n: u32) -> Self {
-        Self { n, map: std::collections::HashMap::new() }
+        Self {
+            n,
+            map: std::collections::HashMap::new(),
+        }
     }
 
     /// The projection size.

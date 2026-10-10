@@ -5,8 +5,8 @@
 //! plus the per-estimator 判定 recorded in DESIGN §12.3/§16.1.
 
 use reed_oracle::estimators::allele_counts::allele_counts;
-use reed_oracle::estimators::fstats::{d_stat, f2};
 use reed_oracle::estimators::fst::{fst, FstEstimator};
+use reed_oracle::estimators::fstats::{d_stat, f2};
 use reed_oracle::estimators::hwe::{heterozygosity, hwe_exact};
 use reed_oracle::estimators::ld::{ld_r2_pairs, ld_r2_summary};
 use reed_oracle::estimators::pbs::{pbs, PbsEstimator};

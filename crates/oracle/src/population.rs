@@ -12,11 +12,18 @@ pub enum PopError {
     /// Assignment length does not match the sample count.
     AssignmentLength { expected: usize, got: usize },
     /// A sample was assigned to a group index outside `0..n_groups`.
-    GroupOutOfRange { sample: usize, group: u32, n_groups: u32 },
+    GroupOutOfRange {
+        sample: usize,
+        group: u32,
+        n_groups: u32,
+    },
     /// A declared group has no samples.
     EmptyGroup(u32),
     /// The view's sample count does not match the window being analysed.
-    SampleCountMismatch { view_samples: usize, window_samples: u32 },
+    SampleCountMismatch {
+        view_samples: usize,
+        window_samples: u32,
+    },
 }
 
 impl fmt::Display for PopError {
@@ -24,14 +31,24 @@ impl fmt::Display for PopError {
         match self {
             PopError::NoGroups => write!(f, "n_groups must be at least 1"),
             PopError::AssignmentLength { expected, got } => {
-                write!(f, "assignment length {got} does not match {expected} samples")
+                write!(
+                    f,
+                    "assignment length {got} does not match {expected} samples"
+                )
             }
-            PopError::GroupOutOfRange { sample, group, n_groups } => write!(
+            PopError::GroupOutOfRange {
+                sample,
+                group,
+                n_groups,
+            } => write!(
                 f,
                 "sample {sample} assigned to group {group}, but only {n_groups} groups exist"
             ),
             PopError::EmptyGroup(g) => write!(f, "group {g} has no samples"),
-            PopError::SampleCountMismatch { view_samples, window_samples } => write!(
+            PopError::SampleCountMismatch {
+                view_samples,
+                window_samples,
+            } => write!(
                 f,
                 "population view covers {view_samples} samples but the window has {window_samples}"
             ),
@@ -141,11 +158,18 @@ mod tests {
         );
         assert_eq!(
             PopulationView::from_assignment(3, &[0, 1], 2),
-            Err(PopError::AssignmentLength { expected: 3, got: 2 })
+            Err(PopError::AssignmentLength {
+                expected: 3,
+                got: 2
+            })
         );
         assert_eq!(
             PopulationView::from_assignment(2, &[0, 2], 2),
-            Err(PopError::GroupOutOfRange { sample: 1, group: 2, n_groups: 2 })
+            Err(PopError::GroupOutOfRange {
+                sample: 1,
+                group: 2,
+                n_groups: 2
+            })
         );
         assert_eq!(
             PopulationView::from_assignment(2, &[0, 0], 2),

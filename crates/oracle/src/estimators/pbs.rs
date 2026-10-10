@@ -131,10 +131,10 @@ fn pair_mpd(a: crate::window::AlleleCounts, b: crate::window::AlleleCounts) -> P
     let n_a = a.ref_count + a.alt_count;
     let n_b = b.ref_count + b.alt_count;
     PairMpd {
-        within_a: (n_a >= 2).then(|| a.ref_count as f64 * a.alt_count as f64
-            / (n_a * (n_a - 1) / 2) as f64),
-        within_b: (n_b >= 2).then(|| b.ref_count as f64 * b.alt_count as f64
-            / (n_b * (n_b - 1) / 2) as f64),
+        within_a: (n_a >= 2)
+            .then(|| a.ref_count as f64 * a.alt_count as f64 / (n_a * (n_a - 1) / 2) as f64),
+        within_b: (n_b >= 2)
+            .then(|| b.ref_count as f64 * b.alt_count as f64 / (n_b * (n_b - 1) / 2) as f64),
         between: (n_a >= 1 && n_b >= 1).then(|| {
             (a.ref_count * b.alt_count + a.alt_count * b.ref_count) as f64 / (n_a * n_b) as f64
         }),
@@ -175,10 +175,16 @@ pub fn pbs(
     let (between_total_ab, between_total_ac, between_total_bc) =
         (chrom_a * chrom_b, chrom_a * chrom_c, chrom_b * chrom_c);
 
-    let (mut within_a, mut within_b, mut within_c) =
-        (PairCounts::default(), PairCounts::default(), PairCounts::default());
-    let (mut between_ab, mut between_ac, mut between_bc) =
-        (PairCounts::default(), PairCounts::default(), PairCounts::default());
+    let (mut within_a, mut within_b, mut within_c) = (
+        PairCounts::default(),
+        PairCounts::default(),
+        PairCounts::default(),
+    );
+    let (mut between_ab, mut between_ac, mut between_bc) = (
+        PairCounts::default(),
+        PairCounts::default(),
+        PairCounts::default(),
+    );
     let (mut n_sites, mut n_skipped) = (0u64, 0u64);
     // Per-site-normalised Hudson sums per pair (allel hudson_fst semantics).
     let (mut num_ab, mut den_ab) = (0.0f64, 0.0f64);

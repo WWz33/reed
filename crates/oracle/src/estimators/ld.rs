@@ -16,8 +16,7 @@ use crate::window::{ContigId, WindowBuffer};
 use super::samples_of;
 
 /// Bias note for the window summary under `VariantOnly(Filtered/Unknown)`.
-const LD_BIAS: &str =
-    "variant-only input: pairs involving removed true variants are missing; \
+const LD_BIAS: &str = "variant-only input: pairs involving removed true variants are missing; \
      r2 is exact for pairs fully present, and Unknown cannot be distinguished \
      from Filtered";
 
@@ -66,12 +65,7 @@ fn dosage(window: &WindowBuffer, site: usize, sample: u32) -> Option<f64> {
 }
 
 /// Correlation of dosages over pairwise-complete individuals.
-fn pair_r(
-    window: &WindowBuffer,
-    samples: &[u32],
-    i: usize,
-    j: usize,
-) -> Option<(u64, f64, f64)> {
+fn pair_r(window: &WindowBuffer, samples: &[u32], i: usize, j: usize) -> Option<(u64, f64, f64)> {
     let (mut n, mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
     for &s in samples {
         if let (Some(x), Some(y)) = (dosage(window, i, s), dosage(window, j, s)) {
@@ -152,7 +146,11 @@ pub fn ld_r2_summary(
         group,
         n_sites: k,
         // k < 2 (e.g. the empty grid windows the reader emits) means no pairs.
-        n_pairs: if k >= 2 { (k as u64) * (k as u64 - 1) / 2 } else { 0 },
+        n_pairs: if k >= 2 {
+            (k as u64) * (k as u64 - 1) / 2
+        } else {
+            0
+        },
         n_valid,
         mean_r2: (n_valid > 0).then(|| sum_r2 / n_valid as f64),
         bias,

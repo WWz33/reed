@@ -189,7 +189,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, String> {
                     "unexpected character {:?} at column {}",
                     c as char,
                     i + 1
-                ))
+                ));
             }
         }
     }
@@ -204,7 +204,11 @@ mod tests {
     fn tokenizes_the_gold_expressions() {
         assert_eq!(
             tokenize("QUAL>=30").expect("invariant"),
-            [Token::Ident("QUAL".into()), Token::Cmp(">="), Token::Number(30.0)]
+            [
+                Token::Ident("QUAL".into()),
+                Token::Cmp(">="),
+                Token::Number(30.0)
+            ]
         );
         assert_eq!(
             tokenize("QD<4 || FS>50").expect("invariant"),
@@ -233,10 +237,9 @@ mod tests {
                 Token::Number(10.0),
             ]
         );
-        assert_eq!(tokenize("AF != .").expect("invariant"), [
-            Token::Ident("AF".into()),
-            Token::Cmp("!="),
-            Token::Missing,
-        ]);
+        assert_eq!(
+            tokenize("AF != .").expect("invariant"),
+            [Token::Ident("AF".into()), Token::Cmp("!="), Token::Missing,]
+        );
     }
 }

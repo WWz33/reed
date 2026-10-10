@@ -92,14 +92,18 @@ impl Region {
                     if x.is_empty() {
                         return Ok(None);
                     }
-                    x.parse::<u64>()
-                        .map(Some)
-                        .map_err(|_| FilterError::Spec(format!("region {what} is not a number: {s:?}")))
+                    x.parse::<u64>().map(Some).map_err(|_| {
+                        FilterError::Spec(format!("region {what} is not a number: {s:?}"))
+                    })
                 };
                 (p(a, "start")?, p(b, "end")?)
             }
         };
-        Ok(Self { contig: contig.to_string(), start, end })
+        Ok(Self {
+            contig: contig.to_string(),
+            start,
+            end,
+        })
     }
 
     /// 1-based closed-interval containment test.

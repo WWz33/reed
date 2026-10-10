@@ -3,11 +3,11 @@
 //! integer components exactly, float components within 4 ulp.
 
 use proptest::prelude::*;
-use reed_core::count::SiteGroupCounts;
 use reed_core::CoreError;
+use reed_core::count::SiteGroupCounts;
 use reed_stats::fst::FstKind;
 use reed_stats::pbs::PbsKind;
-use reed_stats::request::{build_accs, StatAcc, StatKind};
+use reed_stats::request::{StatAcc, StatKind, build_accs};
 
 /// Per-group counts: `(n_ref, n_alt, n_het)` with `n_ref + n_alt = called`
 /// and `called ≤ n_chrom` (the accumulators assume consistent tallies).
@@ -148,27 +148,75 @@ fn assert_same(left: &[Obs], right: &[Obs], ulp: f64, context: &str) {
             (None, None) => {}
             (Some(x), Some(y)) => {
                 let tol = ulp * f64::EPSILON * x.abs().max(y.abs()).max(1.0);
-                assert!((x - y).abs() <= tol, "{context}: value of acc {i}: {x} vs {y}");
+                assert!(
+                    (x - y).abs() <= tol,
+                    "{context}: value of acc {i}: {x} vs {y}"
+                );
             }
-            _ => panic!("{context}: value definedness of acc {i}: {a:?} vs {b:?}"),
+            (a, b) => assert_eq!(
+                a.is_some(),
+                b.is_some(),
+                "{context}: value definedness of acc {i}: {a:?} vs {b:?}"
+            ),
         }
     }
 }
 
 fn kinds() -> Vec<StatKind> {
     vec![
-        StatKind::Pi { group: 0, per_bp: false },
-        StatKind::Dxy { a: 1, b: 2, per_bp: false },
-        StatKind::Fst { a: 0, b: 2, kind: FstKind::Hudson },
-        StatKind::Fst { a: 0, b: 2, kind: FstKind::WeirCockerham84 },
-        StatKind::Fst { a: 0, b: 2, kind: FstKind::Hudson },
+        StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        },
+        StatKind::Dxy {
+            a: 1,
+            b: 2,
+            per_bp: false,
+        },
+        StatKind::Fst {
+            a: 0,
+            b: 2,
+            kind: FstKind::Hudson,
+        },
+        StatKind::Fst {
+            a: 0,
+            b: 2,
+            kind: FstKind::WeirCockerham84,
+        },
+        StatKind::Fst {
+            a: 0,
+            b: 2,
+            kind: FstKind::Hudson,
+        },
         StatKind::FstGlobal,
-        StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::Yi2010 },
-        StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::PbsN1 },
-        StatKind::Sfs { group: 1, folded: false },
-        StatKind::Sfs { group: 1, folded: true },
-        StatKind::ThetaW { group: 2, per_bp: false },
-        StatKind::TajimaD { group: 2, min_sites: 0 },
+        StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 2,
+            kind: PbsKind::Yi2010,
+        },
+        StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 2,
+            kind: PbsKind::PbsN1,
+        },
+        StatKind::Sfs {
+            group: 1,
+            folded: false,
+        },
+        StatKind::Sfs {
+            group: 1,
+            folded: true,
+        },
+        StatKind::ThetaW {
+            group: 2,
+            per_bp: false,
+        },
+        StatKind::TajimaD {
+            group: 2,
+            min_sites: 0,
+        },
     ]
 }
 
@@ -245,9 +293,18 @@ proptest! {
 
 #[test]
 fn empty_group_is_rejected_at_build_time() {
-    let err = build_accs(&[StatKind::Pi { group: 0, per_bp: false }], &[0])
-        .err()
-        .unwrap_or(CoreError::LengthMismatch { expected: 0, got: 0 });
+    let err = build_accs(
+        &[StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        }],
+        &[0],
+    )
+    .err()
+    .unwrap_or(CoreError::LengthMismatch {
+        expected: 0,
+        got: 0,
+    });
     assert!(matches!(
         err,
         CoreError::InvalidWindow | CoreError::LengthMismatch { .. }

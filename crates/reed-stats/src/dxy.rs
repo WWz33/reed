@@ -42,7 +42,8 @@ impl DxyAcc {
             * u64::from(b.n_ref_alleles + b.n_alt_alleles);
         self.counts.add(cross_diffs, comparable, self.total_pairs);
         if comparable > 0 {
-            self.sum_site_means.add(cross_diffs as f64 / comparable as f64);
+            self.sum_site_means
+                .add(cross_diffs as f64 / comparable as f64);
         }
         if all_variant {
             self.n_variant_sites += 1;
@@ -68,7 +69,8 @@ impl DxyAcc {
     /// `PerPairComparable` value.
     #[must_use]
     pub fn value_per_pair(&self) -> Option<f64> {
-        (self.counts.comparable > 0).then(|| self.counts.diffs as f64 / self.counts.comparable as f64)
+        (self.counts.comparable > 0)
+            .then(|| self.counts.diffs as f64 / self.counts.comparable as f64)
     }
 
     /// `AccessibleBp` value.

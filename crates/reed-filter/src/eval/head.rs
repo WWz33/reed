@@ -2,7 +2,7 @@
 //! class/max-alt → FILTER → QUAL → INFO, first failure short-circuits; the
 //! evaluation order is semantics and must not be reordered).
 
-use reed_core::site::{classify_variant, VariantClass};
+use reed_core::site::{VariantClass, classify_variant};
 use reed_io::vcf::fixed::parse_qual;
 use reed_io::vcf::info::info_fragments;
 use reed_io::vcf::line::LineRef;
@@ -42,7 +42,11 @@ pub fn eval_head(
 ) -> bool {
     // The counters are aligned with the rule list; a short slice would make
     // the zip below silently skip rules (a caller invariant violation).
-    assert_eq!(rules.len(), hits.len(), "invariant: head counters align with the rules");
+    assert_eq!(
+        rules.len(),
+        hits.len(),
+        "invariant: head counters align with the rules"
+    );
     let chrom = line.chrom();
     let reference = line.reference();
     let alts = line.alts();
@@ -68,21 +72,23 @@ pub fn eval_head(
                 !classes.iter().any(|c| class_matches(class, c))
             }
             HeadRule::MinAltAlleles(min) => {
-                let n = u32::try_from(alts.iter().filter(|&&b| b == b',').count() + 1)
-                    .unwrap_or(u32::MAX);
+                let n =
+                    u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX);
                 n >= *min
             }
             HeadRule::MaxAltAlleles(max) => {
-                let n = u32::try_from(alts.iter().filter(|&&b| b == b',').count() + 1)
-                    .unwrap_or(u32::MAX);
+                let n =
+                    u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX);
                 n <= *max
             }
             HeadRule::BiallelicGate => !alts.contains(&b','),
             HeadRule::RequireFilter(set) => set.iter().any(|s| s == line.filter_text()),
-            HeadRule::MinAfInfo(bound) => non_reference_af_info(line.info_text())
-                .is_none_or(|freq| freq >= *bound),
-            HeadRule::MaxAfInfo(bound) => non_reference_af_info(line.info_text())
-                .is_none_or(|freq| freq <= *bound),
+            HeadRule::MinAfInfo(bound) => {
+                non_reference_af_info(line.info_text()).is_none_or(|freq| freq >= *bound)
+            }
+            HeadRule::MaxAfInfo(bound) => {
+                non_reference_af_info(line.info_text()).is_none_or(|freq| freq <= *bound)
+            }
             HeadRule::MinQual(q) => {
                 // A missing QUAL fails (bcftools semantics).
                 parse_qual(line.qual_text(), &locus(line, pos1))
@@ -94,11 +100,7 @@ pub fn eval_head(
             HeadRule::Expr { include, expr, .. } => {
                 let values = crate::expr::SiteValues::from_line(line, pos1, None);
                 let truth = crate::expr::eval(expr, &values);
-                if *include {
-                    truth
-                } else {
-                    !truth
-                }
+                if *include { truth } else { !truth }
             }
         };
         if !ok {
@@ -205,7 +207,11 @@ fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> 
             });
         }
     }
-    let Some(frag) = scratch.fragments.iter().find(|f| info[f.tag.clone()] == *rule.tag) else {
+    let Some(frag) = scratch
+        .fragments
+        .iter()
+        .find(|f| info[f.tag.clone()] == *rule.tag)
+    else {
         return rule.on_missing == crate::spec::OnMissing::Pass;
     };
     let Some(value) = frag.value.clone() else {

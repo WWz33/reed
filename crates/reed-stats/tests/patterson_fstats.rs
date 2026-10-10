@@ -21,12 +21,17 @@ fn row(an: [u32; 4], alt: [u32; 4]) -> Vec<SiteGroupCounts> {
 
 /// allel admixture.py reference formulas (f64, per site).
 fn ref_f2(an: [u32; 4], alt: [u32; 4]) -> f64 {
-    let (p1, p2) = (f64::from(alt[0]) / f64::from(an[0]), f64::from(alt[1]) / f64::from(an[1]));
+    let (p1, p2) = (
+        f64::from(alt[0]) / f64::from(an[0]),
+        f64::from(alt[1]) / f64::from(an[1]),
+    );
     let h = |a: u32, alt: u32| -> f64 {
         let na = f64::from(a);
         (f64::from(a - alt) * f64::from(alt)) / (na * (na - 1.0))
     };
-    (p1 - p2) * (p1 - p2) - h(an[0], alt[0]) / f64::from(an[0]) - h(an[1], alt[1]) / f64::from(an[1])
+    (p1 - p2) * (p1 - p2)
+        - h(an[0], alt[0]) / f64::from(an[0])
+        - h(an[1], alt[1]) / f64::from(an[1])
 }
 
 fn ref_f3(an: [u32; 4], alt: [u32; 4]) -> (f64, f64) {
@@ -35,14 +40,16 @@ fn ref_f3(an: [u32; 4], alt: [u32; 4]) -> (f64, f64) {
         f64::from(alt[1]) / f64::from(an[1]),
         f64::from(alt[2]) / f64::from(an[2]),
     );
-    let hc = (f64::from(an[2] - alt[2]) * f64::from(alt[2]))
-        / (f64::from(an[2]) * f64::from(an[2] - 1));
+    let hc =
+        (f64::from(an[2] - alt[2]) * f64::from(alt[2])) / (f64::from(an[2]) * f64::from(an[2] - 1));
     let t = (pc - pa) * (pc - pb) - hc / f64::from(an[2]);
     (t, 2.0 * hc)
 }
 
 fn ref_d(an: [u32; 4], alt: [u32; 4]) -> (f64, f64) {
-    let p: Vec<f64> = (0..4).map(|i| f64::from(alt[i]) / f64::from(an[i])).collect();
+    let p: Vec<f64> = (0..4)
+        .map(|i| f64::from(alt[i]) / f64::from(an[i]))
+        .collect();
     let num = (p[0] - p[1]) * (p[2] - p[3]);
     let den = (p[0] + p[1] - 2.0 * p[0] * p[1]) * (p[2] + p[3] - 2.0 * p[2] * p[3]);
     (num, den)
@@ -74,7 +81,9 @@ fn f2_naive_drops_the_correction() {
     naive.push(&row(an, alt));
     let (p1, p2) = (0.2, 0.7);
     assert!((naive.value().expect("invariant: sites") - (p1 - p2) * (p1 - p2)).abs() < 1e-12);
-    assert!(corrected.value().expect("invariant: sites") < naive.value().expect("invariant: sites"));
+    assert!(
+        corrected.value().expect("invariant: sites") < naive.value().expect("invariant: sites")
+    );
 }
 
 #[test]
@@ -157,12 +166,12 @@ fn jackknife_se_matches_brute_force_delete_one() {
     let (est, se, vj) = jk.jackknife().expect("invariant: ≥ 2 blocks");
 
     // Brute force: recompute the sums per block and delete each.
-    let n_blocks = (pairs.len() as u64).div_ceil(block_size) as usize;
+    let n_blocks = usize::try_from((pairs.len() as u64).div_ceil(block_size)).unwrap();
     let mut block_sums = vec![(0.0, 0.0); n_blocks];
     for (i, (num, den)) in pairs.iter().enumerate() {
-        let b = i as u64 / block_size;
-        block_sums[b as usize].0 += num;
-        block_sums[b as usize].1 += den;
+        let b = u64::try_from(i).unwrap() / block_size;
+        block_sums[usize::try_from(b).unwrap()].0 += num;
+        block_sums[usize::try_from(b).unwrap()].1 += den;
     }
     let total_num: f64 = block_sums.iter().map(|(n, _)| n).sum();
     let total_den: f64 = block_sums.iter().map(|(_, d)| d).sum();
@@ -179,7 +188,10 @@ fn jackknife_se_matches_brute_force_delete_one() {
     let n = vj_brute.len() as f64;
     let mean = vj_brute.iter().sum::<f64>() / n;
     let se_brute = (((n - 1.0) / n)
-        * vj_brute.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>())
+        * vj_brute
+            .iter()
+            .map(|v| (v - mean) * (v - mean))
+            .sum::<f64>())
     .sqrt();
     assert_eq!(vj.len(), vj_brute.len());
     for (a, b) in vj.iter().zip(&vj_brute) {
@@ -209,13 +221,21 @@ fn chunked_accept_reproduces_the_whole() {
     // The block grid is the global ordinal grid: feeding two chunk
     // partials through one accumulator (any split point) reproduces the
     // single-partial run exactly.
-    let pairs: Vec<(f64, f64)> = (0..100).map(|i| (f64::from(i), 10.0 + f64::from(i))).collect();
+    let pairs: Vec<(f64, f64)> = (0..100)
+        .map(|i| (f64::from(i), 10.0 + f64::from(i)))
+        .collect();
     let mut whole = BlockJackknife::new(10);
-    whole.accept(&BlockPartial { values: pairs.clone() });
+    whole.accept(&BlockPartial {
+        values: pairs.clone(),
+    });
 
     let mut split = BlockJackknife::new(10);
-    split.accept(&BlockPartial { values: pairs[..55].to_vec() });
-    split.accept(&BlockPartial { values: pairs[55..].to_vec() });
+    split.accept(&BlockPartial {
+        values: pairs[..55].to_vec(),
+    });
+    split.accept(&BlockPartial {
+        values: pairs[55..].to_vec(),
+    });
 
     assert_eq!(split.n_blocks(), whole.n_blocks());
     let (est_w, se_w, vj_w) = whole.jackknife().expect("invariant: blocks");

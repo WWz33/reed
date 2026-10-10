@@ -35,7 +35,14 @@ impl SketchFragment {
     /// An empty fragment for `w` words per bitmap and `n_rules` mask rules.
     #[must_use]
     pub fn new(w: usize, n_rules: usize) -> Self {
-        Self { n_records: 0, head_bits: Vec::new(), w, n_sites: 0, n_rules, data: Vec::new() }
+        Self {
+            n_records: 0,
+            head_bits: Vec::new(),
+            w,
+            n_sites: 0,
+            n_rules,
+            data: Vec::new(),
+        }
     }
 
     /// Marks record `r`'s head outcome and advances the record counter.
@@ -54,7 +61,9 @@ impl SketchFragment {
     /// Whether record `r` passed the head rules.
     #[must_use]
     pub fn head_passed(&self, r: usize) -> bool {
-        self.head_bits.get(r / 64).is_some_and(|word| word >> (r % 64) & 1 == 1)
+        self.head_bits
+            .get(r / 64)
+            .is_some_and(|word| word >> (r % 64) & 1 == 1)
     }
 
     /// Appends another fragment's records and sites (bit offsets shift by
@@ -78,7 +87,11 @@ impl SketchFragment {
     /// the mid stage intersects with the keep mask).
     pub fn push_site(&mut self, planes: &[&[u64]], rule_masks: &[&[u64]]) {
         debug_assert_eq!(planes.len(), 4, "invariant: 4 genotype planes");
-        debug_assert_eq!(rule_masks.len(), self.n_rules, "invariant: one bitmap per rule");
+        debug_assert_eq!(
+            rule_masks.len(),
+            self.n_rules,
+            "invariant: one bitmap per rule"
+        );
         self.data.reserve((4 + self.n_rules) * self.w);
         for plane in planes {
             self.data.extend_from_slice(plane);
@@ -127,7 +140,6 @@ impl SketchFragment {
         )
         .unwrap_or(u64::MAX)
     }
-
 }
 
 /// Post-mask per-site counts derived from the sketch planes

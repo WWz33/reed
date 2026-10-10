@@ -41,12 +41,7 @@ impl PattersonKind {
 /// `(pA−pB)² − ĥA/anA − ĥB/anB`, or the raw moment for `Naive`. `None`
 /// when the site is skipped (anA or anB zero; corrected also needs both ≥ 2).
 #[must_use]
-pub fn f2_site(
-    row: &[SiteGroupCounts],
-    a: usize,
-    b: usize,
-    kind: PattersonKind,
-) -> Option<f64> {
+pub fn f2_site(row: &[SiteGroupCounts], a: usize, b: usize, kind: PattersonKind) -> Option<f64> {
     let (g1, g2) = (&row[a], &row[b]);
     let an1 = u64::from(g1.n_ref_alleles + g1.n_alt_alleles);
     let an2 = u64::from(g2.n_ref_alleles + g2.n_alt_alleles);
@@ -160,7 +155,11 @@ impl F2Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let kind = if self.corrected { PattersonKind::Corrected } else { PattersonKind::Naive };
+        let kind = if self.corrected {
+            PattersonKind::Corrected
+        } else {
+            PattersonKind::Naive
+        };
         match f2_site(row, self.a, self.b, kind) {
             Some(v) => {
                 self.sum.add(v);
@@ -222,7 +221,11 @@ impl F3Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let kind = if self.corrected { PattersonKind::Corrected } else { PattersonKind::Naive };
+        let kind = if self.corrected {
+            PattersonKind::Corrected
+        } else {
+            PattersonKind::Naive
+        };
         match f3_site(row, self.c, self.a, self.b, kind) {
             Some((t, b_term)) => {
                 self.t.add(t);

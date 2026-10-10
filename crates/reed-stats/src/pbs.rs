@@ -118,15 +118,14 @@ impl PbsAcc {
         });
         let between = (n_x >= 1 && n_y >= 1).then(|| {
             (u64::from(x.n_ref_alleles) * u64::from(y.n_alt_alleles)
-                + u64::from(x.n_alt_alleles) * u64::from(y.n_ref_alleles))
-                as f64
+                + u64::from(x.n_alt_alleles) * u64::from(y.n_ref_alleles)) as f64
                 / (n_x * n_y) as f64
         });
         if let Some(bet) = between {
             pair.den.add(bet);
             pair.den_any = true;
             if let (Some(wx), Some(wy)) = (within_x, within_y) {
-                pair.num.add(bet - (wx + wy) / 2.0);
+                pair.num.add(bet - f64::midpoint(wx, wy));
                 pair.num_any = true;
             }
         }
@@ -167,9 +166,21 @@ impl PbsAcc {
         let comps_a = n_a * n_a.saturating_sub(1) / 2;
         let comps_b = n_b * n_b.saturating_sub(1) / 2;
         let comps_c = n_c * n_c.saturating_sub(1) / 2;
-        self.within_a.add(u64::from(a.n_ref_alleles) * u64::from(a.n_alt_alleles), comps_a, comps_a);
-        self.within_b.add(u64::from(b.n_ref_alleles) * u64::from(b.n_alt_alleles), comps_b, comps_b);
-        self.within_c.add(u64::from(c.n_ref_alleles) * u64::from(c.n_alt_alleles), comps_c, comps_c);
+        self.within_a.add(
+            u64::from(a.n_ref_alleles) * u64::from(a.n_alt_alleles),
+            comps_a,
+            comps_a,
+        );
+        self.within_b.add(
+            u64::from(b.n_ref_alleles) * u64::from(b.n_alt_alleles),
+            comps_b,
+            comps_b,
+        );
+        self.within_c.add(
+            u64::from(c.n_ref_alleles) * u64::from(c.n_alt_alleles),
+            comps_c,
+            comps_c,
+        );
         let ab = n_a * n_b;
         let ac = n_a * n_c;
         let bc = n_b * n_c;
@@ -191,7 +202,6 @@ impl PbsAcc {
             bc,
             bc,
         );
-
     }
 
     /// Component-wise merge.

@@ -4,13 +4,13 @@
 //! every request up front (group bounds, distinctness, chromosome counts),
 //! so a rejected combination fails at build time, never mid-stream.
 
-use reed_core::count::SiteGroupCounts;
 use reed_core::CoreError;
+use reed_core::count::SiteGroupCounts;
 
 use crate::dxy::DxyAcc;
 use crate::fst::{FstAcc, FstKind, WcMultiAcc};
-use crate::pi::PiAcc;
 use crate::pbs::{PbsAcc, PbsKind};
+use crate::pi::PiAcc;
 use crate::sfs::SfsAcc;
 use crate::tajima::TajimaAcc;
 use crate::theta::ThetaAcc;
@@ -122,12 +122,11 @@ impl StatKind {
             )),
             Self::Fst { a, b, kind } => StatKey(format!("fst.{}.{a}.{b}", kind.id())),
             Self::FstGlobal => StatKey("fst.wc84.global".to_string()),
-            Self::Pbs { a, b, c, kind } => {
-                StatKey(format!("pbs.{}.{a}.{b}.{c}", kind.id()))
-            }
-            Self::Sfs { group, folded } => {
-                StatKey(format!("sfs.{}.{group}", if folded { "folded" } else { "unfolded" }))
-            }
+            Self::Pbs { a, b, c, kind } => StatKey(format!("pbs.{}.{a}.{b}.{c}", kind.id())),
+            Self::Sfs { group, folded } => StatKey(format!(
+                "sfs.{}.{group}",
+                if folded { "folded" } else { "unfolded" }
+            )),
             Self::ThetaW { group, per_bp } => StatKey(format!(
                 "theta_w.{}.{}",
                 if per_bp { "bp" } else { "total" },
@@ -184,9 +183,14 @@ impl StatKind {
             }
             Self::FstGlobal => {
                 if n_group.len() < 2 {
-                    return Err(CoreError::LengthMismatch { expected: 2, got: n_group.len() });
+                    return Err(CoreError::LengthMismatch {
+                        expected: 2,
+                        got: n_group.len(),
+                    });
                 }
-                Ok(StatAcc::FstGlobal(WcMultiAcc::new((0..n_group.len()).collect())))
+                Ok(StatAcc::FstGlobal(WcMultiAcc::new(
+                    (0..n_group.len()).collect(),
+                )))
             }
             Self::Pbs { a, b, c, .. } => {
                 distinct(&[a, b, c])?;
@@ -243,10 +247,10 @@ pub enum StatAcc {
     Tajima(TajimaAcc),
 }
 
-/// pixy `_pbs.txt` columns: `(value, no_snps, f_ab, f_ac, f_bc)`.
+/// Reference `_pbs.txt` columns: `(value, no_snps, f_ab, f_ac, f_bc)`.
 pub type PbsColumns = (Option<f64>, u64, (Option<f64>, Option<f64>, Option<f64>));
 
-/// pixy `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev, no_sites)`.
+/// Reference `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev, no_sites)`.
 pub type TajimaColumns = (Option<f64>, Option<f64>, Option<f64>, u64);
 
 impl StatAcc {
@@ -329,7 +333,7 @@ impl StatAcc {
         }
     }
 
-    /// pixy `_watterson_theta.txt` columns:
+    /// Reference `_watterson_theta.txt` columns:
     /// `(raw_theta, no_sites, no_var_sites, weighted_no_sites)`.
     #[must_use]
     pub fn theta_columns(&self) -> Option<(f64, u64, u64, f64)> {
@@ -355,13 +359,11 @@ impl StatAcc {
         }
     }
 
-    /// pixy `_fst.txt` columns: `(value, no_snps)`.
+    /// Reference `_fst.txt` columns: `(value, no_snps)`.
     #[must_use]
     pub fn fst_columns(&self, kind: &StatKind) -> Option<(Option<f64>, u64)> {
         match (self, kind) {
-            (Self::Fst(acc), StatKind::Fst { kind, .. }) => {
-                Some((acc.value(*kind), acc.n_sites()))
-            }
+            (Self::Fst(acc), StatKind::Fst { kind, .. }) => Some((acc.value(*kind), acc.n_sites())),
             _ => None,
         }
     }
@@ -375,9 +377,9 @@ impl StatAcc {
         }
     }
 
-    /// pixy `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev,
+    /// Reference `_tajima_d.txt` components: `(raw_pi, raw_theta, stdev,
     /// no_sites)`. The values are `None` where the denominator is undefined
-    /// (pixy prints `NA` there); the site count is always present.
+    /// (the reference prints `NA` there); the site count is always present.
     #[must_use]
     pub fn tajima_columns(&self) -> Option<TajimaColumns> {
         match self {
@@ -430,8 +432,7 @@ impl StatAcc {
         match self {
             Self::Pi(_) => "pi",
             Self::Dxy(_) => "dxy",
-            Self::Fst(_) => "fst",
-            Self::FstGlobal(_) => "fst",
+            Self::Fst(_) | Self::FstGlobal(_) => "fst",
             Self::Pbs(_) => "pbs",
             Self::Sfs(_) => "sfs",
             Self::Theta(_) => "theta",
@@ -444,8 +445,7 @@ fn kind_key_family(kind: &StatKind) -> &'static str {
     match kind {
         StatKind::Pi { .. } => "pi",
         StatKind::Dxy { .. } => "dxy",
-        StatKind::Fst { .. } => "fst",
-        StatKind::FstGlobal => "fst",
+        StatKind::Fst { .. } | StatKind::FstGlobal => "fst",
         StatKind::Pbs { .. } => "pbs",
         StatKind::Sfs { .. } => "sfs",
         StatKind::ThetaW { .. } => "theta",
@@ -460,15 +460,47 @@ mod tests {
     #[test]
     fn keys_are_stable_and_distinct() {
         let kinds = [
-            StatKind::Pi { group: 0, per_bp: false },
-            StatKind::Pi { group: 0, per_bp: true },
-            StatKind::Dxy { a: 0, b: 1, per_bp: false },
-            StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson },
-            StatKind::Fst { a: 0, b: 1, kind: FstKind::WeirCockerham84 },
-            StatKind::Pbs { a: 0, b: 1, c: 2, kind: PbsKind::PbsN1 },
-            StatKind::Sfs { group: 1, folded: true },
-            StatKind::ThetaW { group: 0, per_bp: false },
-            StatKind::TajimaD { group: 0, min_sites: 3 },
+            StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            },
+            StatKind::Pi {
+                group: 0,
+                per_bp: true,
+            },
+            StatKind::Dxy {
+                a: 0,
+                b: 1,
+                per_bp: false,
+            },
+            StatKind::Fst {
+                a: 0,
+                b: 1,
+                kind: FstKind::Hudson,
+            },
+            StatKind::Fst {
+                a: 0,
+                b: 1,
+                kind: FstKind::WeirCockerham84,
+            },
+            StatKind::Pbs {
+                a: 0,
+                b: 1,
+                c: 2,
+                kind: PbsKind::PbsN1,
+            },
+            StatKind::Sfs {
+                group: 1,
+                folded: true,
+            },
+            StatKind::ThetaW {
+                group: 0,
+                per_bp: false,
+            },
+            StatKind::TajimaD {
+                group: 0,
+                min_sites: 3,
+            },
         ];
         let keys: Vec<_> = kinds.iter().map(StatKind::key).collect();
         for (i, a) in keys.iter().enumerate() {
@@ -481,16 +513,35 @@ mod tests {
 
     #[test]
     fn build_validates_bounds_and_distinctness() {
-        let ok = [StatKind::Fst { a: 0, b: 1, kind: FstKind::Hudson }];
+        let ok = [StatKind::Fst {
+            a: 0,
+            b: 1,
+            kind: FstKind::Hudson,
+        }];
         assert!(build_accs(&ok, &[3, 2]).is_ok());
-        let oob = [StatKind::Pi { group: 2, per_bp: false }];
+        let oob = [StatKind::Pi {
+            group: 2,
+            per_bp: false,
+        }];
         assert!(build_accs(&oob, &[3, 2]).is_err());
-        let same = [StatKind::Fst { a: 1, b: 1, kind: FstKind::Hudson }];
+        let same = [StatKind::Fst {
+            a: 1,
+            b: 1,
+            kind: FstKind::Hudson,
+        }];
         assert!(build_accs(&same, &[3, 2]).is_err());
-        let pbs = [StatKind::Pbs { a: 0, b: 1, c: 1, kind: PbsKind::Yi2010 }];
+        let pbs = [StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 1,
+            kind: PbsKind::Yi2010,
+        }];
         assert!(build_accs(&pbs, &[3, 2, 2]).is_err());
         // SFS with zero chromosomes has no spectrum.
-        let sfs = [StatKind::Sfs { group: 0, folded: false }];
+        let sfs = [StatKind::Sfs {
+            group: 0,
+            folded: false,
+        }];
         assert!(build_accs(&sfs, &[0]).is_err());
     }
 }

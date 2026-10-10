@@ -42,8 +42,9 @@ impl IndividualFAcc {
     }
 
     /// Absorbs one biallelic site's per-sample genotypes from the plane
-    /// block (positional popcount over the slot planes — no per-sample
-    /// loop over genotypes, only over words).
+    /// block. The loop is per selected sample (F6-11 in
+    /// docs/rounds/v6/01-review.md: a word-parallel popcount rewrite is
+    /// queued for the Y3 columnar-mask work).
     ///
     /// `p_alt` is the site's alt frequency (denominator: called alleles).
     /// Samples outside `mask` contribute nothing.
@@ -96,8 +97,7 @@ impl IndividualFAcc {
                 let n = self.n_called[i] as f64;
                 let e_hom = n - self.hetero_expected[i].value();
                 let denom = n - e_hom;
-                (n > 0.0 && denom != 0.0)
-                    .then(|| (self.o_hom[i] as f64 - e_hom) / denom)
+                (n > 0.0 && denom != 0.0).then(|| (self.o_hom[i] as f64 - e_hom) / denom)
             })
             .collect()
     }
@@ -107,7 +107,7 @@ impl IndividualFAcc {
 /// `sf.js`/dadi semantics): bin (i, j) counts sites with i alt alleles in
 /// group 1 and j in group 2 over complete-case sites. Folding projects
 /// both axes to the minor side. Projection support arrives through the
-/// same [`reed_stats::sfs::projection_weights`] product when needed; this
+/// same `reed_stats::sfs::projection_weights` product when needed; this
 /// accumulator is the complete-case core (the M7 deliverable — the dadi
 /// export is the writer's job).
 #[derive(Clone, Debug)]

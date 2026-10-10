@@ -6,12 +6,22 @@ use reed_stats::ld::{LdDecayAcc, LdPruner, LdWindow, SitePruneStats, pair_sums};
 
 /// A polymorphic site's aggregates (2 het + 2 hom per the fixture planes).
 fn poly(maj_freq: f64) -> SitePruneStats {
-    SitePruneStats { maj_freq, n_hom_ref: 2, n_hom_alt: 2, n_het: 2 }
+    SitePruneStats {
+        maj_freq,
+        n_hom_ref: 2,
+        n_hom_alt: 2,
+        n_het: 2,
+    }
 }
 
 /// A monomorphic site (all hom-ref).
 fn mono() -> SitePruneStats {
-    SitePruneStats { maj_freq: 1.0, n_hom_ref: 4, n_hom_alt: 0, n_het: 0 }
+    SitePruneStats {
+        maj_freq: 1.0,
+        n_hom_ref: 4,
+        n_hom_alt: 0,
+        n_het: 0,
+    }
 }
 
 /// Builds a site's four planes from per-sample genotypes
@@ -157,7 +167,13 @@ fn ref_cov(x: &[(Option<u8>, Option<u8>)], y: &[(Option<u8>, Option<u8>)]) -> Op
     }
     let mx = xs.iter().sum::<f64>() / n;
     let my = ys.iter().sum::<f64>() / n;
-    Some(xs.iter().zip(&ys).map(|(a, b)| (a - mx) * (b - my)).sum::<f64>() / n)
+    Some(
+        xs.iter()
+            .zip(&ys)
+            .map(|(a, b)| (a - mx) * (b - my))
+            .sum::<f64>()
+            / n,
+    )
 }
 
 #[test]
@@ -253,7 +269,10 @@ fn pruner_drops_monomorphic_sites_on_arrival() {
     let q = planes(&constant);
     let mut pruner = LdPruner::new(0.8, LdWindow::Variants(10), 1, p[0].len(), g.len());
     assert!(pruner.push(0, 0, p, poly(0.5)));
-    assert!(!pruner.push(1, 10, q, mono()), "monomorphic → pruned on arrival");
+    assert!(
+        !pruner.push(1, 10, q, mono()),
+        "monomorphic → pruned on arrival"
+    );
     pruner.finish_contig();
     assert_eq!(pruner.kept_sites(), vec![0]);
     assert_eq!(pruner.pruned_sites(), vec![1]);
@@ -263,7 +282,14 @@ fn pruner_drops_monomorphic_sites_on_arrival() {
 fn pruner_window_advances_by_step() {
     // step = 2: the second window starts two sites after the first, so the
     // first window's second site is decided by the first window's scan.
-    let spec = vec![(b'0', b'0'), (b'0', b'1'), (b'1', b'1'), (b'1', b'0'), (b'0', b'0'), (b'1', b'1')];
+    let spec = vec![
+        (b'0', b'0'),
+        (b'0', b'1'),
+        (b'1', b'1'),
+        (b'1', b'0'),
+        (b'0', b'0'),
+        (b'1', b'1'),
+    ];
     let g = gts(&spec);
     let p = planes(&g);
     let mut pruner = LdPruner::new(0.8, LdWindow::Variants(2), 2, p[0].len(), g.len());
@@ -276,4 +302,3 @@ fn pruner_window_advances_by_step() {
     assert_eq!(pruner.pruned_sites(), vec![1, 3]);
     assert!(pruner.kept_sites().contains(&0));
 }
-

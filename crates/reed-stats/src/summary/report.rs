@@ -198,7 +198,10 @@ impl QcReportAcc {
 
     /// Component-wise merge (additive; §8.4 laws).
     pub fn merge(&mut self, other: &Self) {
-        debug_assert_eq!(self.n_samples, other.n_samples, "invariant: same sample count");
+        debug_assert_eq!(
+            self.n_samples, other.n_samples,
+            "invariant: same sample count"
+        );
         let SummaryAcc {
             n_records,
             n_snv,

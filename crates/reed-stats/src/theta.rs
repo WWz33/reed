@@ -1,5 +1,5 @@
-//! Watterson's θ in pixy's missing-data form (Watterson 1975; mutation-count
-//! per observed-allele class, Korunes & Samuk 2021 / pixy calc.py
+//! Watterson's θ in the reference missing-data form (Watterson 1975;
+//! mutation-count per observed-allele class, Korunes & Samuk 2021,
 //! `calc_watterson_theta`).
 //!
 //! Sites are grouped by their observed allele count `n_i`; each variant
@@ -35,7 +35,9 @@ impl ThetaAcc {
         if n_chrom < 2 {
             return None;
         }
-        let width = usize::try_from(n_chrom).unwrap_or(usize::MAX).saturating_add(1);
+        let width = usize::try_from(n_chrom)
+            .unwrap_or(usize::MAX)
+            .saturating_add(1);
         Some(Self {
             group,
             n_chrom,
@@ -66,7 +68,7 @@ impl ThetaAcc {
         if alt > 0 {
             self.n_var_sites += 1;
         }
-        // pixy counts mutations as k − 1 (k = distinct observed alleles), so a
+        // the reference counts mutations as k − 1 (k = distinct observed alleles), so a
         // site fixed for ALT has k = 1 and contributes 0 — it is not
         // segregating. Biallelic sites with both alleles observed contribute 1.
         // Multi-allelic sites need per-allele counts (04-algorithms.md §3),
@@ -110,7 +112,7 @@ impl ThetaAcc {
         raw
     }
 
-    /// Window-average θ = `raw / n_sites` (pixy `avg_watterson_theta`).
+    /// Window-average θ = `raw / n_sites` (`avg_watterson_theta`).
     #[must_use]
     pub fn value_total(&self) -> Option<f64> {
         (self.n_sites > 0).then(|| self.raw_theta() / self.n_sites as f64)
@@ -129,7 +131,7 @@ impl ThetaAcc {
             .then(|| (self.raw_theta() / self.n_sites as f64) / window_bp as f64)
     }
 
-    /// pixy's `weighted_no_sites`: `Σ_n sites(n) · n / max(n)`.
+    /// The reference `weighted_no_sites`: `Σ_n sites(n) · n / max(n)`.
     #[must_use]
     pub fn weighted_no_sites(&self) -> f64 {
         let Some(max_n) = self.sites.iter().rposition(|&count| count > 0) else {
@@ -171,7 +173,7 @@ impl ThetaAcc {
         self.mutations.iter().sum()
     }
 
-    /// Contributing / skipped site tally (skipped is always 0 under pixy
+    /// Contributing / skipped site tally (skipped is always 0 under the reference
     /// semantics: missing data is incorporated, not dropped).
     #[must_use]
     pub const fn site_tally(&self) -> (u64, u64) {

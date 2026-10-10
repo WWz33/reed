@@ -54,8 +54,10 @@ impl MissingRate {
             )));
         }
         // `value · 10^9` is within ±1e-7 of an integer for any decimal the
-        // user writes; the rounding is what makes the form exact.
+        // user writes; the rounding is what makes the form exact. The cast is
+        // exact after `round()`: the range check above bounds it by 10^9.
         let q = (value * MISSING_RATE_DENOMINATOR as f64).round();
+        #[allow(clippy::cast_possible_truncation)]
         Ok(Self { q: q as u64 })
     }
 
@@ -79,7 +81,9 @@ impl MissingRate {
     /// flags translate to (`--max-missing 0.9` → `--geno 0.1`).
     #[must_use]
     pub const fn complement(self) -> Self {
-        Self { q: MISSING_RATE_DENOMINATOR - self.q }
+        Self {
+            q: MISSING_RATE_DENOMINATOR - self.q,
+        }
     }
 
     /// The shortest decimal that parses back to the same threshold
@@ -109,7 +113,11 @@ impl Serialize for MissingRate {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         // A JSON number keeps the canonical spec readable; deserialisation
         // re-quantises to the same `q`.
-        serializer.serialize_f64(self.render().parse().expect("invariant: rendered as a decimal"))
+        serializer.serialize_f64(
+            self.render()
+                .parse()
+                .expect("invariant: rendered as a decimal"),
+        )
     }
 }
 
@@ -184,9 +192,27 @@ mod tests {
     /// `--max-missing 0.9` → `--geno 0.1`, not `0.09999999999999998`.
     #[test]
     fn complement_is_exact_decimal() {
-        assert_eq!(MissingRate::parse("0.9").expect("valid").complement().render(), "0.1");
-        assert_eq!(MissingRate::parse("0.8").expect("valid").complement().render(), "0.2");
-        assert_eq!(MissingRate::parse("0").expect("valid").complement().render(), "1");
+        assert_eq!(
+            MissingRate::parse("0.9")
+                .expect("valid")
+                .complement()
+                .render(),
+            "0.1"
+        );
+        assert_eq!(
+            MissingRate::parse("0.8")
+                .expect("valid")
+                .complement()
+                .render(),
+            "0.2"
+        );
+        assert_eq!(
+            MissingRate::parse("0")
+                .expect("valid")
+                .complement()
+                .render(),
+            "1"
+        );
     }
 
     #[test]
@@ -202,7 +228,10 @@ mod tests {
         let rate = MissingRate::parse("0.1").expect("valid");
         let json = serde_json::to_string(&rate).expect("serialize");
         assert_eq!(json, "0.1");
-        assert_eq!(serde_json::from_str::<MissingRate>(&json).expect("parse"), rate);
+        assert_eq!(
+            serde_json::from_str::<MissingRate>(&json).expect("parse"),
+            rate
+        );
         assert_eq!(
             serde_json::from_str::<MissingRate>("\"0.85\"").expect("parse"),
             MissingRate::parse("0.85").expect("valid")

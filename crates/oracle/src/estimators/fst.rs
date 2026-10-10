@@ -132,15 +132,13 @@ pub fn fst(
             // (n ≥ 2 per group), otherwise it is NaN and allel's `nansum` skips
             // it while keeping the site in the denominator. (pixy instead drops
             // the site from both — we follow the cited allel semantics.)
-            let mpd_a = (n_a >= 2).then(|| {
-                a.ref_count as f64 * a.alt_count as f64 / (n_a * (n_a - 1) / 2) as f64
+            let mpd_a = (n_a >= 2)
+                .then(|| a.ref_count as f64 * a.alt_count as f64 / (n_a * (n_a - 1) / 2) as f64);
+            let mpd_b = (n_b >= 2)
+                .then(|| b.ref_count as f64 * b.alt_count as f64 / (n_b * (n_b - 1) / 2) as f64);
+            let mpd_ab = (n_a >= 1 && n_b >= 1).then(|| {
+                (a.ref_count * b.alt_count + a.alt_count * b.ref_count) as f64 / (n_a * n_b) as f64
             });
-            let mpd_b = (n_b >= 2).then(|| {
-                b.ref_count as f64 * b.alt_count as f64 / (n_b * (n_b - 1) / 2) as f64
-            });
-            let mpd_ab = (n_a >= 1 && n_b >= 1)
-                .then(|| (a.ref_count * b.alt_count + a.alt_count * b.ref_count) as f64
-                    / (n_a * n_b) as f64);
             if let Some(pab) = mpd_ab {
                 hudson_den += pab;
                 if let (Some(pa), Some(pb)) = (mpd_a, mpd_b) {
@@ -183,9 +181,9 @@ pub fn fst(
                 let term = p_bar * (1.0 - p_bar) - (2.0 - 1.0) * s2 / 2.0 - h_bar / 4.0;
                 let a_allele = (n_bar / n_c) * (s2 - term / (n_bar - 1.0));
                 let b_allele = (n_bar / (n_bar - 1.0))
-                    * (p_bar * (1.0 - p_bar) - (2.0 - 1.0) * s2 / 2.0 - (2.0 * n_bar - 1.0)
-                        * h_bar
-                        / (4.0 * n_bar));
+                    * (p_bar * (1.0 - p_bar)
+                        - (2.0 - 1.0) * s2 / 2.0
+                        - (2.0 * n_bar - 1.0) * h_bar / (4.0 * n_bar));
                 let c_allele = h_bar / 2.0;
                 // Biallelic: the alt-allele components are identical (p̄ ↦ 1−p̄).
                 wc.a += 2.0 * a_allele;

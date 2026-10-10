@@ -1,6 +1,6 @@
-//! Tajima's D in pixy's missing-data form (Tajima 1989; the `ThetaRecov`
-//! denominator evaluated once at the window-average allele count, pixy
-//! calc.py `calc_tajima_d`).
+//! Tajima's D in the reference missing-data form (Tajima 1989; the
+//! `ThetaRecov` denominator evaluated once at the window-average allele count,
+//! Korunes & Samuk 2021 `calc_tajima_d`).
 //!
 //! `D = (raw_pi − raw_theta) / sqrt(e1·S + e2·S(S−1))` where `raw_pi` is the
 //! sum of per-site unbiased π, `raw_theta` the per-allele-class Watterson
@@ -59,20 +59,20 @@ impl TajimaAcc {
         self.raw_pi.merge(&other.raw_pi);
     }
 
-    /// The window's raw π sum (pixy `raw_pi`).
+    /// The window's raw π sum (`raw_pi`).
     #[must_use]
     pub fn raw_pi(&self) -> f64 {
         self.raw_pi.value()
     }
 
-    /// The window's raw Watterson θ (pixy `raw_watterson_theta`).
+    /// The window's raw Watterson θ (`raw_watterson_theta`).
     #[must_use]
     pub fn raw_theta(&self) -> f64 {
         self.theta.raw_theta()
     }
 
     /// Tajima's D denominator: evaluated once at the rounded window-average
-    /// observed allele count (pixy `calc_tajima_d_stdev`); `None` where
+    /// observed allele count (Korunes & Samuk 2021); `None` where
     /// undefined (no sites, no mutations, mean n < 2).
     #[must_use]
     pub fn d_stdev(&self) -> Option<f64> {
@@ -81,7 +81,7 @@ impl TajimaAcc {
         if sites == 0 || mutations == 0 {
             return None;
         }
-        // np.rint semantics: round half to even, matching pixy's
+        // np.rint semantics: round half to even, matching the reference
         // `int(np.rint(total_allele_count / num_sites))`.
         let mean_n = (self.theta.total_allele_count() as f64 / sites as f64).round_ties_even();
         if mean_n < 2.0 {

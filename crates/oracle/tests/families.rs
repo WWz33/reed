@@ -11,13 +11,15 @@ use reed_oracle::estimators::hwe::{hardy_weinberg_p_value, heterozygosity, hwe_e
 use reed_oracle::estimators::ld::{ld_r2_pairs, ld_r2_summary};
 use reed_oracle::estimators::pbs::{pbs, PbsEstimator};
 use reed_oracle::estimators::spectrum::{sfs, tajima_d, watterson_theta};
-use reed_oracle::{
-    Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer,
-};
+use reed_oracle::{Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer};
 
 const EPS: f64 = 1e-12;
 
-fn build(manifest: SiteCompleteness, n_samples: u32, sites: &[(u32, Vec<[i8; 2]>)]) -> WindowBuffer {
+fn build(
+    manifest: SiteCompleteness,
+    n_samples: u32,
+    sites: &[(u32, Vec<[i8; 2]>)],
+) -> WindowBuffer {
     let mut pos = Vec::new();
     let mut is_variant = Vec::new();
     let mut genotypes = Vec::new();
@@ -140,9 +142,15 @@ fn hwe_exact_matches_independent_enumeration() {
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
     let sites = hwe_exact(&w, &pops, 0).unwrap();
     assert_eq!(sites.len(), 3);
-    assert_eq!((sites[0].hom_ref, sites[0].het, sites[0].hom_alt), (1, 2, 1));
+    assert_eq!(
+        (sites[0].hom_ref, sites[0].het, sites[0].hom_alt),
+        (1, 2, 1)
+    );
     assert!((sites[0].p_value - 1.0).abs() < EPS);
-    assert_eq!((sites[1].hom_ref, sites[1].het, sites[1].hom_alt), (3, 1, 0));
+    assert_eq!(
+        (sites[1].hom_ref, sites[1].het, sites[1].hom_alt),
+        (3, 1, 0)
+    );
     assert!((sites[1].p_value - 1.0).abs() < EPS);
 }
 
@@ -195,8 +203,8 @@ fn f_statistics_match_hand_values() {
     assert_eq!(r.n_sites, 3);
 
     let r = f3(&w, &pops, 2, 0, 1).unwrap(); // f3(S2; S0, S1)
-    // site0: (0−1)(0.5−1) = 0.5; site1: (0−0.5)(0−0.5) = 0.25 (S2 is 0/1 there);
-    // site2: 0 → mean = 0.75/3 = 0.25.
+                                             // site0: (0−1)(0.5−1) = 0.5; site1: (0−0.5)(0−0.5) = 0.25 (S2 is 0/1 there);
+                                             // site2: 0 → mean = 0.75/3 = 0.25.
     assert_close(r.value(), 0.25);
 
     let r = f4(&w, &pops, 0, 1, 2, 3).unwrap();
@@ -216,10 +224,7 @@ fn pbs_matches_scikit_allel() {
     let w = build(
         SiteCompleteness::WithInvariants,
         6,
-        &[(
-            0,
-            vec![[0, 0], [0, 0], [0, 1], [0, 1], [1, 1], [0, 1]],
-        )],
+        &[(0, vec![[0, 0], [0, 0], [0, 1], [0, 1], [1, 1], [0, 1]])],
     );
     let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).unwrap();
 

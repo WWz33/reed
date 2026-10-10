@@ -1,7 +1,7 @@
 //! Survivor → EditPlan assembly (§4 eval layer): the recomputed tag values
 //! rendered from the post-mask counts, in fill-tags order. The caller
 //! (worker) owns the scratch buffers and constructs the borrowed
-//! [`EditPlan`] inline — no leaked allocations, no unsafe.
+//! edit plan inline — no leaked allocations, no unsafe.
 
 // Casts in this file are bounded by construction: INFO Float values are f32 by the VCF header type.
 #![allow(clippy::cast_possible_truncation)]
@@ -34,6 +34,9 @@ pub fn fill_info_set(
         info_set.push((b"MAF".as_slice(), InfoValueOut::Float(counts.maf() as f32)));
     }
     if recompute.hwe {
-        info_set.push((b"HWE".as_slice(), InfoValueOut::Float(counts.hwe_p() as f32)));
+        info_set.push((
+            b"HWE".as_slice(),
+            InfoValueOut::Float(counts.hwe_p() as f32),
+        ));
     }
 }

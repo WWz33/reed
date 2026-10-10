@@ -18,12 +18,12 @@
 
 pub mod dxy;
 pub mod fst;
-pub mod pi;
 pub mod individual;
 pub mod jackknife;
 pub mod ld;
 pub mod patterson;
 pub mod pbs;
+pub mod pi;
 pub mod request;
 pub mod sfs;
 pub mod summary;
@@ -33,28 +33,24 @@ pub mod window;
 
 pub use dxy::DxyAcc;
 pub use fst::{FstAcc, FstKind, FstMatrixEntry};
-pub use pi::PiAcc;
 pub use individual::IndividualFAcc;
 pub use pbs::PbsAcc;
+pub use pi::PiAcc;
 pub use request::{StatAcc, StatKey, StatKind, build_accs};
 pub use sfs::SfsAcc;
 pub use tajima::TajimaAcc;
 pub use theta::ThetaAcc;
 pub use window::{BpBinning, ContigBins};
 
-// Statistics whose CLI is not wired yet (doc_v3 04 §C2): they stay available
-// for the parity suites but are excluded from the documented API until they
-// have a CLI exit and a reference comparison (`--fst-global`, `--sfs --proj`,
-// the R8 LD/f-statistics work).
-#[doc(hidden)]
+// The remaining statistics: wired into the CLI by the X4 round and covered by
+// the reference parity suites (`--fst-global`, `--sfs --proj`, `--ld-decay`,
+// the f-statistics). The one exception is `JointSfsAcc`: the two-population
+// joint spectrum has no CLI exit yet (Y6), so it stays `#[doc(hidden)]` until
+// it has one.
 pub use fst::{FstMatrixAcc, WcMultiAcc};
 #[doc(hidden)]
 pub use individual::JointSfsAcc;
-#[doc(hidden)]
 pub use jackknife::{BlockJackknife, BlockPartial, BpBlockJackknife};
-#[doc(hidden)]
 pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
-#[doc(hidden)]
 pub use patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
-#[doc(hidden)]
-pub use sfs::{ProjectionCache, ProjectedSfsAcc, projection_weights};
+pub use sfs::{ProjectedSfsAcc, ProjectionCache, projection_weights};

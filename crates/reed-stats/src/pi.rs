@@ -32,7 +32,7 @@ impl PairAcc {
     }
 }
 
-/// π accumulator for one group. `value_per_pair` is the pixy-style
+/// π accumulator for one group. `value_per_pair` is the reference-style
 /// PerPairComparable estimate; `value_accessible_bp` the scikit-allel
 /// sequence-diversity convention (per window bp).
 #[derive(Clone, Debug)]
@@ -103,7 +103,8 @@ impl PiAcc {
     /// PerPairComparable: `Σ diffs / Σ comparable` over the window.
     #[must_use]
     pub fn value_per_pair(&self) -> Option<f64> {
-        (self.counts.comparable > 0).then(|| self.counts.diffs as f64 / self.counts.comparable as f64)
+        (self.counts.comparable > 0)
+            .then(|| self.counts.diffs as f64 / self.counts.comparable as f64)
     }
 
     /// AccessibleBp: `Σ per-site mean pairwise difference / window bp`.

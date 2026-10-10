@@ -221,9 +221,12 @@ impl FunnelPartial {
     pub fn merge(&mut self, other: &Self) {
         // The receiving side may start with unsized (default) vectors;
         // extend so every counter of `other` lands somewhere.
-        self.head_hits.resize(self.head_hits.len().max(other.head_hits.len()), 0);
-        self.tail_hits.resize(self.tail_hits.len().max(other.tail_hits.len()), 0);
-        self.mask_hits.resize(self.mask_hits.len().max(other.mask_hits.len()), 0);
+        self.head_hits
+            .resize(self.head_hits.len().max(other.head_hits.len()), 0);
+        self.tail_hits
+            .resize(self.tail_hits.len().max(other.tail_hits.len()), 0);
+        self.mask_hits
+            .resize(self.mask_hits.len().max(other.mask_hits.len()), 0);
         for (dst, src) in self.head_hits.iter_mut().zip(&other.head_hits) {
             *dst += src;
         }

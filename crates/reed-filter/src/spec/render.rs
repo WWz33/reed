@@ -187,10 +187,7 @@ mod tests {
             ..Default::default()
         };
         let args = args_of(&spec);
-        assert_eq!(
-            &args[..6],
-            &["-s", "a,b", "-s", "^c", "--mind", "0.25"]
-        );
+        assert_eq!(&args[..6], &["-s", "a,b", "-s", "^c", "--mind", "0.25"]);
     }
 
     #[test]
@@ -222,9 +219,31 @@ mod tests {
         assert_eq!(
             args_of(&spec),
             vec![
-                "-v", "snv", "-V", "indel", "-M", "2", "-f", "PASS", "--geno", "0.1", "--maf",
-                "0.05", "--max-maf", "0.4", "--mac", "3", "--max-mac", "30", "--hwe", "0.000001",
-                "-x", "INFO/DP", "--fill-tags", "AC,AN", "-I",
+                "-v",
+                "snv",
+                "-V",
+                "indel",
+                "-M",
+                "2",
+                "-f",
+                "PASS",
+                "--geno",
+                "0.1",
+                "--maf",
+                "0.05",
+                "--max-maf",
+                "0.4",
+                "--mac",
+                "3",
+                "--max-mac",
+                "30",
+                "--hwe",
+                "0.000001",
+                "-x",
+                "INFO/DP",
+                "--fill-tags",
+                "AC,AN",
+                "-I",
             ]
         );
     }

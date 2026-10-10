@@ -1,8 +1,8 @@
 //! Between-group Fst: Hudson (1992) as Bhatia et al. 2013's ratio of sums
 //! and Weir & Cockerham (1984) variance components
-//! (`docs/rounds/v2/04-algorithms.md` §3). The components follow scikit-allel, which
-//! pixy calls, and are verified against pixy 2.2.4 in `gold/popgen`. Nei 1986
-//! is not implemented (04 §1).
+//! (`docs/rounds/v2/04-algorithms.md` §3). The components follow scikit-allel
+//! and are verified against the reference implementation in `gold/popgen`
+//! (the parity script names the tool). Nei 1986 is not implemented (04 §1).
 
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::sum::NeumaierSum;
@@ -70,7 +70,7 @@ pub struct FstAcc {
     hudson_any: bool,
     hudson_num_any: bool,
     wc: WcAcc,
-    /// Every site pushed (pixy's `no_snps` column).
+    /// Every site pushed (the reference `no_snps` column).
     n_sites: u64,
 }
 
@@ -132,15 +132,14 @@ impl FstAcc {
         });
         let mpd_ab = (n_a >= 1 && n_b >= 1).then(|| {
             (u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
-                + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles))
-                as f64
+                + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles)) as f64
                 / (n_a * n_b) as f64
         });
         if let Some(pab) = mpd_ab {
             self.hudson_den.add(pab);
             self.hudson_any = true;
             if let (Some(pa), Some(pb)) = (mpd_a, mpd_b) {
-                self.hudson_num.add(pab - (pa + pb) / 2.0);
+                self.hudson_num.add(pab - f64::midpoint(pa, pb));
                 self.hudson_num_any = true;
             }
         }
@@ -158,7 +157,8 @@ impl FstAcc {
             } else {
                 let p_ref_1 = u64::from(a.n_ref_alleles) as f64 / n_a as f64;
                 let p_ref_2 = u64::from(b.n_ref_alleles) as f64 / n_b as f64;
-                let p_bar = u64::from(a.n_ref_alleles + b.n_ref_alleles) as f64 / (n_a + n_b) as f64;
+                let p_bar =
+                    u64::from(a.n_ref_alleles + b.n_ref_alleles) as f64 / (n_a + n_b) as f64;
                 let s2 = (n1 * (p_ref_1 - p_bar).powi(2) + n2 * (p_ref_2 - p_bar).powi(2))
                     / (n_bar * (2.0 - 1.0));
                 let h_bar = (u64::from(a.n_het + b.n_het) as f64) / n_total;
@@ -228,13 +228,12 @@ impl FstAcc {
         }
     }
 
-    /// Sites pushed (pixy's `no_snps`).
+    /// Sites pushed (the reference `no_snps`).
     #[must_use]
     pub const fn n_sites(&self) -> u64 {
         self.n_sites
     }
 }
-
 
 // ---------------------------------------------------- multi-population WC84
 
@@ -276,8 +275,7 @@ impl WcMultiAcc {
             self.n_skipped += 1;
             return;
         }
-        let counts: Vec<&SiteGroupCounts> =
-            self.groups.iter().map(|&g| &row[g]).collect();
+        let counts: Vec<&SiteGroupCounts> = self.groups.iter().map(|&g| &row[g]).collect();
         // n_i = an_i // 2 (allel floor semantics), an_i = called alleles.
         let an: Vec<u64> = counts
             .iter()
@@ -312,8 +310,7 @@ impl WcMultiAcc {
             .sum::<f64>()
             / (n_bar * (r as f64 - 1.0));
         // h̄ = Σ n_het_i / n_total (from the count table).
-        let h_bar =
-            counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
+        let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
         let a = (n_bar / n_c)
             * (s2
                 - (1.0 / (n_bar - 1.0))
@@ -394,7 +391,11 @@ impl FstMatrixAcc {
         let pairs = (0..n_groups)
             .flat_map(|i| (i + 1..n_groups).map(move |j| FstAcc::new(i, j)))
             .collect();
-        Self { n_groups, kind, pairs }
+        Self {
+            n_groups,
+            kind,
+            pairs,
+        }
     }
 
     /// The estimator kind.
@@ -423,7 +424,11 @@ impl FstMatrixAcc {
         (0..self.n_groups)
             .flat_map(|i| (i + 1..self.n_groups).map(move |j| (i, j)))
             .zip(&self.pairs)
-            .map(|((i, j), acc)| FstMatrixEntry { i, j, value: acc.value(self.kind) })
+            .map(|((i, j), acc)| FstMatrixEntry {
+                i,
+                j,
+                value: acc.value(self.kind),
+            })
             .collect()
     }
 }

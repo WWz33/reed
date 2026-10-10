@@ -4,8 +4,8 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::spec::FilterSpec;
 use crate::FilterError;
+use crate::spec::FilterSpec;
 
 /// Provenance of one run.
 #[derive(Clone, Debug)]
@@ -56,8 +56,14 @@ impl Provenance {
         vec![
             (String::from("reed_version"), self.version.clone()),
             (String::from("reed_command"), self.command.clone()),
-            (String::from("reed_filterCommand"), self.filter_command.clone()),
-            (String::from("reed_filter_spec"), self.canonical_json.clone()),
+            (
+                String::from("reed_filterCommand"),
+                self.filter_command.clone(),
+            ),
+            (
+                String::from("reed_filter_spec"),
+                self.canonical_json.clone(),
+            ),
             (String::from("reed_filter_sha256"), self.sha256.clone()),
         ]
     }

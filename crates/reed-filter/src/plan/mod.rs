@@ -9,21 +9,17 @@
 pub mod provenance;
 pub mod strategy;
 
-
 use reed_core::tag_table::{TagNumber, TagTable, TagType};
 
 pub use strategy::ExecStrategy;
 
-use crate::spec::region::RegionTriple;
-use crate::spec::{
-    FilterSpec, OnMissing, Quantifier, RegionRule,
-};
 use crate::FilterError;
+use crate::spec::region::RegionTriple;
+use crate::spec::{FilterSpec, OnMissing, Quantifier, RegionRule};
 
 /// A compiled head rule (fixed columns + INFO only).
 #[derive(Clone, Debug)]
 pub enum HeadRule {
-
     /// Streaming targets: keep when inside any include and no exclude.
     Regions {
         /// Parsed include regions.
@@ -134,7 +130,10 @@ fn stale_info_hits(expr: &crate::expr::Expr, tags: &TagTable) -> Vec<&'static st
         .into_iter()
         .filter(|field| {
             field.is_genotype_derived()
-                && !matches!(field, crate::expr::Field::NMissing | crate::expr::Field::FMissing)
+                && !matches!(
+                    field,
+                    crate::expr::Field::NMissing | crate::expr::Field::FMissing
+                )
                 && tags.info(field.name()).is_some()
         })
         .map(crate::expr::Field::name)
@@ -158,8 +157,9 @@ fn expr_reads_gt_fields(expr: &crate::expr::Expr) -> bool {
     use crate::expr::Expr;
     match expr {
         Expr::Field(f) => f.is_genotype_derived(),
-        Expr::Bare(name) => crate::expr::Field::from_name(name)
-            .is_some_and(crate::expr::Field::is_genotype_derived),
+        Expr::Bare(name) => {
+            crate::expr::Field::from_name(name).is_some_and(crate::expr::Field::is_genotype_derived)
+        }
         Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
             expr_reads_gt_fields(a) || expr_reads_gt_fields(b)
         }
@@ -255,7 +255,7 @@ impl TailRule {
     }
 }
 
-/// The recomputed-tag flags (compiled from [`RecomputeSpec`]).
+/// The recomputed-tag flags (compiled from [`RecomputeSpec`](crate::spec::RecomputeSpec)).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RecomputeFlags {
     /// AC.
@@ -324,19 +324,23 @@ pub fn compile(
     command_line: &str,
     biallelic_gate: bool,
 ) -> Result<FilterPlan, FilterError> {
-
     // ---- head rules (§11.2 order: targets → class/alt → FILTER → QUAL →
     // INFO in declaration order) ----
     let mut head = Vec::new();
     let regions = compile_regions(&spec.targets)?;
     if let Some(r) = regions {
-        head.push(HeadRule::Regions { include: r.0, exclude: r.1 });
+        head.push(HeadRule::Regions {
+            include: r.0,
+            exclude: r.1,
+        });
     }
     if !spec.site.variant_class.is_empty() {
         head.push(HeadRule::VariantClass(spec.site.variant_class.clone()));
     }
     if !spec.site.exclude_variant_class.is_empty() {
-        head.push(HeadRule::ExcludeVariantClass(spec.site.exclude_variant_class.clone()));
+        head.push(HeadRule::ExcludeVariantClass(
+            spec.site.exclude_variant_class.clone(),
+        ));
     }
     if spec.site.min_alt_alleles > 0 {
         head.push(HeadRule::MinAltAlleles(spec.site.min_alt_alleles));
@@ -352,12 +356,19 @@ pub fn compile(
     }
     if !spec.site.require_filter.is_empty() {
         head.push(HeadRule::RequireFilter(
-            spec.site.require_filter.iter().map(String::as_bytes).map(<[u8]>::to_vec).collect(),
+            spec.site
+                .require_filter
+                .iter()
+                .map(String::as_bytes)
+                .map(<[u8]>::to_vec)
+                .collect(),
         ));
     }
     if let Some(q) = spec.site.min_qual {
         if q < 0.0 {
-            return Err(FilterError::Spec(format!("min_qual out of range [0,inf): {q}")));
+            return Err(FilterError::Spec(format!(
+                "min_qual out of range [0,inf): {q}"
+            )));
         }
         head.push(HeadRule::MinQual(q));
     }
@@ -367,10 +378,15 @@ pub fn compile(
     let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
     for bound in spec.site_after_mask.min_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
-            return Err(FilterError::Spec(format!("min_af out of range [0,1]: {bound}")));
+            return Err(FilterError::Spec(format!(
+                "min_af out of range [0,1]: {bound}"
+            )));
         }
         if info_af
-            && spec.site_after_mask.min_af_kind.unwrap_or(crate::spec::AfKind::Nref)
+            && spec
+                .site_after_mask
+                .min_af_kind
+                .unwrap_or(crate::spec::AfKind::Nref)
                 == crate::spec::AfKind::Nref
         {
             head.push(HeadRule::MinAfInfo(af_threshold(bound)));
@@ -378,10 +394,15 @@ pub fn compile(
     }
     for bound in spec.site_after_mask.max_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
-            return Err(FilterError::Spec(format!("max_af out of range [0,1]: {bound}")));
+            return Err(FilterError::Spec(format!(
+                "max_af out of range [0,1]: {bound}"
+            )));
         }
         if info_af
-            && spec.site_after_mask.max_af_kind.unwrap_or(crate::spec::AfKind::Nref)
+            && spec
+                .site_after_mask
+                .max_af_kind
+                .unwrap_or(crate::spec::AfKind::Nref)
                 == crate::spec::AfKind::Nref
         {
             head.push(HeadRule::MaxAfInfo(af_threshold(bound)));
@@ -400,7 +421,11 @@ pub fn compile(
                 "-i {text:?} reads genotype-derived values and belongs in [site_after_mask]"
             )));
         }
-        head.push(HeadRule::Expr { id: format!("site.include#{}", index + 1), include: true, expr });
+        head.push(HeadRule::Expr {
+            id: format!("site.include#{}", index + 1),
+            include: true,
+            expr,
+        });
     }
     for (index, text) in spec.site.exclude.iter().enumerate() {
         let expr = crate::expr::parse_and_check(text, &info_tags)
@@ -411,12 +436,19 @@ pub fn compile(
                 "-e {text:?} reads genotype-derived values and belongs in [site_after_mask]"
             )));
         }
-        head.push(HeadRule::Expr { id: format!("site.exclude#{}", index + 1), include: false, expr });
+        head.push(HeadRule::Expr {
+            id: format!("site.exclude#{}", index + 1),
+            include: false,
+            expr,
+        });
     }
     for rule in &spec.site.info {
-        let def = tags
-            .info(&rule.tag)
-            .ok_or_else(|| FilterError::Spec(format!("INFO tag {} is not declared in the header", rule.tag)))?;
+        let def = tags.info(&rule.tag).ok_or_else(|| {
+            FilterError::Spec(format!(
+                "INFO tag {} is not declared in the header",
+                rule.tag
+            ))
+        })?;
         validate_numeric(&rule.tag, def.ty)?;
         let number_a = def.number == TagNumber::A;
         if def.number != TagNumber::Count(1) && !number_a {
@@ -463,9 +495,12 @@ pub fn compile(
     let mut int_fields: Vec<Vec<u8>> = Vec::new();
     let mut float_fields: Vec<Vec<u8>> = Vec::new();
     for rule in &spec.genotype.mask_if {
-        let def = tags
-            .format(&rule.field)
-            .ok_or_else(|| FilterError::Spec(format!("FORMAT field {} is not declared in the header", rule.field)))?;
+        let def = tags.format(&rule.field).ok_or_else(|| {
+            FilterError::Spec(format!(
+                "FORMAT field {} is not declared in the header",
+                rule.field
+            ))
+        })?;
         validate_numeric(&rule.field, def.ty)?;
         let is_float = def.ty == TagType::Float;
         let cmp = crate::spec::predicate::Cmp::parse(&rule.when)?;
@@ -475,7 +510,10 @@ pub fn compile(
             OnMissing::Keep | OnMissing::Pass => OnMissing::Keep,
             OnMissing::Mask | OnMissing::Fail => OnMissing::Mask,
         };
-        let column_of = |fields: &mut Vec<Vec<u8>>| match fields.iter().position(|f| *f == rule.field.as_bytes()) {
+        let column_of = |fields: &mut Vec<Vec<u8>>| match fields
+            .iter()
+            .position(|f| *f == rule.field.as_bytes())
+        {
             Some(i) => i,
             None => {
                 fields.push(rule.field.as_bytes().to_vec());
@@ -508,7 +546,9 @@ pub fn compile(
         }
         tail.push(TailRule::MinAf(
             af_threshold(f),
-            spec.site_after_mask.min_af_kind.unwrap_or(crate::spec::AfKind::Nref),
+            spec.site_after_mask
+                .min_af_kind
+                .unwrap_or(crate::spec::AfKind::Nref),
         ));
     }
     if let Some(f) = spec.site_after_mask.max_af {
@@ -517,7 +557,9 @@ pub fn compile(
         }
         tail.push(TailRule::MaxAf(
             af_threshold(f),
-            spec.site_after_mask.max_af_kind.unwrap_or(crate::spec::AfKind::Nref),
+            spec.site_after_mask
+                .max_af_kind
+                .unwrap_or(crate::spec::AfKind::Nref),
         ));
     }
     if let Some(rate) = spec.site_after_mask.max_missing {
@@ -528,13 +570,17 @@ pub fn compile(
     }
     if let Some(m) = spec.site_after_mask.min_maf {
         if !(0.0..=0.5).contains(&m) {
-            return Err(FilterError::Spec(format!("min_maf out of range [0,0.5]: {m}")));
+            return Err(FilterError::Spec(format!(
+                "min_maf out of range [0,0.5]: {m}"
+            )));
         }
         tail.push(TailRule::MinMaf(m));
     }
     if let Some(m) = spec.site_after_mask.max_maf {
         if !(0.0..=0.5).contains(&m) {
-            return Err(FilterError::Spec(format!("max_maf out of range [0,0.5]: {m}")));
+            return Err(FilterError::Spec(format!(
+                "max_maf out of range [0,0.5]: {m}"
+            )));
         }
         tail.push(TailRule::MaxMaf(m));
     }
@@ -551,7 +597,9 @@ pub fn compile(
             ));
         }
         if !(0.0..=1.0).contains(&p) {
-            return Err(FilterError::Spec(format!("min_hwe_p out of range [0,1]: {p}")));
+            return Err(FilterError::Spec(format!(
+                "min_hwe_p out of range [0,1]: {p}"
+            )));
         }
         tail.push(TailRule::MinHweP(p));
     }
@@ -564,7 +612,7 @@ pub fn compile(
         Some(other) => {
             return Err(FilterError::Spec(format!(
                 "--set-gts {other:?}: only `.` (the missing genotype) is supported"
-            )))
+            )));
         }
     };
     for (index, include, text) in spec
@@ -616,17 +664,21 @@ pub fn compile(
             )));
         }
         for tag in &fmt_tags {
-            let def = tags
-                .format(tag)
-                .ok_or_else(|| FilterError::Spec(format!("FORMAT tag {tag} is not declared in the header")))?;
+            let def = tags.format(tag).ok_or_else(|| {
+                FilterError::Spec(format!("FORMAT tag {tag} is not declared in the header"))
+            })?;
             if def.number != TagNumber::Count(1) {
                 return Err(FilterError::Spec(format!(
-                    "FORMAT tag {tag} is multi-valued (Number={:?}): subscripts are not supported yet", def.number
+                    "FORMAT tag {tag} is multi-valued (Number={:?}): subscripts are not supported yet",
+                    def.number
                 )));
             }
             validate_numeric(tag, def.ty)?;
             let is_float = def.ty == TagType::Float;
-            let column_of = |fields: &mut Vec<Vec<u8>>| match fields.iter().position(|f| f.as_slice() == tag.as_bytes()) {
+            let column_of = |fields: &mut Vec<Vec<u8>>| match fields
+                .iter()
+                .position(|f| f.as_slice() == tag.as_bytes())
+            {
                 Some(i) => i,
                 None => {
                     fields.push(tag.as_bytes().to_vec());
@@ -737,7 +789,10 @@ fn compile_regions(rule: &RegionRule) -> Result<Option<RegionLists>, FilterError
         return Ok(None);
     }
     use crate::spec::region::parse_regions;
-    Ok(Some((parse_regions(&rule.include)?, parse_regions(&rule.exclude)?)))
+    Ok(Some((
+        parse_regions(&rule.include)?,
+        parse_regions(&rule.exclude)?,
+    )))
 }
 
 #[cfg(test)]

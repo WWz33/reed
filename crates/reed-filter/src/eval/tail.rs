@@ -15,7 +15,11 @@ pub fn eval_tail(
     hits: &mut [u64],
 ) -> bool {
     // A short counter slice would silently skip rules (caller invariant).
-    assert_eq!(rules.len(), hits.len(), "invariant: tail counters align with the rules");
+    assert_eq!(
+        rules.len(),
+        hits.len(),
+        "invariant: tail counters align with the rules"
+    );
     // The call-rate denominator: every kept sample carries two allele slots
     // (doc_v4 02-cli-semantics.md §3.1 — the numerator is `counts.an`, so a
     // half call contributes one called allele).
@@ -24,11 +28,7 @@ pub fn eval_tail(
         let ok = match rule {
             TailRule::Expr { include, expr, .. } => {
                 let truth = crate::expr::eval(expr, values);
-                if *include {
-                    truth
-                } else {
-                    !truth
-                }
+                if *include { truth } else { !truth }
             }
             TailRule::MinAf(bound, kind) => {
                 af_of(values, counts, *kind).is_some_and(|freq| freq >= *bound)
@@ -60,20 +60,19 @@ pub fn eval_tail(
     true
 }
 
-/// The non-reference allele frequency (`-q/-Q`, bcftools default `nref`
-/// type): the INFO AC/AN values when both are present (bcftools semantics —
-/// they may be stale), else the genotype-derived counts. `None` when the
-/// site has no called alleles at all (such sites fail both bounds).
 /// The allele frequency a `-q/-Q` threshold applies to (bcftools `:type`;
 /// docs/rounds/v5/02-cli.md §3.2; `vcfview.c` `subset_vcf` + `bcf_calc_ac`
 /// with `BCF_UN_INFO|BCF_UN_FMT`, read 2026-10-10):
-///   * the per-allele counts come from INFO/AC + INFO/AN when both exist,
-///     else from the genotype tallies (`counts`);
-///   * `nref` = Σ(ALT counts)/an, `alt1` = AC[1]/an;
-///   * `minor`/`major` = min/max over every allele's count (REF included);
-///   * `nonmajor` = (an − max count)/an.
+///
+/// * the per-allele counts come from INFO/AC + INFO/AN when both exist,
+///   else from the genotype tallies (`counts`);
+/// * `nref` = Σ(ALT counts)/an, `alt1` = AC[1]/an;
+/// * `minor`/`major` = min/max over every allele's count (REF included);
+/// * `nonmajor` = (an − max count)/an.
+///
 /// The comparison runs in f64 exactly like bcftools; a site with an == 0
-/// never passes.
+/// never passes. `None` when the site has no called alleles at all (such
+/// sites fail both bounds).
 fn af_of(
     values: &crate::expr::SiteValues<'_>,
     counts: &SiteCounts,
@@ -117,15 +116,22 @@ fn af_of(
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PloidyPolicy};
     use reed_core::count::SiteCounts;
+    use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PloidyPolicy};
 
     fn counts(ac: u64, an: u64, hom_ref: u64, het: u64, hom_alt: u64) -> SiteCounts {
-        SiteCounts { ac, an, ns: hom_ref + het + hom_alt, n_missing: 0, hom_ref, het, hom_alt }
+        SiteCounts {
+            ac,
+            an,
+            ns: hom_ref + het + hom_alt,
+            n_missing: 0,
+            hom_ref,
+            het,
+            hom_alt,
+        }
     }
 
     fn values(counts: &SiteCounts) -> crate::expr::SiteValues<'static> {
@@ -154,7 +160,11 @@ mod tests {
         assert!(run(&[TailRule::MaxMac(4)]));
         assert!(!run(&[TailRule::MinMac(5)]));
         assert!(!run(&[TailRule::MaxMac(3)]));
-        let _ = (PloidyPolicy::HaploidAsHalfCall, MultiallelicPolicy::CollapseAlt, GenotypePolicies::default());
+        let _ = (
+            PloidyPolicy::HaploidAsHalfCall,
+            MultiallelicPolicy::CollapseAlt,
+            GenotypePolicies::default(),
+        );
     }
 
     /// doc_v4 02 回退版 §7.6: the decisions are exact at the boundary —
@@ -171,8 +181,12 @@ mod tests {
             let mut hits = vec![0_u64; rules.len()];
             eval_tail(&v, &c, 10, rules, &mut hits)
         };
-        assert!(run(&[TailRule::MaxMissing(MissingRate::parse("0.2").expect("valid"))]));
-        assert!(!run(&[TailRule::MaxMissing(MissingRate::parse("0.05").expect("valid"))]));
+        assert!(run(&[TailRule::MaxMissing(
+            MissingRate::parse("0.2").expect("valid")
+        )]));
+        assert!(!run(&[TailRule::MaxMissing(
+            MissingRate::parse("0.05").expect("valid")
+        )]));
         // 17 of 20 called → 3 missing (0.15): 0.3 keeps, 0.1 drops.
         let c = counts(2, 17, 7, 3, 0);
         let v = values(&c);
@@ -180,14 +194,18 @@ mod tests {
             &v,
             &c,
             10,
-            &[TailRule::MaxMissing(MissingRate::parse("0.3").expect("valid"))],
+            &[TailRule::MaxMissing(
+                MissingRate::parse("0.3").expect("valid")
+            )],
             &mut [0]
         ));
         assert!(!eval_tail(
             &v,
             &c,
             10,
-            &[TailRule::MaxMissing(MissingRate::parse("0.1").expect("valid"))],
+            &[TailRule::MaxMissing(
+                MissingRate::parse("0.1").expect("valid")
+            )],
             &mut [0]
         ));
     }
@@ -202,9 +220,21 @@ mod tests {
         assert_eq!(hits, vec![1, 1]);
         let outside = counts(6, 20, 7, 0, 3); // MAF = 0.3
         let mut hits = vec![0_u64; rules.len()];
-        assert!(eval_tail(&values(&outside), &outside, 10, &rules, &mut hits));
+        assert!(eval_tail(
+            &values(&outside),
+            &outside,
+            10,
+            &rules,
+            &mut hits
+        ));
         let too_common = counts(10, 20, 5, 0, 5); // MAF = 0.5
         let mut hits = vec![0_u64; rules.len()];
-        assert!(!eval_tail(&values(&too_common), &too_common, 10, &rules, &mut hits));
+        assert!(!eval_tail(
+            &values(&too_common),
+            &too_common,
+            10,
+            &rules,
+            &mut hits
+        ));
     }
 }

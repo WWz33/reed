@@ -13,7 +13,9 @@ use reed_oracle::estimators::allele_counts::allele_counts;
 use reed_oracle::estimators::dxy::{dxy, DxyEstimator};
 use reed_oracle::estimators::fst::{fst, FstEstimator};
 use reed_oracle::estimators::pi::{pi, PiEstimator};
-use reed_oracle::{Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer, WindowError};
+use reed_oracle::{
+    Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer, WindowError,
+};
 
 const EPS: f64 = 1e-12;
 
@@ -238,7 +240,10 @@ fn constructor_rejects_invalid_buffers() {
     );
     assert_eq!(
         e.unwrap_err(),
-        WindowError::AlleleOutOfRange { index: 0, allele: 2 }
+        WindowError::AlleleOutOfRange {
+            index: 0,
+            allele: 2
+        }
     );
 
     // Position outside window.

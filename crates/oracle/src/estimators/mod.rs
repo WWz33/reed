@@ -48,10 +48,12 @@ pub(crate) fn samples_of<'a>(
     window: &WindowBuffer,
     group: u32,
 ) -> Result<&'a [u32], Unavailable> {
-    pops.validate_against(window)
-        .map_err(|_| Unavailable { reason: ERR_POP_MISMATCH })?;
-    pops.get(group)
-        .ok_or(Unavailable { reason: ERR_GROUP_RANGE })
+    pops.validate_against(window).map_err(|_| Unavailable {
+        reason: ERR_POP_MISMATCH,
+    })?;
+    pops.get(group).ok_or(Unavailable {
+        reason: ERR_GROUP_RANGE,
+    })
 }
 
 /// Bias note for statistics that are **invariant to the presence of
@@ -64,9 +66,8 @@ pub(crate) fn monomorphic_invariant_note(
     note: &'static str,
 ) -> Option<&'static str> {
     match manifest {
-        SiteCompleteness::WithInvariants | SiteCompleteness::VariantOnly(Ascertainment::Complete) => {
-            None
-        }
+        SiteCompleteness::WithInvariants
+        | SiteCompleteness::VariantOnly(Ascertainment::Complete) => None,
         SiteCompleteness::VariantOnly(_) => Some(note),
     }
 }

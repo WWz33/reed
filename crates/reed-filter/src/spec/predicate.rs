@@ -49,7 +49,11 @@ impl Op {
     }
 
     /// Applies the comparison to two f64 values.
+    ///
+    /// Exact by design: the threshold and the tag value are the numbers the
+    /// user and the file provide; an epsilon would change the boundary.
     #[must_use]
+    #[allow(clippy::float_cmp)]
     pub fn apply_f64(self, a: f64, b: f64) -> bool {
         match self {
             Self::Ge => a >= b,
