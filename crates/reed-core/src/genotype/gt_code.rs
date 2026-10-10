@@ -4,7 +4,8 @@
 //! Layout: the low four bits are `slot0_state | slot1_state << 2` with
 //! 0 = REF, 1 = ALT, 2 = missing (9 of the 16 states occur); bit 4 is the
 //! phasing bit and bit 5 records that the input text was haploid. Consumers
-//! that need bit planes convert once with [`PlaneBlock::push_codes`].
+//! that need bit planes convert once with
+//! [`PlaneBlock::push_codes`](crate::genotype::PlaneBlock::push_codes).
 //!
 //! The genotype policies (ploidy, multi-allelic, half calls) are executed in
 //! exactly one place — [`GtCode::from_alleles`] — with every trigger counted
@@ -51,7 +52,12 @@ impl GtCode {
     /// Builds a code from two slot states.
     #[must_use]
     pub const fn from_states(slot0: u8, slot1: u8, phased: bool, haploid: bool) -> Self {
-        Self(slot0 | slot1 << 2 | if phased { PHASED } else { 0 } | if haploid { HAPLOID } else { 0 })
+        Self(
+            slot0
+                | slot1 << 2
+                | if phased { PHASED } else { 0 }
+                | if haploid { HAPLOID } else { 0 },
+        )
     }
 
     /// The low four bits: `slot0_state | slot1_state << 2`.
@@ -155,7 +161,12 @@ impl GtCode {
                 }
             }
             Ploidy::Diploid => match (slots[0], slots[1]) {
-                (None, None) => Ok(Self::from_states(STATE_MISSING, STATE_MISSING, phased, false)),
+                (None, None) => Ok(Self::from_states(
+                    STATE_MISSING,
+                    STATE_MISSING,
+                    phased,
+                    false,
+                )),
                 (Some(allele), None) => half_call(0, allele, phased, false, policies, counters),
                 (None, Some(allele)) => half_call(1, allele, phased, false, policies, counters),
                 (Some(a), Some(b)) => {
@@ -261,7 +272,8 @@ mod tests {
     fn diploid_full_calls_decode() {
         let mut c = PolicyCounters::default();
         let p = policies();
-        let code = GtCode::from_alleles([Some(0), Some(1)], Ploidy::Diploid, true, &p, &mut c).unwrap();
+        let code =
+            GtCode::from_alleles([Some(0), Some(1)], Ploidy::Diploid, true, &p, &mut c).unwrap();
         assert_eq!(code.state(), STATE_REF | STATE_ALT << 2);
         assert!(code.phased());
         assert_eq!(c, PolicyCounters::default());
@@ -271,9 +283,11 @@ mod tests {
     fn half_call_and_haploid_policies() {
         let mut c = PolicyCounters::default();
         let p = policies();
-        let half = GtCode::from_alleles([None, Some(0)], Ploidy::Diploid, false, &p, &mut c).unwrap();
+        let half =
+            GtCode::from_alleles([None, Some(0)], Ploidy::Diploid, false, &p, &mut c).unwrap();
         assert_eq!(half.state(), STATE_MISSING | STATE_REF << 2);
-        let hap = GtCode::from_alleles([Some(1), None], Ploidy::Haploid, false, &p, &mut c).unwrap();
+        let hap =
+            GtCode::from_alleles([Some(1), None], Ploidy::Haploid, false, &p, &mut c).unwrap();
         assert_eq!(hap.state(), STATE_ALT | STATE_MISSING << 2);
         assert!(hap.is_haploid());
         assert_eq!(c.n_haploid_as_half_call, 1);
@@ -307,8 +321,14 @@ mod tests {
     #[test]
     fn multiallelic_policies_count_and_reject() {
         let mut collapse = PolicyCounters::default();
-        let collapsed =
-            GtCode::from_alleles([Some(2), Some(3)], Ploidy::Diploid, false, &policies(), &mut collapse).unwrap();
+        let collapsed = GtCode::from_alleles(
+            [Some(2), Some(3)],
+            Ploidy::Diploid,
+            false,
+            &policies(),
+            &mut collapse,
+        )
+        .unwrap();
         assert_eq!(collapsed.state(), STATE_ALT | STATE_ALT << 2);
         assert_eq!(collapse.n_multiallelic_collapsed, 2);
 
@@ -332,7 +352,8 @@ mod tests {
             half_call: HalfCallPolicy::TreatAsMissing,
         };
         let mut c = PolicyCounters::default();
-        let code = GtCode::from_alleles([Some(1), None], Ploidy::Diploid, false, &policies, &mut c).unwrap();
+        let code = GtCode::from_alleles([Some(1), None], Ploidy::Diploid, false, &policies, &mut c)
+            .unwrap();
         assert!(code.is_fully_missing());
         assert_eq!(c.n_half_call_as_missing, 1);
     }

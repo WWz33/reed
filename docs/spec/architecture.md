@@ -802,6 +802,8 @@ worker 对一个 chunk 一口气完成：**inflate → 认领行 → 解析（�
 - 进程里不允许出现第二个线程池（不用 noodles MT reader/writer；rayon 只在 pass 之间的批量运算里使用，
   例如 sketch 的尾部判定，并且复用同一个预算）。
 - N ≤ 2 时退化为 reader 和 worker 合一的顺序模式。结果必须与并行模式逐字节相同（测试锁定）。
+  **现状（2026-10-10，doc_v6 F6-6）**：`run()` 无条件走并行路径，顺序模式尚未实现；
+  `ThreadBudget::is_sequential` 无调用者。实现或改规范由 Y5 裁决（docs/rounds/v6/06-roadmap.md）。
 
 ### 7.4 背压：票据窗口【规】
 
@@ -1665,9 +1667,10 @@ debug = true
 
 ### 14.4 unsafe 政策
 
-- 只允许出现在：`reed-core::count::kernel`（SIMD intrinsics）、`reed-io::vcf::sample_scan`
-  （边界已证明之后的 unchecked 下标，必须先有基准证明收益）、`memmap2` 调用点。
-- 每个 unsafe 块都要写 `// SAFETY:` 说明前置条件；标量路径跑 Miri；SIMD 路径与标量路径做 proptest 对拍；解析器跑 fuzz。
+- 只允许出现在：`memmap2` 调用点（`reed-io/src/chunk/bgzf.rs`，doc_v6 06 Y0 起是工作区唯一一处）。
+  doc_v6 Y0 删除了 `reed-core::count::kernel` 的 AVX-512 内核（release 下长度检查不成立 = 可达 UB，
+  且 348 样本下永不向量化）；若将来重新引入 SIMD，必须先恢复本文档与 `ci/check-doc-drift.sh` 的计数守卫。
+- 每个 unsafe 块都要写 `// SAFETY:` 说明前置条件；标量路径跑 Miri；解析器跑 fuzz。
 
 ### 14.5 API 规则
 

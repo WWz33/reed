@@ -5,14 +5,19 @@
 use proptest::prelude::*;
 
 use reed_core::genotype::{
-    write_genotype, GenotypePolicies, HalfCallPolicy, PlaneBlock, Ploidy, PloidyPolicy,
-    PolicyCounters,
+    GenotypePolicies, HalfCallPolicy, PlaneBlock, Ploidy, PloidyPolicy, PolicyCounters,
+    write_genotype,
 };
 
 fn arb_gt() -> impl Strategy<Value = (Ploidy, Option<u16>, Option<u16>)> {
     (
-        proptest::bool::weighted(0.1)
-            .prop_map(|haploid| if haploid { Ploidy::Haploid } else { Ploidy::Diploid }),
+        proptest::bool::weighted(0.1).prop_map(|haploid| {
+            if haploid {
+                Ploidy::Haploid
+            } else {
+                Ploidy::Diploid
+            }
+        }),
         proptest::option::of(0_u16..2),
         proptest::option::of(0_u16..2),
     )
@@ -80,7 +85,7 @@ proptest! {
                 bit(planes.slot1_alt),
                 bit(planes.slot1_miss),
             );
-            prop_assert!(!(a0 && m0) && !(a1 && m1), "slot state exclusive at sample {s}");
+            prop_assert!(!(a0 && m0 || a1 && m1), "slot state exclusive at sample {s}");
             n_miss += u32::from(m0) + u32::from(m1);
             if a0 || a1 {
                 n_alt += 1;
@@ -107,7 +112,11 @@ fn treat_as_missing_zeroes_exactly_two_alleles_per_genotype() {
     };
     let mut block = PlaneBlock::new(1, 3, false);
     let mut counters = PolicyCounters::default();
-    let gt = [(None, Some(1_u16)), (Some(1_u16), None), (Some(0_u16), None)];
+    let gt = [
+        (None, Some(1_u16)),
+        (Some(1_u16), None),
+        (Some(0_u16), None),
+    ];
     for (sample_idx, &(a, b)) in gt.iter().enumerate() {
         write_genotype(
             &mut block,

@@ -11,14 +11,13 @@
 // Casts in this file are bounded by construction: Element widths and counts come from the record descriptor.
 #![allow(clippy::cast_possible_truncation)]
 
-
 use super::dict::BcfDict;
 use super::record::{
-    int_sentinels, malformed, type_width, value_type, BcfRecordRef, Cursor, FLOAT_MISSING,
-    FLOAT_VECTOR_END,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, int_sentinels, malformed, type_width,
+    value_type,
 };
 use crate::error::{IoError, Locus};
-use crate::vcf::line_edit::{format_g6_into};
+use crate::vcf::line_edit::format_g6_into;
 
 /// htslib's `bcf_str_missing`: a single char value equal to this prints `.`
 /// in the `n == 1` FORMAT path.
@@ -129,10 +128,12 @@ pub fn render_site_part(
                 out.push(b';');
             }
             let idx = c.int_value(f_ty)?;
-            let idx = u32::try_from(idx).map_err(|_| bad(&locus, "BCF FILTER index is negative"))?;
+            let idx =
+                u32::try_from(idx).map_err(|_| bad(&locus, "BCF FILTER index is negative"))?;
             out.extend_from_slice(
-                dict.tag(idx)
-                    .ok_or_else(|| bad(&locus, "BCF FILTER index is not in the header dictionary"))?,
+                dict.tag(idx).ok_or_else(|| {
+                    bad(&locus, "BCF FILTER index is not in the header dictionary")
+                })?,
             );
         }
     }
@@ -307,8 +308,7 @@ pub fn decode_format_columns(
     let mut fields: Vec<(u32, u8, usize, usize)> = Vec::with_capacity(header.n_fmt);
     for _ in 0..header.n_fmt {
         let key = ci.typed_int()?;
-        let key = u32::try_from(key)
-            .map_err(|_| malformed("BCF FORMAT key is negative"))?;
+        let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
         let (ty, count) = ci.typed()?;
         let start = indiv.len() - ci.remaining();
         ci.take(type_width(ty) * count * n_sample)?;
@@ -321,14 +321,18 @@ pub fn decode_format_columns(
             continue;
         }
         if let Some(i) = int_keys.iter().position(|k| *k == name) {
-            let Some(column) = int_columns.get_mut(i) else { continue };
+            let Some(column) = int_columns.get_mut(i) else {
+                continue;
+            };
             for (s, slot) in column.iter_mut().enumerate() {
                 let elem = &indiv[start + s * width..start + (s + 1) * width];
                 *slot = int_element_column(ty, elem);
             }
         }
         if let Some(i) = float_keys.iter().position(|k| *k == name) {
-            let Some(column) = float_columns.get_mut(i) else { continue };
+            let Some(column) = float_columns.get_mut(i) else {
+                continue;
+            };
             for (s, slot) in column.iter_mut().enumerate() {
                 let elem = &indiv[start + s * width..start + (s + 1) * width];
                 *slot = float_element_column(ty, elem);
@@ -371,7 +375,10 @@ fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
 
 /// A malformed record at a known locus.
 fn bad(locus: &Locus, reason: &'static str) -> IoError {
-    IoError::MalformedRecord { locus: locus.clone(), reason }
+    IoError::MalformedRecord {
+        locus: locus.clone(),
+        reason,
+    }
 }
 
 /// `bcf_fmt_array`: elements joined by `,`; vector-end truncates the vector;

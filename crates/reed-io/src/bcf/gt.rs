@@ -16,7 +16,7 @@
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters};
 
 use super::dict::BcfDict;
-use super::record::{malformed, type_width, value_type, BcfRecordRef, Cursor};
+use super::record::{BcfRecordRef, Cursor, malformed, type_width, value_type};
 use super::render::fmt_gt;
 use crate::error::{IoError, Locus};
 use crate::vcf::genotype_scan::decode_gt_text;
@@ -43,8 +43,8 @@ pub struct SiteHeader {
 ///
 /// [`IoError::MalformedRecord`] when the shared block is shorter than its
 /// header.
-pub fn site_header(rec: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
-    let mut c = Cursor::new(rec.shared);
+pub fn site_header(record: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
+    let mut c = Cursor::new(record.shared);
     let chrom = c.i32()?;
     let pos0 = c.i32()?;
     let _rlen = c.i32()?;
@@ -89,8 +89,17 @@ impl GtTable {
     /// running the text decoder on it.
     #[must_use]
     pub fn new(policies: GenotypePolicies) -> Self {
-        let locus = Locus { contig_name: "<bcf-gt-table>".into(), pos1: 0 };
-        let mut entries = vec![GtEntry { code: GtCode::MISSING, triggers: TRIG_ERROR }; 65_536];
+        let locus = Locus {
+            contig_name: "<bcf-gt-table>".into(),
+            pos1: 0,
+        };
+        let mut entries = vec![
+            GtEntry {
+                code: GtCode::MISSING,
+                triggers: TRIG_ERROR
+            };
+            65_536
+        ];
         let mut text = Vec::with_capacity(8);
         for pair in 0..65_536_u32 {
             // The table index is the little-endian byte pair as it appears in
@@ -102,13 +111,17 @@ impl GtTable {
             fmt_gt(&mut text, value_type::INT8, raw.len(), &raw);
             let mut counters = PolicyCounters::default();
             let mut token = [None; 2];
-            if let Ok(code) =
-                decode_gt_text(&text, &locus, &policies, &mut counters, &mut token)
-            {
-                entries[pair as usize] = GtEntry { code, triggers: pack_triggers(&counters) };
+            if let Ok(code) = decode_gt_text(&text, &locus, &policies, &mut counters, &mut token) {
+                entries[pair as usize] = GtEntry {
+                    code,
+                    triggers: pack_triggers(&counters),
+                };
             }
         }
-        Self { entries: entries.into_boxed_slice(), policies }
+        Self {
+            entries: entries.into_boxed_slice(),
+            policies,
+        }
     }
 
     /// The policies the table (and its slow path) decode under.
@@ -231,14 +244,19 @@ pub struct GtQuery<'a> {
 /// [`IoError::MalformedRecord`] for a malformed record and
 /// [`IoError::PolicyRejected`] for genotypes the policies forbid.
 pub fn decode_record_gt(
-    rec: &BcfRecordRef<'_>,
+    record: &BcfRecordRef<'_>,
     header: &SiteHeader,
     query: &GtQuery<'_>,
     table: &GtTable,
     codes: &mut Vec<GtCode>,
     counters: &mut PolicyCounters,
 ) -> Result<(), IoError> {
-    let GtQuery { gt_key, n_samples, contig_name, pos1 } = *query;
+    let GtQuery {
+        gt_key,
+        n_samples,
+        contig_name,
+        pos1,
+    } = *query;
     codes.clear();
     if header.n_sample != n_samples {
         let reason = if header.n_sample > n_samples {
@@ -256,7 +274,7 @@ pub fn decode_record_gt(
     }
     let mut found: Option<(u8, usize, usize)> = None;
     if let Some(gt_key) = gt_key.filter(|_| header.n_fmt > 0) {
-        let indiv = rec.indiv;
+        let indiv = record.indiv;
         let mut ci = Cursor::new(indiv);
         for _ in 0..header.n_fmt {
             let key = ci.typed_int()?;
@@ -277,18 +295,21 @@ pub fn decode_record_gt(
         codes.resize(n_samples, GtCode::MISSING);
         return Ok(());
     };
-    let locus = Locus { contig_name: String::from_utf8_lossy(contig_name).into_owned(), pos1 };
+    let locus = Locus {
+        contig_name: String::from_utf8_lossy(contig_name).into_owned(),
+        pos1,
+    };
     let mut text = Vec::new();
     let stride = type_width(ty) * count;
     if ty == value_type::INT8 && count == 2 {
         for s in 0..header.n_sample {
-            let b = &rec.indiv[start + s * 2..start + s * 2 + 2];
+            let b = &record.indiv[start + s * 2..start + s * 2 + 2];
             codes.push(table.decode_pair(b[0], b[1], &locus, counters)?);
         }
     } else {
         for s in 0..header.n_sample {
             let off = start + s * stride;
-            let data = &rec.indiv[off..off + stride];
+            let data = &record.indiv[off..off + stride];
             codes.push(table.decode_slow(ty, data, &locus, counters, &mut text)?);
         }
     }
@@ -320,10 +341,13 @@ mod tests {
     #[test]
     fn table_matches_the_text_path_for_every_byte_pair() {
         let table = GtTable::new(policies());
-        let locus = Locus { contig_name: "c".into(), pos1: 1 };
+        let locus = Locus {
+            contig_name: "c".into(),
+            pos1: 1,
+        };
         for pair in 0..65_536_u32 {
-            let b0 = pair as u8;
-            let b1 = (pair >> 8) as u8;
+            let b0 = u8::try_from(pair & 0xFF).expect("invariant: low byte");
+            let b1 = u8::try_from(pair >> 8).expect("invariant: high byte");
             let mut native_counters = PolicyCounters::default();
             let got = table.decode_pair(b0, b1, &locus, &mut native_counters);
             // The text path: render the same two bytes and decode.
@@ -331,8 +355,13 @@ mod tests {
             fmt_gt(&mut rendered, value_type::INT8, 2, &[b0, b1]);
             let mut text_counters = PolicyCounters::default();
             let mut token = [None; 2];
-            let want =
-                decode_gt_text(&rendered, &locus, &policies(), &mut text_counters, &mut token);
+            let want = decode_gt_text(
+                &rendered,
+                &locus,
+                &policies(),
+                &mut text_counters,
+                &mut token,
+            );
             match (got, want) {
                 (Ok(a), Ok(b)) => {
                     assert_eq!(a.raw(), b.raw(), "pair {b0:#04x},{b1:#04x}");

@@ -14,8 +14,8 @@ use crate::error::CoreError;
 
 pub use gt_code::{GtCode, STATE_ALT, STATE_MISSING, STATE_REF};
 pub use planes::{
-    PlaneBlock, SitePlanes, N_BASE_PLANES, PLANE_PHASED, PLANE_SLOT0_ALT, PLANE_SLOT0_MISS,
-    PLANE_SLOT1_ALT, PLANE_SLOT1_MISS,
+    N_BASE_PLANES, PLANE_PHASED, PLANE_SLOT0_ALT, PLANE_SLOT0_MISS, PLANE_SLOT1_ALT,
+    PLANE_SLOT1_MISS, PlaneBlock, SitePlanes,
 };
 pub use policy::{
     GenotypePolicies, HalfCallPolicy, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
@@ -73,11 +73,21 @@ mod tests {
         let mut b = block();
         let mut c = PolicyCounters::default();
         let p = GenotypePolicies::default();
-        write_genotype(&mut b, 0, 0, [Some(0), Some(1)], Ploidy::Diploid, true, &p, &mut c).unwrap();
+        write_genotype(
+            &mut b,
+            0,
+            0,
+            [Some(0), Some(1)],
+            Ploidy::Diploid,
+            true,
+            &p,
+            &mut c,
+        )
+        .unwrap();
         let planes = b.site_planes(0);
-        assert!(planes.slot0_alt[0] & 1 == 0);
-        assert!(planes.slot1_alt[0] & 1 == 1);
-        assert!(planes.phased.expect("invariant: phased plane")[0] & 1 == 1);
+        assert_eq!(planes.slot0_alt[0] & 1, 0);
+        assert_eq!(planes.slot1_alt[0] & 1, 1);
+        assert_eq!(planes.phased.expect("invariant: phased plane")[0] & 1, 1);
         assert_eq!(c, PolicyCounters::default());
     }
 
@@ -86,10 +96,20 @@ mod tests {
         let mut b = block();
         let mut c = PolicyCounters::default();
         let p = GenotypePolicies::default();
-        write_genotype(&mut b, 0, 3, [None, None], Ploidy::Diploid, false, &p, &mut c).unwrap();
+        write_genotype(
+            &mut b,
+            0,
+            3,
+            [None, None],
+            Ploidy::Diploid,
+            false,
+            &p,
+            &mut c,
+        )
+        .unwrap();
         let planes = b.site_planes(0);
-        assert!(planes.slot0_miss[0] >> 3 & 1 == 1);
-        assert!(planes.slot1_miss[0] >> 3 & 1 == 1);
+        assert_eq!(planes.slot0_miss[0] >> 3 & 1, 1);
+        assert_eq!(planes.slot1_miss[0] >> 3 & 1, 1);
     }
 
     #[test]
@@ -102,19 +122,39 @@ mod tests {
         let mut b = block();
         let mut c = PolicyCounters::default();
         // `./1` keeps the called slot.
-        write_genotype(&mut b, 0, 0, [None, Some(1)], Ploidy::Diploid, false, &p_allele, &mut c).unwrap();
+        write_genotype(
+            &mut b,
+            0,
+            0,
+            [None, Some(1)],
+            Ploidy::Diploid,
+            false,
+            &p_allele,
+            &mut c,
+        )
+        .unwrap();
         let planes = b.site_planes(0);
-        assert!(planes.slot1_alt[0] & 1 == 1);
-        assert!(planes.slot0_miss[0] & 1 == 1);
-        assert!(planes.slot1_miss[0] & 1 == 0);
+        assert_eq!(planes.slot1_alt[0] & 1, 1);
+        assert_eq!(planes.slot0_miss[0] & 1, 1);
+        assert_eq!(planes.slot1_miss[0] & 1, 0);
         assert_eq!(c.n_half_call_as_missing, 0);
         // Same genotype under TreatAsMissing zeroes both slots.
         let mut b2 = block();
-        write_genotype(&mut b2, 0, 0, [None, Some(1)], Ploidy::Diploid, false, &p_missing, &mut c).unwrap();
+        write_genotype(
+            &mut b2,
+            0,
+            0,
+            [None, Some(1)],
+            Ploidy::Diploid,
+            false,
+            &p_missing,
+            &mut c,
+        )
+        .unwrap();
         let planes = b2.site_planes(0);
-        assert!(planes.slot0_miss[0] & 1 == 1);
-        assert!(planes.slot1_miss[0] & 1 == 1);
-        assert!(planes.slot1_alt[0] & 1 == 0);
+        assert_eq!(planes.slot0_miss[0] & 1, 1);
+        assert_eq!(planes.slot1_miss[0] & 1, 1);
+        assert_eq!(planes.slot1_alt[0] & 1, 0);
         assert_eq!(c.n_half_call_as_missing, 1);
     }
 
@@ -123,7 +163,17 @@ mod tests {
         let mut c = PolicyCounters::default();
         // Default rejects.
         let mut b = block();
-        let err = write_genotype(&mut b, 0, 0, [Some(1), None], Ploidy::Haploid, false, &GenotypePolicies::default(), &mut c).unwrap_err();
+        let err = write_genotype(
+            &mut b,
+            0,
+            0,
+            [Some(1), None],
+            Ploidy::Haploid,
+            false,
+            &GenotypePolicies::default(),
+            &mut c,
+        )
+        .unwrap_err();
         assert!(matches!(err, CoreError::PolicyRejected(_)));
         // Half-call conversion.
         let p_half = GenotypePolicies {
@@ -131,10 +181,20 @@ mod tests {
             ..GenotypePolicies::default()
         };
         let mut b = block();
-        write_genotype(&mut b, 0, 1, [Some(1), None], Ploidy::Haploid, false, &p_half, &mut c).unwrap();
+        write_genotype(
+            &mut b,
+            0,
+            1,
+            [Some(1), None],
+            Ploidy::Haploid,
+            false,
+            &p_half,
+            &mut c,
+        )
+        .unwrap();
         let planes = b.site_planes(0);
-        assert!(planes.slot0_alt[0] >> 1 & 1 == 1);
-        assert!(planes.slot1_miss[0] >> 1 & 1 == 1);
+        assert_eq!(planes.slot0_alt[0] >> 1 & 1, 1);
+        assert_eq!(planes.slot1_miss[0] >> 1 & 1, 1);
         assert_eq!(c.n_haploid_as_half_call, 1);
         // Homozygous duplication.
         let p_hom = GenotypePolicies {
@@ -142,11 +202,21 @@ mod tests {
             ..GenotypePolicies::default()
         };
         let mut b = block();
-        write_genotype(&mut b, 0, 2, [Some(1), None], Ploidy::Haploid, false, &p_hom, &mut c).unwrap();
+        write_genotype(
+            &mut b,
+            0,
+            2,
+            [Some(1), None],
+            Ploidy::Haploid,
+            false,
+            &p_hom,
+            &mut c,
+        )
+        .unwrap();
         let planes = b.site_planes(0);
-        assert!(planes.slot0_alt[0] >> 2 & 1 == 1);
-        assert!(planes.slot1_alt[0] >> 2 & 1 == 1);
-        assert!(planes.slot1_miss[0] >> 2 & 1 == 0);
+        assert_eq!(planes.slot0_alt[0] >> 2 & 1, 1);
+        assert_eq!(planes.slot1_alt[0] >> 2 & 1, 1);
+        assert_eq!(planes.slot1_miss[0] >> 2 & 1, 0);
         assert_eq!(c.n_haploid_as_homozygous, 1);
     }
 
@@ -155,7 +225,17 @@ mod tests {
         let mut c = PolicyCounters::default();
         // Default rejects allele index 2.
         let mut b = block();
-        let err = write_genotype(&mut b, 0, 0, [Some(0), Some(2)], Ploidy::Diploid, false, &GenotypePolicies::default(), &mut c).unwrap_err();
+        let err = write_genotype(
+            &mut b,
+            0,
+            0,
+            [Some(0), Some(2)],
+            Ploidy::Diploid,
+            false,
+            &GenotypePolicies::default(),
+            &mut c,
+        )
+        .unwrap_err();
         assert!(matches!(err, CoreError::PolicyRejected(_)));
         // CollapseAlt folds it onto the ALT bit and counts the trigger.
         let p_collapse = GenotypePolicies {
@@ -163,9 +243,19 @@ mod tests {
             ..GenotypePolicies::default()
         };
         let mut b = block();
-        write_genotype(&mut b, 0, 0, [Some(0), Some(2)], Ploidy::Diploid, false, &p_collapse, &mut c).unwrap();
+        write_genotype(
+            &mut b,
+            0,
+            0,
+            [Some(0), Some(2)],
+            Ploidy::Diploid,
+            false,
+            &p_collapse,
+            &mut c,
+        )
+        .unwrap();
         let planes = b.site_planes(0);
-        assert!(planes.slot1_alt[0] & 1 == 1);
+        assert_eq!(planes.slot1_alt[0] & 1, 1);
         assert_eq!(c.n_multiallelic_collapsed, 1);
     }
 }

@@ -14,8 +14,10 @@ pub mod record;
 pub mod render;
 
 pub use dict::BcfDict;
-pub use gt::{decode_record_gt, format_key, site_header, GtQuery, GtTable, SiteHeader};
-pub use record::{declared_len, record_len, record_ref, record_site, BcfRecordRef, VirtualMap};
-pub use encode::{bcf_header_text, BcfEncoder};
+pub use encode::{BcfEncoder, bcf_header_text};
+pub use gt::{GtQuery, GtTable, SiteHeader, decode_record_gt, format_key, site_header};
 pub use native_encode::NativeEncoder;
-pub use render::{decode_format_columns, render_record, render_sample_part, render_site_line, render_site_part};
+pub use record::{BcfRecordRef, VirtualMap, declared_len, record_len, record_ref, record_site};
+pub use render::{
+    decode_format_columns, render_record, render_sample_part, render_site_line, render_site_part,
+};

@@ -27,8 +27,12 @@ fn inflate_all(path: &std::path::Path) -> Vec<u8> {
         let total = reed_io::bgzf::block::parse_block_size(&header).expect("invariant: BGZF");
         let mut block = header.to_vec();
         block.resize(total, 0);
-        reader.read_exact(&mut block[18..]).expect("invariant: full block");
-        inflater.inflate_block(&block, &mut data).expect("invariant: inflates");
+        reader
+            .read_exact(&mut block[18..])
+            .expect("invariant: full block");
+        inflater
+            .inflate_block(&block, &mut data)
+            .expect("invariant: inflates");
     }
     data
 }
@@ -68,7 +72,7 @@ fn render_noodles(path: &std::path::Path, limit: usize) -> String {
             match reader.read_record_buf(&header, &mut buffer) {
                 Ok(0) => break,
                 Ok(_) => {}
-                Err(err) => panic!("noodles read: {err}"),
+                Err(err) => unreachable!("noodles read: {err}"),
             }
             writer
                 .write_variant_record(&header, &buffer)
@@ -77,10 +81,12 @@ fn render_noodles(path: &std::path::Path, limit: usize) -> String {
     }
     let text = String::from_utf8(out).expect("invariant: VCF text");
     // Drop noodles' header: compare records only.
-    text.lines()
-        .filter(|l| !l.starts_with('#'))
-        .map(|l| format!("{l}\n"))
-        .collect()
+    let mut out = String::new();
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Splits off the leading numeric run of `s` (`None` when it starts with a
@@ -118,7 +124,10 @@ fn tokens_agree(ours: &str, theirs: &str) -> bool {
         {
             // BCF floats are f32; comparing the widened values catches a
             // wrong byte while tolerating the text form.
-            if (va as f32).to_bits() != (vb as f32).to_bits() {
+            // BCF floats are f32; the text forms may carry more digits.
+            #[allow(clippy::cast_possible_truncation)]
+            let same = (va as f32).to_bits() == (vb as f32).to_bits();
+            if !same {
                 return false;
             }
             a = ra;

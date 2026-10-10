@@ -25,8 +25,12 @@ fn inflate_all(path: &std::path::Path) -> Vec<u8> {
         let total = reed_io::bgzf::block::parse_block_size(&header).expect("invariant: BGZF");
         let mut block = header.to_vec();
         block.resize(total, 0);
-        reader.read_exact(&mut block[18..]).expect("invariant: full block");
-        inflater.inflate_block(&block, &mut data).expect("invariant: inflates");
+        reader
+            .read_exact(&mut block[18..])
+            .expect("invariant: full block");
+        inflater
+            .inflate_block(&block, &mut data)
+            .expect("invariant: inflates");
     }
     data
 }

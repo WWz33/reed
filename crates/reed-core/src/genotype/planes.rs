@@ -105,7 +105,10 @@ impl PlaneBlock {
     /// Panics if `site >= n_sites` or `plane >= n_planes` (caller invariant).
     #[must_use]
     pub fn plane(&self, site: usize, plane: usize) -> &[u64] {
-        assert!(site < self.n_sites && plane < self.n_planes, "invariant: plane index out of range");
+        assert!(
+            site < self.n_sites && plane < self.n_planes,
+            "invariant: plane index out of range"
+        );
         let start = (site * self.n_planes + plane) * self.n_words_per_plane;
         &self.words[start..start + self.n_words_per_plane]
     }
@@ -116,7 +119,10 @@ impl PlaneBlock {
     ///
     /// Panics if the indices are out of range.
     pub fn plane_mut(&mut self, site: usize, plane: usize) -> &mut [u64] {
-        assert!(site < self.n_sites && plane < self.n_planes, "invariant: plane index out of range");
+        assert!(
+            site < self.n_sites && plane < self.n_planes,
+            "invariant: plane index out of range"
+        );
         let start = (site * self.n_planes + plane) * self.n_words_per_plane;
         let w = self.n_words_per_plane;
         &mut self.words[start..start + w]
@@ -128,7 +134,10 @@ impl PlaneBlock {
     ///
     /// Panics if `site >= n_sites` or `sample >= n_samples`.
     pub fn set_slot(&mut self, site: usize, sample: usize, slot: usize, alt: bool, miss: bool) {
-        assert!(site < self.n_sites && sample < self.n_samples, "invariant: genotype index out of range");
+        assert!(
+            site < self.n_sites && sample < self.n_samples,
+            "invariant: genotype index out of range"
+        );
         let (alt_plane, miss_plane) = match slot {
             0 => (PLANE_SLOT0_ALT, PLANE_SLOT0_MISS),
             _ => (PLANE_SLOT1_ALT, PLANE_SLOT1_MISS),
@@ -184,7 +193,10 @@ impl PlaneBlock {
     ///
     /// Panics if `site >= n_sites` or `sample >= n_samples`.
     pub fn set_phased(&mut self, site: usize, sample: usize, phased: bool) {
-        assert!(site < self.n_sites && sample < self.n_samples, "invariant: genotype index out of range");
+        assert!(
+            site < self.n_sites && sample < self.n_samples,
+            "invariant: genotype index out of range"
+        );
         if !self.with_phase() {
             return;
         }
@@ -242,12 +254,7 @@ impl PlaneBlock {
                 .slot0_alt
                 .iter()
                 .zip(planes.slot0_miss.iter())
-                .chain(
-                    planes
-                        .slot1_alt
-                        .iter()
-                        .zip(planes.slot1_miss.iter()),
-                )
+                .chain(planes.slot1_alt.iter().zip(planes.slot1_miss.iter()))
                 .all(|(&a, &m)| a & m == 0)
         })
     }
@@ -266,12 +273,15 @@ mod tests {
         block.set_phased(1, 0, true);
 
         let planes = block.site_planes(1);
-        assert!(planes.slot0_alt[0] & 1 == 1);
-        assert!(planes.slot0_miss[0] & 1 == 0);
-        assert!(planes.slot1_alt[0] & 1 == 0);
-        assert!(planes.phased.expect("invariant: phased plane present")[0] & 1 == 1);
+        assert_eq!(planes.slot0_alt[0] & 1, 1);
+        assert_eq!(planes.slot0_miss[0] & 1, 0);
+        assert_eq!(planes.slot1_alt[0] & 1, 0);
+        assert_eq!(
+            planes.phased.expect("invariant: phased plane present")[0] & 1,
+            1
+        );
         // Last sample lives in the second word.
-        assert!(planes.slot0_miss[2] >> (129 - 128) & 1 == 1);
+        assert_eq!(planes.slot0_miss[2] >> (129 - 128) & 1, 1);
         assert!(block.invariants_hold());
     }
 

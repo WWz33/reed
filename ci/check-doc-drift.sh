@@ -52,10 +52,11 @@ check "reed index rejects stdin (doc_v4 W1/F4-4)" \
 check "the shared Verbosity enum exists (doc_v4 03 §3.3)" \
     grep -q 'pub(crate) enum Verbosity' crates/reed-cli/src/cli/verbosity.rs
 
-# doc_v5 03 §2 / A5-2: exactly two audited `unsafe` sites (the AVX-512 count
-# kernel and the mmap). A new one must change the docs and this guard first.
-check "exactly two allow(unsafe_code) sites (doc_v5 03 §2)" \
-    bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | wc -l)" -eq 2 ]'
+# doc_v6 06 Y0 / A6-22: the unsound AVX-512 count kernel was deleted, leaving
+# the mmap as the only audited `unsafe` site (doc_v6 03 §5). A new one must
+# change the docs and this guard first.
+check "exactly one allow(unsafe_code) site (doc_v6 06 Y0)" \
+    bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | wc -l)" -eq 1 ]'
 
 # doc_v5 03 §6 / A5-3: the stale names are gone from the code.
 check "no code says sample.max_missing (doc_v5 A5-3)" \
@@ -104,5 +105,30 @@ check "the summary has no second scanner (doc_v5 X3)" \
 # worker carry resets per chunk and the sink owns every cross-chunk pair.
 check "the LD carry resets per chunk (doc_v5 X4.4)" \
     grep -q 'The LD carry is per chunk' crates/reed/src/stats/job.rs
+
+# doc_v6 06 Y0 / E6-13: vendor vocabulary is out of the production code
+# (test directories keep the reference-tool names, naming.md §2.5).
+check "no pixy vocabulary in production src (doc_v6 E6-13)" \
+    bash -c '! grep -rniE "\bpixy" crates/reed/src crates/reed-cli/src crates/reed-core/src crates/reed-io/src crates/reed-engine/src crates/reed-stats/src crates/reed-filter/src --include=*.rs'
+
+# doc_v6 06 Y0 / E6-14: the non-standard `ponytail` markers are gone.
+check "no ponytail markers remain (doc_v6 E6-14)" \
+    bash -c '! grep -rq ponytail crates'
+
+# doc_v6 06 Y0 / E6-16: one module style — no `foo.rs` + `foo/` sibling pairs.
+check "no sibling foo.rs + foo/ module pairs (doc_v6 E6-16)" \
+    bash -c 'for d in crates/*/src; do for f in "$d"/*.rs; do [ -d "${f%.rs}" ] && exit 1; done; done; exit 0'
+
+# doc_v6 06 Y0 / E6-16: every product crate defines its error in error.rs.
+check "the four product crates have error.rs (doc_v6 E6-16)" \
+    bash -c '[ "$(ls crates/reed-core/src/error.rs crates/reed-io/src/error.rs crates/reed-engine/src/error.rs crates/reed-filter/src/error.rs 2>/dev/null | wc -l)" -eq 4 ]'
+
+# doc_v6 06 Y0 / E6-11: the binary carries its build provenance.
+check "reed-cli has a build.rs for --version provenance (doc_v6 E6-11)" \
+    grep -q 'REED_BUILD_COMMIT' crates/reed-cli/build.rs
+
+# doc_v6 06 Y0 / E6-10: the declared license has its texts.
+check "LICENSE-MIT and LICENSE-APACHE exist (doc_v6 E6-10)" \
+    bash -c '[ -f LICENSE-MIT ] && [ -f LICENSE-APACHE ]'
 
 exit "$fail"

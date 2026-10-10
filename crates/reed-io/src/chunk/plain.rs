@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use reed_core::ChunkId;
 
-use crate::chunk::{ChunkBytes, ChunkPayload, CHUNK_TARGET_COMPRESSED};
+use crate::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes, ChunkPayload};
 use crate::error::IoError;
 use crate::header::HeaderFacts;
 

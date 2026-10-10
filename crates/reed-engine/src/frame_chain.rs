@@ -81,7 +81,8 @@ fn clear_waiter(bits: &mut [u64], id: u64) {
 
 /// Whether bit `id` is set.
 fn has_waiter(bits: &[u64], id: u64) -> bool {
-    bits.get((id >> 6) as usize).is_some_and(|word| word >> (id & 63) & 1 == 1)
+    bits.get((id >> 6) as usize)
+        .is_some_and(|word| word >> (id & 63) & 1 == 1)
 }
 
 /// The shared chain.
@@ -244,7 +245,11 @@ impl FrameChain {
     /// A guard that publishes cell `id` (or poisons the chain instead).
     #[must_use]
     pub const fn publish_guard(&self, id: u64) -> PublishGuard<'_> {
-        PublishGuard { chain: self, id, done: false }
+        PublishGuard {
+            chain: self,
+            id,
+            done: false,
+        }
     }
 }
 
@@ -279,7 +284,9 @@ mod tests {
         let mut chain = FrameChain::new(abort.signal.clone());
         chain.stall_limit = Duration::from_millis(20);
         // Cell 1 is never published: only the construction-time cell 0 exists.
-        let err = chain.wait(1).expect_err("a silent chain must trip the watchdog");
+        let err = chain
+            .wait(1)
+            .expect_err("a silent chain must trip the watchdog");
         let text = err.to_string();
         assert!(text.contains("chain stalled"), "{text}");
         assert!(text.contains("chunk 1"), "{text}");

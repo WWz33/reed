@@ -79,7 +79,10 @@ pub struct BcfRecordRef<'a> {
 #[must_use]
 pub fn malformed(reason: &'static str) -> IoError {
     IoError::MalformedRecord {
-        locus: Locus { contig_name: "<bcf>".into(), pos1: 0 },
+        locus: Locus {
+            contig_name: "<bcf>".into(),
+            pos1: 0,
+        },
         reason,
     }
 }
@@ -158,7 +161,9 @@ impl VirtualMap<'_> {
 ///
 /// [`IoError::MalformedRecord`] when fewer than 12 bytes are available.
 pub fn record_site(bytes: &[u8]) -> Result<(i32, i32, i32), IoError> {
-    let head = bytes.get(..12).ok_or_else(|| malformed("BCF record header is truncated"))?;
+    let head = bytes
+        .get(..12)
+        .ok_or_else(|| malformed("BCF record header is truncated"))?;
     let int = |i: usize| i32::from_le_bytes([head[i], head[i + 1], head[i + 2], head[i + 3]]);
     Ok((int(0), int(4), int(8)))
 }
@@ -188,7 +193,10 @@ impl<'a> Cursor<'a> {
     ///
     /// [`IoError::MalformedRecord`] at the block's end.
     pub fn take(&mut self, n: usize) -> Result<&'a [u8], IoError> {
-        let end = self.pos.checked_add(n).ok_or_else(|| malformed("BCF block overrun"))?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| malformed("BCF block overrun"))?;
         let slice = self
             .data
             .get(self.pos..end)
@@ -246,8 +254,8 @@ impl<'a> Cursor<'a> {
         let mut count = usize::from(desc >> 4);
         if count == 15 {
             let ext = self.typed_int()?;
-            count = usize::try_from(ext)
-                .map_err(|_| malformed("BCF descriptor count is negative"))?;
+            count =
+                usize::try_from(ext).map_err(|_| malformed("BCF descriptor count is negative"))?;
         }
         if type_width(ty) == 0 && ty != value_type::NULL {
             return Err(malformed("BCF descriptor has an unknown type"));
@@ -329,7 +337,10 @@ mod tests {
         // Trailing data (the next record) does not leak in.
         bytes.push(0);
         assert_eq!(record_len(&bytes), Some(14));
-        assert_eq!(record_ref(&buf(&bytes)).expect("invariant: parses").indiv, b"ef");
+        assert_eq!(
+            record_ref(&buf(&bytes)).expect("invariant: parses").indiv,
+            b"ef"
+        );
     }
 
     fn buf(b: &[u8]) -> Vec<u8> {
@@ -341,7 +352,10 @@ mod tests {
         // CHAR with count 15 -> extended typed int 20.
         let data = [0xF7, 0x11, 20];
         let mut c = Cursor::new(&data);
-        assert_eq!(c.typed().expect("invariant: parses"), (value_type::CHAR, 20));
+        assert_eq!(
+            c.typed().expect("invariant: parses"),
+            (value_type::CHAR, 20)
+        );
     }
 
     #[test]

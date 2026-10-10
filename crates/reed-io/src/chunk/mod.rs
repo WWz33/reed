@@ -17,7 +17,6 @@ use reed_core::ChunkId;
 
 use crate::error::IoError;
 
-
 /// Compressed-byte target per chunk. `// determinism-relevant`: changing it
 /// changes chunk boundaries, so output could shift at the last float digit;
 /// bump the version and record an ADR before touching it
@@ -240,8 +239,7 @@ fn tail_range(text: &[u8]) -> Option<Range<usize>> {
     match text.iter().rposition(|&b| b == b'\n') {
         Some(rel) if rel + 1 < text.len() => Some(rel + 1..text.len()),
         Some(_) => None,
-        None if !text.is_empty() => Some(0..text.len()),
-        None => None,
+        None => (!text.is_empty()).then_some(0..text.len()),
     }
 }
 
@@ -267,9 +265,7 @@ impl<R: std::io::Read + Send> BgzfChunkSource<R> {
     /// # Errors
     ///
     /// [`IoError::Header`] when the header is missing or unparsable.
-    pub fn open(
-        inner: R,
-    ) -> Result<(Self, crate::header::HeaderFacts), IoError> {
+    pub fn open(inner: R) -> Result<(Self, crate::header::HeaderFacts), IoError> {
         let mut reader = bgzf::BgzfChunkReader::new(inner);
         let scan = reader.scan_header(&mut crate::bgzf::inflate::Inflater::new())?;
         let facts = crate::header::HeaderFacts::parse(&scan.text)?;

@@ -113,7 +113,10 @@ mod tests {
     #[test]
     fn interval_conventions() {
         // 1-based closed [10, 20] == 0-based half-open [9, 20).
-        let i1 = Interval1 { start: Pos1(10), end: Pos1(20) };
+        let i1 = Interval1 {
+            start: Pos1(10),
+            end: Pos1(20),
+        };
         let i0 = i1.to_interval0();
         assert_eq!(i0.start, Pos0(9));
         assert_eq!(i0.end, Pos0(20));

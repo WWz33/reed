@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-
 /// In-flight chunks per worker (§7.4): the ticket window capacity is
 /// `TICKETS_PER_WORKER × workers`.
 pub const TICKETS_PER_WORKER: usize = 2;
@@ -10,8 +9,10 @@ pub const TICKETS_PER_WORKER: usize = 2;
 /// The single compute-resource knob: total threads reed may use.
 ///
 /// Layout: 1 reader + 1 reducer/writer + `workers()` compute workers.
-/// `threads <= 2` selects the sequential mode (§7.3), whose output must be
-/// byte-identical to the parallel mode (locked by tests).
+/// `threads <= 2` is the intended sequential-mode selector (§7.3), whose
+/// output must be byte-identical to the parallel mode; the sequential path
+/// itself is not implemented yet (`is_sequential` has no caller — F6-6,
+/// decided in the Y5 engine work, docs/rounds/v6/06-roadmap.md).
 #[derive(Clone, Copy, Debug)]
 pub struct ThreadBudget {
     /// Total threads (default: all available cores).
@@ -25,8 +26,7 @@ impl ThreadBudget {
     #[must_use]
     pub fn all() -> Self {
         Self {
-            threads: std::thread::available_parallelism()
-                .map_or(1, std::num::NonZeroUsize::get),
+            threads: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
             mem: MemBudget::default_half_memory(),
         }
     }
@@ -78,12 +78,6 @@ impl MemBudget {
         Self { bytes }
     }
 
-    /// Half of physical memory; tests use this to avoid `u64::MAX` pools.
-    #[must_use]
-    pub fn from_half_memory_for_tests() -> Self {
-        Self::default_half_memory()
-    }
-
     /// Default: 50% of physical memory (Linux; other platforms: unlimited).
     #[must_use]
     pub fn default_half_memory() -> Self {
@@ -122,7 +116,10 @@ impl BytePermits {
     /// Blocks until `bytes` permits are available (or abort fires); returns
     /// `false` on abort.
     pub fn acquire(&self, bytes: u64, abort: &crate::abort::AbortSignal) -> bool {
-        let mut guard = self.available.lock().expect("invariant: permits not poisoned");
+        let mut guard = self
+            .available
+            .lock()
+            .expect("invariant: permits not poisoned");
         loop {
             if abort.is_aborted() {
                 return false;
@@ -142,7 +139,10 @@ impl BytePermits {
 
     /// Returns `bytes` permits to the pool.
     pub fn release(&self, bytes: u64) {
-        let mut guard = self.available.lock().expect("invariant: permits not poisoned");
+        let mut guard = self
+            .available
+            .lock()
+            .expect("invariant: permits not poisoned");
         *guard = guard.saturating_add(bytes);
         drop(guard);
         self.cv.notify_all();

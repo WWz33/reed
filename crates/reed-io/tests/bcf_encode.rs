@@ -22,8 +22,12 @@ fn inflate_all(path: &std::path::Path) -> Vec<u8> {
         let total = reed_io::bgzf::block::parse_block_size(&header).expect("invariant: BGZF");
         let mut block = header.to_vec();
         block.resize(total, 0);
-        reader.read_exact(&mut block[18..]).expect("invariant: full block");
-        inflater.inflate_block(&block, &mut data).expect("invariant: inflates");
+        reader
+            .read_exact(&mut block[18..])
+            .expect("invariant: full block");
+        inflater
+            .inflate_block(&block, &mut data)
+            .expect("invariant: inflates");
     }
     data
 }
@@ -33,7 +37,9 @@ fn fixture_parts() -> (String, Vec<Vec<u8>>) {
     let data = inflate_all(&fixture("fix.vcf.gz"));
     let text = String::from_utf8(data).expect("invariant: UTF-8 VCF");
     let chrom = text.find("#CHROM").expect("invariant: header");
-    let end = text[chrom..].find('\n').map_or(text.len(), |i| chrom + i + 1);
+    let end = text[chrom..]
+        .find('\n')
+        .map_or(text.len(), |i| chrom + i + 1);
     let header = text[..end].to_string();
     let records = text[end..]
         .lines()
@@ -51,19 +57,25 @@ fn fixture_parts() -> (String, Vec<Vec<u8>>) {
 #[test]
 fn native_and_noodles_encoders_agree() {
     let (header_text, records) = fixture_parts();
-    let header: noodles::vcf::Header =
-        header_text.parse().expect("invariant: header parses");
+    let header: noodles::vcf::Header = header_text.parse().expect("invariant: header parses");
     let mut native = reed_io::bcf::NativeEncoder::new(&header).expect("invariant: native encoder");
     let mut noodles = reed_io::bcf::BcfEncoder::new().expect("invariant: noodles encoder");
     noodles.write_header(&header).expect("invariant: header");
     for (i, record) in records.iter().enumerate() {
         let mut expected = Vec::new();
-        native.encode(record, &mut expected).expect("invariant: native encode");
+        native
+            .encode(record, &mut expected)
+            .expect("invariant: native encode");
         let mut got = Vec::new();
         noodles
             .encode_record(&header, record, &mut got)
             .expect("invariant: noodles encode");
-        assert_eq!(got, expected, "record {i}: {}", String::from_utf8_lossy(record));
+        assert_eq!(
+            got,
+            expected,
+            "record {i}: {}",
+            String::from_utf8_lossy(record)
+        );
     }
 }
 
@@ -72,13 +84,14 @@ fn native_and_noodles_encoders_agree() {
 #[test]
 fn encode_round_trips_through_the_renderer() {
     let (header_text, records) = fixture_parts();
-    let header: noodles::vcf::Header =
-        header_text.parse().expect("invariant: header parses");
+    let header: noodles::vcf::Header = header_text.parse().expect("invariant: header parses");
     let mut encoder = reed_io::bcf::NativeEncoder::new(&header).expect("invariant: encoder");
     // A synthetic BCF stream: header text + records, rendered back.
     let mut stream = Vec::new();
     for record in &records {
-        encoder.encode(record, &mut stream).expect("invariant: encode");
+        encoder
+            .encode(record, &mut stream)
+            .expect("invariant: encode");
     }
     // The encoder numbers tags with noodles' StringMaps; the file header a
     // real run writes carries explicit IDX for every tag, which pins htslib

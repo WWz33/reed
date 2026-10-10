@@ -6,6 +6,8 @@ pub mod block_writer;
 pub mod index;
 pub mod ordered_output;
 
-pub use block_writer::{BGZF_BLOCK_SIZE, BlockWriter, ChunkOutput, IndexKey, IndexRecord, OutBlock};
+pub use block_writer::{
+    BGZF_BLOCK_SIZE, BlockWriter, ChunkOutput, IndexKey, IndexRecord, OutBlock,
+};
 pub use index::{Indexer, WriteIndex};
 pub use ordered_output::OrderedOutput;

@@ -7,7 +7,6 @@ pub mod bcf;
 pub mod bgzf;
 pub mod chunk;
 pub mod error;
-pub mod field_plan;
 pub mod format;
 pub mod header;
 pub mod vcf;

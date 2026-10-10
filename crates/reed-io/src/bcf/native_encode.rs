@@ -16,16 +16,16 @@
 use std::collections::HashMap;
 
 use crate::error::{IoError, Locus};
-use noodles::vcf as vcf;
 use crate::vcf::line::LineRef;
 use crate::vcf::site::SiteView;
+use noodles::vcf;
 
 /// Marker for a sample column shorter than the FORMAT key list.
 const ABSENT: (u32, u32) = (u32::MAX, u32::MAX);
 
 use super::record::{
-    value_type, FLOAT_MISSING, FLOAT_VECTOR_END, INT16_MAX_VALUE, INT16_MIN_VALUE,
-    INT32_MAX_VALUE, INT32_MIN_VALUE, INT8_MAX_VALUE, INT8_MIN_VALUE,
+    FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE, INT16_MAX_VALUE,
+    INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, value_type,
 };
 
 /// A per-worker native encoder.
@@ -93,13 +93,19 @@ impl NativeEncoder {
             .chain(header.formats().keys())
         {
             if let Some(idx) = maps.strings().get_index_of(key) {
-                tags.insert(key.as_bytes().to_vec(), u32::try_from(idx).unwrap_or(u32::MAX));
+                tags.insert(
+                    key.as_bytes().to_vec(),
+                    u32::try_from(idx).unwrap_or(u32::MAX),
+                );
             }
         }
         let mut contig_index = HashMap::new();
         for name in header.contigs().keys() {
             if let Some(idx) = maps.contigs().get_index_of(name) {
-                contig_index.insert(name.as_bytes().to_vec(), i32::try_from(idx).unwrap_or(i32::MAX));
+                contig_index.insert(
+                    name.as_bytes().to_vec(),
+                    i32::try_from(idx).unwrap_or(i32::MAX),
+                );
             }
         }
         Ok(Self {
@@ -168,9 +174,7 @@ impl NativeEncoder {
         s.extend_from_slice(&contig.to_le_bytes());
         s.extend_from_slice(&pos0.to_le_bytes());
         s.extend_from_slice(&rlen.to_le_bytes());
-        s.extend_from_slice(
-            &site.qual.map_or(FLOAT_MISSING, f32::to_bits).to_le_bytes(),
-        );
+        s.extend_from_slice(&site.qual.map_or(FLOAT_MISSING, f32::to_bits).to_le_bytes());
         s.extend_from_slice(&[0; 8]); // n_allele|n_info, n_fmt|n_sample
 
         // ID: an empty ID (".") is stored as a zero-length string.
@@ -229,7 +233,11 @@ impl NativeEncoder {
                     .get(key)
                     .copied()
                     .ok_or_else(|| Self::undeclared("INFO", key))?;
-                let declared = self.info_types.get(key).copied().unwrap_or(InfoType::String);
+                let declared = self
+                    .info_types
+                    .get(key)
+                    .copied()
+                    .unwrap_or(InfoType::String);
                 info_items.push((idx, declared, value));
             }
         }
@@ -286,7 +294,7 @@ impl NativeEncoder {
         let n_fmt = if format == b"." || format.is_empty() {
             0_u32
         } else {
-            u32::try_from(format.iter().filter(|&&b| b == b':').count() + 1).unwrap_or(u32::MAX)
+            u32::try_from(memchr::memchr_iter(b':', format).count() + 1).unwrap_or(u32::MAX)
         };
         if n_fmt > 0 {
             let samples = lr.samples_text();
@@ -298,10 +306,7 @@ impl NativeEncoder {
             let mut column_start = 0_usize;
             for sample in 0..self.n_samples {
                 let rest = &samples[column_start..];
-                let column_len = rest
-                    .iter()
-                    .position(|&b| b == b'\t')
-                    .unwrap_or(rest.len());
+                let column_len = rest.iter().position(|&b| b == b'\t').unwrap_or(rest.len());
                 let column = &rest[..column_len];
                 let mut sub_start = 0_usize;
                 for k in 0..n_keys {
@@ -328,7 +333,11 @@ impl NativeEncoder {
                     .get(*key)
                     .copied()
                     .ok_or_else(|| Self::undeclared("FORMAT", key))?;
-                let ty = self.format_types.get(*key).copied().unwrap_or(value_type::CHAR);
+                let ty = self
+                    .format_types
+                    .get(*key)
+                    .copied()
+                    .unwrap_or(value_type::CHAR);
                 encode_typed_int(&mut self.indiv, i64::from(idx));
                 if *key == b"GT" {
                     self.encode_gt_column(samples, k, n_keys);
@@ -347,7 +356,13 @@ impl NativeEncoder {
     }
 
     /// One sample's subfield `k` (`ABSENT` when the column is shorter).
-    fn cell<'a>(cells: &[(u32, u32)], samples: &'a [u8], sample: usize, k: usize, n_keys: usize) -> &'a [u8] {
+    fn cell<'a>(
+        cells: &[(u32, u32)],
+        samples: &'a [u8],
+        sample: usize,
+        k: usize,
+        n_keys: usize,
+    ) -> &'a [u8] {
         match cells.get(sample * n_keys + k).copied() {
             Some((start, end)) if start != u32::MAX => &samples[start as usize..end as usize],
             _ => b".",
@@ -385,7 +400,12 @@ impl NativeEncoder {
         }
     }
 
-    fn encode_int_column(&mut self, samples: &[u8], k: usize, n_keys: usize) -> Result<(), IoError> {
+    fn encode_int_column(
+        &mut self,
+        samples: &[u8],
+        k: usize,
+        n_keys: usize,
+    ) -> Result<(), IoError> {
         let mut max_len = 0_usize;
         let (mut min, mut max) = (i64::MAX, i64::MIN);
         for s in 0..self.n_samples {
@@ -420,8 +440,7 @@ impl NativeEncoder {
                         missing
                     } else {
                         let v = parse_i64(part).ok_or_else(|| bad("non-integer FORMAT value"))?;
-                        i32::try_from(v.clamp(INT32_MIN_VALUE, INT32_MAX_VALUE))
-                            .unwrap_or(missing)
+                        i32::try_from(v.clamp(INT32_MIN_VALUE, INT32_MAX_VALUE)).unwrap_or(missing)
                     };
                     push_int(&mut self.indiv, v, width);
                     written += 1;
@@ -466,7 +485,11 @@ impl NativeEncoder {
                 }
             }
             while written < max_len {
-                let bits = if written == 0 { FLOAT_MISSING } else { FLOAT_VECTOR_END };
+                let bits = if written == 0 {
+                    FLOAT_MISSING
+                } else {
+                    FLOAT_VECTOR_END
+                };
                 self.indiv.extend_from_slice(&bits.to_le_bytes());
                 written += 1;
             }
@@ -551,7 +574,11 @@ fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     encode_size(out, values.len(), ty);
     let (missing, _) = super::record::int_sentinels(ty);
     for &v in values {
-        let v = if v == i64::MIN { missing as i32 } else { v as i32 };
+        let v = if v == i64::MIN {
+            missing as i32
+        } else {
+            v as i32
+        };
         push_int(out, v, width);
     }
 }
@@ -599,7 +626,8 @@ fn gt_shape(sub: &[u8]) -> (usize, i64) {
     let mut max_allele = 0_i64;
     for allele in sub.split(|&b| b == b'/' || b == b'|') {
         ploidy += 1;
-        if allele != b"." && !allele.is_empty()
+        if allele != b"."
+            && !allele.is_empty()
             && let Some(v) = parse_i64(allele)
         {
             max_allele = max_allele.max(v);
@@ -655,7 +683,10 @@ fn gt_codes(sub: &[u8]) -> Vec<i32> {
 
 fn bad(reason: &'static str) -> IoError {
     IoError::MalformedRecord {
-        locus: Locus { contig_name: "<bcf-encode>".into(), pos1: 0 },
+        locus: Locus {
+            contig_name: "<bcf-encode>".into(),
+            pos1: 0,
+        },
         reason,
     }
 }

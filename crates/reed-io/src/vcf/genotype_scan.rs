@@ -10,7 +10,7 @@
 
 use std::ops::Range;
 
-use reed_core::genotype::{GtCode, GenotypePolicies, Ploidy, PolicyCounters};
+use reed_core::genotype::{GenotypePolicies, GtCode, Ploidy, PolicyCounters};
 
 use crate::error::{IoError, Locus};
 use crate::vcf::format_layout::FormatLayoutCache;
@@ -170,13 +170,23 @@ impl GenotypeScanner {
                 alleles.extend_from_slice(token);
             }
 
-            for (key, column) in layouts.get(layout_ix).int_indices.iter().zip(int_columns.iter_mut()) {
+            for (key, column) in layouts
+                .get(layout_ix)
+                .int_indices
+                .iter()
+                .zip(int_columns.iter_mut())
+            {
                 column.push(
                     key.and_then(|ki| subfields.get(usize::from(ki)))
                         .map_or(INT_MISSING, |range| parse_int(&field[range.clone()])),
                 );
             }
-            for (key, column) in layouts.get(layout_ix).float_indices.iter().zip(float_columns.iter_mut()) {
+            for (key, column) in layouts
+                .get(layout_ix)
+                .float_indices
+                .iter()
+                .zip(float_columns.iter_mut())
+            {
                 column.push(
                     key.and_then(|ki| subfields.get(usize::from(ki)))
                         .map_or(f32::NAN, |range| parse_float(&field[range.clone()])),
@@ -282,8 +292,10 @@ fn decode_gt<S: LocusSource>(
     // Fast path: exactly `[0|1|.][/|][0|1|.]`.
     if let Some((s0, s1, phased)) = fast_gt(gt) {
         *token = [
-            (s0 != reed_core::genotype::STATE_MISSING).then(|| u16::from(s0 == reed_core::genotype::STATE_ALT)),
-            (s1 != reed_core::genotype::STATE_MISSING).then(|| u16::from(s1 == reed_core::genotype::STATE_ALT)),
+            (s0 != reed_core::genotype::STATE_MISSING)
+                .then(|| u16::from(s0 == reed_core::genotype::STATE_ALT)),
+            (s1 != reed_core::genotype::STATE_MISSING)
+                .then(|| u16::from(s1 == reed_core::genotype::STATE_ALT)),
         ];
         return Ok(GtCode::from_states(s0, s1, phased, false));
     }
@@ -325,11 +337,15 @@ fn decode_gt<S: LocusSource>(
         (Ploidy::Diploid, slots)
     };
     GtCode::from_alleles(slots, ploidy, phased, policies, counters).map_err(|err| match err {
-        reed_core::CoreError::PolicyRejected(reason) => {
-            IoError::PolicyRejected { locus: site.error_locus(), reason }
-        }
+        reed_core::CoreError::PolicyRejected(reason) => IoError::PolicyRejected {
+            locus: site.error_locus(),
+            reason,
+        },
         reed_core::CoreError::Unimplemented(reason) => IoError::UnsupportedInput(reason),
-        other => IoError::MalformedRecord { locus: site.error_locus(), reason: reason_str(&other) },
+        other => IoError::MalformedRecord {
+            locus: site.error_locus(),
+            reason: reason_str(&other),
+        },
     })
 }
 
@@ -454,7 +470,10 @@ mod tests {
     #[test]
     fn decodes_slots_and_phasing() {
         let mut scanner = GenotypeScanner::new(3, &[], &[], GenotypePolicies::default());
-        let (out, counters) = scan(&mut scanner, b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\t1|0\t./.\n");
+        let (out, counters) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\t1|0\t./.\n",
+        );
         assert_eq!(counters, PolicyCounters::default());
         let states: Vec<u8> = out.codes.iter().map(|c| c.state()).collect();
         assert_eq!(states, vec![0b0100, 0b0001, 0b1010]);
@@ -465,9 +484,11 @@ mod tests {
 
     #[test]
     fn haploid_and_multiallelic_follow_the_policies() {
-        let mut scanner =
-            GenotypeScanner::new(3, &[], &[], permissive()).tracking_alleles();
-        let (out, counters) = scan(&mut scanner, b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t1\t10/11\t0/.\n");
+        let mut scanner = GenotypeScanner::new(3, &[], &[], permissive()).tracking_alleles();
+        let (out, counters) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t1\t10/11\t0/.\n",
+        );
         assert_eq!(out.codes[0].state(), 0b1001); // haploid ALT → half call
         assert!(out.codes[0].is_haploid());
         assert_eq!(out.codes[1].state(), 0b0101); // multi-digit collapses to ALT
@@ -492,8 +513,7 @@ mod tests {
 
     #[test]
     fn int_and_float_columns_with_missing_variants() {
-        let mut scanner =
-            GenotypeScanner::new(3, &[b"DP", b"GQ"], &[b"AB"], permissive());
+        let mut scanner = GenotypeScanner::new(3, &[b"DP", b"GQ"], &[b"AB"], permissive());
         let (out, _) = scan(
             &mut scanner,
             b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT:DP:GQ:AB\t0/1:9:40:0.5\t1/1:.:.:.\t1/1\n",
@@ -545,6 +565,6 @@ mod tests {
         split_needed(&mut ranges, b"0/1", 3);
         assert_eq!(ranges, vec![0..3]);
         split_needed(&mut ranges, b"0/1:9", 0);
-        assert!(ranges.is_empty());
+        assert_eq!(ranges.len(), 0);
     }
 }

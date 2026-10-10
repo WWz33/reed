@@ -61,7 +61,7 @@ impl SiteCounts {
     }
 
     /// Per-site exact HWE p-value, paired with
-    /// [`hardy_weinberg_p_value`](super::hwe::hardy_weinberg_p_value)
+    /// [`crate::math::hwe::hwe_exact_p`]
     /// (Wigginton, Cutler & Abecasis 2005) over the genotype classes.
     ///
     /// Degenerate sites (see [`SiteCounts::hwe_is_degenerate`]) return 1.0 —
@@ -217,7 +217,11 @@ mod tests {
         let c = count_site(&[0, 1, 1, 0], None);
         assert!((c.maf() - 0.5).abs() < 1e-12);
         // The filter layer's an = 10, ac = 5 boundary case.
-        let c = SiteCounts { ac: 5, an: 10, ..SiteCounts::default() };
+        let c = SiteCounts {
+            ac: 5,
+            an: 10,
+            ..SiteCounts::default()
+        };
         assert!((c.maf() - 0.5).abs() < 1e-12);
     }
 
@@ -225,7 +229,11 @@ mod tests {
     /// exactly when AN = 0 or an allele side is empty.
     #[test]
     fn hwe_degenerate_sentinels() {
-        let mut c = SiteCounts { ac: 0, an: 10, ..SiteCounts::default() };
+        let mut c = SiteCounts {
+            ac: 0,
+            an: 10,
+            ..SiteCounts::default()
+        };
         assert!(c.hwe_is_degenerate());
         c.ac = 10;
         assert!(c.hwe_is_degenerate());

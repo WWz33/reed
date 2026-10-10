@@ -5,15 +5,17 @@
 //! keep mask and masked samples get their GT subfield replaced with `./.`
 //! while every other FORMAT subfield is preserved byte-for-byte.
 //!
-//! A record with no edit at all should not be routed through
-//! [`edit_vcf_line`] at all: the caller copies the line verbatim (zero
-//! re-serialization).
+//! Every survivor is routed through [`edit_vcf_line`] today (F6-11 in
+//! docs/rounds/v6/01-review.md: the two call sites in
+//! `reed/src/filter/single_pass.rs` are unconditional). A verbatim-copy
+//! fast path for records with no edit is queued for the Y3 filter work;
+//! until then the function itself copies unmodified regions byte-for-byte.
 
 // Casts in this file are bounded by construction: Sample counts are validated against the header and fit u32.
 #![allow(clippy::cast_possible_truncation)]
 
-use reed_core::sample::SampleMask;
 use reed_core::Bitset;
+use reed_core::sample::SampleMask;
 
 use crate::error::IoError;
 use crate::vcf::line::LineRef;
@@ -53,7 +55,8 @@ impl EditPlan<'_> {
 
     /// Whether the sample region needs editing (pruning or masking).
     fn samples_edited(&self) -> bool {
-        self.keep_samples.is_some_and(|k| k.n_selected() < k.n_samples() as u32)
+        self.keep_samples
+            .is_some_and(|k| k.n_selected() < k.n_samples() as u32)
             || self.mask_gt.is_some_and(|m| m.count_ones() > 0)
     }
 }
@@ -107,10 +110,10 @@ pub fn edit_vcf_line(
 
     // Sample region.
     let samples = line.samples_text();
-    if !plan.samples_edited() {
-        out.extend_from_slice(samples);
-    } else {
+    if plan.samples_edited() {
         edit_samples(samples, plan, gt_subfield_index, out);
+    } else {
+        out.extend_from_slice(samples);
     }
     out.push(b'\n');
     Ok(())
@@ -164,7 +167,12 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
 
 /// Sample region edit: skip dropped columns, replace the GT subfield of
 /// masked samples with `./.`, copy everything else verbatim.
-fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_subfield_index: Option<u8>, out: &mut Vec<u8>) {
+fn edit_samples(
+    samples: &[u8],
+    plan: &EditPlan<'_>,
+    gt_subfield_index: Option<u8>,
+    out: &mut Vec<u8>,
+) {
     let keep = plan.keep_samples;
     let mask = plan.mask_gt;
     let mut field_start = 0;
@@ -194,11 +202,7 @@ fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_subfield_index: Option<u
                 if wrote_column {
                     out.push(b'\t');
                 }
-                replace_gt_subfield(
-                    &samples[field_start..field_end],
-                    gt_subfield_index,
-                    out,
-                );
+                replace_gt_subfield(&samples[field_start..field_end], gt_subfield_index, out);
                 wrote_column = true;
             }
         }
@@ -320,15 +324,15 @@ mod tests {
     #[test]
     fn g6_matches_htslib_gold_rendings() {
         let cases = [
-            (0.120061_f32, "0.120061"),
+            (0.120_061_f32, "0.120061"),
             (0.05_f32, "0.05"),
             (0.0_f32, "0"),
             (8.20818e-38_f32, "8.20818e-38"),
-            (0.289678_f32, "0.289678"),
+            (0.289_678_f32, "0.289678"),
             (0.5_f32, "0.5"),
             (1.0_f32, "1"),
             (1.0e-5_f32, "1e-05"),
-            (1.234567e-4_f32, "0.000123457"),
+            (1.234_567e-4_f32, "0.000123457"),
             (1_234_567.0_f32, "1.23457e+06"),
         ];
         for (v, expected) in cases {
@@ -363,7 +367,10 @@ mod tests {
         let lr = LineRef::parse(line).expect("invariant: full line");
         let mut out = Vec::new();
         edit_vcf_line(&lr, plan, gt_idx, &mut out).expect("invariant: edit");
-        String::from_utf8(out).expect("invariant: utf-8").trim_end().to_string()
+        String::from_utf8(out)
+            .expect("invariant: utf-8")
+            .trim_end()
+            .to_string()
     }
 
     const LINE: &[u8] =
@@ -372,7 +379,10 @@ mod tests {
     #[test]
     fn verbatim_when_no_plan() {
         let plan = EditPlan::default();
-        assert_eq!(edit(LINE, &plan, Some(0)), String::from_utf8_lossy(LINE).trim_end());
+        assert_eq!(
+            edit(LINE, &plan, Some(0)),
+            String::from_utf8_lossy(LINE).trim_end()
+        );
     }
 
     #[test]
@@ -424,13 +434,19 @@ mod tests {
         // Mask sample 0 (GT subfield 0 → ./.), DP/GQ stay verbatim.
         let mut bits = Bitset::new(4);
         bits.set(0, true);
-        let plan = EditPlan { mask_gt: Some(&bits), ..EditPlan::default() };
+        let plan = EditPlan {
+            mask_gt: Some(&bits),
+            ..EditPlan::default()
+        };
         let got = edit(LINE, &plan, Some(0));
         assert!(got.contains("\t./.:15:99\t1|1:12:99"), "{got}");
 
         // A row whose "." value has no GT subfield stays verbatim.
         let short = b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1\t.\t0/0\t1/1\n";
-        let plan = EditPlan { mask_gt: Some(&bits), ..EditPlan::default() };
+        let plan = EditPlan {
+            mask_gt: Some(&bits),
+            ..EditPlan::default()
+        };
         let got = edit(short, &plan, Some(0));
         assert!(got.contains("\t./.\t.\t"), "{got}");
     }
@@ -440,7 +456,10 @@ mod tests {
         let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tDP:GT\t15:0/1\t12:1|1\t9:./.\t44:0/0\n";
         let mut bits = Bitset::new(4);
         bits.set(0, true);
-        let plan = EditPlan { mask_gt: Some(&bits), ..EditPlan::default() };
+        let plan = EditPlan {
+            mask_gt: Some(&bits),
+            ..EditPlan::default()
+        };
         let got = edit(line, &plan, Some(1));
         assert!(got.contains("\t15:./.\t12:1|1"), "{got}");
     }

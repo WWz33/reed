@@ -103,9 +103,15 @@ pub fn hwe_distribution(n_called: u32, n_minor: u32) -> Option<HweDistribution> 
             - (nh as f64 + 2.0).ln();
         nh += 2;
     }
-    let max_log = log_weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let max_log = log_weights
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
     let total: f64 = log_weights.iter().map(|&lw| (lw - max_log).exp()).sum();
-    let probs = log_weights.iter().map(|&lw| (lw - max_log).exp() / total).collect();
+    let probs = log_weights
+        .iter()
+        .map(|&lw| (lw - max_log).exp() / total)
+        .collect();
     Some(HweDistribution {
         nh_min: u32::try_from(nh_min).ok()?,
         probs,
@@ -115,15 +121,13 @@ pub fn hwe_distribution(n_called: u32, n_minor: u32) -> Option<HweDistribution> 
 /// Exact-test p-value without memoization.
 #[must_use]
 pub fn hwe_exact_p(n_called: u32, n_minor: u32, n_het: u32) -> f64 {
-    hwe_distribution(n_called, n_minor)
-        .map_or(f64::NAN, |d| d.p_exact(n_het))
+    hwe_distribution(n_called, n_minor).map_or(f64::NAN, |d| d.p_exact(n_het))
 }
 
 /// Mid-p p-value without memoization.
 #[must_use]
 pub fn hwe_midp_p(n_called: u32, n_minor: u32, n_het: u32) -> f64 {
-    hwe_distribution(n_called, n_minor)
-        .map_or(f64::NAN, |d| d.p_mid(n_het))
+    hwe_distribution(n_called, n_minor).map_or(f64::NAN, |d| d.p_mid(n_het))
 }
 
 /// Bounded memo for `(n_called, n_minor) → distribution`, shared within one
@@ -131,7 +135,7 @@ pub fn hwe_midp_p(n_called: u32, n_minor: u32, n_het: u32) -> f64 {
 /// dropped (simple and bounded; a true LRU replaces it if hit-rate profiling
 /// ever demands).
 ///
-/// # ponytail: clear-on-full memo, swap for a real LRU if hit rate matters.
+/// TODO: clear-on-full memo; swap for a real LRU if the hit rate matters.
 #[derive(Debug, Default)]
 pub struct HweCache {
     map: HashMap<(u32, u32), HweDistribution>,
@@ -161,13 +165,15 @@ impl HweCache {
     /// Exact p-value for `(n_called, n_minor, n_het)`.
     #[must_use]
     pub fn p_exact(&mut self, n_called: u32, n_minor: u32, n_het: u32) -> f64 {
-        self.distribution(n_called, n_minor).map_or(f64::NAN, |d| d.p_exact(n_het))
+        self.distribution(n_called, n_minor)
+            .map_or(f64::NAN, |d| d.p_exact(n_het))
     }
 
     /// Mid-p value for `(n_called, n_minor, n_het)`.
     #[must_use]
     pub fn p_mid(&mut self, n_called: u32, n_minor: u32, n_het: u32) -> f64 {
-        self.distribution(n_called, n_minor).map_or(f64::NAN, |d| d.p_mid(n_het))
+        self.distribution(n_called, n_minor)
+            .map_or(f64::NAN, |d| d.p_mid(n_het))
     }
 }
 

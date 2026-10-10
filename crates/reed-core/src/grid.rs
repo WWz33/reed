@@ -238,7 +238,10 @@ mod tests {
 
     #[test]
     fn bp_windows_match_legacy_anchoring() {
-        let grid = WindowGrid::Bp { size: 100, step: 100 };
+        let grid = WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        };
         // First site at 150 anchors the grid at 100.
         let windows = grid.bp_windows(150, 450, 1000).unwrap();
         let starts: Vec<u64> = windows.iter().map(|w| w.interval.start.0).collect();
@@ -257,7 +260,10 @@ mod tests {
 
     #[test]
     fn overlapping_bp_windows_share_bins() {
-        let grid = WindowGrid::Bp { size: 100, step: 50 };
+        let grid = WindowGrid::Bp {
+            size: 100,
+            step: 50,
+        };
         assert_eq!(grid.bin_width_bp(), Some(50));
         let windows = grid.bp_windows(10, 200, 1000).unwrap();
         // Anchor 0: windows [0,100), [50,150), [100,200) — site 10 in window 0.
@@ -268,7 +274,10 @@ mod tests {
 
     #[test]
     fn last_window_clips_to_contig_length() {
-        let grid = WindowGrid::Bp { size: 100, step: 100 };
+        let grid = WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        };
         let windows = grid.bp_windows(0, 950, 960).unwrap();
         let last = windows.last().unwrap();
         assert_eq!(last.interval, Interval0::new(Pos0(900), Pos0(960)));
@@ -277,7 +286,10 @@ mod tests {
 
     #[test]
     fn sites_windows_enumerate_ranks() {
-        let grid = WindowGrid::Sites { n_sites: 10, step: 10 };
+        let grid = WindowGrid::Sites {
+            n_sites: 10,
+            step: 10,
+        };
         let windows = grid.sites_windows(0, 25).unwrap();
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[2].first_rank, 20);
@@ -303,7 +315,14 @@ mod tests {
     #[test]
     fn validate_rejects_zero_size_or_step() {
         assert!(WindowGrid::Bp { size: 0, step: 10 }.validate().is_err());
-        assert!(WindowGrid::Sites { n_sites: 10, step: 0 }.validate().is_err());
+        assert!(
+            WindowGrid::Sites {
+                n_sites: 10,
+                step: 0
+            }
+            .validate()
+            .is_err()
+        );
         assert!(WindowGrid::Bp { size: 10, step: 10 }.validate().is_ok());
     }
 }

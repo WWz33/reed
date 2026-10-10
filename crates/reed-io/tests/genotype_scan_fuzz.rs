@@ -11,8 +11,8 @@
 use proptest::prelude::*;
 
 use reed_core::genotype::{
-    GenotypePolicies, GtCode, MultiallelicPolicy, Ploidy, PloidyPolicy, PolicyCounters,
-    STATE_ALT, STATE_MISSING, STATE_REF,
+    GenotypePolicies, GtCode, MultiallelicPolicy, Ploidy, PloidyPolicy, PolicyCounters, STATE_ALT,
+    STATE_MISSING, STATE_REF,
 };
 use reed_io::vcf::genotype_scan::GenotypeScanner;
 use reed_io::vcf::line::LineRef;
@@ -65,7 +65,11 @@ fn reference_gt(gt: &str) -> Option<(GtCode, [Option<u16>; 2])> {
         phased |= bytes[end] == b'|';
         from = end + 1;
     }
-    let ploidy = if n == 1 { Ploidy::Haploid } else { Ploidy::Diploid };
+    let ploidy = if n == 1 {
+        Ploidy::Haploid
+    } else {
+        Ploidy::Diploid
+    };
     let mut scratch = PolicyCounters::default();
     let code = GtCode::from_alleles(slots, ploidy, phased, &policies(), &mut scratch).ok()?;
     Some((code, slots))
@@ -73,7 +77,10 @@ fn reference_gt(gt: &str) -> Option<(GtCode, [Option<u16>; 2])> {
 
 /// A sample column: a GT value plus trailing subfields.
 fn arb_sample() -> impl Strategy<Value = String> {
-    let allele = prop_oneof![Just(".".to_string()), (0_u16..5).prop_map(|i| i.to_string())];
+    let allele = prop_oneof![
+        Just(".".to_string()),
+        (0_u16..5).prop_map(|i| i.to_string())
+    ];
     let gt = prop_oneof![
         (allele.clone(), allele.clone()).prop_map(|(a, b)| format!("{a}/{b}")),
         (allele.clone(), allele.clone()).prop_map(|(a, b)| format!("{a}|{b}")),
@@ -81,7 +88,11 @@ fn arb_sample() -> impl Strategy<Value = String> {
         Just(".".to_string()),
         Just(String::new()),
     ];
-    (gt, prop::option::of(0_u32..200), prop::option::of(0_u32..100))
+    (
+        gt,
+        prop::option::of(0_u32..200),
+        prop::option::of(0_u32..100),
+    )
         .prop_map(|(gt, dp, gq)| {
             let dp = dp.map_or(".".to_string(), |v| v.to_string());
             let gq = gq.map_or(".".to_string(), |v| v.to_string());
@@ -195,20 +206,31 @@ fn reference_and_scanner_agree_on_the_documented_edge_cases() {
         ("10/11", 0b0101),
         ("1|0", 0b0001),
     ];
-    let line_text = format!("c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t{}\n", cases.iter().map(|(g, _)| *g).collect::<Vec<_>>().join("\t"));
+    let line_text = format!(
+        "c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t{}\n",
+        cases.iter().map(|(g, _)| *g).collect::<Vec<_>>().join("\t")
+    );
     let line = LineRef::parse(line_text.as_bytes()).expect("invariant: 10 columns");
     let site = SiteView::parse(&line).expect("invariant: site parses");
     let mut scanner = GenotypeScanner::new(cases.len(), &[], &[], policies());
     let mut counters = PolicyCounters::default();
-    let out = scanner.scan(&line, &site, &mut counters).expect("invariant: decodes");
+    let out = scanner
+        .scan(&line, &site, &mut counters)
+        .expect("invariant: decodes");
     for (i, (gt, expected)) in cases.iter().enumerate() {
         assert_eq!(out.codes[i].state(), *expected, "GT {gt}");
         // The text reference agrees with the pinned expectation.
         let (code, _) = reference_gt(gt).expect("invariant: reference decodes");
         assert_eq!(code.state(), *expected, "reference GT {gt}");
     }
-    assert_eq!(counters.n_haploid_as_half_call, 2, "`1` and `0` are half calls");
-    assert_eq!(counters.n_multiallelic_collapsed, 2, "`10` and `11` collapse");
+    assert_eq!(
+        counters.n_haploid_as_half_call, 2,
+        "`1` and `0` are half calls"
+    );
+    assert_eq!(
+        counters.n_multiallelic_collapsed, 2,
+        "`10` and `11` collapse"
+    );
     let _ = STATE_REF;
     let _ = STATE_ALT;
 }

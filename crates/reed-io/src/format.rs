@@ -28,7 +28,10 @@ impl Format {
     /// # Errors
     ///
     /// [`IoError::UnsupportedInput`] when no known magic matches.
-    pub fn detect(raw_first_block: &[u8], inflated_first_block: Option<&[u8]>) -> Result<Self, IoError> {
+    pub fn detect(
+        raw_first_block: &[u8],
+        inflated_first_block: Option<&[u8]>,
+    ) -> Result<Self, IoError> {
         if raw_first_block.starts_with(b"##fileformat=VCF") {
             return Ok(Self::Vcf);
         }

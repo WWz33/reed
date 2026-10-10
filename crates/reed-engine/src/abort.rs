@@ -114,13 +114,18 @@ impl FirstError {
     /// Whether an error has been recorded.
     #[must_use]
     pub fn failed(&self) -> bool {
-        self.err.lock().expect("invariant: error slot not poisoned").is_some()
+        self.err
+            .lock()
+            .expect("invariant: error slot not poisoned")
+            .is_some()
     }
 
     /// Takes the recorded error, if any.
     #[must_use]
     pub fn take(self) -> Option<EngineError> {
-        self.err.into_inner().expect("invariant: error slot not poisoned")
+        self.err
+            .into_inner()
+            .expect("invariant: error slot not poisoned")
     }
 
     /// Same as [`FirstError::take`] through an `Arc` (for the pipeline, which

@@ -9,11 +9,11 @@ use std::collections::HashMap;
 
 use reed_core::ContigId;
 
+use crate::Locus;
 use crate::error::IoError;
 use crate::vcf::fixed::parse_pos1;
 use crate::vcf::info::info_fragments;
 use crate::vcf::line::LineRef;
-use crate::Locus;
 
 /// Contig-name to `tid` table with a last-hit cache (records from one contig
 /// arrive in runs).
@@ -30,10 +30,13 @@ impl ContigTable {
         let mut ids = HashMap::new();
         for (i, name) in names.into_iter().enumerate() {
             if let Ok(id) = u32::try_from(i) {
-                ids.insert(name.into_boxed_slice(), id);
+                ids.insert(name.into_boxed_slice(), ContigId(id));
             }
         }
-        Self { ids, last: (Vec::new(), u32::MAX) }
+        Self {
+            ids,
+            last: (Vec::new(), ContigId(u32::MAX)),
+        }
     }
 
     /// The contig's id, or `None` when the header does not declare it.
@@ -102,10 +105,7 @@ impl<'a> SiteView<'a> {
     ///
     /// [`IoError::MalformedRecord`] for an unparsable POS/QUAL and for a
     /// CHROM the header does not declare.
-    pub fn parse_declared(
-        line: &LineRef<'a>,
-        contigs: &mut ContigTable,
-    ) -> Result<Self, IoError> {
+    pub fn parse_declared(line: &LineRef<'a>, contigs: &mut ContigTable) -> Result<Self, IoError> {
         let mut site = Self::parse(line)?;
         let Some(contig) = contigs.id_of(site.contig_name) else {
             return Err(IoError::MalformedRecord {
@@ -132,11 +132,11 @@ impl<'a> SiteView<'a> {
         if self.alts == b"." {
             return 0;
         }
-        let commas = self.alts.iter().filter(|&&b| b == b',').count();
+        let commas = memchr::memchr_iter(b',', self.alts).count();
         u32::try_from(commas + 1).unwrap_or(u32::MAX)
     }
 
-    /// Whether ALT is `.` (pixy's all-sites marker).
+    /// Whether ALT is `.` (the all-sites marker).
     #[must_use]
     pub fn is_invariant(&self) -> bool {
         self.alts == b"."
@@ -214,13 +214,13 @@ mod tests {
     #[test]
     fn contig_ids_follow_header_order_and_errors() {
         let mut contigs = ContigTable::new(vec![b"chr1".to_vec(), b"chr2".to_vec()]);
-        assert_eq!(contigs.id_of(b"chr1"), Some(0));
-        assert_eq!(contigs.id_of(b"chr2"), Some(1));
+        assert_eq!(contigs.id_of(b"chr1"), Some(ContigId(0)));
+        assert_eq!(contigs.id_of(b"chr2"), Some(ContigId(1)));
         assert_eq!(contigs.id_of(b"chrX"), None);
 
         let lr = line(b"chr2\t1\t.\tC\tT\t.\t.\t.\tGT\t0/0\n");
         let site = SiteView::parse_declared(&lr, &mut contigs).expect("invariant: declared");
-        assert_eq!(site.contig, Some(1));
+        assert_eq!(site.contig, Some(ContigId(1)));
         let lr = line(b"chrX\t1\t.\tC\tT\t.\t.\t.\tGT\t0/0\n");
         let err = SiteView::parse_declared(&lr, &mut contigs).unwrap_err();
         assert!(matches!(err, IoError::MalformedRecord { .. }));

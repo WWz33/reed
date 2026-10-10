@@ -80,7 +80,11 @@ impl HeaderFacts {
             .map_err(|err| IoError::Header(format!("noodles rejected the header: {err}")))?;
         Ok(Self {
             text: text.to_vec(),
-            sample_names: header.sample_names().iter().map(ToString::to_string).collect(),
+            sample_names: header
+                .sample_names()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             contig_names: header
                 .contigs()
                 .iter()

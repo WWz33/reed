@@ -12,8 +12,10 @@
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use reed_core::genotype::{GtCode, GenotypePolicies, MultiallelicPolicy, Ploidy, PloidyPolicy, PolicyCounters};
-use reed_io::vcf::genotype_scan::{INT_MISSING, GenotypeScanner};
+use reed_core::genotype::{
+    GenotypePolicies, GtCode, MultiallelicPolicy, Ploidy, PloidyPolicy, PolicyCounters,
+};
+use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING};
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
 
@@ -35,7 +37,11 @@ fn policies() -> GenotypePolicies {
 /// One record's raw slots per sample (2 slots, index order) with the
 /// genotype's arity, plus the DP/GQ columns noodles reports. The arity is
 /// what tells a haploid call from a half call.
-type RawRecord = (Vec<([Option<u16>; 2], u8)>, Vec<Option<u32>>, Vec<Option<u32>>);
+type RawRecord = (
+    Vec<([Option<u16>; 2], u8)>,
+    Vec<Option<u32>>,
+    Vec<Option<u32>>,
+);
 
 /// Reference decode via noodles RecordBufs.
 fn reference(path: &Path) -> Vec<RawRecord> {
@@ -63,11 +69,14 @@ fn reference(path: &Path) -> Vec<RawRecord> {
                             slots[i] = ([None, None], 1);
                             continue;
                         };
-                        slots[i].1 = u8::try_from(genotype.iter().count().min(2)).expect("invariant: ≤ 2");
+                        slots[i].1 =
+                            u8::try_from(genotype.iter().count().min(2)).expect("invariant: ≤ 2");
                         for (slot, pair) in genotype.iter().enumerate().take(2) {
                             let (allele, _) = pair.expect("invariant: allele pair");
                             if let Some(index) = allele {
-                                slots[i].0[slot] = Some(u16::try_from(index).expect("invariant: allele index fits u16"));
+                                slots[i].0[slot] = Some(
+                                    u16::try_from(index).expect("invariant: allele index fits u16"),
+                                );
                             }
                         }
                     }
@@ -97,7 +106,8 @@ type ScannedRecord = (Vec<GtCode>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<Option<u16>
 fn scanned(path: &Path) -> Vec<ScannedRecord> {
     let bytes = std::fs::read(path).expect("invariant: fixture exists");
     let n_samples = 3;
-    let mut scanner = GenotypeScanner::new(n_samples, &[b"DP", b"GQ"], &[], policies()).tracking_alleles();
+    let mut scanner =
+        GenotypeScanner::new(n_samples, &[b"DP", b"GQ"], &[], policies()).tracking_alleles();
     let mut out = Vec::new();
     let mut counters = PolicyCounters::default();
     for line_bytes in bytes.split(|&b| b == b'\n') {
@@ -123,24 +133,50 @@ fn scanned(path: &Path) -> Vec<ScannedRecord> {
 fn scanner_matches_noodles_on_every_fixture_record() {
     let expected = reference(&fixture_path());
     let actual = scanned(&fixture_path());
-    assert_eq!(expected.len(), actual.len(), "both sides must see the same records");
+    assert_eq!(
+        expected.len(),
+        actual.len(),
+        "both sides must see the same records"
+    );
 
     for (record_idx, ((slots, dp, gq), (codes, int_cols, _floats, alleles))) in
         expected.iter().zip(&actual).enumerate()
     {
         let n_samples = slots.len();
-        assert_eq!(codes.len(), n_samples, "record {record_idx}: one code per sample");
+        assert_eq!(
+            codes.len(),
+            n_samples,
+            "record {record_idx}: one code per sample"
+        );
         assert_eq!(int_cols.len(), 2);
-        assert_eq!(int_cols[0].len(), n_samples, "record {record_idx}: DP per sample");
-        assert_eq!(int_cols[1].len(), n_samples, "record {record_idx}: GQ per sample");
-        assert_eq!(alleles.len(), 2 * n_samples, "record {record_idx}: raw alleles per sample");
+        assert_eq!(
+            int_cols[0].len(),
+            n_samples,
+            "record {record_idx}: DP per sample"
+        );
+        assert_eq!(
+            int_cols[1].len(),
+            n_samples,
+            "record {record_idx}: GQ per sample"
+        );
+        assert_eq!(
+            alleles.len(),
+            2 * n_samples,
+            "record {record_idx}: raw alleles per sample"
+        );
 
         for sample in 0..n_samples {
             let (raw, arity) = slots[sample];
-            let ploidy = if arity == 1 { Ploidy::Haploid } else { Ploidy::Diploid };
+            let ploidy = if arity == 1 {
+                Ploidy::Haploid
+            } else {
+                Ploidy::Diploid
+            };
             let mut scratch = PolicyCounters::default();
             let expected_code = GtCode::from_alleles(raw, ploidy, false, &policies(), &mut scratch)
-                .unwrap_or_else(|_| panic!("record {record_idx} sample {sample}: reference decode"));
+                .unwrap_or_else(|_| {
+                    panic!("record {record_idx} sample {sample}: reference decode")
+                });
             assert_eq!(
                 codes[sample].state(),
                 expected_code.state(),
@@ -157,8 +193,16 @@ fn scanner_matches_noodles_on_every_fixture_record() {
                 "record {record_idx} sample {sample}: raw allele indices"
             );
             let expect_int = |v: &Option<u32>| v.unwrap_or(INT_MISSING);
-            assert_eq!(int_cols[0][sample], expect_int(&dp[sample]), "record {record_idx} sample {sample} DP");
-            assert_eq!(int_cols[1][sample], expect_int(&gq[sample]), "record {record_idx} sample {sample} GQ");
+            assert_eq!(
+                int_cols[0][sample],
+                expect_int(&dp[sample]),
+                "record {record_idx} sample {sample} DP"
+            );
+            assert_eq!(
+                int_cols[1][sample],
+                expect_int(&gq[sample]),
+                "record {record_idx} sample {sample} GQ"
+            );
         }
     }
 }
@@ -172,13 +216,23 @@ fn scanner_policies_are_counted_once_per_trigger() {
     let mut expected_scratch = PolicyCounters::default();
     for (record_idx, (slots, _, _)) in reference(&fixture_path()).iter().enumerate() {
         for (raw, arity) in slots {
-            let ploidy = if *arity == 1 { Ploidy::Haploid } else { Ploidy::Diploid };
+            let ploidy = if *arity == 1 {
+                Ploidy::Haploid
+            } else {
+                Ploidy::Diploid
+            };
             let _ = GtCode::from_alleles(*raw, ploidy, false, &policies(), &mut expected_scratch)
                 .unwrap_or_else(|_| panic!("record {record_idx}: reference decode"));
         }
     }
-    assert!(expected_scratch.n_haploid_as_half_call > 0, "fixture must exercise haploid calls");
-    assert!(expected_scratch.n_multiallelic_collapsed > 0, "fixture must exercise collapse");
+    assert!(
+        expected_scratch.n_haploid_as_half_call > 0,
+        "fixture must exercise haploid calls"
+    );
+    assert!(
+        expected_scratch.n_multiallelic_collapsed > 0,
+        "fixture must exercise collapse"
+    );
 
     // The scanner's counters must match the same triggers exactly.
     let mut scanner = GenotypeScanner::new(3, &[b"DP"], &[], policies());
@@ -190,7 +244,9 @@ fn scanner_policies_are_counted_once_per_trigger() {
         }
         let line = LineRef::parse(line_bytes).expect("invariant: 9 tabs");
         let site = SiteView::parse(&line).expect("invariant: site parses");
-        scanner.scan(&line, &site, &mut counters).expect("invariant: relaxed policies");
+        scanner
+            .scan(&line, &site, &mut counters)
+            .expect("invariant: relaxed policies");
     }
     assert_eq!(counters, expected_scratch);
     let _ = actual;

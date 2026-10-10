@@ -46,8 +46,14 @@ impl FormatLayoutCache {
     #[must_use]
     pub fn new(int_keys: &[&[u8]], float_keys: &[&[u8]]) -> Self {
         Self {
-            int_keys: int_keys.iter().map(|k| k.to_vec().into_boxed_slice()).collect(),
-            float_keys: float_keys.iter().map(|k| k.to_vec().into_boxed_slice()).collect(),
+            int_keys: int_keys
+                .iter()
+                .map(|k| k.to_vec().into_boxed_slice())
+                .collect(),
+            float_keys: float_keys
+                .iter()
+                .map(|k| k.to_vec().into_boxed_slice())
+                .collect(),
             layouts: Vec::new(),
             index: HashMap::new(),
             last: (Vec::new(), usize::MAX),
@@ -99,7 +105,12 @@ impl FormatLayoutCache {
             .max()
             .unwrap_or(0);
         let ix = self.layouts.len();
-        self.layouts.push(Layout { gt_index, int_indices, float_indices, last_needed });
+        self.layouts.push(Layout {
+            gt_index,
+            int_indices,
+            float_indices,
+            last_needed,
+        });
         self.index.insert(format.to_vec().into_boxed_slice(), ix);
         self.last = (format.to_vec(), ix);
         ix

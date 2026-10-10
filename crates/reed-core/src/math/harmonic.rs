@@ -76,21 +76,13 @@ pub fn harmonic2(n: usize) -> f64 {
 /// Watterson's `a1(n) = H(n−1)` (`0` for `n < 2`).
 #[must_use]
 pub fn a1(n: usize) -> f64 {
-    if n < 2 {
-        0.0
-    } else {
-        harmonic1(n - 1)
-    }
+    if n < 2 { 0.0 } else { harmonic1(n - 1) }
 }
 
 /// Tajima's `a2(n) = Σ_{k=1}^{n−1} 1/k²` (`0` for `n < 2`).
 #[must_use]
 pub fn a2(n: usize) -> f64 {
-    if n < 2 {
-        0.0
-    } else {
-        harmonic2(n - 1)
-    }
+    if n < 2 { 0.0 } else { harmonic2(n - 1) }
 }
 
 #[cfg(test)]

@@ -67,7 +67,11 @@ impl<T> ReorderBuffer<T> {
         );
         let capacity = self.ring.len();
         let slot = &mut self.ring[(id.get() as usize) % capacity];
-        assert!(slot.is_none(), "invariant: duplicate delivery of chunk {}", id.get());
+        assert!(
+            slot.is_none(),
+            "invariant: duplicate delivery of chunk {}",
+            id.get()
+        );
         *slot = Some(value);
     }
 

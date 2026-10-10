@@ -50,10 +50,7 @@ impl GroupTable {
     /// Builds a table from an ordered list of `(name, member sample ids)`
     /// pairs. Duplicate group names are rejected; empty groups are rejected
     /// (a group with no samples cannot support any denominator).
-    pub fn from_members<I, S>(
-        n_samples: usize,
-        groups: I,
-    ) -> Result<Self, CoreError>
+    pub fn from_members<I, S>(n_samples: usize, groups: I) -> Result<Self, CoreError>
     where
         I: IntoIterator<Item = (S, Vec<SampleId>)>,
         S: Into<String>,
@@ -85,7 +82,7 @@ impl GroupTable {
         Ok(table)
     }
 
-    /// Reads a `sample<TAB>population` TSV (the pixy/vcftools convention used
+    /// Reads a `sample<TAB>population` TSV (the conventional used
     /// by `clean.3pop.txt`): one assignment per line, `#` comments and blank
     /// lines skipped. Group ids follow first-appearance order of the group
     /// name in the file.
@@ -135,12 +132,13 @@ impl GroupTable {
                 members.push(vec![sample_id]);
             }
         }
-        let table = Self::from_members(
-            samples.n_samples(),
-            names_in_order.into_iter().zip(members),
-        )?;
+        let table =
+            Self::from_members(samples.n_samples(), names_in_order.into_iter().zip(members))?;
         if n_ignored > 0 {
-            tracing::warn!(n_ignored, "group file referenced samples absent from the header");
+            tracing::warn!(
+                n_ignored,
+                "group file referenced samples absent from the header"
+            );
         }
         Ok(table)
     }
@@ -215,10 +213,7 @@ impl GroupTable {
     /// Group id by name.
     #[must_use]
     pub fn by_name(&self, name: &str) -> Option<GroupId> {
-        self.groups
-            .iter()
-            .find(|g| g.name == name)
-            .map(|g| g.id)
+        self.groups.iter().find(|g| g.name == name).map(|g| g.id)
     }
 
     /// All groups in id order.
@@ -243,11 +238,9 @@ mod tests {
 
     fn table() -> (SampleTable, GroupTable) {
         let samples = SampleTable::from_names(["s1", "s2", "s3", "s4"]).unwrap();
-        let groups = GroupTable::from_assignment(
-            &samples,
-            &[("s1", "A"), ("s2", "A"), ("s3", "B")],
-        )
-        .unwrap();
+        let groups =
+            GroupTable::from_assignment(&samples, &[("s1", "A"), ("s2", "A"), ("s3", "B")])
+                .unwrap();
         (samples, groups)
     }
 
@@ -295,14 +288,10 @@ mod tests {
     #[test]
     fn rejects_duplicates_and_empties() {
         let _samples = SampleTable::from_names(["s1", "s2"]).unwrap();
-        assert!(GroupTable::from_members(
-            2,
-            [
-                ("A", vec![SampleId(0)]),
-                ("A", vec![SampleId(1)]),
-            ],
-        )
-        .is_err());
+        assert!(
+            GroupTable::from_members(2, [("A", vec![SampleId(0)]), ("A", vec![SampleId(1)]),],)
+                .is_err()
+        );
         assert!(GroupTable::from_members(2, [("A", vec![SampleId(0)]), ("B", vec![])]).is_err());
     }
 

@@ -3,5 +3,4 @@
 
 pub mod harmonic;
 pub mod hwe;
-pub mod hypergeom;
 pub mod sum;

@@ -1,6 +1,7 @@
 //! Fixed-length bit set over `u64` words (`docs/spec/architecture.md` §5.3).
 //!
-//! Supersedes the legacy [`crate::bits::Bits`] with word-level operations so
+//! Supersedes the legacy `Bits` of the frozen 0.2 oracle with word-level
+//! operations so
 //! counting kernels can combine masks and planes without per-bit loops.
 //!
 //! Invariants: trailing padding bits (indices `len..words.len()*64`) are
@@ -126,7 +127,10 @@ impl Bitset {
             .map(|(&a, &b)| f(a, b))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        Ok(Bitset { words, len: self.len })
+        Ok(Bitset {
+            words,
+            len: self.len,
+        })
     }
 }
 

@@ -129,7 +129,10 @@ impl BlockWriter {
         }
         let offset = u32::try_from(self.pending.len())
             .map_err(|_| IoError::Io("pending block exceeds u32::MAX bytes".into()))?;
-        self.records.push(IndexRecord { key, offset_in_block: offset });
+        self.records.push(IndexRecord {
+            key,
+            offset_in_block: offset,
+        });
         self.pending.extend_from_slice(bytes);
         while self.pending.len() >= BGZF_BLOCK_SIZE {
             self.cut()?;
@@ -198,7 +201,11 @@ mod tests {
     use crate::bgzf::inflate::Inflater;
 
     fn key(start1: u64) -> IndexKey {
-        IndexKey { contig: 0, start1, ref_len: 1 }
+        IndexKey {
+            contig: ContigId(0),
+            start1,
+            ref_len: 1,
+        }
     }
 
     /// Inflates every block back and checks the bytes and record anchors.
@@ -226,12 +233,22 @@ mod tests {
         let out = writer.finish_chunk().expect("invariant: finish");
         // 80,000 bytes: one cut at the member limit, the rest in a second block.
         assert_eq!(out.blocks.len(), 2);
-        assert_eq!(out.blocks[0].uncompressed_len, BGZF_BLOCK_SIZE as u32);
-        assert_eq!(out.blocks[1].uncompressed_len, 80_000 - BGZF_BLOCK_SIZE as u32);
+        assert_eq!(
+            out.blocks[0].uncompressed_len,
+            u32::try_from(BGZF_BLOCK_SIZE).expect("invariant: fits u32")
+        );
+        assert_eq!(
+            out.blocks[1].uncompressed_len,
+            80_000 - u32::try_from(BGZF_BLOCK_SIZE).expect("invariant: fits u32")
+        );
         // Both records start before the cut, so both anchor in block 0.
-        let anchors: Vec<u32> = out.blocks[0].records.iter().map(|r| r.offset_in_block).collect();
+        let anchors: Vec<u32> = out.blocks[0]
+            .records
+            .iter()
+            .map(|r| r.offset_in_block)
+            .collect();
         assert_eq!(anchors, vec![0, 40_000]);
-        assert!(out.blocks[1].records.is_empty());
+        assert_eq!(out.blocks[1].records.len(), 0);
         let mut expected = a.clone();
         expected.extend_from_slice(&b);
         round_trip(&out, &expected);
@@ -244,9 +261,13 @@ mod tests {
         writer.push_record(&wide, key(1)).expect("invariant: push");
         let out = writer.finish_chunk().expect("invariant: finish");
         assert_eq!(out.blocks.len(), 2);
-        assert_eq!(out.blocks[0].records.len(), 1, "the record anchors in the first block");
+        assert_eq!(
+            out.blocks[0].records.len(),
+            1,
+            "the record anchors in the first block"
+        );
         assert_eq!(out.blocks[0].records[0].offset_in_block, 0);
-        assert!(out.blocks[1].records.is_empty());
+        assert_eq!(out.blocks[1].records.len(), 0);
         round_trip(&out, &wide);
     }
 
@@ -255,7 +276,9 @@ mod tests {
         let mut writer = BlockWriter::new(6, true).expect("invariant: level 6");
         let wide = vec![b'x'; BGZF_BLOCK_SIZE + 1_000];
         writer.push_record(&wide, key(1)).expect("invariant: push");
-        writer.push_record(b"tail", key(2)).expect("invariant: push");
+        writer
+            .push_record(b"tail", key(2))
+            .expect("invariant: push");
         let out = writer.finish_chunk().expect("invariant: finish");
         // `tail` starts after the cut → it is re-based into block 1.
         assert_eq!(out.blocks[1].records.len(), 1);
@@ -268,7 +291,9 @@ mod tests {
     #[test]
     fn plain_path_keeps_bytes_and_no_blocks() {
         let mut writer = BlockWriter::new(6, false).expect("invariant: plain");
-        writer.push_record(b"record\n", key(1)).expect("invariant: push");
+        writer
+            .push_record(b"record\n", key(1))
+            .expect("invariant: push");
         let out = writer.finish_chunk().expect("invariant: finish");
         assert!(out.blocks.is_empty());
         assert_eq!(out.raw, b"record\n");

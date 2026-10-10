@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use reed_core::ChunkId;
 
-use crate::bgzf::block::{is_empty_member, is_eof_block, parse_block_size, BGZF_HEADER_LEN};
-use crate::chunk::{ChunkBytes, ChunkPayload, CHUNK_TARGET_COMPRESSED};
+use crate::bgzf::block::{BGZF_HEADER_LEN, is_empty_member, is_eof_block, parse_block_size};
+use crate::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes, ChunkPayload};
 use crate::error::IoError;
 
 /// Locates the end of the VCF header and hands out chunks from there.
@@ -281,7 +281,10 @@ impl<R: Read> BgzfChunkReader<R> {
                 let n_samples = count_samples(&header_text).ok_or_else(|| {
                     IoError::Header("#CHROM line found but has no sample columns".into())
                 })?;
-                return Ok(HeaderScan { text: header_text, n_samples });
+                return Ok(HeaderScan {
+                    text: header_text,
+                    n_samples,
+                });
             }
         }
     }
@@ -294,7 +297,9 @@ impl<R: Read> BgzfChunkReader<R> {
         }
         // Reserve the target up front: growth reallocs would copy the whole
         // chunk several times over.
-        let mut compressed = Vec::with_capacity(self.chunk_target as usize + (1 << 17));
+        let mut compressed = Vec::with_capacity(
+            usize::try_from(self.chunk_target).unwrap_or(usize::MAX - (1 << 17)) + (1 << 17),
+        );
         let mut blocks = Vec::with_capacity(24);
         // The chunk starts with the bytes carried over from the previous
         // read (the header block for chunk 0, else a partial block tail).
@@ -349,16 +354,14 @@ impl MmapChunkSource {
     ///
     /// Mapping failures (the caller falls back to the streaming reader) and
     /// [`IoError::Header`] when the header is missing or unparsable.
-    pub fn open(
-        file: std::fs::File,
-    ) -> Result<(Self, crate::header::HeaderFacts), IoError> {
+    pub fn open(file: std::fs::File) -> Result<(Self, crate::header::HeaderFacts), IoError> {
         // SAFETY: `Mmap::map` is unsafe because a concurrent writer could
         // change the file under the mapping (the worst case is a SIGBUS on
         // truncation). reed opens the input read-only, never writes it, and
         // the mapping outlives every chunk; the callers fall back to the
-        // streaming reader when the input is not a regular file. This is one
-        // of the two audited `unsafe` sites in the workspace (the other is
-        // the AVX-512 count kernel, `reed-core/src/count/kernel.rs`).
+        // streaming reader when the input is not a regular file. This is the
+        // single audited `unsafe` site in the workspace (doc_v6 06 Y0 deleted
+        // the AVX-512 count kernel).
         #[allow(unsafe_code)]
         let map = unsafe { memmap2::Mmap::map(&file) }?;
         let map = Arc::new(map);
@@ -448,8 +451,11 @@ impl crate::chunk::ChunkSource for MmapChunkSource {
         }
         let id = ChunkId(self.next_chunk_id);
         self.next_chunk_id += 1;
-        let first_in_block_offset =
-            if self.next_chunk_id == 1 { self.first_in_block_offset } else { 0 };
+        let first_in_block_offset = if self.next_chunk_id == 1 {
+            self.first_in_block_offset
+        } else {
+            0
+        };
         self.next_offset = pos;
         Ok(Some(ChunkBytes {
             id,
@@ -486,7 +492,7 @@ fn count_samples(header_text: &[u8]) -> Option<usize> {
     let line = header_text
         .split(|&b| b == b'\n')
         .find(|l| l.starts_with(b"#CHROM"))?;
-    Some(line.iter().filter(|&&b| b == b'\t').count().saturating_sub(8))
+    Some(memchr::memchr_iter(b'\t', line).count().saturating_sub(8))
 }
 
 #[cfg(test)]
@@ -506,7 +512,9 @@ mod tests {
             text.extend_from_slice(line);
         }
         for block in text.chunks(block_data) {
-            deflater.deflate_block(block, &mut out).expect("invariant: test block fits");
+            deflater
+                .deflate_block(block, &mut out)
+                .expect("invariant: test block fits");
         }
         out.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
         out
@@ -516,7 +524,8 @@ mod tests {
         let mut h = String::from("##fileformat=VCFv4.3\n##contig=<ID=chr1,length=100000>\n");
         h.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
         for i in 0..n_samples {
-            h.push_str(&format!("\ts{i}"));
+            use std::fmt::Write as _;
+            write!(h, "\ts{i}").expect("invariant: writing to String");
         }
         h.push('\n');
         h.into_bytes()
@@ -529,7 +538,9 @@ mod tests {
         let stream = compress_lines(&[&text], 64);
         let mut reader = BgzfChunkReader::with_chunk_target(Cursor(stream), 64);
         let mut inflater = crate::bgzf::inflate::Inflater::new();
-        let scan = reader.scan_header(&mut inflater).expect("invariant: header present");
+        let scan = reader
+            .scan_header(&mut inflater)
+            .expect("invariant: header present");
         assert_eq!(scan.n_samples, 3);
         assert!(scan.text.ends_with(b"\ts2\n"));
     }
@@ -556,7 +567,9 @@ mod tests {
         let stream = compress_lines(&[&text], 32);
         let mut reader = BgzfChunkReader::with_chunk_target(Cursor(stream), 40);
         let mut inflater = crate::bgzf::inflate::Inflater::new();
-        let _ = reader.scan_header(&mut inflater).expect("invariant: header present");
+        let _ = reader
+            .scan_header(&mut inflater)
+            .expect("invariant: header present");
 
         let mut n_record_lines = 0_usize;
         let mut n_seam_bytes = 0_usize;
@@ -566,13 +579,18 @@ mod tests {
         let mut fragment: Option<Vec<u8>> = None;
         let mut scratch = Vec::new();
         while let Some(chunk) = reader.next_chunk().expect("invariant: chunking") {
-            let view = inflate_chunk(&chunk, &mut inflater, &mut scratch).expect("invariant: inflate");
+            let view =
+                inflate_chunk(&chunk, &mut inflater, &mut scratch).expect("invariant: inflate");
             if let Some(head) = view.head_bytes(view.text) {
                 let mut seam = fragment.take().unwrap_or_default();
                 n_seam_bytes += head.len();
                 seam.extend_from_slice(head);
                 if seam.ends_with(b"\n") {
-                    assert_eq!(seam.iter().filter(|&&b| b == b'\n').count(), 1, "seam is one line");
+                    assert_eq!(
+                        memchr::memchr_iter(b'\n', &seam).count(),
+                        1,
+                        "seam is one line"
+                    );
                     assert!(seam.starts_with(b"chr1\t"));
                     n_record_lines += 1;
                 } else {
@@ -610,7 +628,9 @@ mod tests {
         let mut blocks = Vec::new();
         for piece in text.chunks(block_data) {
             let mut block = Vec::new();
-            deflater.deflate_block(piece, &mut block).expect("invariant: test block fits");
+            deflater
+                .deflate_block(piece, &mut block)
+                .expect("invariant: test block fits");
             blocks.push(block);
         }
         blocks
@@ -630,12 +650,15 @@ mod tests {
     fn count_records_in_stream(stream: &[u8], chunk_target: u64) -> usize {
         let mut reader = BgzfChunkReader::with_chunk_target(Cursor(stream.to_vec()), chunk_target);
         let mut inflater = crate::bgzf::inflate::Inflater::new();
-        let _ = reader.scan_header(&mut inflater).expect("invariant: header present");
+        let _ = reader
+            .scan_header(&mut inflater)
+            .expect("invariant: header present");
         let mut n = 0_usize;
         let mut scratch = Vec::new();
         let mut fragment: Vec<u8> = Vec::new();
         while let Some(chunk) = reader.next_chunk().expect("invariant: chunking") {
-            let view = inflate_chunk(&chunk, &mut inflater, &mut scratch).expect("invariant: inflate");
+            let view =
+                inflate_chunk(&chunk, &mut inflater, &mut scratch).expect("invariant: inflate");
             let text = view.text;
             let mut all = std::mem::take(&mut fragment);
             all.extend_from_slice(text);

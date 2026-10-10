@@ -3,8 +3,8 @@
 
 use proptest::prelude::*;
 
-use reed_core::grid::{BinId, WindowGrid};
 use reed_core::coord::Pos0;
+use reed_core::grid::{BinId, WindowGrid};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -41,7 +41,7 @@ proptest! {
         // exactly one window and the bin ranges partition the touched span.
         if step >= size {
             for (i, w) in windows.iter().enumerate() {
-                prop_assert_eq!(w.index as usize, i);
+                prop_assert_eq!(usize::try_from(w.index).unwrap(), i);
                 prop_assert!(w.bins.start <= w.bins.end);
                 let covered = w.bins.end.0 - w.bins.start.0;
                 prop_assert!(covered <= size / width + 1);
@@ -64,7 +64,10 @@ proptest! {
 fn legacy_anchoring_is_preserved_end_to_end() {
     // The legacy reader anchors the first window at floor(pos/step)*step and
     // clips the final window to the contig length (reed-io lib.rs semantics).
-    let grid = WindowGrid::Bp { size: 1_000, step: 1_000 };
+    let grid = WindowGrid::Bp {
+        size: 1_000,
+        step: 1_000,
+    };
     let windows = grid.bp_windows(3_700, 9_900, 10_000).unwrap();
     let spans: Vec<(u64, u64)> = windows
         .iter()
@@ -72,7 +75,15 @@ fn legacy_anchoring_is_preserved_end_to_end() {
         .collect();
     assert_eq!(
         spans,
-        vec![(3_000, 4_000), (4_000, 5_000), (5_000, 6_000), (6_000, 7_000), (7_000, 8_000), (8_000, 9_000), (9_000, 10_000)]
+        vec![
+            (3_000, 4_000),
+            (4_000, 5_000),
+            (5_000, 6_000),
+            (6_000, 7_000),
+            (7_000, 8_000),
+            (8_000, 9_000),
+            (9_000, 10_000)
+        ]
     );
     assert_eq!(windows[0].bins, BinId(3)..BinId(4));
 }
@@ -81,7 +92,10 @@ fn legacy_anchoring_is_preserved_end_to_end() {
 fn overlapping_windows_share_bins_without_reaccumulation() {
     // step < size: a bin belongs to several windows; the ranges must reflect
     // that sharing so the reducer can merge shared bins once.
-    let grid = WindowGrid::Bp { size: 100, step: 50 };
+    let grid = WindowGrid::Bp {
+        size: 100,
+        step: 50,
+    };
     let windows = grid.bp_windows(0, 100, 10_000).unwrap();
     assert_eq!(windows[0].bins, BinId(0)..BinId(2));
     assert_eq!(windows[1].bins, BinId(1)..BinId(3));

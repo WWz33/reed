@@ -8,8 +8,8 @@ use std::io::Read;
 
 use reed_core::genotype::{GenotypePolicies, MultiallelicPolicy, PloidyPolicy, PolicyCounters};
 use reed_io::bcf::{
-    decode_format_columns, decode_record_gt, format_key, record_len, record_ref, render_record,
-    render_site_line, site_header, BcfDict, GtQuery, GtTable,
+    BcfDict, GtQuery, GtTable, decode_format_columns, decode_record_gt, format_key, record_len,
+    record_ref, render_record, render_site_line, site_header,
 };
 use reed_io::vcf::genotype_scan::GenotypeScanner;
 use reed_io::vcf::line::LineRef;
@@ -33,8 +33,12 @@ fn inflate_all(path: &std::path::Path) -> Vec<u8> {
         let total = reed_io::bgzf::block::parse_block_size(&header).expect("invariant: BGZF");
         let mut block = header.to_vec();
         block.resize(total, 0);
-        reader.read_exact(&mut block[18..]).expect("invariant: full block");
-        inflater.inflate_block(&block, &mut data).expect("invariant: inflates");
+        reader
+            .read_exact(&mut block[18..])
+            .expect("invariant: full block");
+        inflater
+            .inflate_block(&block, &mut data)
+            .expect("invariant: inflates");
     }
     data
 }
@@ -74,7 +78,9 @@ fn native_inputs_match_the_text_path() {
         let site = SiteView::parse(&lr).expect("invariant: site parses");
         let mut scanner = GenotypeScanner::new(header.n_sample, &[b"DP"], &[], policies());
         let mut counters = PolicyCounters::default();
-        let text = scanner.scan(&lr, &site, &mut counters).expect("invariant: scans");
+        let text = scanner
+            .scan(&lr, &site, &mut counters)
+            .expect("invariant: scans");
 
         // ---- native side: the site line plus the typed columns ----
         let mut site_line = Vec::new();
@@ -87,7 +93,10 @@ fn native_inputs_match_the_text_path() {
         assert_eq!(nsite.alts, site.alts, "record {checked}");
         assert_eq!(nsite.qual, site.qual, "record {checked}");
         assert_eq!(nsite.filter, site.filter, "record {checked}");
-        assert_eq!(nsite.info, site.info, "record {checked}: INFO must be identical");
+        assert_eq!(
+            nsite.info, site.info,
+            "record {checked}: INFO must be identical"
+        );
         assert_eq!(nlr.id(), lr.id(), "record {checked}");
         assert_eq!(
             nlr.n_sample_cols(),
@@ -132,5 +141,8 @@ fn native_inputs_match_the_text_path() {
         checked += 1;
         off += len;
     }
-    assert!(checked >= 4, "the fixture must exercise several records, got {checked}");
+    assert!(
+        checked >= 4,
+        "the fixture must exercise several records, got {checked}"
+    );
 }

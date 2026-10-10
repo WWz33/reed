@@ -10,17 +10,15 @@
 // Casts in this file are bounded by construction: Elapsed nanoseconds are clamped to u64 in practice (584 years).
 #![allow(clippy::cast_possible_truncation)]
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::bounded;
 use reed_core::ChunkId;
 use reed_io::chunk::framing::RecordFraming;
-use reed_io::chunk::{inflate_chunk, ChunkBytes, ChunkSource};
-
-pub use reed_io::chunk::ChunkBytes as ChunkBytesExport;
+use reed_io::chunk::{ChunkBytes, ChunkSource, inflate_chunk};
 
 use crate::abort::{Abort, AbortSignal, FirstError};
 use crate::budget::{BytePermits, ThreadBudget};
@@ -256,10 +254,7 @@ where
                     }
                     let read_started = Instant::now();
                     let chunk = source.next_chunk();
-                    reader_ns.fetch_add(
-                        read_started.elapsed().as_nanos() as u64,
-                        Ordering::AcqRel,
-                    );
+                    reader_ns.fetch_add(read_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
                     let chunk = match chunk {
                         Ok(Some(chunk)) => {
                             chunks_read.fetch_add(1, Ordering::AcqRel);
@@ -332,8 +327,7 @@ where
                         let started = Instant::now();
                         let framing = job.framing();
                         let outcome = catch_unwind(AssertUnwindSafe(|| {
-                            let view =
-                                inflate_chunk(&chunk, &mut inflater, &mut inflate_scratch)?;
+                            let view = inflate_chunk(&chunk, &mut inflater, &mut inflate_scratch)?;
                             let (body, head, tail) = match framing {
                                 RecordFraming::Newline => (
                                     view.body_bytes(view.text),
@@ -346,10 +340,8 @@ where
                             let partial = job.run_chunk(&chunk, body, &mut scratch)?;
                             Ok::<_, EngineError>((partial, head, tail))
                         }));
-                        worker_busy_ns.fetch_add(
-                            started.elapsed().as_nanos() as u64,
-                            Ordering::AcqRel,
-                        );
+                        worker_busy_ns
+                            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::AcqRel);
                         let (partial, head, tail, failure) = match outcome {
                             Ok(Ok((partial, head, tail))) => (partial, head, tail, None),
                             Ok(Err(err)) => (J::Partial::default(), None, None, Some(err)),
@@ -424,10 +416,7 @@ where
                 };
                 let accept_started = Instant::now();
                 let accepted = sink.accept(id, &mut msg.partial);
-                reduce_ns.fetch_add(
-                    accept_started.elapsed().as_nanos() as u64,
-                    Ordering::AcqRel,
-                );
+                reduce_ns.fetch_add(accept_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
                 if let Err(err) = accepted {
                     drop(result_rx);
                     return Err(err);
@@ -545,7 +534,10 @@ where
     let Some(head) = head else {
         // First chunk: nothing to stitch (its head is complete by
         // construction); any prior fragment would be a bug.
-        debug_assert!(fragment.is_none(), "invariant: fragment before the first chunk");
+        debug_assert!(
+            fragment.is_none(),
+            "invariant: fragment before the first chunk"
+        );
         return Ok(None);
     };
     let mut seam = fragment.unwrap_or_default();

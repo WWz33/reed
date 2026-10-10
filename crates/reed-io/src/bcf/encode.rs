@@ -7,10 +7,10 @@
 //! `BlockWriter` like any other output.
 
 use noodles::vcf::variant::io::Write as _;
-use noodles::vcf::variant::record_buf::samples::{sample::Value, Keys, Samples};
+use noodles::vcf::variant::record_buf::samples::{Keys, Samples, sample::Value};
 
 use crate::error::{IoError, Locus};
-use noodles::vcf as vcf;
+use noodles::vcf;
 
 /// The per-worker encoder: noodles' BCF writer over a byte buffer.
 pub struct BcfEncoder {
@@ -86,7 +86,10 @@ impl BcfEncoder {
         reader
             .read_record(&mut record)
             .map_err(|e| IoError::MalformedRecord {
-                locus: Locus { contig_name: "<bcf-encode>".into(), pos1: 0 },
+                locus: Locus {
+                    contig_name: "<bcf-encode>".into(),
+                    pos1: 0,
+                },
                 reason: leak(&e),
             })?;
         match self.writer.write_variant_record(header, &record) {
@@ -94,12 +97,15 @@ impl BcfEncoder {
             Err(e) if is_missing_strings(&e) => {
                 let mut reader = vcf::io::Reader::new(&self.scratch[..]);
                 let mut owned = vcf::variant::RecordBuf::default();
-                reader
-                    .read_record_buf(header, &mut owned)
-                    .map_err(|e| IoError::MalformedRecord {
-                        locus: Locus { contig_name: "<bcf-encode>".into(), pos1: 0 },
+                reader.read_record_buf(header, &mut owned).map_err(|e| {
+                    IoError::MalformedRecord {
+                        locus: Locus {
+                            contig_name: "<bcf-encode>".into(),
+                            pos1: 0,
+                        },
                         reason: leak(&e),
-                    })?;
+                    }
+                })?;
                 fix_missing_strings(&self.string_keys, &mut owned);
                 self.writer
                     .write_variant_record(header, &owned)
@@ -191,9 +197,9 @@ pub fn bcf_header_text(header: &vcf::Header) -> Result<Vec<u8>, IoError> {
         };
         // The payload starts with `ID=value,` (or ends right after the value).
         let rest = &line[kind.len()..];
-        let value = rest.strip_prefix(b"ID=").ok_or_else(|| {
-            IoError::Io("BCF header line does not start with ID=".into())
-        })?;
+        let value = rest
+            .strip_prefix(b"ID=")
+            .ok_or_else(|| IoError::Io("BCF header line does not start with ID=".into()))?;
         let id_len = value
             .iter()
             .position(|&b| b == b',' || b == b'>')
@@ -201,15 +207,14 @@ pub fn bcf_header_text(header: &vcf::Header) -> Result<Vec<u8>, IoError> {
         let id = std::str::from_utf8(&value[..id_len])
             .map_err(|_| IoError::Io("BCF header ID is not UTF-8".into()))?;
         let idx = maps.strings().get_index_of(id).ok_or_else(|| {
-            IoError::Io(format!("BCF header tag {id:?} is not in the string dictionary"))
+            IoError::Io(format!(
+                "BCF header tag {id:?} is not in the string dictionary"
+            ))
         })?;
         // Insert `,IDX=n` before the closing '>'.
         let close = line.iter().rposition(|&b| b == b'>').unwrap_or(line.len());
         out.extend_from_slice(&line[..close]);
-        let _ = std::io::Write::write_fmt(
-            &mut out,
-            format_args!(",IDX={idx}"),
-        );
+        let _ = std::io::Write::write_fmt(&mut out, format_args!(",IDX={idx}"));
         out.extend_from_slice(&line[close..]);
     }
     out.push(b'\0');

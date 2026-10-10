@@ -38,11 +38,16 @@ pub fn parse_qual(text: &[u8], locus: &crate::Locus) -> Result<Option<f32>, IoEr
     if text == b"." || text.is_empty() {
         return Ok(None);
     }
-    let s = std::str::from_utf8(text)
-        .map_err(|_| IoError::MalformedRecord { locus: locus.clone(), reason: "QUAL is not ASCII" })?;
+    let s = std::str::from_utf8(text).map_err(|_| IoError::MalformedRecord {
+        locus: locus.clone(),
+        reason: "QUAL is not ASCII",
+    })?;
     s.parse::<f32>()
         .map(Some)
-        .map_err(|_| IoError::MalformedRecord { locus: locus.clone(), reason: "QUAL is not a number" })
+        .map_err(|_| IoError::MalformedRecord {
+            locus: locus.clone(),
+            reason: "QUAL is not a number",
+        })
 }
 
 /// Whether the FILTER column passes (`PASS`, byte-exact).
@@ -56,7 +61,10 @@ mod tests {
     use super::*;
 
     fn locus() -> crate::Locus {
-        crate::Locus { contig_name: "chr1".into(), pos1: 1 }
+        crate::Locus {
+            contig_name: "chr1".into(),
+            pos1: 1,
+        }
     }
 
     #[test]

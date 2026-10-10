@@ -1,7 +1,7 @@
 //! libdeflate-based BGZF block decompression with worker-local reuse
 //! (`docs/spec/architecture.md` §6.2).
 
-use crate::bgzf::block::{parse_block_size, BGZF_INFLATE_MAX};
+use crate::bgzf::block::{BGZF_INFLATE_MAX, parse_block_size};
 use crate::error::IoError;
 
 /// Worker-local decompressor: allocate once per worker, reuse per block.
@@ -49,7 +49,9 @@ impl Inflater {
         dst.resize(start + BGZF_INFLATE_MAX, 0);
         // libdeflate parses the gzip member itself: pass the whole block
         // (header included), not just the deflate payload.
-        let written = self.decompressor.gzip_decompress(&block[..total], &mut dst[start..])?;
+        let written = self
+            .decompressor
+            .gzip_decompress(&block[..total], &mut dst[start..])?;
         dst.truncate(start + written);
         Ok(written)
     }
@@ -64,11 +66,15 @@ mod tests {
     fn inflate_roundtrips_deflated_block() {
         let mut deflater = Deflater::new(6).expect("invariant: level 6 is valid");
         let mut compressed = Vec::new();
-        deflater.deflate_block(b"hello bgzf world", &mut compressed).expect("invariant: deflate of 16 bytes fits");
+        deflater
+            .deflate_block(b"hello bgzf world", &mut compressed)
+            .expect("invariant: deflate of 16 bytes fits");
 
         let mut inflater = Inflater::new();
         let mut out = Vec::new();
-        let n = inflater.inflate_block(&compressed, &mut out).expect("invariant: roundtrip");
+        let n = inflater
+            .inflate_block(&compressed, &mut out)
+            .expect("invariant: roundtrip");
         assert_eq!(n, 16);
         assert_eq!(out, b"hello bgzf world");
     }
@@ -77,6 +83,10 @@ mod tests {
     fn rejects_non_bgzf_block() {
         let mut inflater = Inflater::new();
         let mut out = Vec::new();
-        assert!(inflater.inflate_block(b"garbage bytes here!!", &mut out).is_err());
+        assert!(
+            inflater
+                .inflate_block(b"garbage bytes here!!", &mut out)
+                .is_err()
+        );
     }
 }

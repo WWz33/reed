@@ -20,7 +20,8 @@ fn record() -> Vec<u8> {
             11 => ("1/1", 150, 99),
             _ => ("0/1", 30, 99),
         };
-        line.push_str(&format!("\t{gt}:{dp}:{gq}:0,10,100"));
+        use std::fmt::Write as _;
+        write!(line, "\t{gt}:{dp}:{gq}:0,10,100").expect("invariant: writing to String");
     }
     line.push('\n');
     line.into_bytes()

@@ -32,7 +32,11 @@ impl<'a> LineRef<'a> {
     }
 
     fn field(&self, index: usize) -> &'a [u8] {
-        let start = if index == 0 { 0 } else { self.tabs[index - 1] + 1 };
+        let start = if index == 0 {
+            0
+        } else {
+            self.tabs[index - 1] + 1
+        };
         self.trim_line_end(&self.line[start..self.tabs[index]])
     }
 
@@ -104,7 +108,7 @@ impl<'a> LineRef<'a> {
     /// Number of sample columns (tabs after FORMAT + 1).
     #[must_use]
     pub fn n_sample_cols(&self) -> usize {
-        self.samples_text().iter().filter(|&&b| b == b'\t').count() + 1
+        memchr::memchr_iter(b'\t', self.samples_text()).count() + 1
     }
 
     /// Byte offset of the first sample column within `line`.
@@ -145,11 +149,15 @@ mod tests {
     #[test]
     fn crlf_and_missing_trailing_newline_tolerated() {
         assert_eq!(
-            LineRef::parse(b"chr1\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/0").expect("invariant").samples_text(),
+            LineRef::parse(b"chr1\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/0")
+                .expect("invariant")
+                .samples_text(),
             b"0/0"
         );
         assert_eq!(
-            LineRef::parse(b"chr1\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/0\r\n").expect("invariant").samples_text(),
+            LineRef::parse(b"chr1\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/0\r\n")
+                .expect("invariant")
+                .samples_text(),
             b"0/0"
         );
     }

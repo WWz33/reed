@@ -11,9 +11,8 @@ use reed_io::vcf::line_edit::{EditPlan, InfoValueOut, edit_vcf_line};
 
 /// A 348-sample record whose GT+DP+GQ profile mirrors the clean.vcf.gz data.
 fn record() -> Vec<u8> {
-    let mut line = String::from(
-        "Chr01\t36\tChr01_36\tG\tA\t4596.04\tPASS\tAC=55;AN=696\tGT:DP:GQ:PL",
-    );
+    let mut line =
+        String::from("Chr01\t36\tChr01_36\tG\tA\t4596.04\tPASS\tAC=55;AN=696\tGT:DP:GQ:PL");
     for i in 0..348 {
         let (gt, dp, gq) = match i % 50 {
             0 => ("./.", 0, 0),
@@ -21,7 +20,8 @@ fn record() -> Vec<u8> {
             11 => ("1/1", 150, 99),
             _ => ("0/1", 30, 99),
         };
-        line.push_str(&format!("\t{gt}:{dp}:{gq}:0,10,100"));
+        use std::fmt::Write as _;
+        write!(line, "\t{gt}:{dp}:{gq}:0,10,100").expect("invariant: writing to String");
     }
     line.push('\n');
     line.into_bytes()

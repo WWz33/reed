@@ -10,3 +10,9 @@ pub mod frame_chain;
 pub mod metrics;
 pub mod pipeline;
 pub mod reorder;
+
+// The crate's central types, reachable at the root (naming.md §2.9: `pub mod`
+// per concept plus a short `pub use` list).
+pub use budget::ThreadBudget;
+pub use error::EngineError;
+pub use pipeline::{ChunkJob, OrderedSink, run};

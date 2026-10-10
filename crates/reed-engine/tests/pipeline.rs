@@ -10,7 +10,7 @@ use reed_core::ChunkId;
 use reed_engine::abort::abort;
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_engine::error::EngineError;
-use reed_engine::pipeline::{run, ChunkJob, OrderedSink};
+use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::bgzf::deflate::Deflater;
 use reed_io::chunk::{ChunkBytes, ChunkSource};
 
@@ -59,11 +59,9 @@ struct VecSink {
     n_lines: u64,
 }
 
-
-
 fn fold_line(mut fold: u64, line: &[u8]) -> u64 {
     for &b in line {
-        fold = (fold ^ u64::from(b)).wrapping_mul(0x100000001b3);
+        fold = (fold ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
     }
     fold.wrapping_add(1)
 }
@@ -126,7 +124,9 @@ fn make_chunks(text: &[u8], chunk_bytes: usize) -> Vec<ChunkBytes> {
     let mut chunks = Vec::new();
     for (id, piece) in text.chunks(chunk_bytes).enumerate() {
         let mut compressed = Vec::new();
-        deflater.deflate_block(piece, &mut compressed).expect("invariant: test block fits");
+        deflater
+            .deflate_block(piece, &mut compressed)
+            .expect("invariant: test block fits");
         compressed.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
         chunks.push(ChunkBytes {
             id: ChunkId(id as u64),
@@ -165,16 +165,36 @@ fn output_is_invariant_across_thread_counts() {
     let text = fixture_text(2_000);
     let chunks = make_chunks(&text, 700); // seams + multiple chunks
     let expected = {
-        let mut source = VecSource { chunks: chunks.clone().into_iter() };
+        let mut source = VecSource {
+            chunks: chunks.clone().into_iter(),
+        };
         let abort = abort();
-        run(&mut source, &CountJob, VecSink::default(), &budget(1), &abort).expect("invariant: run")
+        run(
+            &mut source,
+            &CountJob,
+            VecSink::default(),
+            &budget(1),
+            &abort,
+        )
+        .expect("invariant: run")
     };
     for threads in [2_usize, 3, 7, 16] {
-        let mut source = VecSource { chunks: chunks.clone().into_iter() };
+        let mut source = VecSource {
+            chunks: chunks.clone().into_iter(),
+        };
         let abort = abort();
-        let report = run(&mut source, &CountJob, VecSink::default(), &budget(threads), &abort)
-            .expect("invariant: parallel run matches sequential");
-        assert_eq!(report.sink_report, expected.sink_report, "threads={threads}");
+        let report = run(
+            &mut source,
+            &CountJob,
+            VecSink::default(),
+            &budget(threads),
+            &abort,
+        )
+        .expect("invariant: parallel run matches sequential");
+        assert_eq!(
+            report.sink_report, expected.sink_report,
+            "threads={threads}"
+        );
         assert_eq!(report.n_chunks, expected.n_chunks, "threads={threads}");
     }
     // Sanity: the fixture must have produced records and multiple chunks.
@@ -217,12 +237,24 @@ fn slow_first_chunk_does_not_overflow_the_reorder_window() {
     // fast chunks would overflow the ring while chunk 0 sleeps.
     let text = fixture_text(8_000);
     let chunks = make_chunks(&text, 500);
-    assert!(chunks.len() >= 60, "test needs many chunks, got {}", chunks.len());
+    assert!(
+        chunks.len() >= 60,
+        "test needs many chunks, got {}",
+        chunks.len()
+    );
     let n_chunks = chunks.len() as u64;
-    let mut source = VecSource { chunks: chunks.into_iter() };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
     let abort = abort();
-    let report = run(&mut source, &DelayFirstJob, VecSink::default(), &budget(8), &abort)
-        .expect("invariant: slow chunk must not overflow the reorder window");
+    let report = run(
+        &mut source,
+        &DelayFirstJob,
+        VecSink::default(),
+        &budget(8),
+        &abort,
+    )
+    .expect("invariant: slow chunk must not overflow the reorder window");
     assert_eq!(report.n_chunks, n_chunks);
 }
 
@@ -233,17 +265,43 @@ fn seam_records_are_counted_exactly_once() {
     let text = fixture_text(50);
     let all_chunks = make_chunks(&text, 100);
     let n_chunks = all_chunks.len() as u64;
-    assert!(n_chunks > 10, "test needs many seam-rich chunks, got {n_chunks}");
-    let mut seq_source = VecSource { chunks: all_chunks.clone().into_iter() };
+    assert!(
+        n_chunks > 10,
+        "test needs many seam-rich chunks, got {n_chunks}"
+    );
+    let mut seq_source = VecSource {
+        chunks: all_chunks.clone().into_iter(),
+    };
     let abort2 = abort();
-    let seq = run(&mut seq_source, &CountJob, VecSink::default(), &budget(1), &abort2)
-        .expect("invariant: sequential reference");
-    let mut source = VecSource { chunks: all_chunks.into_iter() };
+    let seq = run(
+        &mut seq_source,
+        &CountJob,
+        VecSink::default(),
+        &budget(1),
+        &abort2,
+    )
+    .expect("invariant: sequential reference");
+    let mut source = VecSource {
+        chunks: all_chunks.into_iter(),
+    };
     let abort = abort();
-    let report = run(&mut source, &CountJob, VecSink::default(), &budget(4), &abort)
-        .expect("invariant: run with seams");
-    assert_eq!(report.sink_report, seq.sink_report, "parallel must equal sequential");
-    assert_eq!(seq.sink_report, fold_lines(&text), "sequential must equal a serial scan");
+    let report = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &budget(4),
+        &abort,
+    )
+    .expect("invariant: run with seams");
+    assert_eq!(
+        report.sink_report, seq.sink_report,
+        "parallel must equal sequential"
+    );
+    assert_eq!(
+        seq.sink_report,
+        fold_lines(&text),
+        "sequential must equal a serial scan"
+    );
     assert_eq!(report.n_chunks, n_chunks);
 }
 
@@ -253,19 +311,34 @@ fn worker_panic_becomes_worker_panicked() {
     impl ChunkJob for PanickyJob {
         type Partial = ();
         type Scratch = ();
-        fn run_chunk(&self, chunk: &ChunkBytes, _body: &[u8], _: &mut ()) -> Result<(), EngineError> {
+        // The panic *message* is the contract under test (the engine
+        // captures it verbatim), so an explicit `panic!` is required here.
+        #[allow(clippy::panic, clippy::manual_assert)]
+        fn run_chunk(
+            &self,
+            chunk: &ChunkBytes,
+            _body: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
             if chunk.id.get() == 1 {
                 panic!("boom on chunk 1");
             }
             Ok(())
         }
-        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<(), EngineError> {
+        fn run_seam(
+            &self,
+            _id: reed_core::ChunkId,
+            _line: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
             Ok(())
         }
     }
     let text = fixture_text(200);
     let chunks = make_chunks(&text, 500);
-    let mut source = VecSource { chunks: chunks.into_iter() };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
     let abort = abort();
     let err = run(&mut source, &PanickyJob, UnitSink, &budget(3), &abort).unwrap_err();
     match err {
@@ -283,17 +356,29 @@ fn external_abort_stops_the_run() {
     impl ChunkJob for SlowJob {
         type Partial = ();
         type Scratch = ();
-        fn run_chunk(&self, _chunk: &ChunkBytes, _body: &[u8], _: &mut ()) -> Result<(), EngineError> {
+        fn run_chunk(
+            &self,
+            _chunk: &ChunkBytes,
+            _body: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
             std::thread::sleep(Duration::from_millis(5));
             Ok(())
         }
-        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<(), EngineError> {
+        fn run_seam(
+            &self,
+            _id: reed_core::ChunkId,
+            _line: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
             Ok(())
         }
     }
     let text = fixture_text(5_000);
     let chunks = make_chunks(&text, 500);
-    let mut source = VecSource { chunks: chunks.into_iter() };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
     let abort = abort();
     // Abort shortly after the run starts; the pipeline must observe it at
     // its next blocking point and return Aborted.
@@ -315,7 +400,9 @@ fn memory_budget_stops_the_run() {
     let text = fixture_text(2_000);
     let chunks = make_chunks(&text, 2_000);
     assert!(chunks.len() > 3, "test needs several chunks");
-    let mut source = VecSource { chunks: chunks.into_iter() };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
     let abort = abort();
     let b = ThreadBudget {
         threads: 4,
@@ -338,7 +425,14 @@ fn source_errors_propagate() {
     }
     let mut source = FailingSource;
     let abort = abort();
-    let err = run(&mut source, &CountJob, VecSink::default(), &budget(3), &abort).unwrap_err();
+    let err = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &budget(3),
+        &abort,
+    )
+    .unwrap_err();
     // C5: the transport error keeps its type (doc_v2 03 §4.4), so the locus
     // and source chain survive to the caller.
     assert!(
@@ -382,32 +476,46 @@ fn partials_arrive_in_chunk_order_at_the_sink() {
     impl ChunkJob for SleepJob {
         type Partial = u64;
         type Scratch = ();
-        fn run_chunk(&self, chunk: &ChunkBytes, _body: &[u8], _: &mut ()) -> Result<u64, EngineError> {
+        fn run_chunk(
+            &self,
+            chunk: &ChunkBytes,
+            _body: &[u8],
+            (): &mut (),
+        ) -> Result<u64, EngineError> {
             if chunk.id.get().is_multiple_of(2) {
                 std::thread::sleep(Duration::from_millis(2));
             }
             Ok(chunk.id.get())
         }
-        fn run_seam(&self, _id: reed_core::ChunkId, _line: &[u8], _: &mut ()) -> Result<u64, EngineError> {
+        fn run_seam(
+            &self,
+            _id: reed_core::ChunkId,
+            _line: &[u8],
+            (): &mut (),
+        ) -> Result<u64, EngineError> {
             Ok(u64::MAX)
         }
     }
     let text = fixture_text(3_000);
     let chunks = make_chunks(&text, 600);
     let n_chunks = chunks.len();
-    let mut source = VecSource { chunks: chunks.into_iter() };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
     let abort = abort();
     let report = run(
         &mut source,
         &SleepJob,
-        IdSink { last_id: 0, n_seams: 0 },
+        IdSink {
+            last_id: 0,
+            n_seams: 0,
+        },
         &budget(6),
         &abort,
     )
     .expect("invariant: ordered delivery");
     assert_eq!(report.sink_report, (n_chunks - 1) as u64);
 }
-
 
 /// R3 gate (03-architecture.md §4.2): the memory budget is backpressure —
 /// the run *completes* with a small pool, and the observed in-flight peak
@@ -424,7 +532,9 @@ fn memory_budget_bounds_in_flight_bytes() {
         threads: 4,
         mem: MemBudget::from_bytes(budget_bytes),
     };
-    let mut source = VecSource { chunks: chunks.into_iter() };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
     let abort = abort();
     let report = run(&mut source, &CountJob, VecSink::default(), &b, &abort)
         .expect("invariant: backpressure completes the run");
@@ -433,5 +543,8 @@ fn memory_budget_bounds_in_flight_bytes() {
         "in-flight peak {} must respect the budget {budget_bytes}",
         report.metrics.in_flight_peak_bytes
     );
-    assert!(report.metrics.in_flight_peak_bytes > 0, "peak must be observed");
+    assert!(
+        report.metrics.in_flight_peak_bytes > 0,
+        "peak must be observed"
+    );
 }

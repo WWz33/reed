@@ -13,8 +13,8 @@ use std::io::{Read, Seek, SeekFrom};
 
 use reed_core::ChunkId;
 
-use crate::bgzf::block::{parse_block_size, BGZF_HEADER_LEN};
-use crate::chunk::{ChunkBytes, CHUNK_TARGET_COMPRESSED};
+use crate::bgzf::block::{BGZF_HEADER_LEN, parse_block_size};
+use crate::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes};
 use crate::error::IoError;
 
 /// One parsed region: contig, 1-based inclusive bounds (`None` = open).
@@ -253,9 +253,9 @@ impl FileIndex {
             let file = std::fs::File::open(path)?;
             let mut reader =
                 noodles::bgzf::io::Reader::new(std::io::BufReader::with_capacity(1 << 16, file));
-            reader.read_exact(&mut magic).map_err(|_| {
-                IoError::UnsupportedInput("index file is shorter than its magic")
-            })?;
+            reader
+                .read_exact(&mut magic)
+                .map_err(|_| IoError::UnsupportedInput("index file is shorter than its magic"))?;
         }
         match &magic {
             b"CSI\x01" => Ok(Self::Csi(Box::new(noodles::csi::fs::read(path)?))),
@@ -291,6 +291,9 @@ impl IndexQuery for FileIndex {
             Self::Tbi(index) => index.query(tid, interval),
         }
         .map_err(|e| IoError::Io(e.to_string()))?;
-        Ok(chunks.iter().map(|c| (c.start().into(), c.end().into())).collect())
+        Ok(chunks
+            .iter()
+            .map(|c| (c.start().into(), c.end().into()))
+            .collect())
     }
 }

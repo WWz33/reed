@@ -17,10 +17,7 @@ pub struct NeumaierSum {
 
 impl Default for NeumaierSum {
     fn default() -> Self {
-        Self {
-            sum: 0.0,
-            c: 0.0,
-        }
+        Self { sum: 0.0, c: 0.0 }
     }
 }
 
@@ -28,10 +25,7 @@ impl NeumaierSum {
     /// Creates a zeroed accumulator.
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            sum: 0.0,
-            c: 0.0,
-        }
+        Self { sum: 0.0, c: 0.0 }
     }
 
     /// Adds one term.
@@ -95,7 +89,10 @@ mod tests {
         for &v in values.iter().rev() {
             backward.add(v);
         }
-        assert!((forward.value() - backward.value()).abs() <= 4.0 * f64::EPSILON * forward.value().abs());
+        assert!(
+            (forward.value() - backward.value()).abs()
+                <= 4.0 * f64::EPSILON * forward.value().abs()
+        );
     }
 
     #[test]

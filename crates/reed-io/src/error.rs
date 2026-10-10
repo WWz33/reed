@@ -1,5 +1,5 @@
 //! Transport-layer errors with locus context (`docs/spec/architecture.md` §6,
-//! §15). Supersedes the legacy [`crate::ReadError`] once the old window path
+//! §15). Supersedes the legacy `ReadError` once the old window path
 //! retires.
 
 use std::fmt;

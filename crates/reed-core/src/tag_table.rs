@@ -68,12 +68,26 @@ impl TagTable {
 
     /// Declares an INFO tag.
     pub fn add_info(&mut self, name: &str, ty: TagType, number: TagNumber) {
-        self.info.insert(name.to_string(), TagDef { name: name.to_string(), ty, number });
+        self.info.insert(
+            name.to_string(),
+            TagDef {
+                name: name.to_string(),
+                ty,
+                number,
+            },
+        );
     }
 
     /// Declares a FORMAT tag.
     pub fn add_format(&mut self, name: &str, ty: TagType, number: TagNumber) {
-        self.format.insert(name.to_string(), TagDef { name: name.to_string(), ty, number });
+        self.format.insert(
+            name.to_string(),
+            TagDef {
+                name: name.to_string(),
+                ty,
+                number,
+            },
+        );
     }
 
     /// The INFO tag's definition.
@@ -88,7 +102,7 @@ impl TagTable {
         self.format.get(name)
     }
 
-    /// INFO tag names in declaration order.
+    /// INFO tag names, sorted by name.
     #[must_use]
     pub fn info_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.info.keys().cloned().collect();
@@ -96,7 +110,7 @@ impl TagTable {
         names
     }
 
-    /// FORMAT tag names in declaration order.
+    /// FORMAT tag names, sorted by name.
     #[must_use]
     pub fn format_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.format.keys().cloned().collect();

@@ -123,7 +123,10 @@ impl OrderedOutput {
         Ok(())
     }
 
-    fn accept_block(&mut self, block: &crate::write::block_writer::OutBlock) -> Result<(), IoError> {
+    fn accept_block(
+        &mut self,
+        block: &crate::write::block_writer::OutBlock,
+    ) -> Result<(), IoError> {
         let coffset_before = self.coffset;
         self.writer.write_all(&block.compressed)?;
         self.coffset += block.compressed.len() as u64;
@@ -148,7 +151,7 @@ impl OrderedOutput {
         let (record, voff_start) = pending;
         let name = self
             .contig_names
-            .get(record.key.contig as usize)
+            .get(record.key.contig.get() as usize)
             .map(|v| String::from_utf8_lossy(v).into_owned())
             .unwrap_or_default();
         indexer.add(
