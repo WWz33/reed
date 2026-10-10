@@ -37,17 +37,6 @@ pub struct GtCounts {
     pub n_samples: u64,
 }
 
-/// One sample's `FORMAT` value for a tag the plan scanned (single-valued,
-/// numeric-typed tags only; multi-valued tags need subscripts and are
-/// rejected at compile time).
-#[derive(Clone, Copy, Debug)]
-pub struct FmtValue<'a> {
-    /// The FORMAT key.
-    pub tag: &'a [u8],
-    /// The parsed number (`None` when missing).
-    pub num: Option<f64>,
-}
-
 /// Everything an expression can read about one site.
 #[derive(Clone, Copy, Debug)]
 pub struct SiteValues<'a> {
@@ -72,8 +61,11 @@ pub struct SiteValues<'a> {
     /// Genotype-derived counts (`None` before the mask stage).
     pub gt: Option<GtCounts>,
     /// The current sample's `FORMAT` values, present when the caller
-    /// evaluates per sample (`--set-gts .`, 02-cli.md §3.3).
-    pub fmt: Option<&'a [FmtValue<'a>]>,
+    /// evaluates per sample (`--set-gts .`, 02-cli.md §3.3): the scanned
+    /// `(tag, parsed number)` table borrowed in place — single-valued,
+    /// numeric-typed tags only (multi-valued tags need subscripts and are
+    /// rejected at compile time).
+    pub fmt: Option<&'a [(Vec<u8>, Option<f64>)]>,
 }
 
 impl<'a> SiteValues<'a> {
@@ -306,8 +298,8 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
         Expr::Fmt(tag) => site.fmt.and_then(|values| {
             values
                 .iter()
-                .find(|v| v.tag == tag.as_bytes())
-                .map(|v| v.num.map_or(Val::Missing, Val::Num))
+                .find(|(t, _)| t.as_slice() == tag.as_bytes())
+                .and_then(|(_, num)| num.map_or(Some(Val::Missing), |n| Some(Val::Num(n))))
         }),
         Expr::Info(tag) | Expr::Bare(tag) => {
             if let Some(field) = Field::from_name(tag) {

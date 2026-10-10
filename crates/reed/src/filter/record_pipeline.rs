@@ -13,9 +13,8 @@ use reed_core::math::hwe::HweCache;
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{HeadScratch, eval_head};
-use reed_filter::eval::mask::eval_mask;
 use reed_filter::eval::tail::eval_tail;
-use reed_filter::expr::{self, FmtValue};
+use reed_filter::expr;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
@@ -81,14 +80,12 @@ pub(crate) struct RecordPipeline {
     counters: PolicyCounters,
     head: HeadScratch,
     masked: Bitset,
-    mask_values: Vec<Option<f64>>,
     /// The field rules (expressions evaluated separately), with their
     /// position in the plan's rule list for attribution.
     field_rules: Vec<reed_filter::plan::MaskRule>,
     field_rule_map: Vec<usize>,
     mask_rule: Vec<u16>,
     /// Reused per-sample `FORMAT` value table for `--set-gts .` expressions.
-    fmt_values: Vec<FmtValue<'static>>,
     fmt_storage: Vec<(Vec<u8>, Option<f64>)>,
     /// Memo for the exact HWE test behind the tail rules (A6-16).
     hwe: HweCache,
@@ -112,11 +109,9 @@ impl RecordPipeline {
             counters: PolicyCounters::default(),
             head: HeadScratch::new(),
             masked: Bitset::new(n_samples),
-            mask_values: vec![None; 0],
             field_rules: Vec::new(),
             field_rule_map: Vec::new(),
             mask_rule: vec![u16::MAX; n_samples],
-            fmt_values: Vec::new(),
             fmt_storage: Vec::new(),
             hwe: HweCache::new(),
             counts: SiteCounts::default(),
@@ -139,7 +134,6 @@ impl RecordPipeline {
             .filter(|(_, r)| r.expr.is_none())
             .map(|(i, _)| i)
             .collect();
-        self.mask_values = vec![None; self.field_rules.len()];
         self.fmt_storage = plan
             .fmt_expr_fields
             .iter()
@@ -205,12 +199,10 @@ impl RecordPipeline {
             head_passed,
             &self.field_rules,
             &self.field_rule_map,
-            &mut self.mask_values,
             &mut self.masked,
             &mut self.mask_rule,
             &mut self.counts,
             &mut self.fmt_storage,
-            &mut self.fmt_values,
             &mut self.hwe,
             body,
         )
@@ -288,12 +280,10 @@ impl RecordPipeline {
             head_passed,
             &self.field_rules,
             &self.field_rule_map,
-            &mut self.mask_values,
             &mut self.masked,
             &mut self.mask_rule,
             &mut self.counts,
             &mut self.fmt_storage,
-            &mut self.fmt_values,
             &mut self.hwe,
             body,
         )
@@ -414,138 +404,144 @@ fn run_stages<'a, F>(
     head_passed: bool,
     field_rules: &[reed_filter::plan::MaskRule],
     field_rule_map: &[usize],
-    mask_values: &mut [Option<f64>],
     masked: &mut Bitset,
     mask_rule: &mut [u16],
     counts: &mut SiteCounts,
     fmt_storage: &mut [(Vec<u8>, Option<f64>)],
-    fmt_values: &mut Vec<FmtValue<'static>>,
     hwe: &mut HweCache,
     mut body: F,
 ) -> Result<Processed, EngineError>
 where
     F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
 {
-    // ---- mask + count stage ----
+    // ---- mask + count stage (A6-17: field rules run columnar — one
+    // contiguous pass per rule over the scanned columns; the `--set-gts .`
+    // expression path reuses the pipeline's FORMAT table in place, with no
+    // per-sample allocation) ----
     masked.clear();
     mask_rule.fill(u16::MAX);
     *counts = SiteCounts::default();
-    let mask_rules = &plan.mask;
+    let evaluated =
+        |i: usize| opts.mask_all_samples || keep.get(i).copied().unwrap_or(true);
     // Site context for the `--set-gts .` expressions (no genotype-derived
     // fields: the plan rejects those, so the counts are not needed).
     let expr_site = expr::SiteValues::from_line(lr, pos1, None);
-    for (i, &code) in scan.codes.iter().enumerate() {
-        let kept = keep.get(i).copied().unwrap_or(true);
-        if !kept && !opts.mask_all_samples {
-            continue;
-        }
-        // One observation per FIELD rule: rule i reads its own scanned
-        // column, so several rules may share one field (DP<5 and
-        // DP>100 both read DP). Expression rules (`--set-gts .`) read
-        // the per-sample FORMAT table below.
-        for (rule, v) in field_rules.iter().zip(mask_values.iter_mut()) {
-            *v = match rule.float_column {
-                Some(j) => scan
-                    .float_columns
-                    .get(j)
-                    .and_then(|column| column.get(i))
-                    .copied()
-                    .filter(|x| !x.is_nan())
-                    .map(f64::from),
-                None => scan
-                    .int_columns
-                    .get(rule.int_column)
-                    .and_then(|column| column.get(i))
-                    .copied()
-                    .filter(|&x| x != INT_MISSING)
-                    .map(f64::from),
-            };
-        }
-        // Expression rules read FORMAT values; field rules read their
-        // own column (one observation per rule).
-        let mut hit = None;
-        if !fmt_storage.is_empty() {
-            for (slot, field) in fmt_storage.iter_mut().zip(&plan.fmt_expr_fields) {
-                let value = match field.float_column {
-                    Some(j) => scan
-                        .float_columns
-                        .get(j)
-                        .and_then(|column| column.get(i))
-                        .copied()
-                        .filter(|x| !x.is_nan())
-                        .map(f64::from),
-                    None => scan
-                        .int_columns
-                        .get(field.int_column)
-                        .and_then(|column| column.get(i))
-                        .copied()
-                        .filter(|&x| x != INT_MISSING)
-                        .map(f64::from),
-                };
-                slot.1 = value;
+
+    // Expression rules first (declaration order among themselves), one
+    // sample at a time: the FORMAT slots update in place and the
+    // evaluation borrows the table.
+    if !fmt_storage.is_empty() {
+        for i in 0..scan.codes.len() {
+            if !evaluated(i) {
+                continue;
             }
-            fmt_values.clear();
+            for (slot, field) in fmt_storage.iter_mut().zip(&plan.fmt_expr_fields) {
+                slot.1 = fmt_value_at(scan, field, i);
+            }
+            let mut sample_site = expr_site;
+            sample_site.fmt = Some(fmt_storage);
+            for (rule_index, rule) in plan.mask.iter().enumerate() {
+                let Some(expr) = &rule.expr else {
+                    continue;
+                };
+                let truth = expr::eval(expr, &sample_site);
+                let fires = if rule.include { !truth } else { truth };
+                if fires {
+                    attribute_hit(
+                        i,
+                        rule_index,
+                        keep.get(i).copied().unwrap_or(true),
+                        opts.counts,
+                        masked,
+                        mask_rule,
+                        funnel,
+                    );
+                    break;
+                }
+            }
         }
-        for (rule_index, rule) in mask_rules.iter().enumerate() {
-            let Some(expr) = &rule.expr else {
+    }
+
+    // Field rules columnar: each rule compares its whole scanned column and
+    // the masked check preserves the first-hit attribution (the value
+    // observation per rule is unchanged — several rules may share one
+    // field, DP<5 and DP>100 both read DP).
+    for (local, rule) in field_rules.iter().enumerate() {
+        let rule_index = field_rule_map[local];
+        let mask_on_missing = rule.on_missing == reed_filter::spec::OnMissing::Mask;
+        if let Some(j) = rule.float_column {
+            let Some(column) = scan.float_columns.get(j) else {
                 continue;
             };
-            let values: Vec<FmtValue<'_>> = fmt_storage
-                .iter()
-                .map(|(tag, num)| FmtValue { tag, num: *num })
-                .collect();
-            let mut sample_site = expr_site;
-            sample_site.fmt = Some(&values);
-            let truth = expr::eval(expr, &sample_site);
-            let fires = if rule.include { !truth } else { truth };
-            if fires {
-                hit = Some(rule_index);
-                break;
+            for (i, &x) in column.iter().enumerate() {
+                if masked.get(i)
+                    || !evaluated(i)
+                    || !(x.is_nan() && mask_on_missing)
+                        || (!x.is_nan() && !rule.cmp.apply_f64(f64::from(x)))
+                {
+                    continue;
+                }
+                attribute_hit(
+                    i,
+                    rule_index,
+                    keep.get(i).copied().unwrap_or(true),
+                    opts.counts,
+                    masked,
+                    mask_rule,
+                    funnel,
+                );
             }
-        }
-        if hit.is_none()
-            && let Some(local) = eval_mask(mask_values, field_rules)
-        {
-            hit = field_rule_map.get(local).copied();
-        }
-        if let Some(rule_index) = hit {
-            masked.set(i, true);
-            if let Ok(slot) = u16::try_from(rule_index) {
-                mask_rule[i] = slot;
-            }
-            if opts.counts
-                && kept
-                && let Some(slot) = funnel.mask_hits.get_mut(rule_index)
-            {
-                // Attribution: the first firing rule owns this sample
-                // (already-missing samples are attributed too, matching
-                // the reported called→missing transitions).
-                *slot += 1;
-            }
-        }
-        if !opts.counts || !kept {
-            continue;
-        }
-        // `count_site` semantics from the decoded slots: masked calls
-        // count as missing (the attribution the single pass reports).
-        if !code.is_called_any() {
-            counts.n_missing += 1;
-        } else if hit.is_some() {
-            funnel.masked_gt += 1;
-            counts.n_missing += 1;
         } else {
-            let (s0, s1) = (code.slot_state(0), code.slot_state(1));
-            let n_alt = u64::from(s0 == STATE_ALT) + u64::from(s1 == STATE_ALT);
-            let n_miss = u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
-            counts.ns += 1;
-            counts.an += 2 - n_miss;
-            counts.ac += n_alt;
-            match (n_miss, n_alt) {
-                (0, 0) => counts.hom_ref += 1,
-                (0, 1) => counts.het += 1,
-                (0, _) => counts.hom_alt += 1,
-                // Half-calls feed AN/AC/NS but no genotype class.
-                _ => {}
+            let Some(column) = scan.int_columns.get(rule.int_column) else {
+                continue;
+            };
+            for (i, &x) in column.iter().enumerate() {
+                if masked.get(i)
+                    || !evaluated(i)
+                    || (x == INT_MISSING && !mask_on_missing)
+                    || (x != INT_MISSING && !rule.cmp.apply_f64(f64::from(x)))
+                {
+                    continue;
+                }
+                attribute_hit(
+                    i,
+                    rule_index,
+                    keep.get(i).copied().unwrap_or(true),
+                    opts.counts,
+                    masked,
+                    mask_rule,
+                    funnel,
+                );
+            }
+        }
+    }
+
+    // `count_site` semantics from the decoded slots: masked calls count as
+    // missing (the attribution the single pass reports).
+    if opts.counts {
+        for (i, &code) in scan.codes.iter().enumerate() {
+            if !keep.get(i).copied().unwrap_or(true) {
+                continue;
+            }
+            if !code.is_called_any() {
+                counts.n_missing += 1;
+            } else if masked.get(i) {
+                funnel.masked_gt += 1;
+                counts.n_missing += 1;
+            } else {
+                let (s0, s1) = (code.slot_state(0), code.slot_state(1));
+                let n_alt = u64::from(s0 == STATE_ALT) + u64::from(s1 == STATE_ALT);
+                let n_miss = u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
+                counts.ns += 1;
+                counts.an += 2 - n_miss;
+                counts.ac += n_alt;
+                match (n_miss, n_alt) {
+                    (0, 0) => counts.hom_ref += 1,
+                    (0, 1) => counts.het += 1,
+                    (0, _) => counts.hom_alt += 1,
+                    // Half-calls feed AN/AC/NS but no genotype class.
+                    _ => {}
+                }
             }
         }
     }
@@ -593,6 +589,56 @@ where
         head_passed,
         emitted: true,
     })
+}
+
+/// One sample's scanned `FORMAT` value for a `--set-gts .` expression field
+/// (`None` = missing).
+fn fmt_value_at(
+    scan: &ScanOutput<'_>,
+    field: &reed_filter::plan::FmtExprField,
+    i: usize,
+) -> Option<f64> {
+    match field.float_column {
+        Some(j) => scan
+            .float_columns
+            .get(j)
+            .and_then(|column| column.get(i))
+            .copied()
+            .filter(|x| !x.is_nan())
+            .map(f64::from),
+        None => scan
+            .int_columns
+            .get(field.int_column)
+            .and_then(|column| column.get(i))
+            .copied()
+            .filter(|&x| x != INT_MISSING)
+            .map(f64::from),
+    }
+}
+
+/// Attributes a mask hit to sample `i`: the bit, the owning rule and the
+/// funnel counter (the first firing rule owns the sample; already-missing
+/// samples are attributed too, matching the reported called→missing
+/// transitions).
+fn attribute_hit(
+    i: usize,
+    rule_index: usize,
+    kept: bool,
+    counts_enabled: bool,
+    masked: &mut Bitset,
+    mask_rule: &mut [u16],
+    funnel: &mut FunnelPartial,
+) {
+    masked.set(i, true);
+    if let Ok(slot) = u16::try_from(rule_index) {
+        mask_rule[i] = slot;
+    }
+    if counts_enabled
+        && kept
+        && let Some(slot) = funnel.mask_hits.get_mut(rule_index)
+    {
+        *slot += 1;
+    }
 }
 
 /// Index of `GT` among the colon-separated FORMAT keys.
