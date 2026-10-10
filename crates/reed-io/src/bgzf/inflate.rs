@@ -55,6 +55,31 @@ impl Inflater {
         dst.truncate(start + written);
         Ok(written)
     }
+
+    /// Inflates one whole BGZF block into the *exact-size* window `out`
+    /// (its length must equal the block's ISIZE). The window's bytes may be
+    /// uninitialized garbage from a previous use — libdeflate overwrites
+    /// exactly what it reports, so no zero-fill happens (A6-6: ~64 KiB
+    /// memset per block ≈ 15 GB over the gold input).
+    ///
+    /// Returns the number of bytes written (`== out.len()` on success).
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedBgzf`] on a corrupt member or when the block's
+    /// inflated size disagrees with `out.len()`.
+    pub fn inflate_window(&mut self, block: &[u8], out: &mut [u8]) -> Result<usize, IoError> {
+        // libdeflate parses the gzip member itself: pass the whole block
+        // (header included), not just the deflate payload.
+        let written = self.decompressor.gzip_decompress(block, out)?;
+        if written != out.len() {
+            return Err(IoError::MalformedBgzf {
+                locus: None,
+                reason: "block's inflated size disagrees with its ISIZE",
+            });
+        }
+        Ok(written)
+    }
 }
 
 #[cfg(test)]

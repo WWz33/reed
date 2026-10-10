@@ -127,6 +127,20 @@ fn make_chunks(text: &[u8], chunk_bytes: usize) -> Vec<ChunkBytes> {
         deflater
             .deflate_block(piece, &mut compressed)
             .expect("invariant: test block fits");
+        // Real sources ship a complete block table (one entry per member,
+        // empty members as `(size, 0)`) — inflate_chunk walks it.
+        let block_len = u32::try_from(compressed.len()).expect("invariant: test block fits u32");
+        let blocks = vec![
+            (
+                block_len,
+                u32::try_from(piece.len()).expect("invariant: test block fits u32"),
+            ),
+            (
+                u32::try_from(reed_io::bgzf::block::EOF_BLOCK.len())
+                    .expect("invariant: EOF marker fits u32"),
+                0,
+            ),
+        ];
         compressed.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
         chunks.push(ChunkBytes {
             id: ChunkId(id as u64),
@@ -134,7 +148,7 @@ fn make_chunks(text: &[u8], chunk_bytes: usize) -> Vec<ChunkBytes> {
             first_in_block_offset: 0,
             plain: false,
             compressed_start: 0,
-            blocks: Vec::new(),
+            blocks,
         });
     }
     chunks

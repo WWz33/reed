@@ -159,41 +159,57 @@ impl InflatedChunk<'_> {
     }
 }
 
-/// Inflates every block of `chunk` into `scratch` (replacing its content)
-/// and splits the text into head/body/tail line ownership.
+/// Inflates every block of `chunk` into `scratch` and splits the text into
+/// head/body/tail line ownership.
+///
+/// The chunk's `blocks` metadata (built by the reader) drives the walk: no
+/// second header parse, and `scratch` is grown once to the chunk's total
+/// inflated size — every block inflates straight into its exact-size window,
+/// so after the first chunk a worker does no zero-fill at all (A6-6).
 ///
 /// # Errors
 ///
-/// [`IoError::MalformedBgzf`] on corrupt blocks.
+/// [`IoError::MalformedBgzf`] when the metadata disagrees with the payload
+/// or a block is corrupt.
 pub fn inflate_chunk<'a>(
     chunk: &ChunkBytes,
     inflater: &mut crate::bgzf::inflate::Inflater,
     scratch: &'a mut Vec<u8>,
 ) -> Result<InflatedChunk<'a>, IoError> {
-    scratch.clear();
     if chunk.plain {
+        scratch.clear();
         // Uncompressed input: the "compressed" bytes are the text itself.
         scratch.extend_from_slice(&chunk.compressed);
-        return Ok(split_text(chunk, scratch));
+        let text: &'a [u8] = scratch.as_slice();
+        return Ok(split_text(chunk, text));
+    }
+    let total_inflated: usize = chunk.blocks.iter().map(|&(_, ilen)| ilen as usize).sum();
+    let total_compressed: usize = chunk.blocks.iter().map(|&(clen, _)| clen as usize).sum();
+    if total_compressed != chunk.compressed.len() {
+        return Err(IoError::MalformedBgzf {
+            locus: None,
+            reason: "chunk block table disagrees with the payload length",
+        });
+    }
+    if scratch.len() < total_inflated {
+        scratch.resize(total_inflated, 0);
     }
     let mut compressed: &[u8] = chunk.compressed.as_ref();
-    while !compressed.is_empty() {
-        let Some(total) = crate::bgzf::block::parse_block_size(compressed) else {
-            return Err(IoError::MalformedBgzf {
-                locus: None,
-                reason: "chunk contains a non-BGZF block header",
-            });
-        };
-        inflater.inflate_block(&compressed[..total], scratch)?;
-        compressed = &compressed[total..];
+    let mut pos = 0_usize;
+    for &(clen, ilen) in &chunk.blocks {
+        let block = &compressed[..clen as usize];
+        compressed = &compressed[clen as usize..];
+        if ilen == 0 {
+            continue; // Empty member (EOF marker or concatenation join).
+        }
+        pos += inflater.inflate_window(block, &mut scratch[pos..pos + ilen as usize])?;
     }
-    Ok(split_text(chunk, scratch))
+    let text: &'a [u8] = &scratch[..pos];
+    Ok(split_text(chunk, text))
 }
 
 /// Splits already-inflated text into head/body/tail line ownership.
-fn split_text<'a>(chunk: &ChunkBytes, scratch: &'a mut Vec<u8>) -> InflatedChunk<'a> {
-    let text: &'a [u8] = scratch.as_slice();
-
+fn split_text<'a>(chunk: &ChunkBytes, text: &'a [u8]) -> InflatedChunk<'a> {
     let scan_start = if chunk.first_in_block_offset > 0 {
         usize::try_from(chunk.first_in_block_offset).unwrap_or(0)
     } else {
@@ -228,7 +244,7 @@ fn split_text<'a>(chunk: &ChunkBytes, scratch: &'a mut Vec<u8>) -> InflatedChunk
 
 /// Range of complete lines: from `from` to one past the last `\n`.
 fn owned_body_range(text: &[u8], from: usize) -> Range<usize> {
-    match text[from..].iter().rposition(|&b| b == b'\n') {
+    match memchr::memrchr(b'\n', &text[from..]) {
         Some(rel) => from..from + rel + 1,
         None => from..from,
     }
@@ -236,7 +252,7 @@ fn owned_body_range(text: &[u8], from: usize) -> Range<usize> {
 
 /// Tail fragment range (after the last `\n`), or None when empty.
 fn tail_range(text: &[u8]) -> Option<Range<usize>> {
-    match text.iter().rposition(|&b| b == b'\n') {
+    match memchr::memrchr(b'\n', text) {
         Some(rel) if rel + 1 < text.len() => Some(rel + 1..text.len()),
         Some(_) => None,
         None => (!text.is_empty()).then_some(0..text.len()),

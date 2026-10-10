@@ -99,12 +99,16 @@ impl<R: Read> BgzfChunkReader<R> {
     }
 
     /// Grows `out` until it holds at least `chunk_target` bytes of whole
-    /// BGZF blocks, and returns the offset just past the last whole block
-    /// (bytes beyond it belong to the next chunk).
+    /// BGZF blocks (empty members included, matching the mmap source), and
+    /// returns the offset just past the last whole block (bytes beyond it
+    /// belong to the next chunk).
     ///
-    /// Empty members (ISIZE = 0: the EOF marker and concatenation joins) are
-    /// removed in place and never terminate the stream — the stream ends
-    /// only at the underlying EOF (01-review D2).
+    /// Empty members (ISIZE = 0: the EOF marker and concatenation joins)
+    /// stay in `out` and enter `blocks` as `(size, 0)` — the mmap source
+    /// keeps them in the chunk range too, so both sources produce identical
+    /// chunk metadata and virtual offsets (A6-7: dropping them here used to
+    /// shift every later chunk's `compressed_start`). The stream ends only
+    /// at the underlying EOF (01-review D2).
     ///
     /// # Errors
     ///
@@ -116,6 +120,9 @@ impl<R: Read> BgzfChunkReader<R> {
         blocks: &mut Vec<(u32, u32)>,
     ) -> Result<usize, IoError> {
         let mut pos = 0_usize;
+        // Compressed bytes of the non-empty blocks (the chunk target counts
+        // these, as the mmap source's `total` does).
+        let mut non_empty = 0_u64;
         loop {
             // Parse every whole block currently in `out`.
             while out.len() >= pos + BGZF_HEADER_LEN {
@@ -130,25 +137,26 @@ impl<R: Read> BgzfChunkReader<R> {
                 }
                 if is_empty_member(&out[pos..pos + total]) {
                     self.last_was_eof_marker = is_eof_block(&out[pos..pos + total]);
-                    out.drain(pos..pos + total);
-                    continue; // The next block now starts at `pos`.
+                    blocks.push((u32::try_from(total).unwrap_or(u32::MAX), 0));
+                } else {
+                    self.last_was_eof_marker = false;
+                    non_empty += total as u64;
+                    blocks.push((
+                        u32::try_from(total).unwrap_or(u32::MAX),
+                        crate::bgzf::block::block_inflated_size(&out[pos..pos + total]),
+                    ));
                 }
-                self.last_was_eof_marker = false;
-                blocks.push((
-                    u32::try_from(total).unwrap_or(u32::MAX),
-                    crate::bgzf::block::block_inflated_size(&out[pos..pos + total]),
-                ));
                 pos += total;
             }
             // At least one whole block and the target reached: the chunk is
             // complete (the cut is always a block boundary).
-            if pos > 0 && out.len() as u64 >= self.chunk_target {
+            if pos > 0 && non_empty >= self.chunk_target {
                 return Ok(pos);
             }
             // Read what is still missing. When a block announced more bytes
             // than the target, read exactly that block's remainder so a
             // chunk is never empty and the loop always progresses.
-            let mut want = self.chunk_target.saturating_sub(out.len() as u64);
+            let mut want = self.chunk_target.saturating_sub(non_empty);
             if want == 0 {
                 want = if out.len() >= BGZF_HEADER_LEN {
                     parse_block_size(&out[..BGZF_HEADER_LEN])
@@ -581,6 +589,11 @@ mod tests {
         while let Some(chunk) = reader.next_chunk().expect("invariant: chunking") {
             let view =
                 inflate_chunk(&chunk, &mut inflater, &mut scratch).expect("invariant: inflate");
+            if view.text.is_empty() {
+                // A chunk of nothing but empty members (the trailing EOF
+                // marker): nothing to count, nothing to stitch.
+                continue;
+            }
             if let Some(head) = view.head_bytes(view.text) {
                 let mut seam = fragment.take().unwrap_or_default();
                 n_seam_bytes += head.len();
@@ -730,5 +743,97 @@ mod tests {
         let mut stream = compress_lines(&[&a], 48);
         stream.extend_from_slice(&compress_lines(&[&b], 48));
         assert_eq!(count_records_in_stream(&stream, 64), 60);
+    }
+
+    /// A6-7: the streaming and mmap sources must produce identical chunk
+    /// metadata (offsets, block tables, payloads) even when empty members
+    /// sit mid-chunk and at chunk starts — the index's virtual offsets and
+    /// `bcf_input`'s record map are computed from them.
+    #[test]
+    fn streaming_and_mmap_sources_agree_on_chunk_metadata() {
+        let text = record_text(40);
+        let blocks = compress_blocks(&text, 24);
+        assert!(blocks.len() >= 4, "test needs several blocks");
+        let mut stream: Vec<u8> = Vec::new();
+        for (i, block) in blocks.iter().enumerate() {
+            if i == blocks.len() / 2 {
+                // A canonical EOF marker plus a non-canonical empty member
+                // in the middle of the record stream (past the header).
+                stream.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+                let mut empty = Vec::new();
+                Deflater::new(6)
+                    .expect("invariant: level 6 is valid")
+                    .deflate_block(b"", &mut empty)
+                    .expect("invariant: empty member");
+                stream.extend_from_slice(&empty);
+            }
+            stream.extend_from_slice(block);
+        }
+        stream.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+
+        // Streaming source over the bytes.
+        let mut reader = BgzfChunkReader::with_chunk_target(Cursor(stream.clone()), 96);
+        let mut inflater = crate::bgzf::inflate::Inflater::new();
+        let _ = reader
+            .scan_header(&mut inflater)
+            .expect("invariant: header present");
+
+        // mmap source over the same bytes in a real file.
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "reed_chunk_meta_{}_{}.bgz",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("invariant: clock is after the epoch")
+                .as_nanos()
+        ));
+        std::fs::write(&path, &stream).expect("invariant: temp file writable");
+        let (mut mmap_source, _) =
+            MmapChunkSource::open(std::fs::File::open(&path).expect("invariant: file exists"))
+                .expect("invariant: mmap source opens");
+        mmap_source.chunk_target = 96; // same boundaries as the streaming reader
+
+        let mut n_chunks = 0;
+        let mut n_empty_entries = 0;
+        loop {
+            let streaming = reader.next_chunk().expect("invariant: chunking");
+            let mapped = crate::chunk::ChunkSource::next_chunk(&mut mmap_source)
+                .expect("invariant: chunking");
+            match (streaming, mapped) {
+                (None, None) => break,
+                (Some(s), Some(m)) => {
+                    assert_eq!(s.id, m.id, "chunk ids diverge");
+                    assert_eq!(
+                        s.compressed_start, m.compressed_start,
+                        "chunk {} offset",
+                        s.id
+                    );
+                    assert_eq!(s.blocks, m.blocks, "chunk {} block table", s.id);
+                    assert_eq!(
+                        s.first_in_block_offset, m.first_in_block_offset,
+                        "chunk {} first_in_block_offset",
+                        s.id
+                    );
+                    assert_eq!(
+                        s.compressed.as_slice(),
+                        m.compressed.as_slice(),
+                        "chunk {} payload bytes",
+                        s.id
+                    );
+                    n_empty_entries += s.blocks.iter().filter(|&&(_, ilen)| ilen == 0).count();
+                    n_chunks += 1;
+                }
+                (s, m) => panic!("chunk streams diverge: streaming {s:?} vs mmap {m:?}"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        assert!(n_chunks >= 3, "test needs several chunks, got {n_chunks}");
+        // The fixture must actually carry empty members into the chunks —
+        // otherwise the comparison proves nothing about the drift.
+        assert!(
+            n_empty_entries >= 2,
+            "fixture has no empty members, got {n_empty_entries}"
+        );
     }
 }

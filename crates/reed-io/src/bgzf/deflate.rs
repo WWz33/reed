@@ -10,6 +10,11 @@ use crate::error::IoError;
 /// Worker-local compressor: allocate once per worker, reuse per block.
 pub struct Deflater {
     compressor: libdeflater::Compressor,
+    /// Resident deflate output space. Its `len` always equals its capacity,
+    /// so every byte stays initialized and a block's output is a plain
+    /// `extend_from_slice` — no per-block zero-fill of the worst-case bound
+    /// (A6-5: ~65 KiB memset per block ≈ 23 GB over the gold input).
+    scratch: Vec<u8>,
 }
 
 impl Deflater {
@@ -23,6 +28,7 @@ impl Deflater {
             .map_err(|_| IoError::UnsupportedInput("invalid compression level"))?;
         Ok(Self {
             compressor: libdeflater::Compressor::new(lvl),
+            scratch: Vec::new(),
         })
     }
 
@@ -48,32 +54,34 @@ impl Deflater {
         let start = dst.len();
         // Raw deflate payload with libdeflate's own worst-case bound, plus
         // the 18-byte header and the 8-byte CRC/ISIZE trailer.
-        let payload_start = start + 18;
         let bound = self.compressor.deflate_compress_bound(input.len());
-        dst.resize(payload_start + bound + 8, 0);
+        if self.scratch.len() < bound {
+            self.scratch.resize(bound, 0);
+        }
         let n_deflated = self
             .compressor
-            .deflate_compress(input, &mut dst[payload_start..])
+            .deflate_compress(input, &mut self.scratch[..bound])
             .map_err(|_| IoError::MalformedBgzf {
                 locus: None,
                 reason: "deflate output overflow (block data too large)",
             })?;
         let total = 18 + n_deflated + 8;
-        // Header: gzip with FEXTRA carrying the BC subfield (XLEN = 6).
-        dst[start..start + 18].copy_from_slice(&[
-            0x1f, 0x8b, 0x08, 0x04, 0, 0, 0, 0, 0, 0xff, 0x06, 0x00, b'B', b'C', 0x02, 0x00, 0, 0,
-        ]);
         let bsize = u16::try_from(total - 1).map_err(|_| IoError::MalformedBgzf {
             locus: None,
             reason: "BGZF block size overflows the 16-bit BSIZE field",
         })?;
-        dst[start + 16..start + 18].copy_from_slice(&bsize.to_le_bytes());
+        // Header: gzip with FEXTRA carrying the BC subfield (XLEN = 6); the
+        // BSIZE lands in the header's last two bytes (16..18).
+        dst.extend_from_slice(&[
+            0x1f, 0x8b, 0x08, 0x04, 0, 0, 0, 0, 0, 0xff, 0x06, 0x00, b'B', b'C', 0x02, 0x00,
+        ]);
+        dst.extend_from_slice(&bsize.to_le_bytes());
         // Trailer: CRC32 of the uncompressed data + ISIZE mod 2^32.
         let crc = libdeflater::crc32(input);
-        let trailer = start + 18 + n_deflated;
-        dst[trailer..trailer + 4].copy_from_slice(&crc.to_le_bytes());
-        dst[trailer + 4..trailer + 8].copy_from_slice(&(input.len() as u32).to_le_bytes());
-        dst.truncate(start + total);
+        dst.extend_from_slice(&self.scratch[..n_deflated]);
+        dst.extend_from_slice(&crc.to_le_bytes());
+        dst.extend_from_slice(&(input.len() as u32).to_le_bytes());
+        debug_assert_eq!(dst.len() - start, total);
         Ok(total)
     }
 }
