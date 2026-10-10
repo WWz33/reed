@@ -115,6 +115,12 @@ gold scripts) and bioinformatics artifacts (VCF/BCF outputs, index sidecars, log
 - Module names singular; a function must not duplicate its module name (`hwe::hwe_exact`,
   `pi::pi`, `fst::fst` stutter). Tolerated in reed-core 0.2.0; the fix is re-exporting functions at
   `estimators::` level when the published API next breaks — not renaming call sites.
+- **One module style: `foo/mod.rs` for modules with children, `foo.rs` for leaves** (doc_v6 05
+  §7.5 T-1, E6-16: the tree used to mix 18 `mod.rs` with one sibling pair, `cli.rs` + `cli/`; the
+  outlier became `cli/mod.rs`). A `foo.rs` and a `foo/` directory never coexist.
+- **Crate roots**: `pub mod` per concept, plus a short `pub use` list of the crate's central types
+  (2–4 items), plus the single `error.rs` holding the crate's `*Error`. Every product crate follows
+  this shape (doc_v6 T-2).
 
 ### 2.10 Abbreviations
 - Allowed (domain canon from VCF/popgen, also the INFO/FORMAT tag names): `GT`, `AC`, `AN`, `NS`,

@@ -147,3 +147,42 @@
 | E6-13 | `pixy` 词汇出生产代码：`writers/pixy.rs` → `writers/windows.rs`，`PixyOptions` → `WindowLayoutOptions`，`pixy_kinds` → `window_kinds`；门面 re-export 同步 | 守卫：`! grep -rniE '\bpixy' crates/*/src --include=*.rs`（测试目录除外）；输出 md5 不变 |
 | E6-14 | 测试文件改名（`m7_fst`→`fst_multi`、`qc_merge_laws`→`summary_merge_laws`、`individual_joint`→`het`+`sfs_joint`）；`cli.rs` → `cli/mod.rs`；`ponytail` → `TODO(#…)`；4 个公开参数名去缩写 | `cargo test` 全绿；`! grep -rn ponytail crates` |
 | E6-15 | 超长文件拆分：`stats/job.rs`（Y6 的 `request/run/sink`）、`translate/stats.rs`（按子命令段）、`writers/reports.rs`（按报告族）；目标无文件 > 600 行 | `find crates -name '*.rs' -path '*/src/*' \| xargs wc -l \| awk '$1>600'` 为空 |
+
+### 7.5 `crates/` 内部树与源码形态（对照 noodles 与 rust-htslib）
+
+参照物：`~/reed/noodles`（18 个 crate 的 workspace，`noodles-vcf/src` 全部 sibling 风格 `foo.rs` + `foo/`，0 个 `mod.rs`，最大文件 702 行，`lib.rs` = `pub mod` 每概念一个 + `pub use` 三个中心类型）；`~/reed/rust-htslib`（全部 `mod.rs` 风格，最大文件 9,672 行，带 `LICENSE.md`、`CHANGELOG.md`）。两种模块风格社区都接受，**混用**才是问题。
+
+**合格的部分**
+
+| 项 | 证据 |
+|---|---|
+| 分层与依赖方向 | `core ← io ← engine`、`core ← stats`、`core,io ← filter`、全部 ← `reed` ← `reed-cli`（只依赖 `reed`）；无环、无越层（各 `Cargo.toml`） |
+| 纯度 | reed-stats 不碰 I/O、线程（grep 为空）；reed-core 唯一的文件读取是声明过的 `GroupTable::from_tsv`（`group.rs:97-103`）；reed-filter 只用 reed-io 的 4 个项（`LineRef`、`info_fragments`、`parse_qual`、`line_edit`），接近纯策略层 |
+| 外部依赖按层收口 | noodles/libdeflater/memmap2 只在 reed-io；crossbeam 只在 engine；clap 只在 reed-cli；serde 在 core/stats/filter；rayon 只在 reed |
+| 文档 | **131/131** 个 `src/*.rs` 都有 `//!` 模块文档；每个公开项有 `# Errors`/`# Panics` |
+| 测试形态 | 56/131 文件带内联单元测试；每 crate 有 `tests/`；proptest、oracle crate、差分 oracle、e2e；`e2e_filter.rs` 21 个用例 |
+| 清单卫生 | 7 个产品 crate 都有 `description`、`rust-version.workspace`、`[lints] workspace = true`（oracle 缺后两项，冻结 crate 可接受） |
+| 门面形态 | `reed/src/lib.rs` 六个私有 `mod` + 纯 `pub use` 清单；`reed` 内 `pub(super)` 93 / `pub(crate)` 44，`reed-cli` 裸 `pub` 仅 1 处——可见性纪律比多数开源 Rust 项目严 |
+| 文件尺寸 | 除 8 个离群点外 100–500 行，与 noodles 同量级，远好于 rust-htslib |
+
+**不合格 / 不一致的部分**
+
+| # | 项 | 证据 | 处理 |
+|---|---|---|---|
+| T-1 | 模块风格混用 | 18 个 `mod.rs` + 1 个 sibling（`reed-cli/src/cli.rs` + `cli/`）；noodles 全 sibling、rust-htslib 全 `mod.rs`，没有谁混用 | 统一；最省是把离群点改成 `cli/mod.rs`，并在 naming.md §2.9 写明"本仓库用 `mod.rs` 风格" |
+| T-2 | crate 根的三种风格 | reed-core / reed-stats：`pub mod` 全部 + 主类型扁平 `pub use`（同一类型两条路径）；reed-io / reed-engine：只 `pub mod`（+ 错误类型）；reed-filter：`pub mod` + 把 `FilterError` **直接定义在 `lib.rs:28`**（其余三个 crate 都有 `error.rs`）；门面：隐藏模块只 `pub use`。noodles 的做法是 `pub mod` 每概念 + `pub use` 少数中心类型 | 统一为"`pub mod` 每概念一个 + `pub use` 2–4 个中心类型 + `error.rs`"；`FilterError` 搬到 `reed-filter/src/error.rs` |
+| T-3 | 过期的 `#[doc(hidden)]` | `reed-stats/src/lib.rs:44-60` 注释写"CLI 尚未接入（`--fst-global`、`--sfs --proj`、LD/f 统计）"并把 `WcMultiAcc`、`ProjectedSfsAcc`、`LdPruner`、`F2Acc…`、`BpBlockJackknife` 全部藏起来；X4 已把它们接进 CLI 并对拍 | 去掉 `#[doc(hidden)]`，改注释；未接入的只剩 `JointSfsAcc` |
+| T-4 | 尺寸离群点 | `reed/src/stats/job.rs` **2,039**、`writers/reports.rs` 853、`reed-cli/translate/stats.rs` 870、`filter/mod.rs` 824、`plan/mod.rs` 821、`chunk/bgzf.rs` 734、`native_encode.rs` 714、`record_pipeline.rs` 623；测试 `e2e_filter.rs` 1,188 | E6-15；测试按特性拆 |
+| T-5 | `reed/src/filter/` 的概念缺目录 | 9 个文件平铺：三套 pass0（`reduce.rs`、`sketch.rs`、`ld_prune.rs`）与 `mid_stage.rs`、`emit.rs`、`single_pass.rs` 同级，看不出"pass0 / pass1"的结构 | 03 §7 的 `pass0/` 与 `emit/` 目录随 Y1 落地 |
+| T-6 | `reed-stats` 一文件一统计量的例外 | `individual.rs` 装两个统计量（C-5） | Y6 |
+| T-7 | 测试目录命名不统一 | 只有 `crates/reed/tests` 用 `e2e_` 前缀；`m7_fst.rs`、`qc_merge_laws.rs` 历史名 | E6-14 |
+| T-8 | 基准只在 reed-io | `benches/` 只有 reed-io 两条；引擎、统计、过滤热路径无微基准 | E6-3 随 Y2/Y3 补 |
+
+**判定**：`crates/` 的树与源码**合格偏上**——分层、纯度、文档、测试、清单、可见性都达到或超过 noodles 的水准；拉开差距的是三处一致性债（T-1 模块风格、T-2 根风格与 `FilterError` 位置、T-3 过期的 `doc(hidden)`）和 8 个尺寸离群点。前三项是半天的机械活，并入 Y0；尺寸问题随 Y1/Y6 的拆分解决。
+
+## 8 补充：E6-16、E6-17
+
+| # | 建议 | 门 |
+|---|---|---|
+| E6-16 | 统一模块与 crate 根风格：`cli.rs` → `cli/mod.rs`；每 crate 根 = `pub mod` 每概念 + `pub use` 中心类型 + `error.rs`；`FilterError` 搬入 `reed-filter/src/error.rs`；naming.md §2.9 写明约定 | `find crates -name '*.rs' -path '*/src/*' -mindepth 3` 无 sibling 对；`ls crates/*/src/error.rs` 四个产品 crate 都有 |
+| E6-17 | 去掉 `reed-stats/src/lib.rs:44-60` 已接入项的 `#[doc(hidden)]`，注释改为只列 `JointSfsAcc` | `cargo doc -p reed-stats` 的索引含 `WcMultiAcc`、`ProjectedSfsAcc`、`LdPruner`、`F2Acc` |
