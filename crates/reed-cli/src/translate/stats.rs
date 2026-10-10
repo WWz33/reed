@@ -438,17 +438,16 @@ pub(crate) fn run_stats_cli(
         || !f4.is_empty()
         || !dstat.is_empty()
         || !f4_ratio.is_empty();
-    let windowed = pi
-        || dxy
-        || theta
-        || tajima_d
-        || fst.is_some()
-        || !pbs.is_empty()
-        || fstats_requested
-        || ld_decay.is_some();
+    // LD is a property of the sample set, not of any group (F6-9 in
+    // docs/rounds/v6/01-review.md), so `--ld-decay`/`--ld-pairs` do not
+    // require a populations file.
+    let windowed =
+        pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() || fstats_requested;
     let (gt_groups, group_names) = match &pop {
         Some(groups) => assign_groups(Path::new(groups), &sample_names, force_samples)?,
-        None if sfs.is_some() && !windowed => {
+        None if !windowed => {
+            // A bare `--sfs`, `--ld-decay` or `--ld-pairs` treats every
+            // sample as one population (only the window rows need groups).
             (vec![Some(0); sample_names.len()], vec!["all".to_string()])
         }
         None => {
@@ -470,7 +469,10 @@ pub(crate) fn run_stats_cli(
 
     // Window-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with the reference column layout (02-cli.md §5).
-    if windowed || sfs.is_some() {
+    // LD is genome-wide (no window rows), but it rides the same job as the
+    // windowed statistics; a bare `--ld-decay`/`--ld-pairs` takes this path
+    // with no window kinds and no `--pop` (F6-9).
+    if windowed || sfs.is_some() || ld_decay.is_some() || ld_pairs {
         let step = if step == 0 { size } else { step };
         // A bare `--sfs` has no window denominators, so the all-sites check
         // does not apply (05 §3.1 accepts variant-only input).
