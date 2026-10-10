@@ -299,7 +299,7 @@ impl RecordPipeline {
 pub(crate) struct NativeScratch {
     /// The GT lookup table, built from the plan's policies so the decoded
     /// codes equal the text scanner's.
-    pub(crate) table: reed_io::bcf::GtTable,
+    pub(crate) table: std::sync::Arc<reed_io::bcf::GtTable>,
     /// The site-only text line the head rules and expressions read.
     pub(crate) site_line: Vec<u8>,
     /// The full rendered record (survivors only).
@@ -315,16 +315,18 @@ pub(crate) struct NativeScratch {
 }
 
 impl NativeScratch {
-    /// Allocates the buffers for a plan's FORMAT keys.
+    /// Allocates the buffers for a plan's FORMAT keys. The GT table is
+    /// shared across workers (A6-10: one 65,536-entry table per run, not
+    /// one per worker).
     #[must_use]
     pub(crate) fn new(
-        policies: GenotypePolicies,
+        table: std::sync::Arc<reed_io::bcf::GtTable>,
         n_samples: usize,
         int_keys: &[Vec<u8>],
         float_keys: &[Vec<u8>],
     ) -> Self {
         Self {
-            table: reed_io::bcf::GtTable::new(policies),
+            table,
             site_line: Vec::with_capacity(1 << 10),
             full: Vec::with_capacity(1 << 14),
             codes: Vec::with_capacity(n_samples),

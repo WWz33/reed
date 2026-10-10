@@ -149,13 +149,14 @@ impl OrderedOutput {
             return Ok(());
         };
         let (record, voff_start) = pending;
+        // The CSI path (the default) keys by contig id and never touches the
+        // name, so no per-record String is built (A6-12).
         let name = self
             .contig_names
             .get(record.key.contig.get() as usize)
-            .map(|v| String::from_utf8_lossy(v).into_owned())
-            .unwrap_or_default();
+            .map_or(&[][..], |v| v.as_slice());
         indexer.add(
-            &name,
+            name,
             record.key.contig,
             record.key.start1,
             record.key.ref_len,

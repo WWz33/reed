@@ -236,8 +236,10 @@ fn split_needed(ranges: &mut Vec<Range<usize>>, field: &[u8], needed: usize) {
 
 /// A cheap source of a record's error locus: the text scanner passes the
 /// [`SiteView`] (no allocation on the happy path), the BCF fast path passes
-/// the pieces of a locus it already has.
-pub(crate) trait LocusSource {
+/// the pieces of a locus it already has. Implementors build the `Locus`
+/// (and its `String`) only when an error actually carries it.
+pub trait LocusSource {
+    /// The locus for an error message.
     fn error_locus(&self) -> Locus;
 }
 
@@ -262,17 +264,17 @@ impl LocusSource for (&[u8], u64) {
     }
 }
 
-/// Decodes one GT *text* subfield exactly as the scanner does, against a
-/// pre-built locus (doc_v3 02-bcf.md §2.4: the BCF GT table is built by
+/// Decodes one GT *text* subfield exactly as the scanner does, against any
+/// cheap locus source (doc_v3 02-bcf.md §2.4: the BCF GT table is built by
 /// rendering each byte pair and running this decoder, so the fast path is
 /// the text path by construction).
 ///
 /// # Errors
 ///
 /// As [`GenotypeScanner::scan`] for the GT column.
-pub(crate) fn decode_gt_text(
+pub(crate) fn decode_gt_text<S: LocusSource>(
     gt: &[u8],
-    locus: &Locus,
+    locus: &S,
     policies: &GenotypePolicies,
     counters: &mut PolicyCounters,
     token: &mut [Option<u16>; 2],

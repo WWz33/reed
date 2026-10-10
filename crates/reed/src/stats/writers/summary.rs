@@ -80,10 +80,8 @@ impl QcJob {
         site: &SiteView<'_>,
     ) -> Result<(), EngineError> {
         let pos1 = site.pos1;
-        let locus = || reed_io::Locus {
-            contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(),
-            pos1,
-        };
+        // Borrowed error locus (A6-11): no per-record String.
+        let locus = (lr.chrom(), pos1);
 
         // ---- ALT list ----
         let alts_text = lr.alts();
@@ -149,7 +147,7 @@ impl QcJob {
         }
 
         // ---- QUAL (0.1 bins; indels and SNVs separately) ----
-        let qual = parse_qual(lr.qual_text(), &locus()).ok().flatten();
+        let qual = parse_qual(lr.qual_text(), locus).ok().flatten();
         // First-ALT ts/tv for the QUAL section (bcftools qual_ts/qual_tv).
         let mut first_alt_ts = false;
         let mut first_alt_tv = false;

@@ -100,16 +100,10 @@ impl<'a> SiteValues<'a> {
             VariantClass::Ref => "ref",
             VariantClass::Other | _ => "other",
         };
-        let qual = reed_io::vcf::fixed::parse_qual(
-            line.qual_text(),
-            &reed_io::Locus {
-                contig_name: String::from_utf8_lossy(line.chrom()).into_owned(),
-                pos1,
-            },
-        )
-        .ok()
-        .flatten()
-        .map(f64::from);
+        let qual = reed_io::vcf::fixed::parse_qual(line.qual_text(), (line.chrom(), pos1))
+            .ok()
+            .flatten()
+            .map(f64::from);
         Self {
             qual,
             filter: line.filter_text(),

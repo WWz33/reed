@@ -19,7 +19,7 @@ use super::dict::BcfDict;
 use super::record::{BcfRecordRef, Cursor, malformed, type_width, value_type};
 use super::render::fmt_gt;
 use crate::error::{IoError, Locus};
-use crate::vcf::genotype_scan::decode_gt_text;
+use crate::vcf::genotype_scan::{LocusSource, decode_gt_text};
 
 /// The shared-block header fields a numeric consumer needs (hts-specs
 /// §6.3.1): everything before the ID string.
@@ -136,11 +136,11 @@ impl GtTable {
     ///
     /// The entries' policies reject this genotype (`Reject`-style ploidy or
     /// multiallelic policies).
-    pub fn decode_pair(
+    pub fn decode_pair<S: LocusSource>(
         &self,
         b0: u8,
         b1: u8,
-        locus: &Locus,
+        locus: &S,
         counters: &mut PolicyCounters,
     ) -> Result<GtCode, IoError> {
         let entry = self.entries[usize::from(b0) | (usize::from(b1) << 8)];
@@ -155,17 +155,17 @@ impl GtTable {
 
     /// Decodes one sample's GT field of any integer encoding through the
     /// text path (render, then parse).
-    fn decode_slow(
+    fn decode_slow<S: LocusSource>(
         &self,
         ty: u8,
         data: &[u8],
-        locus: &Locus,
+        locus: &S,
         counters: &mut PolicyCounters,
         text: &mut Vec<u8>,
     ) -> Result<GtCode, IoError> {
         if !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
             return Err(IoError::MalformedRecord {
-                locus: locus.clone(),
+                locus: locus.error_locus(),
                 reason: "BCF GT field is not integer-typed",
             });
         }
@@ -295,10 +295,9 @@ pub fn decode_record_gt(
         codes.resize(n_samples, GtCode::MISSING);
         return Ok(());
     };
-    let locus = Locus {
-        contig_name: String::from_utf8_lossy(contig_name).into_owned(),
-        pos1,
-    };
+    // The error locus stays borrowed (A6-11: no per-record String; the
+    // `Locus` is built only when an error carries it).
+    let locus = (contig_name, pos1);
     let mut text = Vec::new();
     let stride = type_width(ty) * count;
     if ty == value_type::INT8 && count == 2 {

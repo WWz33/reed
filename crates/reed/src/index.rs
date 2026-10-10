@@ -19,7 +19,6 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::frame_chain::{FrameChain, SharedChain};
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
-use reed_io::Locus;
 use reed_io::bcf::{VirtualMap, record_len, record_site};
 use reed_io::chunk::framing::RecordFraming;
 use reed_io::chunk::{ChunkBytes, inflate_chunk};
@@ -124,11 +123,7 @@ impl IndexJob {
                 String::from_utf8_lossy(lr.chrom())
             )));
         };
-        let locus = Locus {
-            contig_name: String::from_utf8_lossy(lr.chrom()).into_owned(),
-            pos1: 0,
-        };
-        let pos1 = parse_pos1(lr.pos_text(), &locus).map_err(EngineError::from)?;
+        let pos1 = parse_pos1(lr.pos_text(), lr.chrom()).map_err(EngineError::from)?;
         let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
         Ok(RecordStart {
             tid,
@@ -412,10 +407,10 @@ impl IndexSink {
     }
 
     fn add(&mut self, entry: RecordStart, end: u64) -> Result<(), EngineError> {
-        let name =
-            String::from_utf8_lossy(&self.contig_names[entry.tid.get() as usize]).into_owned();
+        // The CSI path never touches the name: no per-record String (A6-12).
+        let name = &self.contig_names[entry.tid.get() as usize];
         self.indexer
-            .add(&name, entry.tid, entry.pos1, entry.ref_len, entry.voff, end)
+            .add(name, entry.tid, entry.pos1, entry.ref_len, entry.voff, end)
             .map_err(job)
     }
 }

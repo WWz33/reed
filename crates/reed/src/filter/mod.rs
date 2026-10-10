@@ -601,6 +601,8 @@ pub fn run_filter(
         // The native path's FORMAT keys (copied before the plan is shared).
         let int_keys = plan.int_fields.clone();
         let float_keys = plan.float_fields.clone();
+        // One GT decode table per run, shared by every worker (A6-10).
+        let gt_table = native_bcf.then(|| Arc::new(reed_io::bcf::GtTable::new(plan.policies)));
         let job = FilterJob {
             site_keep: site_keep.clone(),
             plan: Arc::new(plan),
@@ -613,6 +615,7 @@ pub fn run_filter(
             level: bcf_level.unwrap_or(opts.compress_level),
             bcf,
             bcf_input: if native_bcf { input_bcf.clone() } else { None },
+            gt_table,
             int_keys: Arc::from(int_keys.into_boxed_slice()),
             float_keys: Arc::from(float_keys.into_boxed_slice()),
         };

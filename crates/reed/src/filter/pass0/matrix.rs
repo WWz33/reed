@@ -115,6 +115,9 @@ pub(crate) struct MatrixJob {
     /// BCF input: when set, the job decodes the records natively instead of
     /// rendering them (doc_v4 O-4).
     pub bcf_input: Option<Arc<reed_io::bcf::BcfDict>>,
+    /// The GT decode table for the native path, built once per run and
+    /// shared by every worker (A6-10). `Some` exactly when `bcf_input` is.
+    pub gt_table: Option<Arc<reed_io::bcf::GtTable>>,
     /// The plan's Integer FORMAT keys.
     pub int_keys: Arc<[Vec<u8>]>,
     /// The plan's Float FORMAT keys.
@@ -150,14 +153,15 @@ impl MatrixJob {
             flat: Vec::new(),
             pos0: Vec::new(),
             contigs: Vec::new(),
-            native: self.bcf_input.as_ref().map(|_| {
-                NativeScratch::new(
-                    self.plan.policies,
+            native: match (&self.bcf_input, &self.gt_table) {
+                (Some(_), Some(table)) => Some(NativeScratch::new(
+                    std::sync::Arc::clone(table),
                     self.n_samples,
                     &self.int_keys,
                     &self.float_keys,
-                )
-            }),
+                )),
+                _ => None,
+            },
         }
     }
 
@@ -897,6 +901,7 @@ pub(crate) fn run_matrix_pass(
                 .clone()
                 .expect("invariant: a BCF input carries its dictionary")
         }),
+        gt_table: native_bcf.then(|| Arc::new(reed_io::bcf::GtTable::new(plan.policies))),
         int_keys: Arc::from(plan.int_fields.clone().into_boxed_slice()),
         float_keys: Arc::from(plan.float_fields.clone().into_boxed_slice()),
     };

@@ -91,7 +91,7 @@ pub fn eval_head(
             }
             HeadRule::MinQual(q) => {
                 // A missing QUAL fails (bcftools semantics).
-                parse_qual(line.qual_text(), &locus(line, pos1))
+                parse_qual(line.qual_text(), locus(line, pos1))
                     .ok()
                     .flatten()
                     .is_some_and(|v| f64::from(v) >= f64::from(*q))
@@ -245,9 +245,8 @@ fn parse_number(value: &[u8]) -> Option<f64> {
     std::str::from_utf8(value).ok().and_then(|s| s.parse().ok())
 }
 
-fn locus(line: &LineRef<'_>, pos1: u64) -> reed_io::Locus {
-    reed_io::Locus {
-        contig_name: String::from_utf8_lossy(line.chrom()).into_owned(),
-        pos1,
-    }
+/// A cheap error locus: the borrowed CHROM bytes plus the position; the
+/// `Locus` (and its `String`) is built only when an error carries it (A6-11).
+fn locus<'a>(line: &'a LineRef<'_>, pos1: u64) -> (&'a [u8], u64) {
+    (line.chrom(), pos1)
 }

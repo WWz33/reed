@@ -83,6 +83,9 @@ pub(super) struct FilterJob {
     /// path — the site line plus decoded GT/FORMAT columns — instead of
     /// rendered text.
     pub(super) bcf_input: Option<Arc<BcfDict>>,
+    /// The GT decode table for the native path, built once per run and
+    /// shared by every worker (A6-10). `Some` exactly when `bcf_input` is.
+    pub(super) gt_table: Option<Arc<reed_io::bcf::GtTable>>,
     /// The plan's Integer/Float FORMAT keys (the mask's columns).
     pub(super) int_keys: Arc<[Vec<u8>]>,
     /// See [`FilterJob::int_keys`].
@@ -193,14 +196,15 @@ impl FilterJob {
                 mask_hits: vec![0; self.plan.mask.len()],
                 ..FunnelPartial::default()
             },
-            native: self.bcf_input.as_ref().map(|_| {
-                NativeScratch::new(
-                    self.plan.policies,
+            native: match (&self.bcf_input, &self.gt_table) {
+                (Some(_), Some(table)) => Some(NativeScratch::new(
+                    std::sync::Arc::clone(table),
                     self.n_samples_in,
                     &self.int_keys,
                     &self.float_keys,
-                )
-            }),
+                )),
+                _ => None,
+            },
         }
     }
 

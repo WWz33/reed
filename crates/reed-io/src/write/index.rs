@@ -117,7 +117,10 @@ impl Indexer {
         }
     }
 
-    /// Adds one record's chunk `[voff_start, voff_end)`.
+    /// Adds one record's chunk `[voff_start, voff_end)`. `name` is the
+    /// contig's header bytes — the CSI path never touches it (it is keyed by
+    /// contig id), so the default flavor pays no per-record string cost
+    /// (A6-12).
     ///
     /// # Errors
     ///
@@ -125,7 +128,7 @@ impl Indexer {
     /// coordinate.
     pub fn add(
         &mut self,
-        name: &str,
+        name: &[u8],
         contig: reed_core::ContigId,
         pos1: u64,
         ref_len: u32,
@@ -166,8 +169,11 @@ impl Indexer {
                         "{end_pos1}: TBI coordinates are limited to {TBI_MAX_POS1}; use --write-index=csi"
                     )));
                 }
+                // TBI keys records by name (rare flavor; the lossy conversion
+                // keeps the prior behavior for non-UTF-8 contig names).
+                let name = String::from_utf8_lossy(name);
                 indexer
-                    .add_record(name, start, end, chunk)
+                    .add_record(&name, start, end, chunk)
                     .map_err(|e| IoError::Io(format!("index add_record: {e}")))
             }
         }

@@ -65,7 +65,7 @@ impl EditPlan<'_> {
 pub fn render_info_value(value: &InfoValueOut, out: &mut Vec<u8>) {
     match value {
         InfoValueOut::Int(v) => out.extend_from_slice(v.to_string().as_bytes()),
-        InfoValueOut::Float(v) => out.extend_from_slice(format_g6(f64::from(*v)).as_bytes()),
+        InfoValueOut::Float(v) => format_g6_into(out, f64::from(*v)),
     }
 }
 
@@ -122,27 +122,37 @@ pub fn edit_vcf_line(
 /// INFO edit: drop `info_remove`, replace any tag present in `info_set` in
 /// place, append the rest in `info_set` order. An empty result renders as
 /// `.`.
+///
+/// Writes straight into `out` (A6-11: no per-record `edited` buffer) and
+/// keeps the seen-marks on the stack for plans with a handful of tags.
 fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
-    let mut edited: Vec<u8> = Vec::new();
-    let mut seen = vec![false; plan.info_set.len()];
+    let mark = out.len();
+    let mut seen_stack = [false; 8];
+    let mut seen_heap;
+    let seen: &mut [bool] = if plan.info_set.len() <= seen_stack.len() {
+        &mut seen_stack[..plan.info_set.len()]
+    } else {
+        seen_heap = vec![false; plan.info_set.len()];
+        &mut seen_heap
+    };
     if info != b"." {
         for (tag, value) in crate::vcf::info::info_fragments(info) {
             if plan.info_remove.contains(&tag) {
                 continue;
             }
-            if !edited.is_empty() {
-                edited.push(b';');
+            if out.len() > mark {
+                out.push(b';');
             }
             if let Some(i) = plan.info_set.iter().position(|(t, _)| *t == tag) {
-                edited.extend_from_slice(plan.info_set[i].0);
-                edited.push(b'=');
-                render_info_value(&plan.info_set[i].1, &mut edited);
+                out.extend_from_slice(plan.info_set[i].0);
+                out.push(b'=');
+                render_info_value(&plan.info_set[i].1, out);
                 seen[i] = true;
             } else {
-                edited.extend_from_slice(tag);
+                out.extend_from_slice(tag);
                 if let Some(v) = value {
-                    edited.push(b'=');
-                    edited.extend_from_slice(v);
+                    out.push(b'=');
+                    out.extend_from_slice(v);
                 }
             }
         }
@@ -151,17 +161,15 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
         if seen[i] {
             continue;
         }
-        if !edited.is_empty() {
-            edited.push(b';');
+        if out.len() > mark {
+            out.push(b';');
         }
-        edited.extend_from_slice(tag);
-        edited.push(b'=');
-        render_info_value(value, &mut edited);
+        out.extend_from_slice(tag);
+        out.push(b'=');
+        render_info_value(value, out);
     }
-    if edited.is_empty() {
+    if out.len() == mark {
         out.push(b'.');
-    } else {
-        out.extend_from_slice(&edited);
     }
 }
 

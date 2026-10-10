@@ -11,7 +11,7 @@ use reed_core::ContigId;
 
 use crate::Locus;
 use crate::error::IoError;
-use crate::vcf::fixed::parse_pos1;
+use crate::vcf::fixed::{parse_pos1, parse_qual};
 use crate::vcf::info::info_fragments;
 use crate::vcf::line::LineRef;
 
@@ -75,17 +75,15 @@ pub struct SiteView<'a> {
 impl<'a> SiteView<'a> {
     /// Parses the site-level columns without resolving the contig id.
     ///
+    /// The error locus is built from the borrowed CHROM bytes only when an
+    /// error actually happens (A6-11: no per-record `String`).
+    ///
     /// # Errors
     ///
     /// [`IoError::MalformedRecord`] for an unparsable POS or QUAL.
     pub fn parse(line: &LineRef<'a>) -> Result<Self, IoError> {
-        let locus = Locus {
-            contig_name: String::from_utf8_lossy(line.chrom()).into_owned(),
-            pos1: 0,
-        };
-        let pos1 = parse_pos1(line.pos_text(), &locus)?;
-        let locus = Locus { pos1, ..locus };
-        let qual = crate::vcf::fixed::parse_qual(line.qual_text(), &locus)?;
+        let pos1 = parse_pos1(line.pos_text(), line.chrom())?;
+        let qual = parse_qual(line.qual_text(), (line.chrom(), pos1))?;
         Ok(Self {
             contig: None,
             contig_name: line.chrom(),

@@ -16,7 +16,8 @@ use super::record::{
     BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, int_sentinels, malformed, type_width,
     value_type,
 };
-use crate::error::{IoError, Locus};
+use crate::error::IoError;
+use crate::vcf::genotype_scan::LocusSource;
 use crate::vcf::line_edit::format_g6_into;
 
 /// htslib's `bcf_str_missing`: a single char value equal to this prints `.`
@@ -69,17 +70,16 @@ pub fn render_site_part(
     let n_fmt = (nf_ns >> 24) as usize;
     let n_sample = (nf_ns & 0x00FF_FFFF) as usize;
 
-    let locus = Locus {
-        contig_name: String::from_utf8_lossy(
-            dict.contig(chrom)
-                .ok_or_else(|| malformed("BCF contig index is not in the header dictionary"))?,
-        )
-        .into_owned(),
-        pos1: u64::try_from(pos0).unwrap_or(0) + 1,
-    };
-    out.extend_from_slice(locus.contig_name.as_bytes());
+    let contig_name = dict
+        .contig(chrom)
+        .ok_or_else(|| malformed("BCF contig index is not in the header dictionary"))?;
+    let pos1 = u64::try_from(pos0).unwrap_or(0) + 1;
+    // The error locus stays borrowed (A6-11): the tuple's `LocusSource` impl
+    // builds a `Locus` only when an error actually carries it.
+    let locus = (contig_name, pos1);
+    out.extend_from_slice(contig_name);
     out.push(b'\t');
-    push_u64(out, u64::try_from(pos0).unwrap_or(0) + 1);
+    push_u64(out, pos1);
 
     // ID (empty prints `.`).
     let id = c.typed_string()?;
@@ -128,11 +128,10 @@ pub fn render_site_part(
                 out.push(b';');
             }
             let idx = c.int_value(f_ty)?;
-            let idx =
-                u32::try_from(idx).map_err(|_| bad(&locus, "BCF FILTER index is negative"))?;
+            let idx = u32::try_from(idx).map_err(|_| bad(locus, "BCF FILTER index is negative"))?;
             out.extend_from_slice(
                 dict.tag(idx).ok_or_else(|| {
-                    bad(&locus, "BCF FILTER index is not in the header dictionary")
+                    bad(locus, "BCF FILTER index is not in the header dictionary")
                 })?,
             );
         }
@@ -148,10 +147,10 @@ pub fn render_site_part(
                 out.push(b';');
             }
             let key = c.typed_int()?;
-            let key = u32::try_from(key).map_err(|_| bad(&locus, "BCF INFO key is negative"))?;
+            let key = u32::try_from(key).map_err(|_| bad(locus, "BCF INFO key is negative"))?;
             out.extend_from_slice(
                 dict.tag(key)
-                    .ok_or_else(|| bad(&locus, "BCF INFO key is not in the header dictionary"))?,
+                    .ok_or_else(|| bad(locus, "BCF INFO key is not in the header dictionary"))?,
             );
             let (ty, count) = c.typed()?;
             if count == 0 {
@@ -179,14 +178,14 @@ pub fn render_sample_part(
     n_fmt: usize,
     out: &mut Vec<u8>,
 ) -> Result<(), IoError> {
-    // The locus is only needed for error messages; read it back cheaply.
+    // The locus is only needed for error messages; keep it borrowed (A6-11).
     let mut hc = Cursor::new(rec.shared);
     let chrom = hc.i32().unwrap_or(-1);
     let pos0 = hc.i32().unwrap_or(-1);
-    let locus = Locus {
-        contig_name: String::from_utf8_lossy(dict.contig(chrom).unwrap_or(b"<bcf>")).into_owned(),
-        pos1: u64::try_from(pos0).unwrap_or(0) + 1,
-    };
+    let locus = (
+        dict.contig(chrom).unwrap_or(b"<bcf>"),
+        u64::try_from(pos0).unwrap_or(0) + 1,
+    );
     // FORMAT + samples.
     out.push(b'\t');
     if n_fmt == 0 {
@@ -202,7 +201,7 @@ pub fn render_sample_part(
         let mut fields: Vec<(u32, u8, usize, usize)> = Vec::with_capacity(n_fmt);
         for _ in 0..n_fmt {
             let key = ci.typed_int()?;
-            let key = u32::try_from(key).map_err(|_| bad(&locus, "BCF FORMAT key is negative"))?;
+            let key = u32::try_from(key).map_err(|_| bad(locus, "BCF FORMAT key is negative"))?;
             let (ty, count) = ci.typed()?;
             let start = indiv.len() - ci.remaining();
             ci.take(type_width(ty) * count * n_sample)?;
@@ -217,7 +216,7 @@ pub fn render_sample_part(
             first = false;
             out.extend_from_slice(
                 dict.tag(key)
-                    .ok_or_else(|| bad(&locus, "BCF FORMAT key is not in the header dictionary"))?,
+                    .ok_or_else(|| bad(locus, "BCF FORMAT key is not in the header dictionary"))?,
             );
         }
         // Hoist everything the per-sample loop would otherwise recompute.
@@ -373,10 +372,11 @@ fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
     }
 }
 
-/// A malformed record at a known locus.
-fn bad(locus: &Locus, reason: &'static str) -> IoError {
+/// A malformed record at a known locus (borrowed: the `Locus` is built only
+/// when the error actually carries it).
+fn bad(locus: impl LocusSource, reason: &'static str) -> IoError {
     IoError::MalformedRecord {
-        locus: locus.clone(),
+        locus: locus.error_locus(),
         reason,
     }
 }
