@@ -2,10 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-reed 对 VCF/BCF 文件计算群体遗传学统计量并执行硬过滤，输出与原文件逐字节一致的
-格式。纯 Rust 实现，默认用满所有核心，不需要系统库：BGZF 与 BCF 编解码直接编译
-进二进制，工具链能跑的地方它就能跑。它同时也是 Rust 库（`reed` crate），其他
-工具可以直接调用同一套统计，不必起子进程。
+reed 是Rust编写的Popgen API 库，为了提高大文件运算效率
 
 ## 安装
 
