@@ -586,7 +586,7 @@ pub fn run_filter(
         // Header first (as BGZF block(s) on the compressed path).
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
-        let abort = reed_engine::abort::abort();
+        let abort = reed_engine::abort::abort_for(&budget);
         let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
         let pass1_start = Instant::now();
         let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
@@ -634,7 +634,7 @@ pub fn run_filter(
         };
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
-        let abort = reed_engine::abort::abort();
+        let abort = reed_engine::abort::abort_for(&budget);
         // doc_v4 O-4: BCF input with a native-eligible plan decodes the
         // records directly; everything else renders text as before.
         let job = if native_bcf {
@@ -675,6 +675,11 @@ pub fn run_filter(
         worker_busy_secs: timing_engine.worker_busy.as_secs_f64(),
         reader_secs: timing_engine.reader_time.as_secs_f64(),
         reduce_secs: timing_engine.reduce_time.as_secs_f64(),
+        reader_wait_secs: timing_engine.reader_wait.as_secs_f64(),
+        reducer_wait_secs: timing_engine.reducer_wait.as_secs_f64(),
+        inflate_secs: timing_engine.inflate_time.as_secs_f64(),
+        job_secs: timing_engine.job_time.as_secs_f64(),
+        deflate_secs: timing_engine.deflate_time.as_secs_f64(),
         chain_wait_secs: timing_engine.chain_wait.as_secs_f64(),
         in_flight_peak_bytes: Some(timing_engine.in_flight_peak_bytes),
     };
@@ -856,6 +861,10 @@ impl OrderedSink<FilterPartial> for OutputSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut FilterPartial) -> Result<(), EngineError> {
         self.funnel.merge(&partial.funnel);
         self.out.accept_chunk(&partial.output).map_err(job_err)
+    }
+
+    fn deflate_time(&self) -> std::time::Duration {
+        self.out.deflate_time()
     }
 
     fn finish(self) -> Result<u64, EngineError> {

@@ -245,9 +245,51 @@
 | `--mind` + `--indep-pairwise` 的内存预算 | 已知限制 | 组合强制 sketch 形态（矩阵整基因组常驻，剪枝幸存集依赖全基因组 keep）；`choose_for_mind` 的预算判断对此组合不生效，超预算不报错。缓解见 Y6（或后续按 contig 两段式） |
 | LD bp 窗口（F6-10） | **已修**（`a5cd8a2`） | 区域 `50kb 0.2` 158 == plink2 对称差 0；02 §3.2 的 M6-4 行随之关闭 |
 | C-5、联合 SFS、`--bed-file`/`--sites-file`、前后端收尾三项 | 待做 | 并入 Y6 |
-| `is_sequential` / 顺序模式（F6-6） | 待裁决 | Y5 实现或改规范 |
+| `is_sequential` / 顺序模式（F6-6） | **已实现**（Y5） | `run()` 按 `budget.is_sequential()` 分派 `run_sequential`（单线程读/解压/计算/写出，复用 `NewlineStitcher` 与 sink）；输出与并行逐字节相同（`sequential_and_parallel_outputs_agree`） |
 | `JointSfsAcc` 仍 `#[doc(hidden)]` | 有意 | 无 CLI 出口；Y6 接入联合 SFS 时去掉 |
 | 记录模型的范围 | 已知限制 | 落地为 `NativeEncoder` 的 `encode_text`/`encode_bcf` 两个入口（03 §8 的 `Record` 结构体形态未采用：两条源路径各自的扫描即模型，省掉中间表示与一次遍历；`RecordSource`/`RecordSink` trait 待有第三种格式时再抽）。`--set-gts .` 表达式路径经 `plan.mask` 全为 field 规则时仍走 `encode_text`；实测 `--set-gts . -e 'FMT/DP < 10'`（含 `-s` 子集与 `-I`）的 `-Ob` 读回 == `-Oz` 正文（夹具上 4 记录逐字节） |
+
+## Y5：引擎健壮性（2026-10-11）
+
+规格：`docs/spec/v6_y5/README.md`（含与 roadmap 附录的差异表）与 `CODE.md`（难点参考实现）。
+实现按规格执行，落地形态与 roadmap 附录不同的四处登记在 §差异。
+
+### Y5 已落地项
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| S1 中止（A6-1a） | `AbortSignal`/`AbortHandle` 共享 `Arc<AtomicBool>`，`is_aborted` 读 flag（token 被消费不再回假）；`abort_channel_for(threads)` 容量 `threads+4`、`abort_for(&ThreadBudget)`；六个调用点全换（filter 2、index、stats、reports、matrix）；`AbortHandle::register(&Arc<BytePermits>)` + `trigger` 的 `notify_all`，`BytePermits::acquire` 改无超时 `cv.wait`（§7.5 不再轮询） | `consuming_the_token_does_not_clear_the_flag`、`trigger_wakes_registered_permit_waiters`、`abort_at_eight_times_the_cores_returns_without_leaking_permits`（8×核数 + 64 KiB 预算，< 2 s 返回 `Aborted`） |
+| S2 许可 drop guard（A6-1b） | `PermitGuard{Arc<BytePermits>, Arc<Shared>, bytes}`；`InFlightChunk`/`WorkerMsg` 持 guard；reader 三处手写 release 删除；worker 一次解构、失败即 drop；reducer 交付后 drop；`StageMetrics::in_flight_final_bytes` 断言归零 | `permit_guard_returns_its_bytes_on_drop`、`worker_panic_returns_every_permit`（panic 后 2 s 内以 `WorkerPanicked` 收口）、`stage_metrics_split_inflate_and_job_time` 的 `in_flight_final_bytes == 0` |
+| S3 接缝上限（A6-2） | `pipeline::MAX_RECORD_BYTES = 1 GiB`（`bcf_input.rs` 改引用）；`NewlineStitcher` 带 `grow` 上限；并行 reducer 与顺序路径共用；删 `stitch_seam`/`finish_fragment` | `stitcher_reassembles_and_caps_fragments`、`stitcher_rejects_a_record_past_the_ceiling`、`stitcher_reassembles_records_across_ten_chunks`（10 B chunk × 100 B 行） |
+| S4 顺序模式（A6-3） | `run_sequential`（`Newline` 与 `Raw` 两分支）；`run()` 按 `is_sequential()` 分派；单 chunk 超预算同报 `MemBudgetExceeded`；`budget.rs` 注释与 `architecture.md:804-806` 的 F6-6 现状段改写 | `sequential_and_parallel_outputs_agree`（threads 1/2 vs 8，fold 相同） |
+| S5 计量（A6-4） | `StageMetrics` 增 `reader_wait`/`reducer_wait`/`inflate_time`/`job_time`/`deflate_time`/`in_flight_final_bytes`；reader 三处阻塞、reducer `recv` 等待、worker 两段墙钟入原子；deflate 经 `ChunkOutput.deflate_nanos` → `OrderedOutput` → `OrderedSink::deflate_time()`（引擎在 `finish` 前读一次）；`TimingReport` 五字段 + `timing_text` 五行 | `stage_metrics_split_inflate_and_job_time`；子集 `--timing` 实测 `reader_wait_ms`/`reduce_wait_ms`/`inflate_ms`/`job_ms`/`deflate_ms` 全非零（deflate 38.7 s / job 51.3 s） |
+| 文档 | `docs/spec/v6_y5/{README,TODO,CODE}.md`；`docs/README.md` 索引补一行 | 人工 |
+
+### Y5 门（2026-10-11 实测）
+
+| 门 | 结果 |
+|---|---|
+| 测试 | `cargo test --release --workspace`：**398 通过 / 0 失败**（388 → +10：4 引擎集成、2 引擎内联、4 既有调整） |
+| gold 正文 md5（`run_reed.sh`，全量 `-Oz`） | **`7aedc59ac798729a2674e6e7ef19adfc`**（与 v3–v6 逐字符相同） |
+| `check_parity` | **PASS**：1,768,759 / 1,768,759 位点，Jaccard 1.000000，348 样本 MATCH，基因型差 mean=0 max=0 |
+| 子集数字门（`subset.Chr01-03.vcf.gz`） | **263,420 / 381,672**，正文 md5 `fef4cb07943678d45893c5cfdd0c91f9` / `371d3a0d8f1cab0ebb57966cc9a507df`（== Y3/Y4 记录） |
+| 子集跨格式 | `-Ob` 读回 == `-Oz` 正文（`fef4cb07…`）；子集 BCF 输入 `-Oz` == 同 md5（263,420） |
+| 子集 `--mind 0.1` t1/t56 | 两份正文 md5 `fcc6494c4db3068923599acbc3651819`（== Y1e/Y3 记录） |
+| 报告 md5（8 文件，全量） | afreq `b2884092…`、hardy `fd8fbf27…`、het `790293d9…`、smiss `5f4fe4f8…`、vmiss `7c325d64…`、idepth `a4b6dd3a…`、ldepth.mean `475ee083…`、stats `189e025b…` == Y0–Y4 记录 |
+| plink2 LD 夹具（`gold/popgen/run_plink2_ld.sh`） | PASS r²（15 对，1.02e-06）+ PASS prune（3 保留/3 剪除） |
+| 子集 filter 计时 ×3 | wall 1.121 / 1.771 / 1.118 s（run2 在负载 3.67 上；无回退，Y4 记录同量级） |
+| 四件套 | fmt、clippy（CI 命令）、rustdoc 退出 0；守卫 **29/29 ok** |
+
+### Y5 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| 与 roadmap 附录 S2 的形态 | 附录 `PermitGuard<'a>` 借引用；落地改 `Arc` 持有，避免生命周期参数扩散进 `WorkerMsg`/`ReorderBuffer`/channel。每 chunk 两次原子增减，可忽略 |
+| 与 roadmap 附录 S3 的形态 | 附录抽 `SeamStitcher` trait 并把 BCF `FrameChain` 也实现；未做。BCF 走 `RecordFraming::Raw`，接缝在 job 内的链上，reducer 不碰；trait 只有一个实现类型（单实现抽象）。只修上限（A6-2 的真实缺陷） |
+| 与 roadmap 附录 S4 的形态 | 附录 `run_sequential(&Abort) -> RunReport` 且只写换行路径；落地为 `&AbortSignal` + 返回 tuple 并含 `Raw` 分支：① 顺序模式 BCF 输入仍是 Raw；② 直接返回 `RunReport` 会绕过 `run` 的 FirstError 收口 |
+| 与 roadmap 附录 S5 的形态 | 附录 `ChunkJob::stage_nanos() -> [u64;3]` 回报 inflate/job/deflate；未做。`inflate_chunk` 在引擎 worker（job 看不到），deflate 在 per-worker `Scratch`（job 是 `&J` 共享）。落地：inflate/job 引擎直接测，deflate 随 `ChunkOutput` 到 sink |
+| `FrameChain::wait_inner` 仍 10 ms 轮询 | 它同时等 abort/poison/finish 三源，本轮不重排通知路径；中止延迟 ≤10 ms，满足 2 s 门。`BytePermits` 的轮询已按 §7.5 消除 |
+| 全量计时未重测 | Y5 不改计算路径（引擎骨架、计量、许可、接缝），子集 ×3 无回退 + gold md5/parity 逐字节不变即达门；全量 filter `-Oz` user 记录沿用 Y4（417.7–418.2） |
 
 ## tag
 

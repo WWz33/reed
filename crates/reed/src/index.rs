@@ -508,7 +508,7 @@ pub fn run_index(
         threads: threads.max(1),
         mem: reed_engine::budget::MemBudget::default_half_memory(),
     };
-    let abort = reed_engine::abort::abort();
+    let abort = reed_engine::abort::abort_for(&budget);
     let report = if is_bcf {
         let chain = Arc::new(FrameChain::new(abort.signal.clone()));
         chain.publish(0, reed_engine::frame_chain::Carried::default());

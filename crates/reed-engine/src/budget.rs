@@ -9,10 +9,8 @@ pub const TICKETS_PER_WORKER: usize = 2;
 /// The single compute-resource knob: total threads reed may use.
 ///
 /// Layout: 1 reader + 1 reducer/writer + `workers()` compute workers.
-/// `threads <= 2` is the intended sequential-mode selector (§7.3), whose
-/// output must be byte-identical to the parallel mode; the sequential path
-/// itself is not implemented yet (`is_sequential` has no caller — F6-6,
-/// decided in the Y5 engine work, docs/rounds/v6/06-roadmap.md).
+/// `threads <= 2` selects the sequential path (§7.3), whose output is
+/// byte-identical to the parallel mode (locked by tests).
 #[derive(Clone, Copy, Debug)]
 pub struct ThreadBudget {
     /// Total threads (default: all available cores).
@@ -115,6 +113,11 @@ impl BytePermits {
 
     /// Blocks until `bytes` permits are available (or abort fires); returns
     /// `false` on abort.
+    ///
+    /// The wait is a plain condvar wait, not a poll: the abort handle
+    /// notifies this pool on `trigger` (see
+    /// [`crate::abort::AbortHandle::register`]), so abort latency is the
+    /// wake-up latency (§7.5 "中止即时生效").
     pub fn acquire(&self, bytes: u64, abort: &crate::abort::AbortSignal) -> bool {
         let mut guard = self
             .available
@@ -128,13 +131,17 @@ impl BytePermits {
                 *guard -= bytes;
                 return true;
             }
-            // A short poll keeps abort latency low without a watcher thread.
-            let (g, _) = self
+            guard = self
                 .cv
-                .wait_timeout(guard, std::time::Duration::from_millis(10))
+                .wait(guard)
                 .expect("invariant: permits not poisoned");
-            guard = g;
         }
+    }
+
+    /// Wakes every waiter so it re-checks the abort flag. Called by
+    /// [`crate::abort::AbortHandle::trigger`].
+    pub fn notify_abort(&self) {
+        self.cv.notify_all();
     }
 
     /// Returns `bytes` permits to the pool.

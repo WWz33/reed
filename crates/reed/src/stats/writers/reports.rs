@@ -795,7 +795,7 @@ pub fn run_reports_opened(
     if let Some(w) = &mut ldepth {
         writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH").map_err(EngineError::Io)?;
     }
-    let abort = reed_engine::abort::abort();
+    let abort = reed_engine::abort::abort_for(budget);
     let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
     let crate::input::OpenedInput {
         mut source, facts, ..

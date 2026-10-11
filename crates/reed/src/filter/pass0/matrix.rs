@@ -886,7 +886,7 @@ pub(crate) fn run_matrix_pass(
         ),
     };
     let n_samples = opened.facts.header.sample_names().len();
-    let abort = reed_engine::abort::abort();
+    let abort = reed_engine::abort::abort_for(&budget);
     let inner = MatrixJob {
         plan: Arc::new(plan.clone()),
         n_samples,

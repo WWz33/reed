@@ -1884,7 +1884,7 @@ pub fn run_stats_opened(
         .map_err(|err| EngineError::job(format!("invalid stats request: {err}")))?;
     let keys: Vec<StatKey> = request.kinds.iter().map(StatKind::key).collect();
 
-    let abort = reed_engine::abort::abort();
+    let abort = reed_engine::abort::abort_for(budget);
     let header = opened.facts.clone();
     if header.n_samples() != request.gt_groups.len() {
         return Err(EngineError::job(format!(

@@ -9,6 +9,33 @@ are the stability promise (`docs/spec/cli.md` §0).
 
 ### Changed
 
+- The engine's abort signal is an atomic flag (doc_v6 A6-1, Y5): `is_aborted`
+  no longer flips back when a `select!` waiter consumes a channel token, the
+  wake-up channel is sized by `--threads` (which may exceed the core count),
+  and registered byte-permit pools are notified on trigger, so
+  `BytePermits::acquire` waits on a condvar instead of polling every 10 ms
+  (`docs/spec/architecture.md` §7.5). Every engine entry point now builds its
+  abort channel from the run's thread budget (`abort_for`).
+- In-flight chunk permits live in a drop guard (A6-1, Y5): a worker failure
+  or panic, an aborted send, or a dropped pending message all return the
+  permit and the in-flight accounting, so the reader can no longer block
+  forever on a leaked permit. `StageMetrics::in_flight_final_bytes` makes the
+  residue assertable.
+- `threads <= 2` now takes a real sequential path (A6-3, Y5): one thread
+  reads, inflates, computes and writes, with the same seam stitcher and sink
+  as the parallel path; output is byte-identical (locked by a test). The
+  `is_sequential` selector documented in §7.3 finally has a caller.
+- The seam stitcher is bounded (A6-2, Y5): a record reassembled across chunk
+  seams may not exceed `reed_engine::pipeline::MAX_RECORD_BYTES` (1 GiB,
+  shared with the BCF frame chain), so a newline-free input fails the run
+  instead of growing the reducer's fragment to the file size.
+- `StageMetrics` gains `reader_wait`, `reducer_wait`, `inflate_time`,
+  `job_time`, `deflate_time` and `in_flight_final_bytes` (A6-4, Y5). Output
+  deflate time rides `ChunkOutput` to the sink (`OrderedSink::deflate_time`),
+  so the three worker stages are measured instead of inferred; `--timing`
+  and `--verbosity 2` print `reader_wait_ms`, `reduce_wait_ms`, `inflate_ms`,
+  `job_ms` and `deflate_ms`.
+
 - One pass0 serves every filter-side global analysis (doc_v6 03 §7, Y1e):
   the `MatrixJob`/`MatrixSink` pair fills per-contig site-major plane
   matrices that `--mind`, `--indep-pairwise` and the sketch path's mid

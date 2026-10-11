@@ -9,6 +9,9 @@
 //! bytes start; a record whose start falls after a cut is re-based into the
 //! continuation block.
 
+// Casts in this file are bounded by construction: elapsed nanoseconds are clamped to u64 in practice (584 years).
+#![allow(clippy::cast_possible_truncation)]
+
 use reed_core::ContigId;
 
 use crate::bgzf::deflate::Deflater;
@@ -56,6 +59,9 @@ pub struct ChunkOutput {
     pub blocks: Vec<OutBlock>,
     /// Plain bytes (uncompressed output).
     pub raw: Vec<u8>,
+    /// Time spent deflating this chunk's blocks, in nanoseconds (A6-4). It
+    /// rides the output to the sink, which reports the run total.
+    pub deflate_nanos: u64,
 }
 
 /// What the writer emits: BGZF-compressed VCF text (`-Oz`, `-Ob`),
@@ -78,6 +84,7 @@ pub struct BlockWriter {
     records: Vec<IndexRecord>,
     blocks: Vec<OutBlock>,
     raw: Vec<u8>,
+    deflate_nanos: u64,
 }
 
 impl BlockWriter {
@@ -99,6 +106,7 @@ impl BlockWriter {
             records: Vec::new(),
             blocks: Vec::new(),
             raw: Vec::new(),
+            deflate_nanos: 0,
         })
     }
 
@@ -151,6 +159,7 @@ impl BlockWriter {
         Ok(ChunkOutput {
             blocks: std::mem::take(&mut self.blocks),
             raw: std::mem::take(&mut self.raw),
+            deflate_nanos: std::mem::take(&mut self.deflate_nanos),
         })
     }
 
@@ -173,9 +182,11 @@ impl BlockWriter {
         let cut = self.pending.len().min(BGZF_BLOCK_SIZE);
         let cut32 = u32::try_from(cut).map_err(|_| IoError::Io("block cut exceeds u32".into()))?;
         let mut compressed = Vec::with_capacity(cut / 2 + 64);
+        let started = std::time::Instant::now();
         deflater
             .deflate_block(&self.pending[..cut], &mut compressed)
             .map_err(|e| IoError::Io(format!("bgzf deflate: {e}")))?;
+        self.deflate_nanos += started.elapsed().as_nanos() as u64;
         let boundary = self
             .records
             .partition_point(|record| record.offset_in_block < cut32);

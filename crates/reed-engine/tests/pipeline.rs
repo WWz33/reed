@@ -562,3 +562,216 @@ fn memory_budget_bounds_in_flight_bytes() {
         "peak must be observed"
     );
 }
+
+/// S4 gate: the sequential path (`threads <= 2`) must produce the same bytes
+/// as the parallel path, including seam records.
+#[test]
+fn sequential_and_parallel_outputs_agree() {
+    let text = fixture_text(3_000);
+    let chunks = make_chunks(&text, 700);
+    let reference = {
+        let mut source = VecSource {
+            chunks: chunks.clone().into_iter(),
+        };
+        let abort = abort();
+        run(
+            &mut source,
+            &CountJob,
+            VecSink::default(),
+            &budget(8),
+            &abort,
+        )
+        .expect("invariant: parallel run")
+    };
+    for threads in [1_usize, 2] {
+        let mut source = VecSource {
+            chunks: chunks.clone().into_iter(),
+        };
+        let abort = abort();
+        let report = run(
+            &mut source,
+            &CountJob,
+            VecSink::default(),
+            &budget(threads),
+            &abort,
+        )
+        .expect("invariant: sequential run");
+        assert_eq!(
+            report.sink_report, reference.sink_report,
+            "threads={threads} must equal the parallel fold"
+        );
+        assert_eq!(report.n_chunks, reference.n_chunks, "threads={threads}");
+        assert_eq!(report.sink_report, fold_lines(&text), "threads={threads}");
+    }
+}
+
+/// S3 gate: a record split across more than ten chunks reassembles exactly.
+#[test]
+fn stitcher_reassembles_records_across_ten_chunks() {
+    // 100-byte records in 10-byte chunks: every record spans ~10 seams.
+    let text = fixture_text(100);
+    let chunks = make_chunks(&text, 10);
+    assert!(chunks.len() > 100, "test needs many seam-rich chunks");
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    let report = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &budget(4),
+        &abort,
+    )
+    .expect("invariant: seam-heavy run");
+    assert_eq!(report.sink_report, fold_lines(&text));
+}
+
+/// S1/S2 gate: with `threads = 8 × cores` and a tiny memory budget, an
+/// external abort returns `Aborted` promptly instead of hanging on a permit
+/// wait, and every permit is returned (no in-flight residue).
+#[test]
+fn abort_at_eight_times_the_cores_returns_without_leaking_permits() {
+    struct SlowJob;
+    impl ChunkJob for SlowJob {
+        type Partial = ();
+        type Scratch = ();
+        fn run_chunk(
+            &self,
+            _chunk: &ChunkBytes,
+            _body: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
+            // Long enough that the abort lands mid-run even with 8 × cores
+            // workers chewing through the chunk list.
+            std::thread::sleep(Duration::from_millis(50));
+            Ok(())
+        }
+        fn run_seam(
+            &self,
+            _id: reed_core::ChunkId,
+            _line: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 500);
+    let cores = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
+    let b = ThreadBudget {
+        threads: cores * 8,
+        mem: MemBudget::from_bytes(64 * 1024),
+    };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    {
+        let handle = abort.handle.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            handle.trigger();
+        });
+    }
+    let started = std::time::Instant::now();
+    let result = run(&mut source, &SlowJob, UnitSink, &b, &abort);
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(result, Err(EngineError::Aborted)),
+        "expected Aborted, got {result:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "abort must return within 2 s, took {elapsed:?}"
+    );
+    assert!(abort.signal.is_aborted(), "the flag stays set after the run");
+}
+
+/// S2 gate: after a worker panic the run fails promptly, and the panic is
+/// the recorded cause (not a downstream `Aborted`). The permit accounting
+/// itself is locked by the `permit_guard_returns_its_bytes_on_drop` unit
+/// test, since the engine cannot return metrics on the error path.
+#[test]
+fn worker_panic_returns_every_permit() {
+    struct PanickyJob;
+    impl ChunkJob for PanickyJob {
+        type Partial = ();
+        type Scratch = ();
+        #[allow(clippy::panic, clippy::manual_assert)]
+        fn run_chunk(
+            &self,
+            chunk: &ChunkBytes,
+            _body: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
+            if chunk.id.get() == 1 {
+                panic!("boom on chunk 1");
+            }
+            Ok(())
+        }
+        fn run_seam(
+            &self,
+            _id: reed_core::ChunkId,
+            _line: &[u8],
+            (): &mut (),
+        ) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 1_000);
+    assert!(chunks.len() > 20, "test needs many chunks");
+    let b = ThreadBudget {
+        threads: 4,
+        mem: MemBudget::from_bytes(64 * 1024),
+    };
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    let started = std::time::Instant::now();
+    let err = run(&mut source, &PanickyJob, UnitSink, &b, &abort).unwrap_err();
+    assert!(
+        matches!(err, EngineError::WorkerPanicked { chunk, .. } if chunk.get() == 1),
+        "expected WorkerPanicked on chunk 1, got {err:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the panic must stop the run promptly, took {:?}",
+        started.elapsed()
+    );
+    assert!(abort.signal.is_aborted(), "the panic must abort the run");
+}
+
+/// S5 gate: the split metrics are populated on a real run (inflate and job
+/// time non-zero, wait counters consistent).
+#[test]
+fn stage_metrics_split_inflate_and_job_time() {
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 1_000);
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    let report = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &budget(4),
+        &abort,
+    )
+    .expect("invariant: run");
+    let m = &report.metrics;
+    assert!(
+        m.inflate_time > Duration::ZERO,
+        "inflate time must be measured"
+    );
+    assert!(m.job_time > Duration::ZERO, "job time must be measured");
+    assert!(
+        m.worker_busy >= m.inflate_time + m.job_time,
+        "busy covers both"
+    );
+    assert_eq!(m.in_flight_final_bytes, 0, "no permit may stay checked out");
+    assert_eq!(m.n_chunks_read, report.n_chunks, "every chunk is accounted");
+}

@@ -1,26 +1,57 @@
-//! Abortion and first-error capture (`docs/spec/architecture.md` §7.5).
+//! Abortion and first-error capture (`docs/spec/architecture.md` §7.5,
+//! `docs/spec/v6_y5/README.md` §2 S1).
 //!
-//! One close-on-drop channel: recording the first error triggers abort, and
-//! every blocking point in the engine selects on the abort signal, so a
-//! failure stops the whole run immediately (no polling).
+//! One close-on-drop channel plus an atomic flag: the flag is the source of
+//! truth (`is_aborted` never flips back when a waiter consumes a token), the
+//! channel wakes every blocked `select!`, and registered byte-permit pools
+//! are notified so their waiters re-check the flag immediately instead of
+//! polling.
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use crossbeam_channel::{Receiver, Sender};
 
+use crate::budget::BytePermits;
 use crate::error::EngineError;
 
 /// The sending side: trigger abort manually, or let [`FirstError`] do it.
 #[derive(Clone, Debug)]
 pub struct AbortHandle {
     tx: Sender<()>,
+    flag: Arc<AtomicBool>,
+    /// Byte-permit pools blocked in `acquire`; notified on trigger so the
+    /// abort is observed without a polling timeout (§7.5).
+    permits: Arc<Mutex<Vec<Weak<BytePermits>>>>,
 }
 
 impl AbortHandle {
-    /// Triggers the abort signal: fills the channel so every blocked
-    /// waiter observes it; a full or closed channel is fine.
+    /// Registers a permit pool to wake on abort. Call once per run, when the
+    /// pool is created.
+    pub fn register(&self, permits: &Arc<BytePermits>) {
+        self.permits
+            .lock()
+            .expect("invariant: permit registry not poisoned")
+            .push(Arc::downgrade(permits));
+    }
+
+    /// Triggers the abort signal: sets the flag, fills the channel so every
+    /// blocked `select!` observes it, and wakes the registered permit
+    /// waiters. A full or closed channel is fine.
     pub fn trigger(&self) {
+        self.flag.store(true, Ordering::Release);
         while self.tx.try_send(()).is_ok() {}
+        let mut registry = self
+            .permits
+            .lock()
+            .expect("invariant: permit registry not poisoned");
+        registry.retain(|weak| {
+            let Some(permits) = weak.upgrade() else {
+                return false;
+            };
+            permits.notify_abort();
+            true
+        });
     }
 }
 
@@ -28,13 +59,15 @@ impl AbortHandle {
 #[derive(Clone, Debug)]
 pub struct AbortSignal {
     rx: Receiver<()>,
+    flag: Arc<AtomicBool>,
 }
 
 impl AbortSignal {
-    /// Whether abort has been triggered (non-blocking check).
+    /// Whether abort has been triggered (non-blocking check). The flag is
+    /// the source of truth: consuming a channel token never clears it.
     #[must_use]
     pub fn is_aborted(&self) -> bool {
-        !self.rx.is_empty()
+        self.flag.load(Ordering::Acquire)
     }
 
     /// Waits for abort, racing `other` — returns true if abort won.
@@ -53,17 +86,31 @@ impl AbortSignal {
     }
 }
 
-/// Creates an abort channel: the handle may be cloned to multiple owners.
-///
-/// The capacity covers every thread that may block on the signal inside one
-/// run (reader + workers + reducer + a safety margin): `trigger` fills the
-/// channel so *each* blocked `select!` observes the abort rather than one
-/// consumer eating the only token (§7.5 "中止即时生效").
+/// Creates an abort channel whose wake-up capacity covers `threads` waiters
+/// (reader + workers + reducer + margin): `trigger` fills the channel so
+/// *each* blocked `select!` observes the abort rather than one consumer
+/// eating the only token (§7.5). `--threads` may exceed the core count, so
+/// the capacity follows the budget, not `available_parallelism`.
+#[must_use]
+pub fn abort_channel_for(threads: usize) -> (AbortHandle, AbortSignal) {
+    let (tx, rx) = crossbeam_channel::bounded::<()>(threads + 4);
+    let flag = Arc::new(AtomicBool::new(false));
+    (
+        AbortHandle {
+            tx,
+            flag: Arc::clone(&flag),
+            permits: Arc::new(Mutex::new(Vec::new())),
+        },
+        AbortSignal { rx, flag },
+    )
+}
+
+/// Creates an abort channel sized for the default parallelism (tests and
+/// callers without a [`crate::budget::ThreadBudget`]).
 #[must_use]
 pub fn abort_channel() -> (AbortHandle, AbortSignal) {
-    let waiters = std::thread::available_parallelism().map_or(8, std::num::NonZeroUsize::get) + 4;
-    let (tx, rx) = crossbeam_channel::bounded::<()>(waiters);
-    (AbortHandle { tx }, AbortSignal { rx })
+    let threads = std::thread::available_parallelism().map_or(8, std::num::NonZeroUsize::get);
+    abort_channel_for(threads)
 }
 
 /// One abort channel shared by the caller and the engine: internal errors
@@ -81,6 +128,13 @@ pub struct Abort {
 #[must_use]
 pub fn abort() -> Abort {
     let (handle, signal) = abort_channel();
+    Abort { handle, signal }
+}
+
+/// Creates one shared abort channel sized by the run's thread budget.
+#[must_use]
+pub fn abort_for(budget: &crate::budget::ThreadBudget) -> Abort {
+    let (handle, signal) = abort_channel_for(budget.threads);
     Abort { handle, signal }
 }
 
@@ -162,5 +216,42 @@ mod tests {
         let (handle, signal) = abort_channel();
         handle.trigger();
         assert!(signal.is_aborted());
+    }
+
+    /// The flag survives token consumption: `is_aborted` must not flip back
+    /// when a `select!` waiter eats the channel token (A6-1).
+    #[test]
+    fn consuming_the_token_does_not_clear_the_flag() {
+        let (handle, signal) = abort_channel();
+        handle.trigger();
+        while signal.receiver().try_recv().is_ok() {}
+        assert!(
+            signal.is_aborted(),
+            "flag must remain set after the channel drains"
+        );
+    }
+
+    /// A registered permit pool is woken by `trigger`, so `acquire` returns
+    /// without waiting out any polling timeout (A6-1, §7.5).
+    #[test]
+    fn trigger_wakes_registered_permit_waiters() {
+        let (handle, signal) = abort_channel();
+        let permits = Arc::new(BytePermits::new(0));
+        handle.register(&permits);
+        let waiter = {
+            let permits = Arc::clone(&permits);
+            let signal = signal.clone();
+            std::thread::spawn(move || permits.acquire(1, &signal))
+        };
+        // Give the waiter time to block inside `acquire`, then abort.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let started = std::time::Instant::now();
+        handle.trigger();
+        assert!(!waiter.join().expect("invariant: waiter does not panic"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "acquire must wake on trigger, took {:?}",
+            started.elapsed()
+        );
     }
 }

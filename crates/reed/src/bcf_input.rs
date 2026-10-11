@@ -24,8 +24,8 @@ use reed_io::chunk::framing::RecordFraming;
 use crate::input::OpenedInput;
 
 /// The largest record the chain will carry; a runaway length prefix must not
-/// allocate.
-const MAX_RECORD_BYTES: usize = 1 << 30;
+/// allocate. Shared with the engine's seam stitcher (A6-2).
+const MAX_RECORD_BYTES: usize = reed_engine::pipeline::MAX_RECORD_BYTES;
 
 /// The BCF side of the wrapper: the frame chain plus the tag dictionaries.
 struct BcfState {

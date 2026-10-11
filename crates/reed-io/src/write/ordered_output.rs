@@ -36,6 +36,9 @@ pub struct OrderedOutput {
     pending_record: Option<PendingRecord>,
     /// Virtual offset just past the last written block.
     last_block_end: u64,
+    /// Deflate time observed on the chunks handed in (A6-4), reported to the
+    /// engine through `OrderedSink::deflate_time`.
+    deflate_nanos: u64,
 }
 
 impl OrderedOutput {
@@ -60,6 +63,7 @@ impl OrderedOutput {
             coffset: 0,
             pending_record: None,
             last_block_end: 0,
+            deflate_nanos: 0,
         }
     }
 
@@ -92,6 +96,7 @@ impl OrderedOutput {
     ///
     /// [`IoError`] from the writer or the indexer.
     pub fn accept_chunk(&mut self, chunk: &ChunkOutput) -> Result<(), IoError> {
+        self.deflate_nanos += chunk.deflate_nanos;
         if self.compressed {
             for block in &chunk.blocks {
                 self.accept_block(block)?;
@@ -100,6 +105,12 @@ impl OrderedOutput {
             self.writer.write_all(&chunk.raw)?;
         }
         Ok(())
+    }
+
+    /// Cumulative worker-side deflate time observed (A6-4).
+    #[must_use]
+    pub const fn deflate_time(&self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.deflate_nanos)
     }
 
     /// Finishes the stream: EOF marker, flush, the last record's index chunk,

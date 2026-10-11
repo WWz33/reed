@@ -60,6 +60,16 @@ pub struct TimingReport {
     pub reader_secs: f64,
     /// Cumulative reducer time (`accept`) across all passes.
     pub reduce_secs: f64,
+    /// Cumulative time the reader spent blocked on tickets/permits/send (A6-4).
+    pub reader_wait_secs: f64,
+    /// Cumulative time the reducer spent blocked on the result channel (A6-4).
+    pub reducer_wait_secs: f64,
+    /// Cumulative worker inflate time across all passes (A6-4).
+    pub inflate_secs: f64,
+    /// Cumulative worker job time across all passes (deflate included; A6-4).
+    pub job_secs: f64,
+    /// Cumulative output-compression time reported by the sink (A6-4).
+    pub deflate_secs: f64,
     /// Cumulative time workers waited on the BCF frame chain.
     pub chain_wait_secs: f64,
     /// Peak in-flight bytes, when the engine reported it.
@@ -133,6 +143,11 @@ impl FilterReport {
         let _ = writeln!(text, "worker_busy_ms\t{:.3}", t.worker_busy_secs * 1e3);
         let _ = writeln!(text, "reader_ms\t{:.3}", t.reader_secs * 1e3);
         let _ = writeln!(text, "reduce_ms\t{:.3}", t.reduce_secs * 1e3);
+        let _ = writeln!(text, "reader_wait_ms\t{:.3}", t.reader_wait_secs * 1e3);
+        let _ = writeln!(text, "reduce_wait_ms\t{:.3}", t.reducer_wait_secs * 1e3);
+        let _ = writeln!(text, "inflate_ms\t{:.3}", t.inflate_secs * 1e3);
+        let _ = writeln!(text, "job_ms\t{:.3}", t.job_secs * 1e3);
+        let _ = writeln!(text, "deflate_ms\t{:.3}", t.deflate_secs * 1e3);
         let _ = writeln!(text, "chain_wait_ms\t{:.3}", t.chain_wait_secs * 1e3);
         if let Some(peak) = t.in_flight_peak_bytes {
             let _ = writeln!(text, "in_flight_peak_bytes\t{peak}");
