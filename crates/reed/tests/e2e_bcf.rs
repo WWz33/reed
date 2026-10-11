@@ -529,4 +529,5 @@ fn vcf44_phasing_and_negative_zero_survive_the_round_trip() {
         .map(str::to_string)
         .collect();
     assert_eq!(rendered, expected, "-Ob read-back equals -Oz body");
+    let _ = std::fs::remove_dir_all(&dir);
 }
