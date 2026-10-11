@@ -1,7 +1,0 @@
-[package]
-name = "bench-noo"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-noodles = { path = "/sri/home/sri2025201067/reed/noodles/noodles", features = ["bcf", "bgzf", "vcf"] }
