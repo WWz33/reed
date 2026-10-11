@@ -234,7 +234,7 @@ pub fn render_sample_part(
                 let start = base + s * stride;
                 let data = &indiv[start..start + stride];
                 if is_gt {
-                    fmt_gt(out, ty, count, data);
+                    fmt_gt(out, ty, count, data, dict.vcf44());
                 } else if count == 1 {
                     fmt_array1(out, ty, data);
                 } else {
@@ -466,21 +466,31 @@ fn fmt_array1(out: &mut Vec<u8>, ty: u8, data: &[u8]) {
 
 /// `bcf_format_gt_v2`: `(allele+1)<<1 | phased`; the separator before an
 /// allele uses that allele's phased bit; a zero allele prints `.`; an empty
-/// genotype prints `.`.
+/// genotype prints `.`. With `vcf44` (the header declares VCF ≥ 4.4) the
+/// first allele's phasing is rendered as a `|`/`/` prefix exactly when
+/// dropping it would change its inferred value (htslib vcf.c:6495-6517,
+/// A6-14).
 ///
 /// The BCF GT fast path ([`super::gt`]) builds its byte-pair table with this
-/// function, so a decoded code is exactly what the text pipeline would see.
-pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8]) {
+/// function (at `vcf44 = false`, since the table is header-independent), so
+/// a decoded code is exactly what the text pipeline would see.
+pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8], vcf44: bool) {
     let width = type_width(ty);
     let (_, vector_end) = int_sentinels(ty);
-    let mut printed = false;
+    let mark = out.len();
+    let mut val0 = 0_i64;
+    let mut ploidy = 0_usize;
+    let mut anyunphased = false;
     for i in 0..count {
         let v = int_element(ty, &data[i * width..(i + 1) * width]);
         if v == vector_end {
             break;
         }
-        if i > 0 {
+        if i == 0 {
+            val0 = v;
+        } else {
             out.push(if v & 1 != 0 { b'|' } else { b'/' });
+            anyunphased |= v & 1 == 0;
         }
         let allele = v >> 1;
         if allele == 0 {
@@ -488,15 +498,27 @@ pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8]) {
         } else {
             push_u64(out, u64::try_from(allele - 1).unwrap_or(0));
         }
-        printed = true;
+        ploidy += 1;
     }
-    if !printed {
+    if ploidy == 0 {
         out.push(b'.');
+    }
+    if vcf44 {
+        if val0 & 1 != 0 {
+            // A phased first allele needs an explicit prefix only when the
+            // inference rules would otherwise read it as unphased.
+            if (ploidy > 1 && anyunphased) || (ploidy <= 1 && val0 >> 1 == 0) {
+                out.insert(mark, b'|');
+            }
+        } else if (ploidy <= 1 && val0 != 0) || (ploidy > 1 && !anyunphased) {
+            // An unphased first allele the inference would read as phased.
+            out.insert(mark, b'/');
+        }
     }
 }
 
 /// One integer element of `ty`.
-fn int_element(ty: u8, elem: &[u8]) -> i64 {
+pub(super) fn int_element(ty: u8, elem: &[u8]) -> i64 {
     match ty {
         value_type::INT8 => i64::from(elem[0] as i8),
         value_type::INT16 => i64::from(i16::from_le_bytes([elem[0], elem[1]])),
@@ -538,5 +560,40 @@ fn push_i64(out: &mut Vec<u8>, v: i64) {
         push_u64(out, v.unsigned_abs());
     } else {
         push_u64(out, v as u64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// htslib `bcf_format_gt_v2` (vcf.c:6457-6518): the first allele's phasing
+    /// renders as a prefix only when inference would otherwise get it wrong
+    /// (A6-14).
+    #[test]
+    fn fmt_gt_prefixed_phasing_matrix() {
+        let cases: &[(&[u8], bool, &[u8])] = &[
+            // [allele0 phased, allele1 unphased]: the prefix is required.
+            (&[3, 4], true, b"|0/1"),
+            (&[3, 4], false, b"0/1"),
+            // [unphased 0, phased 1]: explicit `/` for the first allele.
+            (&[2, 5], true, b"/0|1"),
+            (&[2, 5], false, b"0|1"),
+            // All phased: no prefix (inference recovers it).
+            (&[3, 5], true, b"0|1"),
+            // Haploid unphased: explicit `/`; phased: bare allele.
+            (&[4], true, b"/1"),
+            (&[5], true, b"1"),
+            // Phased missing haploid: `|.` (inference would drop the bit).
+            (&[1], true, b"|."),
+            (&[1], false, b"."),
+            (&[0], true, b"."),
+            (&[0, 0], true, b"./."),
+        ];
+        for (codes, vcf44, want) in cases {
+            let mut out = Vec::new();
+            fmt_gt(&mut out, value_type::INT8, codes.len(), codes, *vcf44);
+            assert_eq!(out, want.to_vec(), "codes {codes:02x?} vcf44={vcf44}");
+        }
     }
 }

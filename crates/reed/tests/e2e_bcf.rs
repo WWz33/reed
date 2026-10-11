@@ -452,3 +452,81 @@ fn filter_output_is_identical_across_formats() {
     assert_eq!(body(&bcf_out), body(&vcf_out));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A6-14 (doc_v6 03 §3): VCF 4.4 prefixed phasing and the `-0.0` INFO float
+/// survive every path — text and BCF input, `-Oz` and `-Ob` output — and the
+/// `-Ob` record read back through reed's own decoder equals the `-Oz` body.
+#[test]
+fn vcf44_phasing_and_negative_zero_survive_the_round_trip() {
+    let dir = dir("vcf44");
+    let input = dir.join("phasing.vcf");
+    std::fs::write(
+        &input,
+        "##fileformat=VCFv4.4\n\
+         ##FILTER=<ID=PASS,Description=\"All\">\n\
+         ##contig=<ID=Chr01,length=1000000>\n\
+         ##INFO=<ID=XF,Number=1,Type=Float,Description=\"float\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+         ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"dp\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\ts2\ts3\ts4\n\
+         Chr01\t100\trs1\tA\tG\t50\tPASS\tXF=-0\tGT:DP\t|0/1:15\t/0|1:12\t0|1:9\t0|.:4\n\
+         Chr01\t200\trs2\tA\tG\t60\tPASS\tXF=0\tGT:DP\t|1/0:15\t0|.:12\t./.:9\t|.:4\n",
+    )
+    .expect("invariant: fixture write");
+    // The fixture's own text is the expected body (bcftools agrees on these
+    // lines; the unit tests pin the same rules on codes).
+    let expected: Vec<String> = std::fs::read_to_string(&input)
+        .expect("invariant: fixture")
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    let spec = FilterSpec {
+        policy: reed_filter::spec::PolicyRules {
+            // `|1/0` and `|.` exercise the half-call and haploid paths.
+            ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let run = |input: &Path, out: &Path, bcf: Option<u8>| {
+        let opts = FilterOptions {
+            threads: 2,
+            output: Some(out.to_path_buf()),
+            write_index: reed::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            timing: None,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: bcf.is_none().then_some(true),
+            output_bcf: bcf,
+            mem_bytes: None,
+            no_version: false,
+            no_command: false,
+        };
+        run_filter(Some(input), &spec, &opts)
+    };
+    let text_out = dir.join("text.vcf.gz");
+    let bcf_out = dir.join("out.bcf");
+    run(&input, &text_out, None).expect("invariant: text output");
+    run(&input, &bcf_out, Some(6)).expect("invariant: bcf output");
+    let text_body: Vec<String> = inflate_bgzf(&std::fs::read(&text_out).expect("invariant: read"))
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        text_body, expected,
+        "-Oz body keeps the 4.4 prefixes and -0"
+    );
+    let rendered: Vec<String> = render_via_reed(&bcf_out)
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(rendered, expected, "-Ob read-back equals -Oz body");
+}

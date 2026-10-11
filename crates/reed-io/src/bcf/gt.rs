@@ -108,7 +108,7 @@ impl GtTable {
                 .expect("invariant: the loop is bounded by 65,536")
                 .to_le_bytes();
             text.clear();
-            fmt_gt(&mut text, value_type::INT8, raw.len(), &raw);
+            fmt_gt(&mut text, value_type::INT8, raw.len(), &raw, false);
             let mut counters = PolicyCounters::default();
             let mut token = [None; 2];
             if let Ok(code) = decode_gt_text(&text, &locus, &policies, &mut counters, &mut token) {
@@ -171,7 +171,7 @@ impl GtTable {
         }
         let count = data.len() / type_width(ty);
         text.clear();
-        fmt_gt(text, ty, count, data);
+        fmt_gt(text, ty, count, data, false);
         let mut token = [None; 2];
         decode_gt_text(text, locus, &self.policies, counters, &mut token)
     }
@@ -351,7 +351,7 @@ mod tests {
             let got = table.decode_pair(b0, b1, &locus, &mut native_counters);
             // The text path: render the same two bytes and decode.
             let mut rendered = Vec::new();
-            fmt_gt(&mut rendered, value_type::INT8, 2, &[b0, b1]);
+            fmt_gt(&mut rendered, value_type::INT8, 2, &[b0, b1], false);
             let mut text_counters = PolicyCounters::default();
             let mut token = [None; 2];
             let want = decode_gt_text(

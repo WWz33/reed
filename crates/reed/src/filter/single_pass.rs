@@ -49,12 +49,23 @@ impl BcfEncoders {
         })
     }
 
-    fn encode(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<(), reed_io::IoError> {
-        match &mut self.noodles {
-            Some(encoder) => encoder.encode_record(&self.header, line, out),
-            None => self.native.encode(line, out),
-        }
+    /// Encodes the edited text through noodles (the oracle A/B path).
+    fn encode_noodles(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<(), reed_io::IoError> {
+        self.noodles
+            .as_mut()
+            .expect("invariant: the noodles branch checks the encoder exists")
+            .encode_record(&self.header, line, out)
     }
+}
+
+/// The record the emitter encodes/edits from (doc_v6 03 §8).
+enum EmitSource<'a, 'b> {
+    /// Text input: the record's own line.
+    Text(&'a LineRef<'b>),
+    /// BCF input: the framed record bytes and the input dictionary. Only the
+    /// native `-Ob` branch takes it; text output (and the noodles oracle)
+    /// renders the record first.
+    Bcf { bytes: &'a [u8], dict: &'a BcfDict },
 }
 
 /// The chunk partial: output bytes plus the funnel contribution.
@@ -297,14 +308,16 @@ impl FilterJob {
 
     /// The one emit step shared by the text and native paths (A6-20): the
     /// pass0 pruning rule, the recomputed INFO fill, the edit and the write.
-    /// `edit_line` is the line the edit runs on — the record itself on the
-    /// text path, the rendered full record on the native path.
+    /// `source` is the record itself — its text line, or the framed BCF
+    /// bytes for BCF input. The native `-Ob` branch walks the source with
+    /// the edit applied (A6-9: no edited text is materialised and re-parsed);
+    /// text output and the noodles oracle still edit the line first.
     fn emit_survivor(
         &self,
         emit: &mut EmitScratchMut<'_>,
         stale: &[&[u8]],
         view: &mut RecordView<'_, '_>,
-        edit_line: &LineRef<'_>,
+        source: EmitSource<'_, '_>,
     ) -> Result<(), EngineError> {
         // The LD-pruning rule (§3.4.1): pass0 removed this site.
         if let Some(keep) = self.site_keep.as_deref()
@@ -315,35 +328,60 @@ impl FilterJob {
         }
         let counts = view.counts.expect("invariant: counts requested");
         fill_info_set(counts, &self.plan.recompute, emit.hwe, emit.info_set);
+        let masked = view.masked;
+        let site = view.site;
+        let pos1 = view.pos1;
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
-            mask_gt: Some(view.masked),
+            mask_gt: Some(masked),
             info_remove: stale,
             info_set: emit.info_set,
         };
-        let gt_index = gt_subfield_index(edit_line.format_text());
-        emit.edit_buf.clear();
-        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf).map_err(job_err)?;
         view.funnel.n_output += 1;
         // Block boundaries are byte-based, not record-based (htslib): the
         // record's index entry anchors at the block and offset where its
         // bytes start, even when they span into the next block.
         let key = IndexKey {
-            contig: view
-                .site
+            contig: site
                 .contig
                 .expect("invariant: parse_declared resolved the contig"),
-            start1: view.pos1,
-            ref_len: u32::try_from(view.site.reference.len()).unwrap_or(1).max(1),
+            start1: pos1,
+            ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
         };
+        // Native BCF output: encode from the source record with the edit
+        // applied in the same walk (no edited-text round-trip).
+        if let Some(encoders) = emit.bcf.as_mut().filter(|e| e.noodles.is_none()) {
+            emit.bcf_buf.clear();
+            match source {
+                EmitSource::Text(line) => encoders
+                    .native
+                    .encode_text(line, site, self.n_samples_in, &edit_plan, emit.bcf_buf)
+                    .map_err(job_err)?,
+                EmitSource::Bcf { bytes, dict } => {
+                    let rec = record_ref(bytes).map_err(EngineError::from)?;
+                    encoders
+                        .native
+                        .encode_bcf(&rec, dict, &edit_plan, emit.bcf_buf)
+                        .map_err(job_err)?;
+                }
+            }
+            return emit.writer.push_record(emit.bcf_buf, key).map_err(job_err);
+        }
+        let edit_line = match source {
+            EmitSource::Text(line) => line,
+            EmitSource::Bcf { .. } => {
+                unreachable!("invariant: the BCF caller renders for text output")
+            }
+        };
+        let gt_index = gt_subfield_index(edit_line.format_text());
+        emit.edit_buf.clear();
+        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf).map_err(job_err)?;
         match emit.bcf {
             None => emit.writer.push_record(emit.edit_buf, key).map_err(job_err),
-            // The edited text is encoded to BCF; the record's bytes then
-            // flow through the block writer like any other payload.
             Some(encoders) => {
                 emit.bcf_buf.clear();
                 encoders
-                    .encode(emit.edit_buf, emit.bcf_buf)
+                    .encode_noodles(emit.edit_buf, emit.bcf_buf)
                     .map_err(job_err)?;
                 emit.writer.push_record(emit.bcf_buf, key).map_err(job_err)
             }
@@ -417,13 +455,23 @@ impl FilterJob {
                 counters,
             },
             |view| {
-                // Survivor: render the full record, then the shared emit step.
+                // The native `-Ob` branch encodes the framed record directly
+                // (doc_v6 03 §8); text output and the noodles oracle render
+                // the full record and edit the text.
+                if emit.bcf.as_ref().is_some_and(|e| e.noodles.is_none()) {
+                    return self.emit_survivor(
+                        &mut emit,
+                        stale,
+                        view,
+                        EmitSource::Bcf { bytes, dict },
+                    );
+                }
                 let rec = record_ref(bytes).map_err(EngineError::from)?;
                 full.clear();
                 render_record(&rec, dict, &mut full).map_err(EngineError::from)?;
                 let full_lr = LineRef::parse(&full)
                     .ok_or_else(|| EngineError::job("rendered record has fewer than 9 columns"))?;
-                self.emit_survivor(&mut emit, stale, view, &full_lr)
+                self.emit_survivor(&mut emit, stale, view, EmitSource::Text(&full_lr))
             },
         )?;
         *full_slot = full;
@@ -469,7 +517,7 @@ impl FilterJob {
         };
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let edit_line = view.line;
-            self.emit_survivor(&mut emit, stale, view, edit_line)
+            self.emit_survivor(&mut emit, stale, view, EmitSource::Text(edit_line))
         })?;
         Ok(())
     }

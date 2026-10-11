@@ -63,9 +63,7 @@ fn native_and_noodles_encoders_agree() {
     noodles.write_header(&header).expect("invariant: header");
     for (i, record) in records.iter().enumerate() {
         let mut expected = Vec::new();
-        native
-            .encode(record, &mut expected)
-            .expect("invariant: native encode");
+        encode_text(&mut native, &header, record, &mut expected);
         let mut got = Vec::new();
         noodles
             .encode_record(&header, record, &mut got)
@@ -79,6 +77,26 @@ fn native_and_noodles_encoders_agree() {
     }
 }
 
+/// The native encoder's text entry with a default (no-op) edit.
+fn encode_text(
+    encoder: &mut reed_io::bcf::NativeEncoder,
+    header: &noodles::vcf::Header,
+    record: &[u8],
+    out: &mut Vec<u8>,
+) {
+    let lr = reed_io::vcf::line::LineRef::parse(record).expect("invariant: full line");
+    let site = reed_io::vcf::site::SiteView::parse(&lr).expect("invariant: site parses");
+    encoder
+        .encode_text(
+            &lr,
+            &site,
+            header.sample_names().len(),
+            &reed_io::vcf::line_edit::EditPlan::default(),
+            out,
+        )
+        .expect("invariant: native encode");
+}
+
 /// Encoding the fixture's records and decoding them again reproduces the
 /// record text (the fixture's expected rendering).
 #[test]
@@ -89,9 +107,7 @@ fn encode_round_trips_through_the_renderer() {
     // A synthetic BCF stream: header text + records, rendered back.
     let mut stream = Vec::new();
     for record in &records {
-        encoder
-            .encode(record, &mut stream)
-            .expect("invariant: encode");
+        encode_text(&mut encoder, &header, record, &mut stream);
     }
     // The encoder numbers tags with noodles' StringMaps; the file header a
     // real run writes carries explicit IDX for every tag, which pins htslib

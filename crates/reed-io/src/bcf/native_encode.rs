@@ -1,9 +1,12 @@
-//! Native text → BCF encoder (doc_v3 02-bcf.md B4).
+//! Native record → BCF encoder (doc_v3 02-bcf.md B4, doc_v6 03 §8).
 //!
 //! The noodles encoder costs ~800 µs per 348-sample record (it re-parses
 //! every formatted value), which breaks the `-Ob` budget. This encoder
-//! walks the record's text once — the mirror image of [`super::render`] —
-//! and writes the BCF bytes directly, with no per-value allocation.
+//! applies the filter's edits while it walks the *source* record — VCF text
+//! ([`NativeEncoder::encode_text`]) or a framed BCF record
+//! ([`NativeEncoder::encode_bcf`]) — so the edited record never round-trips
+//! through text. Unmodified BCF FORMAT columns copy their raw element bytes;
+//! only INFO and the GT column are rewritten.
 //!
 //! Widths follow htslib's `bcf_enc_vint` (the smallest of int8/int16/int32
 //! covering every element, legal ranges −120…127 / −32760…32767), and
@@ -15,18 +18,22 @@
 
 use std::collections::HashMap;
 
+use reed_core::SampleId;
+
 use crate::error::{IoError, Locus};
+use crate::vcf::info::info_fragments;
 use crate::vcf::line::LineRef;
+use crate::vcf::line_edit::{EditPlan, InfoValueOut, render_info_value};
 use crate::vcf::site::SiteView;
 use noodles::vcf;
 
-/// Marker for a sample column shorter than the FORMAT key list.
-const ABSENT: (u32, u32) = (u32::MAX, u32::MAX);
-
+use super::dict::BcfDict;
 use super::record::{
-    FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE, INT16_MAX_VALUE,
-    INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, value_type,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE,
+    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, malformed, type_width,
+    value_type,
 };
+use super::render::int_element;
 
 /// A per-worker native encoder.
 pub struct NativeEncoder {
@@ -37,6 +44,7 @@ pub struct NativeEncoder {
     info_types: HashMap<Vec<u8>, InfoType>,
     /// FORMAT tag → declared BCF type.
     format_types: HashMap<Vec<u8>, u8>,
+    /// Samples in the *output* header (the sample subset after pruning).
     n_samples: usize,
     /// Scratch buffers, reused across records.
     shared: Vec<u8>,
@@ -45,6 +53,12 @@ pub struct NativeEncoder {
     /// `sample * n_keys + key` (one pass over the sample text per record).
     cells: Vec<(u32, u32)>,
     ints: Vec<i64>,
+    /// One sample's decoded GT codes (reused; the text GT walk allocates
+    /// nothing per record).
+    codes: Vec<i32>,
+    /// Field headers of the current BCF source record `(key, ty, count,
+    /// payload offset)`, reused across records.
+    bcf_fields: Vec<(u32, u8, usize, usize)>,
 }
 
 /// The value shape an INFO tag declares.
@@ -118,6 +132,8 @@ impl NativeEncoder {
             indiv: Vec::with_capacity(1 << 16),
             cells: Vec::new(),
             ints: Vec::with_capacity(64),
+            codes: Vec::with_capacity(8),
+            bcf_fields: Vec::new(),
         })
     }
 
@@ -128,21 +144,78 @@ impl NativeEncoder {
     }
 
     /// Encodes one VCF text record into `out` (the BCF record bytes,
-    /// including the two length prefixes).
+    /// including the two length prefixes), applying `edit` in the same walk
+    /// — with a default edit the output equals the pre-Y4 encode of the
+    /// verbatim line.
     ///
     /// # Errors
     ///
     /// [`IoError::MalformedRecord`] for malformed input and
     /// [`IoError::Header`] for tags the output header does not declare.
-    pub fn encode(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<(), IoError> {
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(bad("record line has fewer than 9 columns"));
-        };
-        let site = SiteView::parse(&lr)?;
+    pub fn encode_text(
+        &mut self,
+        line: &LineRef<'_>,
+        site: &SiteView<'_>,
+        n_samples_in: usize,
+        edit: &EditPlan<'_>,
+        out: &mut Vec<u8>,
+    ) -> Result<(), IoError> {
+        debug_assert_eq!(
+            n_samples_out(edit, n_samples_in),
+            self.n_samples,
+            "encoder built from the output header"
+        );
         self.shared.clear();
         self.indiv.clear();
-        self.encode_shared(&lr, &site)?;
-        self.encode_indiv(&lr)?;
+        self.encode_shared(line, site, edit)?;
+        self.encode_indiv(line, n_samples_in, edit)?;
+        self.finish(out)?;
+        Ok(())
+    }
+
+    /// Encodes one framed BCF record into `out`, applying `edit` in the walk
+    /// (doc_v6 03 §8): dictionary indices are translated through the input
+    /// dictionary, unmodified FORMAT columns copy their raw element bytes,
+    /// and only INFO and the GT column are rewritten.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::encode_text`].
+    pub fn encode_bcf(
+        &mut self,
+        rec: &BcfRecordRef<'_>,
+        dict: &BcfDict,
+        edit: &EditPlan<'_>,
+        out: &mut Vec<u8>,
+    ) -> Result<(), IoError> {
+        let mut head = Cursor::new(rec.shared);
+        let in_chrom = head.i32()?;
+        let pos0 = head.i32()?;
+        let rlen = head.i32()?;
+        let qual = head.u32()?;
+        let na_ni = head.u32()?;
+        let nf_ns = head.u32()?;
+        let n_allele = (na_ni >> 16) as usize;
+        let n_info = (na_ni & 0xFFFF) as usize;
+        let n_fmt = (nf_ns >> 24) as usize;
+        let n_sample_in = (nf_ns & 0x00FF_FFFF) as usize;
+        debug_assert_eq!(
+            n_samples_out(edit, n_sample_in),
+            self.n_samples,
+            "encoder built from the output header"
+        );
+        self.shared.clear();
+        self.indiv.clear();
+        self.encode_shared_bcf(
+            rec, dict, edit, in_chrom, pos0, rlen, qual, n_allele, n_info,
+        )?;
+        self.encode_indiv_bcf(rec, dict, edit, n_fmt, n_sample_in)?;
+        self.finish(out)?;
+        Ok(())
+    }
+
+    /// Appends the length prefixes and the two blocks to `out`.
+    fn finish(&mut self, out: &mut Vec<u8>) -> Result<(), IoError> {
         let l_shared = u32::try_from(self.shared.len())
             .map_err(|_| bad("BCF shared block exceeds u32::MAX bytes"))?;
         let l_indiv = u32::try_from(self.indiv.len())
@@ -161,7 +234,12 @@ impl NativeEncoder {
         ))
     }
 
-    fn encode_shared(&mut self, lr: &LineRef<'_>, site: &SiteView<'_>) -> Result<(), IoError> {
+    fn encode_shared(
+        &mut self,
+        lr: &LineRef<'_>,
+        site: &SiteView<'_>,
+        edit: &EditPlan<'_>,
+    ) -> Result<(), IoError> {
         let chrom = lr.chrom();
         let contig = self
             .contig_index
@@ -170,64 +248,68 @@ impl NativeEncoder {
             .ok_or_else(|| Self::undeclared("contig", chrom))?;
         let pos0 = i32::try_from(site.pos1.saturating_sub(1)).unwrap_or(i32::MAX);
         let rlen = i32::try_from(site.reference.len()).unwrap_or(1).max(1);
-        let s = &mut self.shared;
-        s.extend_from_slice(&contig.to_le_bytes());
-        s.extend_from_slice(&pos0.to_le_bytes());
-        s.extend_from_slice(&rlen.to_le_bytes());
-        s.extend_from_slice(&site.qual.map_or(FLOAT_MISSING, f32::to_bits).to_le_bytes());
-        s.extend_from_slice(&[0; 8]); // n_allele|n_info, n_fmt|n_sample
+        // The site header, ID, alleles and FILTER: a scoped borrow of the
+        // shared block (the INFO section below calls `&mut self` helpers).
+        {
+            let s = &mut self.shared;
+            s.extend_from_slice(&contig.to_le_bytes());
+            s.extend_from_slice(&pos0.to_le_bytes());
+            s.extend_from_slice(&rlen.to_le_bytes());
+            s.extend_from_slice(&site.qual.map_or(FLOAT_MISSING, f32::to_bits).to_le_bytes());
+            s.extend_from_slice(&[0; 8]); // n_allele|n_info, n_fmt|n_sample
 
-        // ID: an empty ID (".") is stored as a zero-length string.
-        let id = lr.id();
-        encode_typed_string(s, if id == b"." { &[] } else { id });
+            // ID: an empty ID (".") is stored as a zero-length string.
+            let id = lr.id();
+            encode_typed_string(s, if id == b"." { &[] } else { id });
 
-        // Alleles: REF then the ALT list ("." means no ALT).
-        let alts = lr.alts();
-        let n_allele = if alts == b"." {
-            encode_typed_string(s, lr.reference());
+            // Alleles: REF then the ALT list ("." means no ALT).
+            let alts = lr.alts();
+            if alts == b"." {
+                encode_typed_string(s, lr.reference());
+            } else {
+                encode_typed_string(s, lr.reference());
+                for alt in alts.split(|&b| b == b',') {
+                    encode_typed_string(s, alt);
+                }
+            }
+        }
+        let n_allele = if lr.alts() == b"." {
             1_u32
         } else {
-            encode_typed_string(s, lr.reference());
-            let mut n = 1_u32;
-            for alt in alts.split(|&b| b == b',') {
-                encode_typed_string(s, alt);
-                n += 1;
-            }
-            n
+            // REF + the comma-separated ALT list.
+            2 + u32::try_from(memchr::memchr_iter(b',', lr.alts()).count()).unwrap_or(u32::MAX)
         };
 
         // FILTER.
         let filter = lr.filter_text();
-        let n_flt = if filter == b"." || filter.is_empty() {
-            encode_size(s, 0, value_type::INT8);
-            0_u32
+        if filter == b"." || filter.is_empty() {
+            encode_size(&mut self.shared, 0, value_type::INT8);
         } else {
-            let mut indices = Vec::new();
+            let mut ints = std::mem::take(&mut self.ints);
+            ints.clear();
             for name in filter.split(|&b| b == b';') {
                 let idx = self
                     .tags
                     .get(name)
                     .copied()
                     .ok_or_else(|| Self::undeclared("FILTER", name))?;
-                indices.push(i64::from(idx));
+                ints.push(i64::from(idx));
             }
-            encode_int_vector(s, &indices);
-            u32::try_from(indices.len()).unwrap_or(u32::MAX)
-        };
+            encode_int_vector(&mut self.shared, &ints);
+            self.ints = ints;
+        }
 
-        // INFO: resolve the dictionary keys and declared types first (the
-        // writes below hold a mutable borrow of the shared buffer).
+        // INFO: one walk of the source fragments with the edit applied —
+        // stale tags drop out, recomputed tags replace in place (typed, no
+        // text round-trip), the rest copy their parsed source values.
+        let mut n_info = 0_u32;
+        let mut seen = SeenMarks::new(edit.info_set.len());
         let info = lr.info_text();
-        let mut info_items: Vec<(u32, InfoType, Option<&[u8]>)> = Vec::new();
         if info != b"." && !info.is_empty() {
-            for entry in info.split(|&b| b == b';') {
-                if entry.is_empty() {
+            for (key, value) in info_fragments(info) {
+                if edit.info_remove.contains(&key) {
                     continue;
                 }
-                let (key, value) = match entry.iter().position(|&b| b == b'=') {
-                    Some(i) => (&entry[..i], Some(&entry[i + 1..])),
-                    None => (entry, None),
-                };
                 let idx = self
                     .tags
                     .get(key)
@@ -238,58 +320,95 @@ impl NativeEncoder {
                     .get(key)
                     .copied()
                     .unwrap_or(InfoType::String);
-                info_items.push((idx, declared, value));
+                encode_typed_int(&mut self.shared, i64::from(idx));
+                if let Some(i) = edit.info_set.iter().position(|(t, _)| *t == key) {
+                    seen.mark(i);
+                    encode_info_typed(&mut self.shared, declared, &edit.info_set[i].1);
+                } else {
+                    self.encode_info_text(declared, value);
+                }
+                n_info += 1;
             }
         }
-        let n_info = if info_items.is_empty() {
-            0_u32
-        } else {
-            let mut n = 0_u32;
-            for (idx, declared, value) in info_items {
-                encode_typed_int(s, i64::from(idx));
-                match (declared, value) {
-                    // A flag carries no value at all.
-                    (InfoType::Flag, _) => encode_size(s, 0, value_type::NULL),
-                    (InfoType::Integer, Some(v)) => {
-                        let mut ints = std::mem::take(&mut self.ints);
-                        ints.clear();
-                        parse_int_vector(v, &mut ints);
-                        encode_int_vector(s, &ints);
-                        self.ints = ints;
-                    }
-                    (InfoType::Float, Some(v)) => {
-                        let mut floats = Vec::new();
-                        parse_float_vector(v, &mut floats);
-                        encode_size(s, floats.len(), value_type::FLOAT);
-                        for f in floats {
-                            s.extend_from_slice(&f.to_le_bytes());
-                        }
-                    }
-                    (_, Some(v)) => {
-                        encode_typed_string(s, if v == b"." { &[] } else { v });
-                    }
-                    (InfoType::Integer, None) => {
-                        encode_size(s, 1, value_type::INT8);
-                        s.push(i8::MIN as u8);
-                    }
-                    (InfoType::Float, None) => {
-                        encode_size(s, 1, value_type::FLOAT);
-                        s.extend_from_slice(&FLOAT_MISSING.to_le_bytes());
-                    }
-                    (InfoType::String, None) => encode_typed_string(s, b""),
-                }
-                n += 1;
-            }
-            n
-        };
-        // Patch the packed counters (n_allele<<16|n_info, n_fmt<<24|n_sample;
-        // n_fmt is filled in by `encode_indiv`).
-        s[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
-        let _ = n_flt;
+        self.encode_info_appends(edit, &seen, &mut n_info)?;
+        // Patch the packed counters (n_allele<<16|n_info; n_fmt|n_sample is
+        // filled in by `encode_indiv`).
+        self.shared[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
         Ok(())
     }
 
-    fn encode_indiv(&mut self, lr: &LineRef<'_>) -> Result<(), IoError> {
+    /// One INFO value parsed from the source text (the pre-Y4 behavior for
+    /// values the edit does not touch).
+    fn encode_info_text(&mut self, declared: InfoType, value: Option<&[u8]>) {
+        let s = &mut self.shared;
+        match (declared, value) {
+            // A flag carries no value at all.
+            (InfoType::Flag, _) => encode_size(s, 0, value_type::NULL),
+            (InfoType::Integer, Some(v)) => {
+                let mut ints = std::mem::take(&mut self.ints);
+                ints.clear();
+                parse_int_vector(v, &mut ints);
+                encode_int_vector(s, &ints);
+                self.ints = ints;
+            }
+            (InfoType::Float, Some(v)) => {
+                let mut floats = Vec::new();
+                parse_float_vector(v, &mut floats);
+                encode_size(s, floats.len(), value_type::FLOAT);
+                for f in floats {
+                    s.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+            (_, Some(v)) => {
+                encode_typed_string(s, if v == b"." { &[] } else { v });
+            }
+            (InfoType::Integer, None) => {
+                encode_size(s, 1, value_type::INT8);
+                s.push(i8::MIN as u8);
+            }
+            (InfoType::Float, None) => {
+                encode_size(s, 1, value_type::FLOAT);
+                s.extend_from_slice(&FLOAT_MISSING.to_le_bytes());
+            }
+            (InfoType::String, None) => encode_typed_string(s, b""),
+        }
+    }
+
+    /// The `info_set` entries the source walk did not replace in place,
+    /// appended in `info_set` order (the `edit_info` semantics).
+    fn encode_info_appends(
+        &mut self,
+        edit: &EditPlan<'_>,
+        seen: &SeenMarks,
+        n_info: &mut u32,
+    ) -> Result<(), IoError> {
+        for (i, (tag, value)) in edit.info_set.iter().enumerate() {
+            if seen.get(i) {
+                continue;
+            }
+            let idx = self
+                .tags
+                .get(*tag)
+                .copied()
+                .ok_or_else(|| Self::undeclared("INFO", tag))?;
+            let declared = self
+                .info_types
+                .get(*tag)
+                .copied()
+                .unwrap_or(InfoType::String);
+            encode_typed_int(&mut self.shared, i64::from(idx));
+            encode_info_typed(&mut self.shared, declared, value);
+            *n_info += 1;
+        }
+        Ok(())
+    }
+
+    fn encode_indiv(
+        &mut self,
+        lr: &LineRef<'_>,
+        n_samples_in: usize,
+        edit: &EditPlan<'_>,
+    ) -> Result<(), IoError> {
         let format = lr.format_text();
         let n_fmt = if format == b"." || format.is_empty() {
             0_u32
@@ -300,11 +419,12 @@ impl NativeEncoder {
             let samples = lr.samples_text();
             let keys: Vec<&[u8]> = format.split(|&b| b == b':').collect();
             let n_keys = keys.len();
+            let gt_index = keys.iter().position(|k| *k == b"GT");
             // One pass over the sample text: every subfield's byte range.
             self.cells.clear();
-            self.cells.resize(self.n_samples * n_keys, ABSENT);
+            self.cells.resize(n_samples_in * n_keys, ABSENT);
             let mut column_start = 0_usize;
-            for sample in 0..self.n_samples {
+            for sample in 0..n_samples_in {
                 let rest = &samples[column_start..];
                 let column_len = rest.iter().position(|&b| b == b'\t').unwrap_or(rest.len());
                 let column = &rest[..column_len];
@@ -339,19 +459,25 @@ impl NativeEncoder {
                     .copied()
                     .unwrap_or(value_type::CHAR);
                 encode_typed_int(&mut self.indiv, i64::from(idx));
-                if *key == b"GT" {
-                    self.encode_gt_column(samples, k, n_keys);
+                if Some(k) == gt_index {
+                    self.encode_gt_column(samples, k, n_keys, n_samples_in, edit);
                 } else {
                     match ty {
-                        value_type::FLOAT => self.encode_float_column(samples, k, n_keys),
-                        value_type::CHAR => self.encode_string_column(samples, k, n_keys),
-                        _ => self.encode_int_column(samples, k, n_keys)?,
+                        value_type::FLOAT => {
+                            self.encode_float_column(samples, k, n_keys, n_samples_in, edit);
+                        }
+                        value_type::CHAR => {
+                            self.encode_string_column(samples, k, n_keys, n_samples_in, edit);
+                        }
+                        _ => self.encode_int_column(samples, k, n_keys, n_samples_in, edit)?,
                     }
                 }
             }
         }
         let s = &mut self.shared;
-        s[20..24].copy_from_slice(&(n_fmt << 24 | self.n_samples as u32).to_le_bytes());
+        s[20..24].copy_from_slice(
+            &(n_fmt << 24 | n_samples_out(edit, n_samples_in) as u32).to_le_bytes(),
+        );
         Ok(())
     }
 
@@ -369,10 +495,25 @@ impl NativeEncoder {
         }
     }
 
-    fn encode_gt_column(&mut self, samples: &[u8], k: usize, n_keys: usize) {
+    fn encode_gt_column(
+        &mut self,
+        samples: &[u8],
+        k: usize,
+        n_keys: usize,
+        n_samples_in: usize,
+        edit: &EditPlan<'_>,
+    ) {
         let mut max_ploidy = 0_usize;
         let mut max_allele = 0_i64;
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
+            if masked(edit, s) {
+                // `./.`: two missing alleles.
+                max_ploidy = max_ploidy.max(2);
+                continue;
+            }
             let (ploidy, allele) = gt_shape(Self::cell(&self.cells, samples, s, k, n_keys));
             max_ploidy = max_ploidy.max(ploidy);
             max_allele = max_allele.max(allele);
@@ -388,12 +529,26 @@ impl NativeEncoder {
         encode_size(&mut self.indiv, max_ploidy, ty);
         let (_, vector_end) = super::record::int_sentinels(ty);
         let vector_end = vector_end as i32;
-        for s in 0..self.n_samples {
-            let codes = gt_codes(Self::cell(&self.cells, samples, s, k, n_keys));
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
+            if masked(edit, s) {
+                push_int(&mut self.indiv, 0, width);
+                push_int(&mut self.indiv, 0, width);
+                for _ in 2..max_ploidy {
+                    push_int(&mut self.indiv, vector_end, width);
+                }
+                continue;
+            }
+            gt_codes_into(
+                Self::cell(&self.cells, samples, s, k, n_keys),
+                &mut self.codes,
+            );
             for i in 0..max_ploidy {
                 push_int(
                     &mut self.indiv,
-                    codes.get(i).copied().unwrap_or(vector_end),
+                    self.codes.get(i).copied().unwrap_or(vector_end),
                     width,
                 );
             }
@@ -405,10 +560,15 @@ impl NativeEncoder {
         samples: &[u8],
         k: usize,
         n_keys: usize,
+        n_samples_in: usize,
+        edit: &EditPlan<'_>,
     ) -> Result<(), IoError> {
         let mut max_len = 0_usize;
         let (mut min, mut max) = (i64::MAX, i64::MIN);
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
             let sub = Self::cell(&self.cells, samples, s, k, n_keys);
             if sub == b"." || sub.is_empty() {
                 max_len = max_len.max(1);
@@ -431,7 +591,10 @@ impl NativeEncoder {
         encode_size(&mut self.indiv, max_len, ty);
         let (missing, vector_end) = super::record::int_sentinels(ty);
         let (missing, vector_end) = (missing as i32, vector_end as i32);
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
             let sub = Self::cell(&self.cells, samples, s, k, n_keys);
             let mut written = 0_usize;
             if sub != b"." && !sub.is_empty() {
@@ -455,9 +618,19 @@ impl NativeEncoder {
         Ok(())
     }
 
-    fn encode_float_column(&mut self, samples: &[u8], k: usize, n_keys: usize) {
+    fn encode_float_column(
+        &mut self,
+        samples: &[u8],
+        k: usize,
+        n_keys: usize,
+        n_samples_in: usize,
+        edit: &EditPlan<'_>,
+    ) {
         let mut max_len = 0_usize;
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
             let sub = Self::cell(&self.cells, samples, s, k, n_keys);
             if sub == b"." || sub.is_empty() {
                 max_len = max_len.max(1);
@@ -467,7 +640,10 @@ impl NativeEncoder {
         }
         let max_len = max_len.max(1);
         encode_size(&mut self.indiv, max_len, value_type::FLOAT);
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
             let sub = Self::cell(&self.cells, samples, s, k, n_keys);
             let mut written = 0_usize;
             if sub != b"." && !sub.is_empty() {
@@ -496,21 +672,357 @@ impl NativeEncoder {
         }
     }
 
-    fn encode_string_column(&mut self, samples: &[u8], k: usize, n_keys: usize) {
+    fn encode_string_column(
+        &mut self,
+        samples: &[u8],
+        k: usize,
+        n_keys: usize,
+        n_samples_in: usize,
+        edit: &EditPlan<'_>,
+    ) {
         // The width is the longest value; a missing value is the literal `.`.
         let mut width = 1_usize;
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
             let sub = Self::cell(&self.cells, samples, s, k, n_keys);
             width = width.max(if sub.is_empty() { 1 } else { sub.len() });
         }
         encode_size(&mut self.indiv, width, value_type::CHAR);
-        for s in 0..self.n_samples {
+        for s in 0..n_samples_in {
+            if !kept(edit, s) {
+                continue;
+            }
             let sub = Self::cell(&self.cells, samples, s, k, n_keys);
             let value: &[u8] = if sub.is_empty() { b"." } else { sub };
             self.indiv.extend_from_slice(value);
             for _ in value.len()..width {
                 self.indiv.push(0);
             }
+        }
+    }
+
+    /// The shared block of a BCF source record: dictionary indices
+    /// (contig/FILTER/INFO keys) are translated to the output header; ID,
+    /// alleles and untouched INFO values copy their raw bytes.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_shared_bcf(
+        &mut self,
+        rec: &BcfRecordRef<'_>,
+        dict: &BcfDict,
+        edit: &EditPlan<'_>,
+        in_chrom: i32,
+        pos0: i32,
+        rlen: i32,
+        qual: u32,
+        n_allele: usize,
+        n_info_in: usize,
+    ) -> Result<(), IoError> {
+        let contig = dict
+            .contig(in_chrom)
+            .ok_or_else(|| malformed("BCF contig index is not in the dictionary"))?;
+        let out_contig = self
+            .contig_index
+            .get(contig)
+            .copied()
+            .ok_or_else(|| Self::undeclared("contig", contig))?;
+        {
+            let s = &mut self.shared;
+            s.extend_from_slice(&out_contig.to_le_bytes());
+            s.extend_from_slice(&pos0.to_le_bytes());
+            s.extend_from_slice(&rlen.to_le_bytes());
+            s.extend_from_slice(&qual.to_le_bytes());
+            s.extend_from_slice(&[0; 8]); // n_allele|n_info, n_fmt|n_sample
+        }
+        let mut c = Cursor::new(&rec.shared[24..]);
+        // ID and alleles are format-neutral typed strings: raw copy.
+        let id = c.typed_string()?;
+        encode_typed_string(&mut self.shared, id);
+        for _ in 0..n_allele {
+            let allele = c.typed_string()?;
+            encode_typed_string(&mut self.shared, allele);
+        }
+        // FILTER: translate the indices.
+        let (f_ty, f_count) = c.typed()?;
+        let mut ints = std::mem::take(&mut self.ints);
+        ints.clear();
+        for _ in 0..f_count {
+            let key = c.int_value(f_ty)?;
+            let name = dict
+                .tag(u32::try_from(key).map_err(|_| malformed("BCF FILTER key is negative"))?)
+                .ok_or_else(|| malformed("BCF FILTER index is not in the dictionary"))?;
+            let idx = self
+                .tags
+                .get(name)
+                .copied()
+                .ok_or_else(|| Self::undeclared("FILTER", name))?;
+            ints.push(i64::from(idx));
+        }
+        encode_int_vector(&mut self.shared, &ints);
+        self.ints = ints;
+        // INFO: the edit walk of encode_shared, with raw value bytes.
+        let mut n_info = 0_u32;
+        let mut seen = SeenMarks::new(edit.info_set.len());
+        for _ in 0..n_info_in {
+            let key = c.typed_int()?;
+            let name = dict
+                .tag(u32::try_from(key).map_err(|_| malformed("BCF INFO key is negative"))?)
+                .ok_or_else(|| malformed("BCF INFO index is not in the dictionary"))?;
+            let (ty, count) = c.typed()?;
+            let payload = c.take(type_width(ty) * count)?;
+            if edit.info_remove.contains(&name) {
+                continue;
+            }
+            let idx = self
+                .tags
+                .get(name)
+                .copied()
+                .ok_or_else(|| Self::undeclared("INFO", name))?;
+            encode_typed_int(&mut self.shared, i64::from(idx));
+            if let Some(i) = edit.info_set.iter().position(|(t, _)| *t == name) {
+                seen.mark(i);
+                let declared = self
+                    .info_types
+                    .get(name)
+                    .copied()
+                    .unwrap_or(InfoType::String);
+                encode_info_typed(&mut self.shared, declared, &edit.info_set[i].1);
+            } else {
+                encode_size(&mut self.shared, count, ty);
+                self.shared.extend_from_slice(payload);
+            }
+            n_info += 1;
+        }
+        self.encode_info_appends(edit, &seen, &mut n_info)?;
+        let n_allele = u32::try_from(n_allele).unwrap_or(u32::MAX);
+        self.shared[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
+        Ok(())
+    }
+
+    /// The individual block of a BCF source record: unmodified FORMAT
+    /// columns copy their raw element bytes (dropped samples skip their
+    /// slice); the GT column is re-encoded (mask/drop) from the source
+    /// codes.
+    fn encode_indiv_bcf(
+        &mut self,
+        rec: &BcfRecordRef<'_>,
+        dict: &BcfDict,
+        edit: &EditPlan<'_>,
+        n_fmt: usize,
+        n_sample_in: usize,
+    ) -> Result<(), IoError> {
+        let indiv = rec.indiv;
+        let mut ci = Cursor::new(indiv);
+        self.bcf_fields.clear();
+        for _ in 0..n_fmt {
+            let key = ci.typed_int()?;
+            let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
+            let (ty, count) = ci.typed()?;
+            let start = indiv.len() - ci.remaining();
+            ci.take(type_width(ty) * count * n_sample_in)?;
+            self.bcf_fields.push((key, ty, count, start));
+        }
+        for f in 0..self.bcf_fields.len() {
+            let (key, ty, count, start) = self.bcf_fields[f];
+            let name = dict
+                .tag(key)
+                .ok_or_else(|| malformed("BCF FORMAT index is not in the dictionary"))?;
+            let out_idx = self
+                .tags
+                .get(name)
+                .copied()
+                .ok_or_else(|| Self::undeclared("FORMAT", name))?;
+            encode_typed_int(&mut self.indiv, i64::from(out_idx));
+            let width = type_width(ty);
+            let payload = &indiv[start..start + width * count * n_sample_in];
+            if name == b"GT" {
+                self.encode_gt_column_bcf(payload, ty, count, n_sample_in, edit)?;
+            } else {
+                encode_size(&mut self.indiv, count, ty);
+                if edit.keep_samples.is_none() {
+                    self.indiv.extend_from_slice(payload);
+                } else {
+                    let stride = width * count;
+                    for s in 0..n_sample_in {
+                        if kept(edit, s) {
+                            self.indiv
+                                .extend_from_slice(&payload[s * stride..(s + 1) * stride]);
+                        }
+                    }
+                }
+            }
+        }
+        let n_fmt = u32::try_from(n_fmt).unwrap_or(u32::MAX);
+        self.shared[20..24].copy_from_slice(
+            &(n_fmt << 24 | n_samples_out(edit, n_sample_in) as u32).to_le_bytes(),
+        );
+        Ok(())
+    }
+
+    /// The GT column of a BCF source record: codes copy through (the width
+    /// follows the largest allele, as the text path's does), masked samples
+    /// become two missing alleles, dropped samples are skipped.
+    fn encode_gt_column_bcf(
+        &mut self,
+        payload: &[u8],
+        ty: u8,
+        count: usize,
+        n_sample_in: usize,
+        edit: &EditPlan<'_>,
+    ) -> Result<(), IoError> {
+        let width = type_width(ty);
+        if width == 0 {
+            return Err(malformed("BCF GT field is not integer-typed"));
+        }
+        let (_, vector_end) = super::record::int_sentinels(ty);
+        let stride = width * count;
+        let mut max_ploidy = 0_usize;
+        let mut max_allele = 0_i64;
+        for s in 0..n_sample_in {
+            if !kept(edit, s) {
+                continue;
+            }
+            if masked(edit, s) {
+                max_ploidy = max_ploidy.max(2);
+                continue;
+            }
+            let sample = &payload[s * stride..(s + 1) * stride];
+            let mut ploidy = 0_usize;
+            for j in 0..count {
+                let v = int_element(ty, &sample[j * width..(j + 1) * width]);
+                if v == vector_end {
+                    break;
+                }
+                ploidy += 1;
+                if v > 0 {
+                    max_allele = max_allele.max((v >> 1) - 1);
+                }
+            }
+            max_ploidy = max_ploidy.max(ploidy);
+        }
+        let count_out = max_ploidy.max(1);
+        let (ty_out, width_out) = if max_allele <= 62 {
+            (value_type::INT8, 1_usize)
+        } else if max_allele <= 32766 {
+            (value_type::INT16, 2)
+        } else {
+            (value_type::INT32, 4)
+        };
+        encode_size(&mut self.indiv, count_out, ty_out);
+        let (_, vector_end_out) = super::record::int_sentinels(ty_out);
+        let vector_end_out = vector_end_out as i32;
+        for s in 0..n_sample_in {
+            if !kept(edit, s) {
+                continue;
+            }
+            if masked(edit, s) {
+                push_int(&mut self.indiv, 0, width_out);
+                push_int(&mut self.indiv, 0, width_out);
+                for _ in 2..count_out {
+                    push_int(&mut self.indiv, vector_end_out, width_out);
+                }
+                continue;
+            }
+            let sample = &payload[s * stride..(s + 1) * stride];
+            let mut written = 0_usize;
+            for j in 0..count {
+                let v = int_element(ty, &sample[j * width..(j + 1) * width]);
+                if v == vector_end {
+                    break;
+                }
+                push_int(
+                    &mut self.indiv,
+                    i32::try_from(v).unwrap_or(vector_end_out),
+                    width_out,
+                );
+                written += 1;
+            }
+            while written < count_out {
+                push_int(&mut self.indiv, vector_end_out, width_out);
+                written += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The output sample count under `edit`.
+fn n_samples_out(edit: &EditPlan<'_>, n_in: usize) -> usize {
+    edit.keep_samples.map_or(n_in, |k| k.n_selected() as usize)
+}
+
+/// Whether sample `s` survives the sample pruning.
+fn kept(edit: &EditPlan<'_>, s: usize) -> bool {
+    edit.keep_samples
+        .is_none_or(|k| k.contains(SampleId(s as u32)))
+}
+
+/// Whether a surviving sample's GT becomes `./.`.
+fn masked(edit: &EditPlan<'_>, s: usize) -> bool {
+    edit.mask_gt.is_some_and(|m| m.get(s))
+}
+
+/// The `info_set` replacement marks: on the stack for the common handful of
+/// tags, on the heap beyond eight (the `edit_info` pattern).
+enum SeenMarks {
+    Stack([bool; 8]),
+    Heap(Vec<bool>),
+}
+
+impl SeenMarks {
+    fn new(n: usize) -> Self {
+        if n <= 8 {
+            Self::Stack([false; 8])
+        } else {
+            Self::Heap(vec![false; n])
+        }
+    }
+
+    fn mark(&mut self, i: usize) {
+        match self {
+            Self::Stack(marks) => marks[i] = true,
+            Self::Heap(marks) => marks[i] = true,
+        }
+    }
+
+    fn get(&self, i: usize) -> bool {
+        match self {
+            Self::Stack(marks) => marks[i],
+            Self::Heap(marks) => marks[i],
+        }
+    }
+}
+
+/// Marker for a sample column shorter than the FORMAT key list.
+const ABSENT: (u32, u32) = (u32::MAX, u32::MAX);
+
+/// One recomputed INFO value, encoded per the tag's declared type. The
+/// outcomes mirror the text round-trip exactly: an integer value on a Float
+/// tag widens, a float on an Integer tag becomes the missing sentinel (the
+/// text "0.25" never parsed as an integer), and a Float keeps its original
+/// f32 bits — `g6(parse(g6(v))) == g6(v)`, so the read-back text is what the
+/// `-Oz` path prints.
+fn encode_info_typed(s: &mut Vec<u8>, declared: InfoType, value: &InfoValueOut) {
+    match (declared, value) {
+        (InfoType::Flag, _) => encode_size(s, 0, value_type::NULL),
+        (InfoType::Integer, InfoValueOut::Int(v)) => encode_int_vector(s, &[*v]),
+        (InfoType::Integer, InfoValueOut::Float(_)) => {
+            encode_size(s, 1, value_type::INT8);
+            s.push(i8::MIN as u8);
+        }
+        (InfoType::Float, InfoValueOut::Int(v)) => {
+            encode_size(s, 1, value_type::FLOAT);
+            s.extend_from_slice(&(*v as f32).to_le_bytes());
+        }
+        (InfoType::Float, InfoValueOut::Float(v)) => {
+            encode_size(s, 1, value_type::FLOAT);
+            s.extend_from_slice(&v.to_le_bytes());
+        }
+        (InfoType::String, value) => {
+            let mut text = Vec::new();
+            render_info_value(value, &mut text);
+            encode_typed_string(s, &text);
         }
     }
 }
@@ -624,7 +1136,7 @@ fn parse_float_vector(value: &[u8], out: &mut Vec<f32>) {
 fn gt_shape(sub: &[u8]) -> (usize, i64) {
     let mut ploidy = 0_usize;
     let mut max_allele = 0_i64;
-    for allele in sub.split(|&b| b == b'/' || b == b'|') {
+    for allele in strip_gt_prefix(sub).split(|&b| b == b'/' || b == b'|') {
         ploidy += 1;
         if allele != b"."
             && !allele.is_empty()
@@ -636,49 +1148,71 @@ fn gt_shape(sub: &[u8]) -> (usize, i64) {
     (ploidy, max_allele)
 }
 
-/// One text genotype's BCF codes (`(allele+1)<<1 | phased`), following
-/// htslib's parser: allele `i > 0` carries the bit of the separator before
-/// it, and allele 0 is phased when a haploid or when every later allele is
-/// (htslib's VCF 4.4 "prefixed phasing" normalisation, `vcf.c`).
-fn gt_codes(sub: &[u8]) -> Vec<i32> {
-    let mut alleles: Vec<&[u8]> = Vec::with_capacity(2);
-    let mut phased_seps: Vec<bool> = Vec::with_capacity(2);
-    let mut rest = sub;
+/// Drops a VCF 4.4 phasing prefix (htslib consumes it only for ≥ 4.4
+/// headers; accepted unconditionally here, as in the scanner's decoder).
+fn strip_gt_prefix(sub: &[u8]) -> &[u8] {
+    match sub.first() {
+        Some(b'|' | b'/') => &sub[1..],
+        _ => sub,
+    }
+}
+
+/// One text genotype's BCF codes in `out` (`(allele+1)<<1 | phased`),
+/// exactly htslib's parser (vcf.c:3496-3558): allele `i > 0` carries the bit
+/// of the separator before it; allele 0's bit is the explicit prefix when
+/// present, else inferred (a haploid is phased, else phased iff every later
+/// allele is); a missing allele stores the bare phasing bit.
+fn gt_codes_into(sub: &[u8], out: &mut Vec<i32>) {
+    out.clear();
+    let (prefix, mut rest) = match sub.first() {
+        Some(b'|') => (Some(true), &sub[1..]),
+        Some(b'/') => (Some(false), &sub[1..]),
+        _ => (None, sub),
+    };
+    let mut ploidy = 0_usize;
+    let mut anyunphased = false;
+    let mut bit = prefix.unwrap_or(false);
     loop {
         match rest.iter().position(|&b| b == b'/' || b == b'|') {
             Some(i) => {
-                alleles.push(&rest[..i]);
-                phased_seps.push(rest[i] == b'|');
+                push_gt_code(out, &rest[..i], bit);
+                ploidy += 1;
+                bit = rest[i] == b'|';
+                anyunphased |= !bit;
                 rest = &rest[i + 1..];
             }
             None => {
-                alleles.push(rest);
+                push_gt_code(out, rest, bit);
+                ploidy += 1;
                 break;
             }
         }
     }
-    let ploidy = alleles.len();
-    let all_phased = phased_seps.iter().all(|&s| s);
-    let mut codes = Vec::with_capacity(ploidy);
-    for (i, allele) in alleles.iter().enumerate() {
-        let phased = if i == 0 {
-            ploidy == 1 || all_phased
+    if prefix.is_none() {
+        // No explicit phasing for allele 0: infer it the v44 way (a missing
+        // haploid allele — code 0 — stays unphased, htslib's `unknown1`).
+        let set = if ploidy == 1 {
+            out.first().is_some_and(|&c| c != 0)
         } else {
-            phased_seps[i - 1]
+            !anyunphased
         };
-        let code = match parse_i64(allele) {
-            // An allele index beyond i32 cannot be represented in any BCF GT
-            // encoding; treat it as missing rather than truncating.
-            Some(a) if (0..=i64::from(i32::MAX >> 1)).contains(&a) => {
-                (((a + 1) << 1) as i32) | i32::from(phased)
-            }
-            // htslib stores a missing allele as the bare `bcf_gt_missing`
-            // sentinel 0 (it cannot carry a phasing bit).
-            _ => 0,
-        };
-        codes.push(code);
+        if set && let Some(first) = out.first_mut() {
+            *first |= 1;
+        }
     }
-    codes
+}
+
+/// One allele token's code: the index plus the phasing bit, or the bare bit
+/// for a missing allele (htslib stores `.` as `is_phased`, vcf.c:3519).
+fn push_gt_code(out: &mut Vec<i32>, allele: &[u8], phased: bool) {
+    let bit = i32::from(phased);
+    let code = match parse_i64(allele) {
+        // An allele index beyond i32 cannot be represented in any BCF GT
+        // encoding; treat it as missing rather than truncating.
+        Some(a) if (0..=i64::from(i32::MAX >> 1)).contains(&a) => (((a + 1) << 1) as i32) | bit,
+        _ => bit,
+    };
+    out.push(code);
 }
 
 fn bad(reason: &'static str) -> IoError {
@@ -711,4 +1245,181 @@ fn parse_i64(text: &[u8]) -> Option<i64> {
         value = value.checked_mul(10)?.checked_add(i64::from(b - b'0'))?;
     }
     Some(if neg { -value } else { value })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bcf::{BcfEncoder, bcf_header_text, record_ref};
+    use crate::vcf::line_edit::{InfoValueOut, edit_vcf_line};
+    use reed_core::Bitset;
+    use reed_core::sample::SampleMask;
+
+    const HEADER: &[u8] = b"##fileformat=VCFv4.2\n\
+        ##FILTER=<ID=PASS,Description=\"All\">\n\
+        ##contig=<ID=Chr01,length=1000>\n\
+        ##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">\n\
+        ##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">\n\
+        ##INFO=<ID=NS,Number=1,Type=Integer,Description=\"ns\">\n\
+        ##INFO=<ID=MAF,Number=1,Type=Float,Description=\"maf\">\n\
+        ##INFO=<ID=AF,Number=A,Type=Float,Description=\"af\">\n\
+        ##INFO=<ID=QD,Number=1,Type=Float,Description=\"qd\">\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+        ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"dp\">\n\
+        ##FORMAT=<ID=GP,Number=3,Type=Float,Description=\"gp\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\ts2\ts3\ts4\n";
+
+    const LINE: &[u8] = b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9;AF=0.5;QD=4.5\tGT:DP:GP\t0/1:15:0.5,0.25,0.25\t1|1:12:0.25,0.5,0.25\t./.:0:.,.,.\t0/0:8:0.25,0.25,0.5\n";
+
+    fn header() -> vcf::Header {
+        std::str::from_utf8(HEADER).unwrap().parse().unwrap()
+    }
+
+    /// The reference path: edit the text, then noodles encodes the result.
+    fn reference_encode(
+        line: &[u8],
+        plan: &EditPlan<'_>,
+        gt_idx: Option<u8>,
+        n_out: usize,
+    ) -> Vec<u8> {
+        let lr = LineRef::parse(line).expect("invariant: line");
+        let mut edited = Vec::new();
+        edit_vcf_line(&lr, plan, gt_idx, &mut edited).expect("invariant: edit");
+        let header_text = std::str::from_utf8(HEADER).unwrap();
+        let out_text = match plan.keep_samples {
+            None => header_text.to_string(),
+            Some(mask) => {
+                let mut names = header_text.lines().last().unwrap().split('\t');
+                let mut kept: Vec<&str> = (0..9).map(|_| names.next().unwrap()).collect();
+                for (i, name) in names.enumerate() {
+                    if mask.contains(SampleId(i as u32)) {
+                        kept.push(name);
+                    }
+                }
+                let mut h: Vec<&str> = header_text.lines().collect();
+                let last = kept.join("\t");
+                let chrom_line = h.len() - 1;
+                h[chrom_line] = &last;
+                h.join("\n") + "\n"
+            }
+        };
+        let out_header: vcf::Header = out_text.parse().expect("invariant: header");
+        assert_eq!(out_header.sample_names().len(), n_out);
+        let mut enc = BcfEncoder::new().expect("invariant: noodles");
+        enc.write_header(&out_header).expect("invariant: header");
+        let mut out = Vec::new();
+        enc.encode_record(&out_header, &edited, &mut out)
+            .expect("invariant: noodles encode");
+        out
+    }
+
+    fn mask_of(n: usize, keeps: &[usize]) -> SampleMask {
+        SampleMask::from_ids(n, keeps.iter().map(|&i| SampleId(i as u32))).unwrap()
+    }
+
+    #[test]
+    fn encode_text_applies_the_edit_like_the_text_path() {
+        let mut bits = Bitset::new(4);
+        bits.set(1, true);
+        let keep = mask_of(4, &[0, 2, 3]);
+        let plan = EditPlan {
+            keep_samples: Some(&keep),
+            mask_gt: Some(&bits),
+            info_remove: &[b"AF"],
+            info_set: &[
+                (b"AC".as_slice(), InfoValueOut::Int(3)),
+                (b"NS".as_slice(), InfoValueOut::Int(3)),
+                (b"MAF".as_slice(), InfoValueOut::Float(0.25)),
+            ],
+        };
+        let lr = LineRef::parse(LINE).unwrap();
+        let site = SiteView::parse(&lr).unwrap();
+        // The encoder expects the *output* sample count: build it from the
+        // pruned header (the production path does the same).
+        let pruned: vcf::Header = std::str::from_utf8(HEADER)
+            .unwrap()
+            .replace("\ts4\n", "\n")
+            .parse()
+            .expect("invariant: pruned header");
+        let mut enc = NativeEncoder::new(&pruned).unwrap();
+        let mut got = Vec::new();
+        enc.encode_text(&lr, &site, 4, &plan, &mut got)
+            .expect("invariant: encode");
+        let want = reference_encode(LINE, &plan, Some(0), 3);
+        assert_eq!(got, want, "encode_text vs edit+noodles");
+    }
+
+    #[test]
+    fn encode_bcf_matches_the_text_reference() {
+        let pruned: vcf::Header = std::str::from_utf8(HEADER)
+            .unwrap()
+            .replace("\ts4\n", "\n")
+            .parse()
+            .expect("invariant: pruned header");
+        let header = header();
+        let dict_text = bcf_header_text(&header).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        // The framed source record (verbatim encode of LINE).
+        let mut framed = Vec::new();
+        {
+            let mut enc = NativeEncoder::new(&header).unwrap();
+            let lr = LineRef::parse(LINE).unwrap();
+            let site = SiteView::parse(&lr).unwrap();
+            enc.encode_text(&lr, &site, 4, &EditPlan::default(), &mut framed)
+                .unwrap();
+        }
+        let mut bits = Bitset::new(4);
+        bits.set(1, true);
+        let keep = mask_of(4, &[0, 2, 3]);
+        let plan = EditPlan {
+            keep_samples: Some(&keep),
+            mask_gt: Some(&bits),
+            info_remove: &[b"AF"],
+            info_set: &[
+                (b"AC".as_slice(), InfoValueOut::Int(3)),
+                (b"NS".as_slice(), InfoValueOut::Int(3)),
+                (b"MAF".as_slice(), InfoValueOut::Float(0.25)),
+            ],
+        };
+        let rec = record_ref(&framed).expect("invariant: framed");
+        let mut enc = NativeEncoder::new(&pruned).unwrap();
+        let mut got = Vec::new();
+        enc.encode_bcf(&rec, &dict, &plan, &mut got)
+            .expect("invariant: encode_bcf");
+        let want = reference_encode(LINE, &plan, Some(0), 3);
+        assert_eq!(
+            got, want,
+            "encode_bcf vs edit+noodles\n got: {got:02x?}\nwant: {want:02x?}"
+        );
+    }
+
+    #[test]
+    fn gt_codes_follow_the_htslib_parser() {
+        let cases: &[(&[u8], &[i32])] = &[
+            (b"0/1", &[2, 4]),
+            (b"0|1", &[3, 5]),
+            (b"|0/1", &[3, 4]), // 4.4 prefix: allele 0 explicitly phased
+            (b"/0|1", &[2, 5]), // explicit unphased first allele
+            (b"1", &[5]),       // haploid: implicitly phased
+            (b".", &[0]),       // missing haploid stays unphased
+            (b"|.", &[1]),      // prefixed missing: the bare phasing bit
+            (b"0|.", &[3, 1]),  // all phased: allele 0 inferred; missing carries the bit
+            (b"0/.", &[2, 0]),
+            (b"./.", &[0, 0]),
+            (b".|.", &[1, 1]), // all phased -> first allele inferred phased
+        ];
+        let mut codes = Vec::new();
+        for (text, want) in cases {
+            gt_codes_into(text, &mut codes);
+            assert_eq!(codes, *want, "GT {}", String::from_utf8_lossy(text));
+        }
+    }
+
+    #[test]
+    fn gt_shape_counts_alleles_after_the_prefix() {
+        assert_eq!(gt_shape(b"|0/1"), (2, 1));
+        assert_eq!(gt_shape(b"0/1"), (2, 1));
+        assert_eq!(gt_shape(b"|1"), (1, 1));
+        assert_eq!(gt_shape(b"."), (1, 0));
+    }
 }

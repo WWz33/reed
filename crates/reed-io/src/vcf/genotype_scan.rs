@@ -311,10 +311,18 @@ fn decode_gt<S: LocusSource>(
             true,
         ));
     }
-    // Slow path: split on the separators.
+    // Slow path: split on the separators. A leading `|`/`/` is the VCF 4.4
+    // prefixed phasing of the first allele (htslib only honors it for ≥ 4.4
+    // headers; accepted unconditionally here — a pre-4.4 file carrying it is
+    // invalid input anyway).
+    let (prefix_phased, gt) = match gt.first() {
+        Some(b'|') => (true, &gt[1..]),
+        Some(b'/') => (false, &gt[1..]),
+        _ => (false, gt),
+    };
     let mut slots = [None::<u16>; 2];
     let mut n_alleles = 0_usize;
-    let mut phased = false;
+    let mut phased = prefix_phased;
     let mut from = 0_usize;
     while from <= gt.len() {
         let end = memchr::memchr2(b'/', b'|', &gt[from..]).map_or(gt.len(), |rel| from + rel);
@@ -443,6 +451,28 @@ fn reason_str(err: &reed_core::CoreError) -> &'static str {
 mod tests {
     use super::*;
     use reed_core::genotype::{MultiallelicPolicy, PloidyPolicy};
+
+    /// VCF 4.4 prefixed phasing parses like the equivalent unprefixed form
+    /// (the bit of the first allele joins the genotype's phased flag).
+    #[test]
+    fn decode_gt_accepts_the_phasing_prefix() {
+        let locus = ("Chr01".as_bytes(), 1_u64);
+        let policies = permissive();
+        let decode = |gt: &[u8]| {
+            let mut counters = PolicyCounters::default();
+            let mut token = [None; 2];
+            decode_gt_text(gt, &locus, &policies, &mut counters, &mut token)
+        };
+        assert_eq!(decode(b"|0/1").unwrap(), decode(b"0|1").unwrap());
+        assert_eq!(decode(b"/0|1").unwrap(), decode(b"0|1").unwrap());
+        // The prefix is the first allele's explicit phasing bit.
+        let prefixed = decode(b"|1").unwrap();
+        assert!(prefixed.phased() && prefixed.is_haploid());
+        assert_eq!(prefixed.slot_state(0), reed_core::genotype::STATE_ALT);
+        let prefixed_missing = decode(b"|.").unwrap();
+        assert!(prefixed_missing.is_fully_missing() && prefixed_missing.is_haploid());
+        assert!(decode(b"|").is_err(), "a bare prefix has no allele");
+    }
 
     fn line(text: &[u8]) -> LineRef<'_> {
         LineRef::parse(text).expect("invariant: test line has 10 columns")

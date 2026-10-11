@@ -12,6 +12,9 @@ pub struct BcfDict {
     strings: Vec<Option<Vec<u8>>>,
     /// Contig names in `##contig` order.
     contigs: Vec<Vec<u8>>,
+    /// The header declares VCF ≥ 4.4 (`##fileformat`): GT rendering applies
+    /// the prefixed-phasing rules (A6-14, htslib `bcf_format_gt_v2`).
+    vcf44: bool,
 }
 
 impl BcfDict {
@@ -24,6 +27,10 @@ impl BcfDict {
         let mut dict = Self::default();
         let mut next = 0_usize;
         for line in text.split(|&b| b == b'\n') {
+            if let Some(version) = line.strip_prefix(b"##fileformat=VCFv") {
+                dict.vcf44 = parse_version(version).is_some_and(|v| v >= (4, 4));
+                continue;
+            }
             if let Some(rest) = line.strip_prefix(b"##contig=<") {
                 let name = field(rest, b"ID");
                 if let Some(name) = name {
@@ -86,6 +93,12 @@ impl BcfDict {
         self.contigs.len()
     }
 
+    /// Whether the header declares VCF ≥ 4.4 (prefixed GT phasing, A6-14).
+    #[must_use]
+    pub const fn vcf44(&self) -> bool {
+        self.vcf44
+    }
+
     /// The dictionary index of `tag`, when present. The fast path resolves
     /// `GT` once per run and then compares integers (doc_v3 02-bcf.md §2.1).
     #[must_use]
@@ -95,6 +108,13 @@ impl BcfDict {
             .position(|entry| entry.as_deref() == Some(tag))
             .and_then(|i| u32::try_from(i).ok())
     }
+}
+
+/// The `(major, minor)` of a `##fileformat=VCFvX.Y` payload.
+fn parse_version(text: &[u8]) -> Option<(u32, u32)> {
+    let text = std::str::from_utf8(text).ok()?.trim();
+    let (major, minor) = text.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
 /// The `KEY=value` inside a `##TAG=<...>` payload (value up to `,` or `>`).

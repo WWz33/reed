@@ -205,7 +205,40 @@
 | A6-18 落点 | "预编译为闭包/字节码"实现为解析期 op 枚举（热路径不再匹配算符串）；未做闭包编译（YAGNI） |
 | 计时协议注 | `run_reed.sh` 的 `THREADS` 默认 8（config）；与 Y2 基线可比的计时 = 直接调 reed（默认 56 线程），8 线程跑出 wall 66 s / 6× 并行属协议差异，不是回退。正文 md5 与线程数无关（3/3 一致） |
 
-## 未完成 / 偏差
+## Y4：`-Ob`/BCF 记录模型（2026-10-11）
+
+### Y4 已落地项
+
+| 项 | 内容 | commit | 验证 |
+|---|---|---|---|
+| A6-9 文本→BCF 编辑内联（03 §8 的记录模型落地形态） | `NativeEncoder::encode_text(line, site, n_samples_in, edit, out)`：INFO 编辑与 GT 掩码/落样在**编码的同一次扫描**里应用——`EditPlan` 的 `info_remove`/`info_set`/`keep_samples`/`mask_gt` 语义逐条对齐 `edit_vcf_line`（stale 丢弃、命中 tag 原位替换、其余按 `info_set` 顺序追加、被掩样本 `./.`、落样跳过）；被替换值走类型化编码（`encode_info_typed`：Integer→`bcf_enc_vint` 宽度、Float 直写原 f32 位、String 走 `render_info_value`），不再"渲染→重解析"。`single_pass.rs` 的 `emit_survivor` 拆成 `EmitSource::{Text, Bcf}` 两路：native `-Ob` 直接 `encode_text`/`encode_bcf`，文本输出与 noodles oracle 仍走 `edit_vcf_line` | 本工作树（待提交） | `encode_text_applies_the_edit_like_the_text_path`（单测：与"edit+noodles"逐字节相等）；`native_and_noodles_encoders_agree`（默认 edit 下 B2/B4 逐字节相等，oracle 门保留） |
+| A6-9 BCF→BCF 记录模型 | `NativeEncoder::encode_bcf(rec, dict, edit, out)`：字典下标经输入 `BcfDict` 翻译到输出头（contig/FILTER/INFO/FORMAT key）；未修改的 FORMAT 列**原字节拷贝**（落样按 stride 跳片），只重写 INFO 与 GT 列（GT 从源码直拷，掩码样本写两个 missing、落样跳过，宽度按最大等位重选）；ID/等位原字节拷贝。BCF→任意输出（`-Ob` 与 `-Oz`）都走它：`-Oz` 时不再 `render_record` 整行文本 | 本工作树 | `encode_bcf_matches_the_text_reference`（单测：与"edit+noodles"逐字节相等）；子集 BCF 输入 `-Oz` 正文 md5 == VCF 输入（`fef4cb07…`） |
+| A6-14 相位与 `-0.0` | ① `fmt_gt` 增 `vcf44` 形参：头声明 ≥ 4.4 时按 htslib `bcf_format_gt_v2`（`vcf.c:6495-6517`）渲染首等位的前缀 `|`/`/`（仅在推断会错时写），`BcfDict` 解析 `##fileformat` 得到该标志；② `decode_gt` 接受 `|`/`/` 前缀（首等位显式相位）；③ `format_g6_into` 保留 `-0`（htslib `kputd` 语义） | 本工作树 | `fmt_gt_prefixed_phasing_matrix`（11 例码→文本矩阵）；`decode_gt_accepts_the_phasing_prefix`；`g6_matches_htslib_gold_rendings` 增 `(-0.0, "-0")`；`vcf44_phasing_and_negative_zero_survive_the_round_trip`（e2e 夹具，`-Oz` 与 `-Ob` 读回均 == 输入正文）；`gold/fixtures/vcf44_phasing.vcf` 四路对拍 bcftools 逐字节相同（见下） |
+
+### Y4 门（2026-10-11 实测，除注明外 56 线程）
+
+| 门 | 结果 |
+|---|---|
+| gold 正文 md5（`run_reed.sh`，全量 `-Oz`） | **`7aedc59ac798729a2674e6e7ef19adfc`**（与 v3–v6 逐字符相同） |
+| `check_parity` | **PASS**：1,768,759 / 1,768,759 位点，Jaccard 1.000000，348 样本 MATCH，基因型差 mean=0 max=0 |
+| 子集数字门 `--min-dp 5 --min-gq 20 --geno 0.1 / 0.2` | **263,420 / 381,672**（正文 md5 `fef4cb07…` / `371d3a0d…`，== Y3 记录） |
+| 报告 md5（8 文件，全量） | afreq/hardy/het/smiss/vmiss/idepth/ldepth.mean/stats 与 Y0–Y3 记录逐字符相同 |
+| A6-14 夹具四路对拍（`gold/fixtures/vcf44_phasing.vcf`，8 样本，含 `|0/1`、`/0|1`、`0|.`、`|.`、`-0`） | VCF 入 `-Oz`、VCF 入 `-Ob` 读回、BCF 入 `-Oz`、BCF 入 `-Ob` 读回——四者与 `bcftools view -H` **逐字节相同**；pre-Y4 二进制在 BCF 入路径丢前缀（`|0/1`→`0/1`）、`-Ob` 直接报错（`GT allele index is empty or too long`），留档对照 |
+| `-Ob` 全量计时（干净段 A/B） | **VCF 入：post 8.02 s / 417.7–418.2 CPU-s vs pre 468.4 CPU-s（−50.7）**；**BCF 入：post 5.34–5.57 s / 273.2 CPU-s vs pre 519.2–521.8 CPU-s（−246）**；`-Oz` gold post 379.0 CPU-s（Y3 记录 395.5，本项顺带消掉 `-Ob` 外的重编码但 `-Oz` 不走编码器，差异属批次） |
+| `-Ob` 读回 ≡ `-Oz` 正文 | 子集（VCF 入与 BCF 入）与全量均逐字节相同（bcftools 读回 md5 == `7aedc59a…`） |
+| noodles oracle | `native_and_noodles_encoders_agree` 通过（B2/B4 逐字节相等）；`REED_BCF_ENCODER=noodles` 分支保留 |
+| 四件套 | 测试 **388** 通过 / 0 失败（+7：4 编码器/GT 单测、2 渲染单测、1 e2e 夹具）；fmt、clippy（CI 命令）、rustdoc 退出 0；守卫 29/29 ok |
+
+### Y4 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| **全量 `-Ob` ≤ 470 s 门** | 按 **user** 判定达成：VCF 入 417.7–418.2（门 ≤ 470 ✓，−50.7 vs pre 468.4）；BCF 入 273.2（−246）。wall 在批次负载 1.5–16 下呈双峰（同 CPU 下 5.3 s 与 23 s 并存），pre 二进制在同一环境同样双峰（9.9/30.8/27.7）——属环境，不是回退；取安静段最好值 post 5.34 vs pre 9.89 |
+| `-Oz` gold 379.0 CPU-s | 与 Y3 记录的 395.5 相差 16.5：`-Oz` 路径不经编码器，属批次环境差异（本次批次 CPU 普遍偏低，见 BCF 入 519→273 的同时 pre 同批次 515–522），不作为 Y4 收益登记 |
+| `-Ob` VCF 入的 50.7 CPU-s | 04 §4.2 估 +61，实测 −50.7，落在估计区间内（差值来自 pre 的 `-Ob` 路径 = edit + reparse + encode 三段，模型版把后两段并为一次扫描） |
+| `encode_bcf` 的 GT 相位位 | BCF 源码的相位位原样拷贝（不重算）：掩码样本写 `0,0`（两个 missing，htslib `./.` 语义），非掩码样本逐码拷贝。文本路径的 `gt_codes_into` 复刻 htslib 解析（含 4.4 前缀与缺失等位裸相位位），两路在夹具上字节一致 |
+
+
 
 | 项 | 状态 | 说明 |
 |---|---|---|
@@ -214,6 +247,7 @@
 | C-5、联合 SFS、`--bed-file`/`--sites-file`、前后端收尾三项 | 待做 | 并入 Y6 |
 | `is_sequential` / 顺序模式（F6-6） | 待裁决 | Y5 实现或改规范 |
 | `JointSfsAcc` 仍 `#[doc(hidden)]` | 有意 | 无 CLI 出口；Y6 接入联合 SFS 时去掉 |
+| 记录模型的范围 | 已知限制 | 落地为 `NativeEncoder` 的 `encode_text`/`encode_bcf` 两个入口（03 §8 的 `Record` 结构体形态未采用：两条源路径各自的扫描即模型，省掉中间表示与一次遍历；`RecordSource`/`RecordSink` trait 待有第三种格式时再抽）。`--set-gts .` 表达式路径经 `plan.mask` 全为 field 规则时仍走 `encode_text`；实测 `--set-gts . -e 'FMT/DP < 10'`（含 `-s` 子集与 `-I`）的 `-Ob` 读回 == `-Oz` 正文（夹具上 4 记录逐字节） |
 
 ## tag
 

@@ -270,7 +270,8 @@ pub fn format_g6(v: f64) -> String {
 pub fn format_g6_into(out: &mut Vec<u8>, v: f64) {
     use std::io::Write as _;
     if v == 0.0 {
-        out.push(b'0');
+        // htslib `kputd` keeps the sign of a negative zero (A6-14).
+        out.extend_from_slice(if v.is_sign_negative() { b"-0" } else { b"0" });
         return;
     }
     if v.is_nan() {
@@ -335,6 +336,7 @@ mod tests {
             (0.120_061_f32, "0.120061"),
             (0.05_f32, "0.05"),
             (0.0_f32, "0"),
+            (-0.0_f32, "-0"),
             (8.20818e-38_f32, "8.20818e-38"),
             (0.289_678_f32, "0.289678"),
             (0.5_f32, "0.5"),
