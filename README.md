@@ -2,11 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-reed computes population-genetics statistics on VCF/BCF files and applies
-hard filters with byte-faithful output. It is pure Rust, uses every core by
-default, and needs no system libraries: the BGZF and BCF codecs are compiled
-in, so the binary runs anywhere the toolchain does. It is also a Rust library
-(`reed`), so other tools can drive the same statistics without shelling out.
+**reed is a Popgen API library written in Rust.**
 
 ## Installation
 
@@ -178,18 +174,6 @@ separates usage errors from runtime failures. `StatsRequest::to_args()` and
 that builds requests programmatically can also log the equivalent command
 line. Only this facade carries a stability promise; the lower crates under
 `crates/` are internal.
-
-## Limitations
-
-- Multiallelic records are rejected. reed does not recompute per-allele
-  statistics when `-M` is raised past 2, so the default keeps them out.
-- LD pruning lives in `filter` and needs its second pass. `reed stats`
-  rejects `--indep-pairwise` and points at `reed filter`.
-- f-statistics standard errors use block jackknife over base pairs, while
-  scikit-allel uses variant counts. The estimates match; the errors are not
-  comparable to allel's.
-- Tajima's D divides by the variance at the window-average allele count, the
-  pixy convention, which differs from vcftools' fixed 2N.
 
 ## Citation
 
