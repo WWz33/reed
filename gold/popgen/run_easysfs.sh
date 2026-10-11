@@ -59,6 +59,20 @@ for fold in unfolded folded; do
         fi
         python3 "$GOLD_DIR/popgen/compare_sfs.py" "$got" "$ref" --label "$fold/$base" || fail=1
     done
+    # The pairwise joint spectra: easySFS writes `<A>-<B>.sfs` (no projection
+    # suffix) per pair; the values line is the comparison target (the header
+    # carries population labels reed omits, like the 1D writer).
+    for ref in "$easy"/dadi/*-*.sfs; do
+        base="$(basename "$ref")"
+        case "$base" in *-"$PROJ".sfs) continue ;; esac
+        got="$reed""_sfs/dadi/$base"
+        if [[ ! -f "$got" ]]; then
+            echo "missing reed joint output: $got" >&2
+            fail=1
+            continue
+        fi
+        python3 "$GOLD_DIR/popgen/compare_sfs.py" "$got" "$ref" --label "$fold/joint/$base" || fail=1
+    done
 done
 
 [[ "$fail" -eq 0 ]] || { echo "SFS parity: FAIL" >&2; exit 1; }

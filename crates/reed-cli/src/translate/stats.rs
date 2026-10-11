@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{Levels, StatsRequest, assign_groups, default_kinds, run_stats_opened};
+use reed::{Levels, Populations, StatsRequest, default_kinds, run_stats_opened};
 
 use crate::cli::StatsCli;
 use crate::units::input_path;
@@ -226,65 +226,14 @@ fn parse_pbs_triples(
 /// # Errors
 ///
 /// Translation (unknown levels/sizes) and driver failures.
-pub(crate) fn run_stats_cli(
-    args: StatsCli,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let StatsCli {
-        input,
-        pop,
-        pi,
-        dxy,
-        theta,
-        tajima_d,
-        fst,
-        fst_global,
-        f2,
-        f3,
-        f4,
-        dstat,
-        f4_ratio,
-        block_size,
-        ld_decay,
-        ld_pairs,
-        pbs,
-        pbs_normed,
-        sfs,
-        proj,
-        sfs_int,
-        freq,
-        hardy,
-        het,
-        missing,
-        depth,
-        summary,
-        variant_only,
-        bypass_invariant_check,
-        force_samples,
-        contig_lengths: contig_lengths_file,
-        size,
-        step,
-        levels,
-        skip_empty,
-        out,
-        threads,
-        tmp_dir,
-        memory,
-        verbosity,
-        regions_args,
-        sample_args,
-        site_args,
-        // The removed / unsupported sample-level flags never reach this
-        // point: their value parsers reject them at parse time.
-        mind: _,
-        max_missing_sample: _,
-    } = args;
-
+pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
     // 03-architecture.md §3.3: one verbosity contract for every subcommand.
-    verbosity.init_tracing();
+    args.verbosity.init_tracing();
     let started = std::time::Instant::now();
     // `-r/-R` (indexed) and `-t/-T` (streamed) share the filter's spellings
     // (04-cleanup §2.1).
-    let (regions, mut targets, targets_exclude) = parse_regions(&regions_args)?;
+    let (regions, mut targets, targets_exclude) =
+        parse_regions(&args.regions_args).map_err(reed::Error::usage)?;
     // Indexed ranges are coarse (whole blocks), so the same regions also act
     // as the record predicate — exactly how the filter's `-r` works.
     for region in &regions {
@@ -294,47 +243,36 @@ pub(crate) fn run_stats_cli(
     // Open once: stdin streams into the driver (03-performance.md O5). Every
     // mode reads once now — the report run accumulates the QC summary in the
     // same pass (doc_v4 O-1), so no spill is needed even on stdin.
-    let _ = tmp_dir;
-    let input_file = input_path(&input);
+    let _ = &args.tmp_dir;
+    let input_file = input_path(&args.input);
     let open_path: Option<PathBuf> = input_file.clone();
-    let mut opened = Some(
-        reed::open_regions(open_path.as_deref(), &regions)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?,
-    );
+    let mut opened = Some(reed::open_regions(open_path.as_deref(), &regions)?);
     let open_secs = started.elapsed().as_secs_f64();
     tracing::debug!(
         open_ms = open_secs * 1e3,
-        input = %input,
+        input = %args.input,
         "reed stats opened the input"
     );
     let facts = &opened.as_ref().expect("invariant: just opened").facts;
     let sample_names: Vec<String> = facts.sample_names.clone();
     // `-s/-S/--keep/--remove`: the same conflict rules as the filter.
-    let keep_samples = parse_sample_keep(&sample_args, &sample_names)?;
+    let keep_samples =
+        parse_sample_keep(&args.sample_args, &sample_names).map_err(reed::Error::usage)?;
     // The site/threshold flags go through the filter's own compiler, so the
     // two commands cannot drift (04-cleanup §2.1).
-    if !site_args.indep_pairwise.is_empty() {
-        return Err(
+    if !args.site_args.indep_pairwise.is_empty() {
+        return Err(reed::Error::usage(
             "reed stats does not support --indep-pairwise yet (the pruning needs a second \
              pass); run `reed filter --indep-pairwise W[kb] [S] R2` first and feed its \
-             output to reed stats"
-                .into(),
-        );
+             output to reed stats",
+        ));
     }
-    let site_spec = super::filter::site_spec(&site_args)?;
-    let filter = if site_spec_is_empty(&site_spec) {
-        None
-    } else {
-        // No biallelic gate here: the stats reporters decide per statistic
-        // how to treat multiallelic sites (doc_v3 05-roadmap R7); gating
-        // records would silently change the summary counts.
-        Some(std::sync::Arc::new(reed::plan::compile(
-            &site_spec,
-            &reed::header::tag_table(&facts.header),
-            "",
-            false,
-        )?))
-    };
+    let site_spec = super::filter::site_spec(&args.site_args).map_err(reed::Error::usage)?;
+    // No biallelic gate here: the stats reporters decide per statistic how
+    // to treat multiallelic sites (doc_v3 05-roadmap R7); gating records
+    // would silently change the summary counts. Compiling the typed spec
+    // against the header happens inside `run_stats_opened` (08 §6.2).
+    let site = (!site_spec_is_empty(&site_spec)).then_some(site_spec);
 
     let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
         .header
@@ -347,7 +285,7 @@ pub(crate) fn run_stats_cli(
                 .map(|len| (name.as_bytes().to_vec(), len))
         })
         .collect();
-    if let Some(path) = &contig_lengths_file {
+    if let Some(path) = &args.contig_lengths {
         for line in std::fs::read_to_string(Path::new(path))?.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -357,40 +295,46 @@ pub(crate) fn run_stats_cli(
             let (Some(name), Some(len)) = (cols.next(), cols.next()) else {
                 continue;
             };
-            let len: u64 = len
-                .parse()
-                .map_err(|_| format!("{path}: contig length for {name:?} is not a number"))?;
+            let len: u64 = len.parse().map_err(|_| {
+                reed::Error::usage(format!(
+                    "{path}: contig length for {name:?} is not a number"
+                ))
+            })?;
             contig_lengths.insert(name.as_bytes().to_vec(), len);
         }
     }
 
-    let threads = threads.unwrap_or_else(|| {
+    let threads = args.threads.unwrap_or_else(|| {
         std::thread::available_parallelism()
             .expect("invariant: parallelism")
             .get()
     });
     let budget = ThreadBudget {
         threads,
-        mem: memory.map_or_else(MemBudget::default_half_memory, |m| {
-            MemBudget::from_bytes(m.saturating_mul(1 << 20))
-        }),
+        mem: args
+            .memory
+            .map_or_else(MemBudget::default_half_memory, |m| {
+                MemBudget::from_bytes(m.saturating_mul(1 << 20))
+            }),
     };
 
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts. One pass
     // serves every requested family — the QC summary accumulates inside the
     // report job (O-1) — and `-t/-T` gate the records (F4-10).
-    if freq || hardy || het || missing || depth || summary {
-        let Some(prefix) = out.clone() else {
-            return Err("report mode writes files: pass -o PREFIX".into());
+    if args.freq || args.hardy || args.het || args.missing || args.depth || args.summary {
+        let Some(prefix) = args.out.clone() else {
+            return Err(reed::Error::usage(
+                "report mode writes files: pass -o PREFIX",
+            ));
         };
         let request = reed::reports::ReportRequest {
-            freq,
-            hardy,
-            het,
-            missing,
-            depth,
-            summary,
+            freq: args.freq,
+            hardy: args.hardy,
+            het: args.het,
+            missing: args.missing,
+            depth: args.depth,
+            summary: args.summary,
             targets: targets.clone(),
             targets_exclude: targets_exclude.clone(),
             prefix: PathBuf::from(&prefix),
@@ -405,11 +349,12 @@ pub(crate) fn run_stats_cli(
         if let Some(qc) = &outcome.qc {
             let mut path = std::ffi::OsString::from(&prefix);
             path.push(".stats");
+            let path = std::path::PathBuf::from(path);
             let text = reed::summary::render_bcftools_stats(qc);
-            std::fs::write(std::path::PathBuf::from(&path), &text)?;
-            files.push(std::path::PathBuf::from(path));
+            reed::summary::write_bcftools_stats(&path, &text)?;
+            files.push(path);
         }
-        if verbosity.shows_summary() {
+        if args.verbosity.shows_summary() {
             eprintln!(
                 "{} records in {:.1}s -> {}",
                 outcome.n_records,
@@ -421,7 +366,7 @@ pub(crate) fn run_stats_cli(
                     .join(", ")
             );
         }
-        if verbosity.shows_timing() {
+        if args.verbosity.shows_timing() {
             eprintln!("# reed stats timing (reports)");
             eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
             eprintln!("phase.reports_ms\t{:.3}", reports_secs * 1e3);
@@ -433,30 +378,16 @@ pub(crate) fn run_stats_cli(
 
     // Windowed statistics need the populations file; a bare `--sfs` (no
     // windowed statistic) treats every sample as one population.
-    let fstats_requested = !f2.is_empty()
-        || !f3.is_empty()
-        || !f4.is_empty()
-        || !dstat.is_empty()
-        || !f4_ratio.is_empty();
-    // LD is a property of the sample set, not of any group (F6-9 in
-    // docs/rounds/v6/01-review.md), so `--ld-decay`/`--ld-pairs` do not
-    // require a populations file.
-    let windowed =
-        pi || dxy || theta || tajima_d || fst.is_some() || !pbs.is_empty() || fstats_requested;
-    let (gt_groups, group_names) = match &pop {
-        Some(groups) => assign_groups(Path::new(groups), &sample_names, force_samples)?,
-        None if !windowed => {
-            // A bare `--sfs`, `--ld-decay` or `--ld-pairs` treats every
-            // sample as one population (only the window rows need groups).
-            (vec![Some(0); sample_names.len()], vec!["all".to_string()])
-        }
-        None => {
-            return Err(
-                "a windowed statistic needs --pop FILE (sample<TAB>population, no header)".into(),
-            );
-        }
+    // A bare `--sfs`, `--ld-decay` or `--ld-pairs` treats every sample as
+    // one population (only the window rows need groups).
+    let populations = match &args.pop {
+        Some(groups) => Populations::File(PathBuf::from(groups)),
+        None => Populations::All,
     };
-    if verbosity.shows_summary() {
+    // The names for kinds/fstats/sfs construction; the assignment against
+    // the header happens inside `run_stats_opened` (08 §6.2).
+    let group_names = populations.group_names()?;
+    if args.verbosity.shows_summary() {
         eprintln!(
             "{} samples, {} groups: {}",
             sample_names.len(),
@@ -465,159 +396,62 @@ pub(crate) fn run_stats_cli(
         );
     }
 
-    let pbs_triples = parse_pbs_triples(&pbs, &group_names)?;
+    // `--bed-file`: the windows are the BED intervals, so the Bp grid is
+    // replaced wholesale; `--sites-file` narrows the counted sites.
+    let grid = match &args.bed_file {
+        Some(path) => reed::WindowGrid::Regions(std::sync::Arc::new(
+            parse_bed(path).map_err(reed::Error::usage)?,
+        )),
+        None => reed::WindowGrid::Bp {
+            size: args.size,
+            step: if args.step == 0 { args.size } else { args.step },
+        },
+    };
+    if let Some(path) = &args.sites_file {
+        for (contig, pos1) in parse_sites(path).map_err(reed::Error::usage)? {
+            targets.push((contig, Some(pos1), Some(pos1)));
+        }
+    }
 
+    let windowed_route = args.pi
+        || args.dxy
+        || args.theta
+        || args.tajima_d
+        || args.fst.is_some()
+        || !args.pbs.is_empty()
+        || !(args.f2.is_empty()
+            && args.f3.is_empty()
+            && args.f4.is_empty()
+            && args.dstat.is_empty()
+            && args.f4_ratio.is_empty());
     // Window-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
-    // with the reference column layout (02-cli.md §5).
-    // LD is genome-wide (no window rows), but it rides the same job as the
-    // windowed statistics; a bare `--ld-decay`/`--ld-pairs` takes this path
-    // with no window kinds and no `--pop` (F6-9).
-    if windowed || sfs.is_some() || ld_decay.is_some() || ld_pairs {
-        let step = if step == 0 { size } else { step };
-        // A bare `--sfs` has no window denominators, so the all-sites check
-        // does not apply (05 §3.1 accepts variant-only input).
-        let ld_requested = ld_decay.is_some();
-        let invariant =
-            if variant_only || (sfs.is_some() && !windowed) || fstats_requested || ld_requested {
-                reed::InvariantMode::VariantOnly
-            } else if bypass_invariant_check {
-                eprintln!(
-                    "reed stats: warning: --bypass-invariant-check computes over present sites \
-                 only; π and dxy are overestimated"
-                );
-                reed::InvariantMode::Bypass
-            } else {
-                reed::InvariantMode::Require
-            };
-        let layout = reed::WindowLayoutOptions { invariant };
-        let fst_kind = match fst.as_deref() {
-            None => None,
-            Some("wc84") => Some(reed::FstKind::WeirCockerham84),
-            Some("hudson") => Some(reed::FstKind::Hudson),
-            Some(other) => {
-                return Err(
-                    format!("unknown --fst method {other:?} (expected wc84 or hudson)").into(),
-                );
-            }
-        };
-        let pbs_kind = if pbs_normed {
-            reed::PbsKind::PbsN1
-        } else {
-            reed::PbsKind::Yi2010
-        };
-        // `--fst-global` replaces the pairwise matrix with one r-population
-        // WC84 value (docs/rounds/v5/05 §3.2); only WC84 has that form.
-        if fst_global {
-            if fst_kind == Some(reed::FstKind::Hudson) {
-                return Err("hudson Fst has no r-population (global) form; use wc84".into());
-            }
-            if group_names.len() == 2 {
-                eprintln!(
-                    "reed stats: note: two populations: --fst-global equals the pairwise wc84 value"
-                );
-            }
-        }
-        let mut kinds = reed::window_kinds(
-            group_names.len(),
-            pi,
-            dxy,
-            theta,
-            tajima_d,
-            if fst_global { None } else { fst_kind },
-            None,
-        );
-        if fst_global {
-            kinds.push(reed::StatKind::FstGlobal);
-        }
-        for &(a, b, c) in &pbs_triples {
-            kinds.push(reed::StatKind::Pbs {
-                a,
-                b,
-                c,
-                kind: pbs_kind,
-            });
-        }
-        // `--sfs [folded] --proj N[,N…]`: a genome-wide spectrum per
-        // population (docs/rounds/v5/05-algorithms.md §3.1).
-        let sfs_request = match sfs.as_deref() {
-            None => None,
-            Some(mode) => {
-                let Some(raw) = proj.as_deref() else {
-                    return Err("--sfs needs --proj N (the projection size in chromosomes)".into());
-                };
-                let mut values = Vec::new();
-                for token in raw.split(',') {
-                    let token = token.trim();
-                    values.push(token.parse::<u32>().map_err(|_| {
-                        format!("invalid --proj value {token:?} (want an integer)")
-                    })?);
-                }
-                if values.len() == 1 {
-                    values = vec![values[0]; group_names.len()];
-                }
-                if values.len() != group_names.len() {
-                    return Err(format!(
-                        "--proj gives {} value(s) but the population file declares {}",
-                        values.len(),
-                        group_names.len()
-                    )
-                    .into());
-                }
-                Some(reed::SfsRequest {
-                    projections: values,
-                    folded: mode == "folded",
-                })
-            }
-        };
-        // Patterson f-statistics (docs/rounds/v5/05-algorithms.md §3.3):
-        // genome-wide, one row per test, block-jackknife SE.
-        let fstats_request =
-            build_fstats_request(&f2, &f3, &f4, &dstat, &f4_ratio, block_size, &group_names)?;
-        // LD: `--ld-decay` / `--indep-pairwise` (docs/rounds/v5/05 §3.4).
-        let ld_request = build_ld_request(ld_decay.as_deref(), ld_pairs)?;
-        // The SFS is genome-wide: with no windowed kind, skip the window
-        // grid entirely (genome level only) and give it a nominal size.
-        let sfs_only = kinds.is_empty() && fstats_request.is_none();
-        let _ = windowed;
-        let size = if size == 0 && sfs_only { 1000 } else { size };
-        let step = if step == 0 { size } else { step };
-        let levels = if sfs_only {
-            Levels {
-                window: false,
-                contig: false,
-                genome: true,
-            }
-        } else {
-            // Honor the user's --levels (the default stays window-only, so
-            // the window-layout files keep their historical shape).
-            Levels::parse(&levels)?
-        };
-        let request = StatsRequest {
-            kinds: kinds.clone(),
+    // with the reference column layout (02-cli.md §5). LD is genome-wide (no
+    // window rows), but it rides the same job as the windowed statistics; a
+    // bare `--ld-decay`/`--ld-pairs` takes this path with no window kinds and
+    // no `--pop` (F6-9).
+    if windowed_route || args.sfs.is_some() || args.ld_decay.is_some() || args.ld_pairs {
+        let ctx = WindowedContext {
             regions: regions.clone(),
-            targets: targets.clone(),
-            targets_exclude: targets_exclude.clone(),
-            keep_samples: keep_samples.clone(),
-            filter: filter.clone(),
-            sfs: sfs_request,
-            fstats: fstats_request,
-            ld: ld_request,
-            gt_groups,
-            window_size: size,
-            step,
-            levels,
-            skip_empty: false,
+            targets,
+            targets_exclude,
+            keep_samples,
+            site,
+            populations: populations.clone(),
+            force_samples: args.force_samples,
             contig_lengths,
-            layout: Some(layout),
+            grid,
         };
+        let (request, group_names, kinds, layout) = build_windowed_request(&args, ctx)?;
         let source = opened
             .take()
             .expect("invariant: the windowed mode reads once");
         let run_start = std::time::Instant::now();
         let report = run_stats_opened(source, request, &budget)?;
         let run_secs = run_start.elapsed().as_secs_f64();
-        let Some(prefix) = out else {
-            return Err("window-layout mode writes files: pass -o PREFIX".into());
+        let Some(prefix) = args.out.clone() else {
+            return Err(reed::Error::usage(
+                "window-layout mode writes files: pass -o PREFIX",
+            ));
         };
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
@@ -640,7 +474,7 @@ pub(crate) fn run_stats_cli(
                 Path::new(&prefix),
                 &group_names,
                 sfs_report,
-                sfs_int,
+                args.sfs_int,
             )?);
         }
         // A bare `--sfs` has no window rows to write.
@@ -655,7 +489,7 @@ pub(crate) fn run_stats_cli(
                 env!("CARGO_PKG_VERSION"),
             )?);
         }
-        if verbosity.shows_summary() {
+        if args.verbosity.shows_summary() {
             eprintln!(
                 "{} windows, {} records in {:.1}s -> {}",
                 report.n_windows,
@@ -668,7 +502,7 @@ pub(crate) fn run_stats_cli(
                     .join(", ")
             );
         }
-        if verbosity.shows_timing() {
+        if args.verbosity.shows_timing() {
             eprintln!("# reed stats timing (windowed)");
             eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
             eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
@@ -680,21 +514,22 @@ pub(crate) fn run_stats_cli(
         return Ok(());
     }
 
+    let kinds = default_kinds(group_names.len());
     let request = StatsRequest {
-        kinds: default_kinds(group_names.len()),
+        kinds: kinds.clone(),
+        site,
+        populations,
+        force_samples: args.force_samples,
         regions,
         targets,
         targets_exclude,
         keep_samples,
-        filter,
         sfs: None,
         fstats: None,
         ld: None,
-        gt_groups,
-        window_size: size,
-        step: if step == 0 { size } else { step },
-        levels: Levels::parse(&levels)?,
-        skip_empty,
+        grid,
+        levels: Levels::parse(&args.levels).map_err(|e| reed::Error::usage(e.to_string()))?,
+        skip_empty: args.skip_empty,
         contig_lengths,
         layout: None,
     };
@@ -704,7 +539,7 @@ pub(crate) fn run_stats_cli(
     let run_start = std::time::Instant::now();
     let report = run_stats_opened(source, request, &budget)?;
     let run_secs = run_start.elapsed().as_secs_f64();
-    if verbosity.shows_summary() {
+    if args.verbosity.shows_summary() {
         eprintln!(
             "{} windows, {} records, {} multiallelic skipped, {} chunks in {:.1}s",
             report.n_windows,
@@ -714,7 +549,7 @@ pub(crate) fn run_stats_cli(
             report.elapsed.as_secs_f64()
         );
     }
-    if verbosity.shows_timing() {
+    if args.verbosity.shows_timing() {
         eprintln!("# reed stats timing (windowed)");
         eprintln!("phase.open_ms\t{:.3}", open_secs * 1e3);
         eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
@@ -723,11 +558,217 @@ pub(crate) fn run_stats_cli(
         eprintln!("chunks\t{}", report.n_chunks);
         print_engine_metrics(&report.metrics);
     }
-    match out {
-        Some(path) => std::fs::write(path, report.tsv)?,
-        None => print!("{}", report.tsv),
+    let text = reed::windows::render_tsv(&report.windows, &kinds, false);
+    match &args.out {
+        Some(path) => std::fs::write(path, text)?,
+        None => print!("{text}"),
     }
     Ok(())
+}
+
+/// The shared, already-parsed pieces a windowed request needs (the caller
+/// resolved them from the region/sample/site flags before this point).
+pub(crate) struct WindowedContext {
+    pub regions: Vec<reed::chunk::region::Region>,
+    pub targets: Vec<reed::spec::region::RegionTriple>,
+    pub targets_exclude: Vec<reed::spec::region::RegionTriple>,
+    pub keep_samples: Option<Vec<bool>>,
+    pub site: Option<reed::spec::FilterSpec>,
+    pub populations: reed::Populations,
+    pub force_samples: bool,
+    pub contig_lengths: HashMap<Vec<u8>, u64>,
+    pub grid: reed::WindowGrid,
+}
+
+/// Builds the windowed statistics request from the parsed flags; the caller
+/// routed here because a windowed statistic, `--sfs`, or LD was requested.
+/// Returns the request, the population names (writers render group columns
+/// from these), the statistic kinds, and the layout options.
+///
+/// # Errors
+///
+/// Usage failures: a windowed statistic without `--pop`, an unknown `--fst`
+/// method, `--fst-global` with hudson, a bad `--proj`, or f-statistic names
+/// not present in the population file.
+pub(crate) fn build_windowed_request(
+    args: &StatsCli,
+    ctx: WindowedContext,
+) -> Result<
+    (
+        StatsRequest,
+        Vec<String>,
+        Vec<reed::StatKind>,
+        reed::WindowLayoutOptions,
+    ),
+    reed::Error,
+> {
+    let fstats_requested = !(args.f2.is_empty()
+        && args.f3.is_empty()
+        && args.f4.is_empty()
+        && args.dstat.is_empty()
+        && args.f4_ratio.is_empty());
+    let windowed = args.pi
+        || args.dxy
+        || args.theta
+        || args.tajima_d
+        || args.fst.is_some()
+        || !args.pbs.is_empty()
+        || fstats_requested;
+    if ctx.populations == reed::Populations::All && windowed {
+        return Err(reed::Error::usage(
+            "a windowed statistic needs --pop FILE (sample<TAB>population, no header)",
+        ));
+    }
+    let group_names = ctx.populations.group_names()?;
+    let pbs_triples = parse_pbs_triples(&args.pbs, &group_names).map_err(reed::Error::usage)?;
+    // A bare `--sfs` has no window denominators, so the all-sites check
+    // does not apply (05 §3.1 accepts variant-only input).
+    let ld_requested = args.ld_decay.is_some();
+    let invariant = if args.variant_only
+        || (args.sfs.is_some() && !windowed)
+        || fstats_requested
+        || ld_requested
+    {
+        reed::InvariantMode::VariantOnly
+    } else if args.bypass_invariant_check {
+        eprintln!(
+            "reed stats: warning: --bypass-invariant-check computes over present sites \
+                 only; π and dxy are overestimated"
+        );
+        reed::InvariantMode::Bypass
+    } else {
+        reed::InvariantMode::Require
+    };
+    let layout = reed::WindowLayoutOptions { invariant };
+    let fst_kind = match args.fst.as_deref() {
+        None => None,
+        Some("wc84") => Some(reed::FstKind::WeirCockerham84),
+        Some("hudson") => Some(reed::FstKind::Hudson),
+        Some(other) => {
+            return Err(reed::Error::usage(format!(
+                "unknown --fst method {other:?} (expected wc84 or hudson)"
+            )));
+        }
+    };
+    let pbs_kind = if args.pbs_normed {
+        reed::PbsKind::PbsN1
+    } else {
+        reed::PbsKind::Yi2010
+    };
+    // `--fst-global` replaces the pairwise matrix with one r-population
+    // WC84 value (docs/rounds/v5/05 §3.2); only WC84 has that form.
+    if args.fst_global {
+        if fst_kind == Some(reed::FstKind::Hudson) {
+            return Err(reed::Error::usage(
+                "hudson Fst has no r-population (global) form; use wc84",
+            ));
+        }
+        if group_names.len() == 2 {
+            eprintln!(
+                "reed stats: note: two populations: --fst-global equals the pairwise wc84 value"
+            );
+        }
+    }
+    let mut kinds = reed::window_kinds(
+        group_names.len(),
+        args.pi,
+        args.dxy,
+        args.theta,
+        args.tajima_d,
+        if args.fst_global { None } else { fst_kind },
+        None,
+    );
+    if args.fst_global {
+        kinds.push(reed::StatKind::FstGlobal);
+    }
+    for &(a, b, c) in &pbs_triples {
+        kinds.push(reed::StatKind::Pbs {
+            a,
+            b,
+            c,
+            kind: pbs_kind,
+        });
+    }
+    // `--sfs [folded] --proj N[,N…]`: a genome-wide spectrum per
+    // population (docs/rounds/v5/05-algorithms.md §3.1).
+    let sfs_request = match args.sfs.as_deref() {
+        None => None,
+        Some(mode) => {
+            let Some(raw) = args.proj.as_deref() else {
+                return Err(reed::Error::usage(
+                    "--sfs needs --proj N (the projection size in chromosomes)",
+                ));
+            };
+            let mut values = Vec::new();
+            for token in raw.split(',') {
+                let token = token.trim();
+                values.push(token.parse::<u32>().map_err(|_| {
+                    reed::Error::usage(format!("invalid --proj value {token:?} (want an integer)"))
+                })?);
+            }
+            if values.len() == 1 {
+                values = vec![values[0]; group_names.len()];
+            }
+            if values.len() != group_names.len() {
+                return Err(reed::Error::usage(format!(
+                    "--proj gives {} value(s) but the population file declares {}",
+                    values.len(),
+                    group_names.len()
+                )));
+            }
+            Some(reed::SfsRequest {
+                projections: values,
+                folded: mode == "folded",
+            })
+        }
+    };
+    // Patterson f-statistics (docs/rounds/v5/05-algorithms.md §3.3):
+    // genome-wide, one row per test, block-jackknife SE.
+    let fstats_request = build_fstats_request(
+        &args.f2,
+        &args.f3,
+        &args.f4,
+        &args.dstat,
+        &args.f4_ratio,
+        args.block_size,
+        &group_names,
+    )?;
+    // LD: `--ld-decay` / `--indep-pairwise` (docs/rounds/v5/05 §3.4).
+    let ld_request = build_ld_request(args.ld_decay.as_deref(), args.ld_pairs)?;
+    // The SFS is genome-wide: with no windowed kind, skip the window
+    // grid entirely (genome level only) and give it a nominal size.
+    let sfs_only = kinds.is_empty() && fstats_request.is_none();
+    let _ = windowed;
+    let levels = if sfs_only {
+        Levels {
+            window: false,
+            contig: false,
+            genome: true,
+        }
+    } else {
+        // Honor the user's --levels (the default stays window-only, so
+        // the window-layout files keep their historical shape).
+        Levels::parse(&args.levels).map_err(|e| reed::Error::usage(e.to_string()))?
+    };
+    let request = StatsRequest {
+        kinds: kinds.clone(),
+        site: ctx.site,
+        populations: ctx.populations,
+        force_samples: ctx.force_samples,
+        regions: ctx.regions,
+        targets: ctx.targets,
+        targets_exclude: ctx.targets_exclude,
+        keep_samples: ctx.keep_samples,
+        sfs: sfs_request,
+        fstats: fstats_request,
+        ld: ld_request,
+        grid: ctx.grid.clone(),
+        levels,
+        skip_empty: false,
+        contig_lengths: ctx.contig_lengths,
+        layout: Some(layout),
+    };
+    Ok((request, group_names, kinds, layout))
 }
 
 /// Builds the f-statistics request from the `--f2/--f3/--f4/--dstat/
@@ -742,13 +783,14 @@ fn build_fstats_request(
     f4_ratio: &[String],
     block_size: Option<u64>,
     group_names: &[String],
-) -> Result<Option<reed::FStatsRequest>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<reed::FStatsRequest>, reed::Error> {
     let mut tests = Vec::new();
-    let index = |name: &str| -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        group_names
-            .iter()
-            .position(|g| g == name)
-            .ok_or_else(|| format!("population {name:?} is not in the populations file").into())
+    let index = |name: &str| -> Result<usize, reed::Error> {
+        group_names.iter().position(|g| g == name).ok_or_else(|| {
+            reed::Error::usage(format!(
+                "population {name:?} is not in the populations file"
+            ))
+        })
     };
     for spec in f2 {
         let parts = split_roles(spec, 2, "--f2")?;
@@ -807,14 +849,14 @@ fn build_fstats_request(
 fn build_ld_request(
     ld_decay: Option<&str>,
     ld_pairs: bool,
-) -> Result<Option<reed::LdRequest>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<reed::LdRequest>, reed::Error> {
     if ld_decay.is_none() {
         return Ok(None);
     }
     let decay_max_bp = match ld_decay {
         None => None,
         Some("") => Some(100_000),
-        Some(text) => Some(crate::units::parse_size(text)?),
+        Some(text) => Some(crate::units::parse_size(text).map_err(reed::Error::usage)?),
     };
     Ok(Some(reed::LdRequest {
         decay_max_bp,
@@ -825,11 +867,7 @@ fn build_ld_request(
 
 /// Splits one f-statistic value into its role groups (semicolon-separated),
 /// each naming one population; `--f3 C;A,B` and `--f3 C;A;B` both work.
-fn split_roles(
-    spec: &str,
-    roles: usize,
-    flag: &str,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+fn split_roles(spec: &str, roles: usize, flag: &str) -> Result<Vec<String>, reed::Error> {
     let groups: Vec<String> = spec
         .split(';')
         .map(|g| g.trim().to_string())
@@ -844,7 +882,7 @@ fn split_roles(
         .filter(|s| !s.is_empty())
         .collect();
     if names.len() != roles {
-        return Err(format!(
+        return Err(reed::Error::usage(format!(
             "{flag} expects {roles} population(s) (e.g. `{}`), got {} in {spec:?}",
             match roles {
                 2 => "A,B",
@@ -852,15 +890,99 @@ fn split_roles(
                 _ => "A,B;C,D",
             },
             names.len()
-        )
-        .into());
+        )));
     }
     Ok(names)
 }
 
+/// Parses a BED3 file (`chrom<TAB>start0<TAB>end0`, 0-based half-open) into
+/// the per-contig window regions of a `--bed-file` grid. `track`/`browser`/
+/// `#` lines are skipped; a fourth column (name) is accepted and ignored.
+///
+/// # Errors
+///
+/// A string message for unreadable files, rows with fewer than three
+/// fields, non-integer or reversed coordinates (exit 2 upstream).
+fn parse_bed(path: &str) -> Result<reed::ContigRegions, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|err| format!("cannot read --bed-file {path}: {err}"))?;
+    let mut entries: Vec<(Vec<u8>, Vec<reed::Interval0>)> = Vec::new();
+    for (line_no, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with("track")
+            || line.starts_with("browser")
+        {
+            continue;
+        }
+        let mut cols = line.split('\t');
+        let (Some(chrom), Some(start), Some(end)) = (cols.next(), cols.next(), cols.next()) else {
+            return Err(format!(
+                "{path}:{}: expected BED3 (chrom, start, end), got {line:?}",
+                line_no + 1
+            ));
+        };
+        let start: u64 = start
+            .trim()
+            .parse()
+            .map_err(|_| format!("{path}:{}: start {start:?} is not an integer", line_no + 1))?;
+        let end: u64 = end
+            .trim()
+            .parse()
+            .map_err(|_| format!("{path}:{}: end {end:?} is not an integer", line_no + 1))?;
+        if end <= start {
+            return Err(format!(
+                "{path}:{}: end ({end}) must be greater than start ({start})",
+                line_no + 1
+            ));
+        }
+        let contig = chrom.trim().as_bytes().to_vec();
+        let interval = reed::Interval0::new(reed::Pos0(start), reed::Pos0(end));
+        match entries.iter_mut().find(|(name, _)| *name == contig) {
+            Some((_, intervals)) => intervals.push(interval),
+            None => entries.push((contig, vec![interval])),
+        }
+    }
+    reed::ContigRegions::new(entries).map_err(|err| format!("{path}: {err}"))
+}
+
+/// Parses a sites file (`CHROM<TAB>POS`, 1-based) into per-site targets.
+///
+/// # Errors
+///
+/// A string message for unreadable files or malformed rows.
+fn parse_sites(path: &str) -> Result<Vec<(String, u64)>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|err| format!("cannot read --sites-file {path}: {err}"))?;
+    let mut sites = Vec::new();
+    for (line_no, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut cols = line.split('\t');
+        let (Some(chrom), Some(pos)) = (cols.next(), cols.next()) else {
+            return Err(format!(
+                "{path}:{}: expected `chrom<TAB>pos`, got {line:?}",
+                line_no + 1
+            ));
+        };
+        let pos: u64 = pos
+            .trim()
+            .parse()
+            .map_err(|_| format!("{path}:{}: POS {pos:?} is not an integer", line_no + 1))?;
+        if pos == 0 {
+            return Err(format!("{path}:{}: POS is 0 (1-based)", line_no + 1));
+        }
+        sites.push((chrom.trim().to_string(), pos));
+    }
+    Ok(sites)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_pbs_triples;
+    use super::{WindowedContext, build_windowed_request, parse_pbs_triples};
 
     /// `--pbs A,B,C` resolves names in order and rejects malformed triples.
     #[test]
@@ -872,5 +994,117 @@ mod tests {
         );
         assert!(parse_pbs_triples(&["pop1,pop2".to_string()], &groups).is_err());
         assert!(parse_pbs_triples(&["pop1,pop2,nope".to_string()], &groups).is_err());
+    }
+
+    /// A representative windowed request renders to flags clap accepts, and
+    /// rebuilding from the parsed flags reproduces the request field by
+    /// field (doc_v5 08 §6.2 text contract, the stats half).
+    #[test]
+    fn stats_request_round_trips_through_the_flags() {
+        use clap::Parser;
+        let dir = std::env::temp_dir().join(format!("reed-stats-rt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let pops = dir.join("pops.tsv");
+        std::fs::write(&pops, "s0\tA\ns1\tB\ns2\tC\n").expect("invariant: pops");
+        let names = || vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let mut kinds = reed::window_kinds(
+            3,
+            true,
+            true,
+            true,
+            true,
+            Some(reed::FstKind::WeirCockerham84),
+            None,
+        );
+        kinds.push(reed::StatKind::Pbs {
+            a: 0,
+            b: 1,
+            c: 2,
+            kind: reed::PbsKind::Yi2010,
+        });
+        let request = reed::StatsRequest {
+            kinds: kinds.clone(),
+            site: None,
+            populations: reed::Populations::File(pops.clone()),
+            force_samples: false,
+            grid: reed::WindowGrid::Bp {
+                size: 100_000,
+                step: 50_000,
+            },
+            levels: reed::Levels {
+                window: true,
+                contig: true,
+                genome: false,
+            },
+            skip_empty: false,
+            contig_lengths: std::collections::HashMap::new(),
+            layout: Some(reed::WindowLayoutOptions {
+                // fstats/ld force VariantOnly in the builder; the request
+                // must carry the CLI-shaped layout for the round trip.
+                invariant: reed::InvariantMode::VariantOnly,
+            }),
+            regions: Vec::new(),
+            targets: Vec::new(),
+            targets_exclude: Vec::new(),
+            keep_samples: None,
+            sfs: Some(reed::SfsRequest {
+                projections: vec![8, 8, 8],
+                folded: false,
+            }),
+            fstats: Some(reed::FStatsRequest {
+                tests: vec![reed::FStatTest::F3 { c: 0, a: 1, b: 2 }],
+                block_bp: 5_000_000,
+            }),
+            ld: Some(reed::LdRequest {
+                decay_max_bp: Some(100_000),
+                decay_bin_bp: 1000,
+                pairs: true,
+            }),
+        };
+        let mut argv: Vec<String> = vec!["reed".into(), "stats".into(), "in.vcf".into()];
+        argv.extend(request.to_args(&names()));
+        let cli = crate::cli::Cli::try_parse_from(argv).expect("to_args must parse");
+        let crate::cli::Command::Stats(stats) = cli.command else {
+            panic!("stats subcommand");
+        };
+        let ctx = WindowedContext {
+            regions: Vec::new(),
+            targets: Vec::new(),
+            targets_exclude: Vec::new(),
+            keep_samples: None,
+            site: None,
+            populations: reed::Populations::File(pops),
+            force_samples: false,
+            contig_lengths: std::collections::HashMap::new(),
+            grid: reed::WindowGrid::Bp {
+                size: 100_000,
+                step: 50_000,
+            },
+        };
+        let (rebuilt, rebuilt_names, rebuilt_kinds, layout) =
+            build_windowed_request(&stats, ctx).expect("rebuild");
+        assert_eq!(rebuilt.kinds, kinds);
+        assert_eq!(rebuilt_kinds, kinds);
+        assert_eq!(rebuilt_names, names());
+        assert_eq!(rebuilt.sfs, request.sfs);
+        assert_eq!(rebuilt.fstats, request.fstats);
+        assert_eq!(rebuilt.ld, request.ld);
+        assert_eq!(rebuilt.levels, request.levels);
+        assert!(!rebuilt.skip_empty);
+        assert_eq!(rebuilt.populations, request.populations);
+        assert!(!rebuilt.force_samples);
+        assert_eq!(
+            layout.invariant,
+            reed::InvariantMode::VariantOnly,
+            "the layout rides the builder return for the writers"
+        );
+        match (&rebuilt.grid, &request.grid) {
+            (
+                reed::WindowGrid::Bp { size: a, step: b },
+                reed::WindowGrid::Bp { size: c, step: d },
+            ) => assert_eq!((a, b), (c, d)),
+            _ => panic!("grid must round-trip as Bp"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

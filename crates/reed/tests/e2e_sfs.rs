@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{Levels, SfsRequest, StatsRequest, run_stats};
+use reed::{Levels, Populations, SfsRequest, StatsRequest, run_stats};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -48,9 +48,12 @@ fn fixture(dir: &Path) -> std::path::PathBuf {
 fn request(folded: bool) -> StatsRequest {
     StatsRequest {
         kinds: Vec::new(),
-        gt_groups: vec![Some(0); 4],
-        window_size: 1000,
-        step: 1000,
+        populations: Populations::All,
+        force_samples: false,
+        grid: reed::WindowGrid::Bp {
+            size: 1000,
+            step: 1000,
+        },
         levels: Levels {
             window: false,
             contig: false,
@@ -63,7 +66,7 @@ fn request(folded: bool) -> StatsRequest {
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         keep_samples: None,
-        filter: None,
+        site: None,
         sfs: Some(SfsRequest {
             projections: vec![6],
             folded,
@@ -207,5 +210,78 @@ fn missing_chromosomes_are_skipped_and_counted() {
     // The other ten sites (m = 8) still project.
     assert_eq!(sfs.n_sites, vec![10]);
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The two-population joint (2D) spectrum on the same fixture split
+/// `s0,s1 | s2,s3`, projected `4,4`. Expectations verified against
+/// easySFS's `dadi_twoD_sfs_combinations` on an identical VCF (folded and
+/// unfolded, dadi and fastsimcoal2 layouts byte-equal modulo the dadi
+/// population-label header, which reed omits like the 1D writer).
+#[test]
+fn joint_spectrum_matches_easysfs() {
+    let dir = std::env::temp_dir().join(format!("reed-sfs-joint-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = fixture(&dir);
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let mut request = request(true);
+    request.populations = Populations::File({
+        let pops = dir.join("pops.tsv");
+        std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+        pops
+    });
+    request.sfs = Some(SfsRequest {
+        projections: vec![4, 4],
+        folded: true,
+    });
+    let report = run_stats(Some(&vcf), request, &budget).expect("invariant: run");
+    let sfs = report.sfs.expect("invariant: SFS requested");
+    let joint = sfs.joint.clone().expect("invariant: joint spectra");
+    assert_eq!(joint.pairs, vec![(0, 1)]);
+    assert_eq!(joint.projections, vec![(4, 4)]);
+    assert!(joint.folded);
+    // easySFS's folded dadi matrix for the same 11-site fixture (row-major).
+    let want = [
+        0.0, 2.0, 2.0, 1.0, 0.5, //
+        1.0, 1.0, 0.0, 0.5, 0.0, //
+        0.0, 1.0, 0.0, 0.0, 0.0, //
+        1.0, 0.5, 0.0, 0.0, 0.0, //
+        0.5, 0.0, 0.0, 0.0, 0.0,
+    ];
+    assert_eq!(joint.spectra[0].len(), 25);
+    for (got, w) in joint.spectra[0].iter().zip(&want) {
+        assert!((got - w).abs() <= 1e-12, "got {got} want {w}");
+    }
+
+    // Files: dadi `<A>-<B>.sfs` and the transposed fastsimcoal2 layout.
+    let prefix = dir.join("out");
+    let files = reed::sfs::write_projected_sfs(
+        &prefix,
+        &["popA".to_string(), "popB".to_string()],
+        &sfs,
+        false,
+    )
+    .expect("invariant: write");
+    assert!(files.iter().any(|p| p.ends_with("dadi/popA-popB.sfs")));
+    let dadi = std::fs::read_to_string(format!("{}_sfs/dadi/popA-popB.sfs", prefix.display()))
+        .expect("invariant: dadi file");
+    let lines: Vec<&str> = dadi.lines().collect();
+    assert_eq!(lines[0], "5 5 folded");
+    assert_eq!(
+        lines[2],
+        "1 0 0 0 0 0 0 0 0 1 0 0 0 1 1 0 0 1 1 1 0 1 1 1 1"
+    );
+    let fsc = std::fs::read_to_string(format!(
+        "{}_sfs/fastsimcoal2/out_jointMAFpop1_0.obs",
+        prefix.display()
+    ))
+    .expect("invariant: fsc2 read");
+    assert_eq!(
+        fsc,
+        "1 observation\n\td0_0\td0_1\td0_2\td0_3\td0_4\nd1_0\t0 1 0 1 0.5\nd1_1\t2 1 1 0.5 0\nd1_2\t2 0 0 0 0\nd1_3\t1 0.5 0 0 0\nd1_4\t0.5 0 0 0 0\n"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

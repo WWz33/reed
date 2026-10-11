@@ -2,40 +2,27 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-reed computes population-genetics statistics and applies hard filters to
-VCF, VCF.gz and BCF files, splitting the work over every core. It is written
-in pure Rust: the transport comes from noodles, the BGZF and BCF codecs are
-reed's own, and no GPL code is linked. The `reed` binary is the product; the
-crates under `crates/` are its internal structure. Only the CLI flags and the
-output file formats carry a stability promise.
+reed computes population-genetics statistics on VCF/BCF files and applies
+hard filters with byte-faithful output. It is pure Rust, uses every core by
+default, and needs no system libraries: the BGZF and BCF codecs are compiled
+in, so the binary runs anywhere the toolchain does. It is also a Rust library
+(`reed`), so other tools can drive the same statistics without shelling out.
 
 ## Installation
 
-reed needs Rust 1.91 or newer. The repository pins 1.99 in
-`rust-toolchain.toml`.
-
 ```bash
-cargo install --path crates/reed-cli
-reed --version   # reed 0.3.0 (64e5dce 2026-10-10, rustc 1.99.0)
+cargo install --path crates/reed-cli     # requires Rust 1.91+
+reed --version
 ```
 
-Building in place works too:
+## Usage
 
 ```bash
-cargo build --release -p reed-cli     # binary at target/release/reed
-```
-
-There are no system libraries to install. The BGZF and BCF codecs are
-compiled from Rust sources, so the binary runs anywhere the toolchain does.
-
-## Quick start
-
-```bash
-# Genome-wide and windowed π, dxy, Fst, θ and Tajima's D over an all-sites file
+# Genome-wide and windowed pi, dxy, Fst, theta and Tajima's D
 reed stats allsites.vcf.gz --pop pops.txt --pi --dxy --fst --theta --tajima-d \
     --window 10k -o out
 
-# Variant-only input, pairwise and global Fst
+# Variant-only input
 reed stats clean.vcf.gz --pop pops.txt --variant-only \
     --fst --window 100k --step 50k -o out
 
@@ -43,46 +30,38 @@ reed stats clean.vcf.gz --pop pops.txt --variant-only \
 reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc
 
 # Site and genotype filters, with an index on the output
-reed filter in.vcf.gz -o out.vcf.gz -Oz6 --geno 0.1 --maf 0.05 --min-dp 5 --min-gq 20 -W
+reed filter in.vcf.gz -o out.vcf.gz -Oz6 --geno 0.1 --maf 0.05 \
+    --min-dp 5 --min-gq 20 -W
 
-# LD pruning: one command writes the pruned VCF
+# LD pruning
 reed filter in.vcf.gz --indep-pairwise 50kb 5 0.2 -Oz6 -o pruned.vcf.gz
 
 # CSI index
 reed index in.vcf.gz
 ```
 
-## Commands
+`reed <command> --help` lists every option.
 
-| Command | Purpose | Reference |
-|---|---|---|
-| `reed filter` | Hard filtering, genotype masking, INFO recomputation; byte-faithful VCF/BCF output | bcftools `view`, `filter -S .`, `+fill-tags`, `annotate -x`; plink2 QC thresholds |
-| `reed stats` | π, dxy, Fst, Watterson θ, Tajima's D, PBS, SFS, f-statistics, LD, per-site and per-sample reports, bcftools-stats summary | vcftools, pixy, plink2, easySFS, scikit-allel, `bcftools stats` |
-| `reed index` | CSI (default) or TBI | `bcftools index` |
+## reed stats
 
-`reed <command> --help` lists every option. The full parameter
-specification is `docs/spec/cli.md`.
-
-### reed stats
-
-Statistics flags. Pass any combination; each one adds its output file.
+Pass any combination of statistics flags; each one adds its output file.
 
 | Flag | Output |
 |---|---|
-| `--pi` | π per population, `PREFIX_pi.txt` |
+| `--pi` | pi per population, `PREFIX_pi.txt` |
 | `--dxy` | dxy per population pair, `PREFIX_dxy.txt` |
-| `--fst [wc84\|hudson]` | Fst for all population pairs, `PREFIX_fst.txt` (the method shows in the column header) |
+| `--fst [wc84\|hudson]` | Fst for all population pairs, `PREFIX_fst.txt` |
 | `--fst-global` | Global WC84 Fst over all populations, `PREFIX_fst_global.txt` |
-| `--theta` | Watterson's θ per population, `PREFIX_watterson_theta.txt` |
+| `--theta` | Watterson's theta per population, `PREFIX_watterson_theta.txt` |
 | `--tajima-d` | Tajima's D per population, `PREFIX_tajima_d.txt` |
-| `--pbs A,B,C` | PBS for the named triple, `PREFIX_pbs.txt`; add `--pbs-normed` for PBSn1 |
+| `--pbs A,B,C` | PBS for the named triple, `PREFIX_pbs.txt`; `--pbs-normed` for PBSn1 |
 | `--sfs` | Projected SFS under `PREFIX_sfs/dadi/` and `PREFIX_sfs/fastsimcoal2/`; needs `--proj N` |
 | `--f2 A,B`, `--f3 C;A,B`, `--f4 A,B;C,D`, `--dstat A,B;C,D`, `--f4-ratio A,B;C,D;X` | Patterson f-statistics with block jackknife, `PREFIX.fstats` |
-| `--ld-decay [MAX_BP]` | Pairwise r² in 1 kb bins, `PREFIX.ld.decay`; add `--ld-pairs` for the per-pair table `PREFIX.ld` |
+| `--ld-decay [MAX_BP]` | Pairwise r² in 1 kb bins, `PREFIX.ld.decay`; `--ld-pairs` for the per-pair table `PREFIX.ld` |
 | `--freq`, `--hardy`, `--het`, `--missing`, `--depth` | `PREFIX.afreq`, `PREFIX.hardy`, `PREFIX.het`, `PREFIX.smiss` + `PREFIX.vmiss`, `PREFIX.idepth` + `PREFIX.ldepth.mean` |
 | `--summary` | QC summary in bcftools-stats layout, `PREFIX.stats` |
 
-Window flags:
+Window options:
 
 | Flag | Meaning |
 |---|---|
@@ -90,15 +69,10 @@ Window flags:
 | `--step <STEP>` | Window step (default: the window size) |
 | `--levels <LIST>` | Rows to report: `window`, `contig`, `genome` (default `window`) |
 | `--skip-empty` | Drop windows that no site fell into |
-| `--pop <FILE>` | `sample<TAB>population` rows, no header; required by the windowed modes and by every per-population statistic |
-| `--variant-only` | Treat the input as all-variant: positions the file lacks count as monomorphic and fully called |
-| `--bypass-invariant-check` | Compute over the sites present, accepting the π/dxy denominator bias |
-| `--contig-lengths <FILE>` | `.fai`-style `name<TAB>length` pairs, for headers without `##contig` lines |
-
-`--variant-only` and `--bypass-invariant-check` exist because π, dxy, θ and
-Tajima's D need a denominator that includes monomorphic sites. By default
-reed verifies that the input carries invariant records and stops with an
-error when it does not.
+| `--pop <FILE>` | `sample<TAB>population` rows, no header; required by the windowed modes |
+| `--variant-only` | Treat the input as all-variant: missing positions count as monomorphic |
+| `--bypass-invariant-check` | Compute over the sites present (biases pi/dxy denominators) |
+| `--contig-lengths <FILE>` | `.fai`-style `name<TAB>length`, for headers without `##contig` lines |
 
 Sample and region selection works the same in `stats` and `filter`: `-r/-R`
 regions (need an index), `-t/-T` targets (streamed), `-s/-S`, `--keep`,
@@ -106,7 +80,7 @@ regions (need an index), `-t/-T` targets (streamed), `-s/-S`, `--keep`,
 `-q/-Q`, `--geno`, `--maf/--max-maf`, `--mac/--max-mac`, `--hwe`) select what
 the statistics see.
 
-### reed filter
+## reed filter
 
 Selection, from bcftools: `-r/-R`, `-t/-T`, `-s/-S`, `--keep`, `--remove`
 (with `--force-samples` to downgrade unknown names to warnings), `-v/-V`,
@@ -136,7 +110,7 @@ default), `-W[=csi|tbi]` writes an index, `--report` writes a JSON run
 report, `--timing` records per-phase timings, `--no-version` and
 `--no-command` suppress the `##reed_*` provenance header lines.
 
-### reed index
+## reed index
 
 `-c/--csi` (default) or `-t/--tbi`, `-o` to write elsewhere, `-f` to
 overwrite. The input must be a file: an index needs a seekable source.
@@ -170,53 +144,40 @@ Provenance header lines land in the output of `filter` (`##reed_version`,
 Windowed tables share a shape: one row per population (or population pair)
 per window, with `chromosome`, `window_pos_1`, `window_pos_2`, the estimate,
 and the counts behind it (`no_sites`, `count_diffs`, `count_comparisons`,
-`count_missing` for π and dxy; `no_snps` for Fst, PBS and the f-statistics).
+`count_missing` for pi and dxy; `no_snps` for Fst, PBS and the f-statistics).
 Estimates with a zero denominator print `NA`.
 
-## Verification
+## Library use
 
-Correctness is pinned to reference tools rather than to self-consistency.
-Each row below has a script under `gold/`, and the numbers come from the
-2026-10-10 review recorded in `docs/rounds/v6/`.
+The `reed` crate is the public API: typed requests go in, structured reports
+come out, and the writers turn reports into the same files the CLI writes.
 
-| Check | Reference | Result |
-|---|---|---|
-| π, dxy with invariant sites | pixy 2.2.4 | 28,470 windows, max relative error 4.8e-14 |
-| Watterson θ, Tajima's D | pixy | 3.1e-14 / 8.9e-11 |
-| Fst wc84 / hudson, pairwise | pixy | 2.9e-15 / 2.2e-15 |
-| Global WC84 Fst | vcftools weighted Fst | 2.2e-16 |
-| PBS | scikit-allel | per-column exact |
-| Projected SFS | easySFS, dadi 2.4.4 | 1e-15 on the fixture, 5.7e-11 on the subset |
-| f2/f3/f4/D estimates | scikit-allel | 1.3e-16 |
-| LD r² and pruning sets | plink2 | identical kept sites on the full file (235,403) |
-| `--freq/--hardy/--het/--missing` | plink2 | row for row |
-| `--depth` | vcftools | row for row |
-| `--summary` | `bcftools stats` | nine sections, row for row |
-| gold filter rule | bcftools | 1,768,759 sites, `check_parity` PASS, body md5 `7aedc59a…` |
-| `--geno/--mind` boundaries | plink2, vcftools | agree at N=10/7 and on half-calls; subsets 263,420 / 381,672 |
-| BCF against VCF, mmap against streaming | bcftools | byte-identical bodies, identical CSI |
+```toml
+[dependencies]
+reed = { path = "crates/reed" }
+```
 
-Thread count does not change the output: the test suite hashes the same
-results at 1, 2, 3, 7 and 56 threads, across all three execution strategies.
+```rust
+use reed::{Populations, StatKind, StatsRequest};
 
-## Performance
+let request = StatsRequest {
+    kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
+    populations: Populations::File("pops.txt".into()),
+    ..StatsRequest::default()
+};
+let report = reed::run_stats(Some("in.vcf.gz".as_ref()), request, &reed::budget::ThreadBudget::default())?;
+let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+```
 
-Full `clean.vcf.gz` (7.0 GB, 3,315,604 records, 348 samples), 56 threads,
-warm cache, median of three runs:
-
-| Command | Wall time |
-|---|---|
-| `filter` gold rule, VCF input, `-Oz6` | 8.85 s |
-| `filter` gold rule, BCF input, `-Oz6` | 9.00 s |
-| `filter` gold rule, `-Ob` output | 9.98 s |
-| `stats` π/dxy/θ/D/Fst, VCF / BCF | 1.78 s / 1.65 s |
-| `stats` reports + summary | 3.0 s to 5.4 s |
-| `index` VCF.gz / BCF | 1.63 s / 1.12 s |
-
-The reader memory-maps regular files and cuts compressed chunks on BGZF block
-boundaries, so threads hand work over without resynchronising. Deflate
-dominates `filter`. On a small machine, `--memory <MB>` caps the in-flight
-buffers.
+The facade re-exports everything needed: `run_filter`, `run_stats`,
+`run_index`, the request types (`StatsRequest`, `FilterSpec`), the reports,
+the writers (`reed::windows`, `reed::reports`, `reed::sfs`, `reed::fstats`,
+`reed::ld`, `reed::summary`), and a single `reed::Error` whose `kind()`
+separates usage errors from runtime failures. `StatsRequest::to_args()` and
+`FilterSpec::to_args()` render a request back to the CLI spelling, so a tool
+that builds requests programmatically can also log the equivalent command
+line. Only this facade carries a stability promise; the lower crates under
+`crates/` are internal.
 
 ## Limitations
 
@@ -224,52 +185,23 @@ buffers.
   statistics when `-M` is raised past 2, so the default keeps them out.
 - LD pruning lives in `filter` and needs its second pass. `reed stats`
   rejects `--indep-pairwise` and points at `reed filter`.
-- `--ld-decay` asks for `--pop FILE` even though LD does not depend on
-  population labels.
-- `--window` currently requires an explicit `--step`; the documented default
-  of "window size" is not accepted.
 - f-statistics standard errors use block jackknife over base pairs, while
   scikit-allel uses variant counts. The estimates match; the errors are not
   comparable to allel's.
 - Tajima's D divides by the variance at the window-average allele count, the
   pixy convention, which differs from vcftools' fixed 2N.
 
-## Build and test
-
-```bash
-cargo test --release --workspace
-cargo build --release --workspace --all-targets
-cargo clippy --release --workspace --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-cargo fmt --all --check
-bash ci/check-doc-drift.sh
-```
-
-The lint gate covers the library and binary targets. Test targets carry
-pedantic lints that are still open, so `-D warnings` over `--all-targets`
-reports them.
-
 ## Citation
 
-reed implements published estimators and checks its output against the
-reference tools above. Cite the methods it uses:
+reed implements published estimators. Cite the methods it uses:
 
-- Nei & Li 1979 for π; Nei 1987 for dxy; Watterson 1975 for θ; Tajima 1989
-  for D.
+- Nei & Li 1979 for pi; Nei 1987 for dxy; Watterson 1975 for theta; Tajima
+  1989 for D.
 - Hudson 1992 and Bhatia et al. 2013 for Hudson Fst; Weir & Cockerham 1984
   for WC84 Fst.
 - Patterson et al. 2012 for f-statistics; Yi et al. 2010 for PBS.
-- Korunes & Samuk 2021 for the missing-data treatment of π, dxy, θ and D.
-
-## Repository layout
-
-```
-crates/    eight crates; reed-cli builds the only binary
-gold/      fixtures and parity scripts for the reference tools
-bench/     measurement suites and result logs
-docs/      specifications (spec/ current, rounds/ history)
-ci/        drift guards and the CI entry point
-```
+- Korunes & Samuk 2021 for the missing-data treatment of pi, dxy, theta and
+  D.
 
 ## License
 

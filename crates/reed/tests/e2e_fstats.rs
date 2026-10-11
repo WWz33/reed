@@ -5,7 +5,8 @@
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    FStatTest, FStatsRequest, InvariantMode, Levels, StatsRequest, WindowLayoutOptions, run_stats,
+    FStatTest, FStatsRequest, InvariantMode, Levels, Populations, StatsRequest,
+    WindowLayoutOptions, run_stats,
 };
 
 const VCF: &str = "\
@@ -26,12 +27,28 @@ const ALLEL_F3_C_AB: f64 = 0.291_666_666_666_666_7;
 const ALLEL_F4_AB_CC: f64 = 0.0;
 const ALLEL_D_AB_AC: f64 = 0.509_803_921_568_627_4;
 
+/// Two samples per population: s0,s1 -> A; s2,s3 -> B; s4,s5 -> C.
+fn pops_file() -> std::path::PathBuf {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("reed-fstats-pops-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        std::fs::write(&path, "s0\tA\ns1\tA\ns2\tB\ns3\tB\ns4\tC\ns5\tC\n")
+            .expect("invariant: pops");
+        path
+    })
+    .clone()
+}
+
 fn request(tests: Vec<FStatTest>, block_bp: u64) -> StatsRequest {
     StatsRequest {
         kinds: Vec::new(),
-        gt_groups: vec![Some(0), Some(0), Some(1), Some(1), Some(2), Some(2)],
-        window_size: 1000,
-        step: 1000,
+        populations: Populations::File(pops_file()),
+        grid: reed::WindowGrid::Bp {
+            size: 1000,
+            step: 1000,
+        },
         levels: Levels {
             window: false,
             contig: false,
@@ -46,7 +63,8 @@ fn request(tests: Vec<FStatTest>, block_bp: u64) -> StatsRequest {
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         keep_samples: None,
-        filter: None,
+        site: None,
+        force_samples: false,
         sfs: None,
         fstats: Some(FStatsRequest { tests, block_bp }),
         ld: None,

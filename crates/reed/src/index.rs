@@ -466,9 +466,9 @@ pub fn run_index(
     flavor: WriteIndex,
     output: Option<&Path>,
     threads: usize,
-) -> Result<IndexOutcome, EngineError> {
+) -> Result<IndexOutcome, crate::error::Error> {
     if !flavor.is_some() {
-        return Err(EngineError::job("no index flavor selected"));
+        return Err(crate::error::Error::usage("no index flavor selected"));
     }
     let path = match output {
         Some(p) => p.to_path_buf(),
@@ -521,9 +521,9 @@ pub fn run_index(
             .peek(report.n_chunks)
             .is_some_and(|carried| !carried.is_empty())
         {
-            return Err(EngineError::Job(
+            return Err(crate::error::Error::Engine(EngineError::Job(
                 "BCF input ends inside a record (truncated file)".into(),
-            ));
+            )));
         }
         report
     } else {

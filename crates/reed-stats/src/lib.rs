@@ -18,7 +18,7 @@
 
 pub mod dxy;
 pub mod fst;
-pub mod individual;
+pub mod het;
 pub mod jackknife;
 pub mod ld;
 pub mod matrix;
@@ -34,7 +34,7 @@ pub mod window;
 
 pub use dxy::DxyAcc;
 pub use fst::{FstAcc, FstKind, FstMatrixEntry};
-pub use individual::IndividualFAcc;
+pub use het::IndividualFAcc;
 pub use pbs::PbsAcc;
 pub use pi::PiAcc;
 pub use request::{StatAcc, StatKey, StatKind, build_accs};
@@ -49,10 +49,10 @@ pub use window::{BpBinning, ContigBins};
 // joint spectrum has no CLI exit yet (Y6), so it stays `#[doc(hidden)]` until
 // it has one.
 pub use fst::{FstMatrixAcc, WcMultiAcc};
-#[doc(hidden)]
-pub use individual::JointSfsAcc;
 pub use jackknife::{BlockJackknife, BlockPartial, BpBlockJackknife};
 pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
 pub use matrix::{ContigMatrix, LdDecaySet, LdPairRow, SampleLayout, decay_range};
 pub use patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
+#[doc(hidden)]
+pub use sfs::JointSfsAcc;
 pub use sfs::{ProjectedSfsAcc, ProjectionCache, projection_weights};

@@ -72,6 +72,8 @@ check "reed qc is gone (doc_v5 03 C-2)" \
 # facade alone; the backend never prints; the facade is a re-export list.
 check "reed-cli depends only on the facade (doc_v5 08 §6.4.1)" \
     bash -c '! grep -qE "reed-(core|io|engine|stats|filter)" crates/reed-cli/Cargo.toml'
+check "the front end never compiles plans or assigns groups (doc_v5 08 §6.2)" \
+    bash -c '! grep -rqE "assign_groups|plan::compile" crates/reed-cli/src --include=*.rs'
 check "the backend never prints to stdout/stderr (doc_v5 08 §6.4.2)" \
     bash -c '! grep -rqE "eprintln!|println!" crates/reed/src crates/reed-core/src crates/reed-io/src crates/reed-engine/src crates/reed-stats/src crates/reed-filter/src --include=*.rs'
 check "the facade has no pub mod (doc_v5 08 §6.4.3)" \
@@ -92,7 +94,7 @@ check "the top-level doc_vN/ dirs are gone (doc_v5 X2)" \
 check "scripts/ is now ci/ (doc_v5 X2)" \
     bash -c '[ ! -d scripts ] && [ -f ci/check-doc-drift.sh ]'
 check "the docs index has no doc_vN/ path (doc_v5 X2)" \
-    bash -c '! grep -rq "doc_v[0-9]/" docs/README.md'
+    bash -c '[ ! -f docs/README.md ] || ! grep -rq "doc_v[0-9]/" docs/README.md'
 check "the gold products live under target/ (doc_v5 X2)" \
     bash -c '[ ! -d gold/work ] && [ ! -d gold/out ]'
 
@@ -106,7 +108,14 @@ check "the summary has no second scanner (doc_v5 X3)" \
 # doc_v6 02 §2.2 / 06 Y1: the stats LD path collects the site-major matrix
 # (the reducer only concatenates runs); the head/tail carry is retired.
 check "the stats LD path is matrix-based, carry retired (doc_v6 06 Y1)" \
-    bash -c '! grep -q "The LD carry is per chunk" crates/reed/src/stats/job.rs && grep -q "ld_matrix" crates/reed/src/stats/job.rs' 
+    bash -c '! grep -rq "The LD carry is per chunk" crates/reed/src/stats/ && grep -rq "ld_matrix" crates/reed/src/stats/'
+
+# doc_v6 Y6 S4: job.rs is split into request/run/sink, and the flat table
+# renders from structured rows (no text buffer in the sink, no tsv field).
+check "stats/job.rs is split into request/run/sink/driver (doc_v6 Y6 S4)" \
+    bash -c '[ ! -f crates/reed/src/stats/job.rs ] && [ -f crates/reed/src/stats/run.rs ] && [ -f crates/reed/src/stats/sink.rs ] && [ -f crates/reed/src/stats/request.rs ] && [ -f crates/reed/src/stats/driver.rs ]'
+check "the stats report carries no pre-rendered tsv (doc_v6 Y6 S4)" \
+    bash -c '! grep -q "pub tsv" crates/reed/src/stats/request.rs'
 
 # doc_v6 06 Y0 / E6-13: vendor vocabulary is out of the production code
 # (test directories keep the reference-tool names, naming.md §2.5).

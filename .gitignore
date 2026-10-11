@@ -13,3 +13,13 @@
 .vscode/
 .idea/
 .codegraph/
+
+# dev-only content (committed on dev, never merged to main)
+/bench/
+/ci/
+/docs/
+/gold/
+/.claude/
+/.agents/
+/.zedcode
+/crates/*/tests/

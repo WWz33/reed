@@ -734,7 +734,7 @@ pub fn run_reports(
     input: Option<&Path>,
     request: &ReportRequest,
     budget: &ThreadBudget,
-) -> Result<ReportsOutcome, EngineError> {
+) -> Result<ReportsOutcome, crate::error::Error> {
     let opened = crate::input::open(input).map_err(EngineError::from)?;
     run_reports_opened(opened, request, budget)
 }
@@ -749,7 +749,7 @@ pub fn run_reports_opened(
     opened: crate::input::OpenedInput,
     request: &ReportRequest,
     budget: &ThreadBudget,
-) -> Result<ReportsOutcome, EngineError> {
+) -> Result<ReportsOutcome, crate::error::Error> {
     let n_samples = opened.facts.n_samples();
     let plan = ReportPlan::from_request(request);
     let job = ReportJob {

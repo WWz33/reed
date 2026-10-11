@@ -15,11 +15,18 @@ fn main() {
         // Display, not Debug: a `String` error would otherwise print its
         // Debug form with surrounding quotes.
         eprintln!("reed: {err}");
-        std::process::exit(1);
+        // cli.md §9: usage errors exit 2 (the operator can fix the command
+        // line), runtime failures exit 1. clap's own usage errors exit 2
+        // inside `Cli::parse` and never reach this point.
+        let code = match err.kind() {
+            reed::ErrorKind::Usage => 2,
+            reed::ErrorKind::Runtime => 1,
+        };
+        std::process::exit(code);
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn run() -> Result<(), reed::Error> {
     match Cli::parse().command {
         Command::Filter(args) => translate::filter::run_filter_cli(args),
         Command::Stats(args) => translate::stats::run_stats_cli(args),

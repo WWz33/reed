@@ -3,7 +3,7 @@
 
 use reed_core::genotype::{GenotypePolicies, PlaneBlock, PolicyCounters, write_genotype};
 use reed_core::sample::SampleTable;
-use reed_stats::individual::IndividualFAcc;
+use reed_stats::het::IndividualFAcc;
 
 /// Builds a PlaneBlock from explicit diploid genotypes
 /// (`(slot0, slot1)`, `None` = missing).

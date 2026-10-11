@@ -6,7 +6,9 @@
 use std::fmt::Write as _;
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{InvariantMode, LdRequest, Levels, StatsRequest, WindowLayoutOptions, run_stats};
+use reed::{
+    InvariantMode, LdRequest, Levels, Populations, StatsRequest, WindowLayoutOptions, run_stats,
+};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -40,12 +42,21 @@ const PLINK2_R2: [(u64, u64, f64); 15] = [
     (5, 6, 0.058_823_5),
 ];
 
+/// Two populations of three samples each (s0..s2 -> A, s3..s5 -> B).
+fn pops_two_file(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("pops.tsv");
+    std::fs::write(&path, "s0\tA\ns1\tA\ns2\tA\ns3\tB\ns4\tB\ns5\tB\n").expect("invariant: pops");
+    path
+}
+
 fn request(ld: LdRequest) -> StatsRequest {
     StatsRequest {
         kinds: Vec::new(),
-        gt_groups: vec![Some(0); 6],
-        window_size: 1000,
-        step: 1000,
+        populations: Populations::All,
+        grid: reed::WindowGrid::Bp {
+            size: 1000,
+            step: 1000,
+        },
         levels: Levels {
             window: false,
             contig: false,
@@ -60,7 +71,8 @@ fn request(ld: LdRequest) -> StatsRequest {
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         keep_samples: None,
-        filter: None,
+        site: None,
+        force_samples: false,
         sfs: None,
         fstats: None,
         ld: Some(ld),
@@ -201,7 +213,7 @@ fn ld_decay_carries_per_population_curves() {
         pairs: false,
     });
     // Two populations of three samples each.
-    req.gt_groups = vec![Some(0), Some(0), Some(0), Some(1), Some(1), Some(1)];
+    req.populations = Populations::File(pops_two_file(dir.as_path()));
     let report = run_stats(Some(&vcf), req, &budget).expect("invariant: run");
     let ld = report.ld.expect("invariant: LD requested");
 

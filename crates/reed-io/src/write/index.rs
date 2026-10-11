@@ -40,6 +40,19 @@ impl WriteIndex {
         }
     }
 
+    /// Renders the `reed index` flag spelling: CSI/TBI as `--csi`/`--tbi`,
+    /// `None` as no flag (the subcommand defaults to CSI). The round-trip
+    /// counterpart of [`Self::parse`] for the filter's `-W` spelling lives
+    /// in the CLI contract tests.
+    #[must_use]
+    pub fn to_args(self) -> Vec<String> {
+        match self {
+            Self::None => Vec::new(),
+            Self::Csi => vec!["--csi".to_string()],
+            Self::Tbi => vec!["--tbi".to_string()],
+        }
+    }
+
     /// Whether an index is requested at all.
     #[must_use]
     pub const fn is_some(self) -> bool {
@@ -197,6 +210,13 @@ impl Indexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_args_renders_the_index_subcommand_spelling() {
+        assert_eq!(WriteIndex::None.to_args().len(), 0);
+        assert_eq!(WriteIndex::Csi.to_args(), ["--csi"]);
+        assert_eq!(WriteIndex::Tbi.to_args(), ["--tbi"]);
+    }
 
     #[test]
     fn flavor_parsing_and_suffixes() {

@@ -3,9 +3,12 @@
 //! `gold/popgen/`.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::Write;
 
-use reed::{InvariantMode, Levels, StatsRequest, WindowLayoutOptions, run_stats, window_kinds};
+use reed::{
+    InvariantMode, Levels, Populations, StatsRequest, WindowLayoutOptions, run_stats, window_kinds,
+};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::request::StatKind;
 
@@ -45,12 +48,23 @@ chr1\t5\t.\tA\t.\t50\tPASS\t.\tGT\t0/0\t0/0\t0/0\t0/0
 chr1\t25\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t1/1\t0/0
 ";
 
+fn pops_two_file() -> std::path::PathBuf {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("reed-pixy-pops2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        std::fs::write(&path, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+        path
+    })
+    .clone()
+}
+
 fn request(invariant: InvariantMode) -> StatsRequest {
     StatsRequest {
         kinds: window_kinds(2, true, true, false, false, None, None),
-        gt_groups: vec![Some(0), Some(0), Some(1), Some(1)],
-        window_size: 10,
-        step: 10,
+        populations: Populations::File(pops_two_file()),
+        grid: reed::WindowGrid::Bp { size: 10, step: 10 },
         levels: Levels {
             window: true,
             contig: false,
@@ -286,7 +300,17 @@ chr1\t130\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t0/0\t0/1\t0/0\t1/1\t0/0\t0/0
 fn pbs_matches_scikit_allel_reference() {
     let path = write_fixture("pbs", PBS_FIXTURE);
     // Groups: pop1 = samples 0..4, pop2 = 4..8, pop3 = 8..12.
-    let gt_groups: Vec<Option<u32>> = (0..12).map(|i| Some((i / 4) as u32)).collect();
+    let pops = {
+        let dir = std::env::temp_dir().join(format!("reed-pixy-pbs-pops-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        let mut text = String::new();
+        for i in 0..12 {
+            writeln!(text, "p{}s{}\tpop{}", i / 4 + 1, i % 4, i / 4 + 1).expect("invariant: pops");
+        }
+        std::fs::write(&path, text).expect("invariant: pops");
+        path
+    };
     for (kind, expected, expected_fst) in [
         (
             reed::PbsKind::Yi2010,
@@ -322,9 +346,11 @@ fn pbs_matches_scikit_allel_reference() {
         ),
     ] {
         let mut request = request(InvariantMode::Bypass);
-        request.gt_groups = gt_groups.clone();
-        request.window_size = 100;
-        request.step = 100;
+        request.populations = Populations::File(pops.clone());
+        request.grid = reed::WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        };
         request.kinds = window_kinds(3, false, false, false, false, None, Some(kind));
         let report = run_stats(Some(&path), request, &budget()).expect("invariant: pbs run");
         assert_eq!(report.windows.len(), 2);

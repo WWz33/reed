@@ -38,6 +38,8 @@ python3 make_fixtures.py [--out DIR]     # 默认 gold/popgen/fixtures
 |---|---|---|
 | `missing_rate.vcf` | 10 样本，位点缺失率 0/0.1/0.2/0.3/0.5/0.9/1.0，另有半调用 | `--geno/--mind` 边界（plink2 `--geno`、vcftools `--max-missing 1−X`） |
 | `sfs.vcf` + `sfs.pops` | 4 样本 1 群体，ALT 计数 1,1,2,2,3,3,4,4,5,6,7（共 8 条染色体） | 投影 SFS（easySFS `--proj 6 --unfolded --dtype int -a` → dadi `7 unfolded` / `1 3 3 2 1 1 0`） |
+| `sfs.vcf` + `sfs2.pops` | 同上位点，`s0,s1｜s2,s3` 两群体，投影 `4,4` | 联合（二维）SFS（`run_easysfs.sh <sfs.vcf> <sfs2.pops> 4`；dadi `<A>-<B>.sfs` 与 fsc2 `*_jointMAFpop1_0.obs` 逐 bin 对拍） |
+| `sfs.bed` | 三行 BED，第二三行在位置 10 重叠 | `--bed-file` 窗口对拍（`run_pixy_bed.sh`，与 pixy `--bed_file` 逐列一致，重叠区间各成窗） |
 | `multiallelic.vcf` | 双等位对照 + 2/3 个 ALT + 一个缺失基因型；INFO/AC,AN 故意陈旧 | 多等位逐等位重算（`bcftools +fill-tags`，doc_v4 W6） |
 | `fstats.vcf` + `fstats.pops` | 3 群体 ×2 样本 | Patterson f2/f3/f4、D（scikit-allel `admixture.py`） |
 | `ld.vcf` + `ld.pops` | 6 样本，两个连锁块 | LD r²（plink2 `--r2-unphased`/`--indep-pairwise`） |

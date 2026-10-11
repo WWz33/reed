@@ -320,8 +320,16 @@ pub(crate) struct StatsCli {
     )]
     pub contig_lengths: Option<String>,
     /// Window size in bp (accepts 100k, 1M, 100kb)
-    #[arg(long = "window", alias = "size", default_value = "100000", value_parser = parse_size)]
+    #[arg(long = "window", alias = "size", default_value = "100000", value_parser = parse_size,
+          conflicts_with = "bed_file")]
     pub size: u64,
+    /// BED3 file giving the windows (0-based half-open; mutually exclusive
+    /// with --window/--step)
+    #[arg(long = "bed-file", value_name = "BED")]
+    pub bed_file: Option<String>,
+    /// Sites file (`CHROM<TAB>POS`, 1-based): only those sites are counted
+    #[arg(long = "sites-file", value_name = "FILE")]
+    pub sites_file: Option<String>,
     /// Window step in bp (default: the window size)
     #[arg(long, default_value = "0", value_parser = parse_size)]
     pub step: u64,
@@ -352,4 +360,33 @@ pub(crate) struct StatsCli {
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
     pub verbosity: Verbosity,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `WriteIndex::to_args` renders flags `reed index` accepts, and the
+    /// parsed `IndexCli` maps back to the same flavor (doc_v5 08 §6.2 text
+    /// contract; the flavor mapping is `translate/index.rs`'s rule).
+    #[test]
+    fn index_args_round_trip() {
+        for (flavor, args) in [
+            (reed::WriteIndex::Csi, vec!["--csi"]),
+            (reed::WriteIndex::Tbi, vec!["--tbi"]),
+        ] {
+            let mut argv = vec!["reed", "index", "in.vcf.gz"];
+            argv.extend(args);
+            let cli = Cli::try_parse_from(argv).expect("to_args must parse");
+            let Command::Index(index) = cli.command else {
+                panic!("index subcommand");
+            };
+            let rebuilt = if index.tbi {
+                reed::WriteIndex::Tbi
+            } else {
+                reed::WriteIndex::Csi
+            };
+            assert_eq!(rebuilt, flavor);
+        }
+    }
 }

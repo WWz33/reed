@@ -457,6 +457,16 @@ impl Positions for [u8] {
     }
 }
 
+/// Writes the rendered bcftools-stats text (the `--summary` product's one
+/// file write goes through the writers, not a raw `fs::write` in translate).
+///
+/// # Errors
+///
+/// The `fs::write` failure (Runtime).
+pub fn write_bcftools_stats(path: &std::path::Path, text: &str) -> Result<(), crate::error::Error> {
+    std::fs::write(path, text).map_err(crate::error::Error::from)
+}
+
 /// Renders the `bcftools stats`-compatible text (§10.3).
 #[must_use]
 pub fn render_bcftools_stats(r: &QcReportAcc) -> String {

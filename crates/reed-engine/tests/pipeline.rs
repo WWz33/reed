@@ -685,7 +685,10 @@ fn abort_at_eight_times_the_cores_returns_without_leaking_permits() {
         elapsed < Duration::from_secs(2),
         "abort must return within 2 s, took {elapsed:?}"
     );
-    assert!(abort.signal.is_aborted(), "the flag stays set after the run");
+    assert!(
+        abort.signal.is_aborted(),
+        "the flag stays set after the run"
+    );
 }
 
 /// S2 gate: after a worker panic the run fails promptly, and the panic is

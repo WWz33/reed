@@ -136,7 +136,7 @@ pub fn run_filter(
     input: Option<&Path>,
     spec: &FilterSpec,
     opts: &FilterOptions,
-) -> Result<FilterReport, FilterError> {
+) -> Result<FilterReport, crate::error::Error> {
     let t0 = Instant::now();
     // `--timing` phases (03 O10): open, pass0, pass1 + the engine metrics.
     // The engine metrics come from whichever strategy's `run` call fired, so
@@ -147,8 +147,8 @@ pub fn run_filter(
     let mut timing_engine = reed_engine::metrics::StageMetrics::default();
     let timing_chunks: u64;
     if input.is_none() && !opts.regions.is_empty() {
-        return Err(FilterError::Spec(
-            "regions need a seekable file, not stdin".into(),
+        return Err(crate::error::Error::usage(
+            "regions need a seekable file, not stdin",
         ));
     }
     // ---- input: stdin streams straight into the single-pass pipeline;
@@ -343,11 +343,10 @@ pub fn run_filter(
     if (plan.recompute.ac || plan.recompute.maf || plan.recompute.hwe)
         && spec.multiallelics_allowed()
     {
-        return Err(FilterError::Spec(
+        return Err(crate::error::Error::usage(
             "multiallelic input with an INFO/AC, INFO/MAF or INFO/HWE update is not \
              implemented yet (doc_v3 R7): drop multiallelic records \
-             (`-M 2`/`max_alt_alleles = 1`) or suppress the update (`-I`/`--no-update`)"
-                .into(),
+             (`-M 2`/`max_alt_alleles = 1`) or suppress the update (`-I`/`--no-update`)",
         ));
     }
 
@@ -485,8 +484,8 @@ pub fn run_filter(
     // ---- output target ----
     if bcf_level.is_some() && opts.write_index == WriteIndex::Tbi {
         // Tabix has no BCF flavour; htslib refuses the combination too.
-        return Err(FilterError::Spec(
-            "BCF output supports only a CSI index (-W, not -W=tbi)".into(),
+        return Err(crate::error::Error::usage(
+            "BCF output supports only a CSI index (-W, not -W=tbi)",
         ));
     }
     let gz_out = match bcf_level {

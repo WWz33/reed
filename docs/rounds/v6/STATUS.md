@@ -291,6 +291,151 @@
 | `FrameChain::wait_inner` 仍 10 ms 轮询 | 它同时等 abort/poison/finish 三源，本轮不重排通知路径；中止延迟 ≤10 ms，满足 2 s 门。`BytePermits` 的轮询已按 §7.5 消除 |
 | 全量计时未重测 | Y5 不改计算路径（引擎骨架、计量、许可、接缝），子集 ×3 无回退 + gold md5/parity 逐字节不变即达门；全量 filter `-Oz` user 记录沿用 Y4（417.7–418.2） |
 
+## Y6：前后端收尾与数据即结果（进行中，2026-10-11）
+
+规格：`docs/spec/v6_y6/README.md`（含与 roadmap / 08 §6.2 的差异表）、`CODE.md`（难点参考实现）与 `TODO.md`（A–H 批执行清单；验证命令按批并行跑）。批 D 的落地钉本文档之外另存 `docs/spec/v6_y6/batch_d/`（README/TODO/CODE 三件）。六项各自一批；截至本段写入，批 A–D 已落地并过门，批 E–H 未开始。
+
+### Y6 已落地项（截至批 D）
+
+| 批 | 内容 | 验证 |
+|---|---|---|
+| A · C-5 拆 `individual.rs` | `IndividualFAcc` → `reed-stats/src/het.rs`；`JointSfsAcc` → `sfs.rs` joint 段；`individual.rs` 删除；`lib.rs` 与两个测试文件的引用路径同步 | `cargo test -p reed-stats` 全绿；gold 全族 md5 不变（纯移动） |
+| B · 联合 SFS 接 CLI（F6-19 前半） | `JointProjectedAcc`（二维 Marth 外积 + dadi 全局折叠：`i+j` 对 `(n1+n2)/2` 镜像、对角 0.5 分裂——实测 dadi `Spectrum.fold` 语义，非逐轴 minor）；`SfsRequest`/`SfsPlan`/`SfsPartial`/`SfsReport` 增 joint 段，`push_sfs` 复用两群体一维权重外积；写出 dadi `<A>-<B>.sfs` + fsc2 `<prefix>_joint{M,D}AFpop<idxB>_<idxA>.obs`（转置布局）；≥2 群体自动产出全部两两对（easySFS `combinations` 行为） | `run_easysfs.sh` 两群体用例：folded + unfolded、dadi + fsc2 四份逐 bin rtol 0（`compare_sfs.py`）；全量 3pop 三对联合谱冒烟；`joint_spectrum_matches_easysfs`（25 bin 手算 + 两布局字节断言） |
+| C · `--bed-file`/`--sites-file`（F6-19 后半） | `WindowGrid::Regions(Arc<ContigRegions>)` 按 contig 分桶（`RegionSet::stab` 刺探，重叠区间各累加）；`ContigAcc::{Bins,Regions}` 贯穿 job/sink，Regions 在 `close_contig` 按输入序出窗（无水位线）；`StatsRequest.window_size/step` → `grid: WindowGrid`；CLI `--bed-file`（BED3 0-based 半开，与 `--window` 互斥）与 `--sites-file`（`CHROM<TAB>POS` 1-based，走既有 targets 路径） | `run_pixy_bed.sh`：pi 六行逐列与 pixy `--bed_file` 一致（含重叠窗）；`bed_file_windows_match_pixy_layout`（窗口坐标 + 位点数 5/5/4）；`--sites-file` 手算 7 diffs/18 comparisons 复核 |
+| D · 单一 `reed::Error`（S2/F6-13 中段） | `crates/reed/src/error.rs`：`kind()` 真值表落地——`Usage(_)/Core(_)/Spec(Spec\|Format)` → Usage，`Io(_)/Spec(Io\|Decode)/Engine(_)` → Runtime；`From<std::io::Error>` 补齐（→ `Io`）。`run_stats_opened` 校验段 11 处 `EngineError::job/from` → `Error::usage`（grid 三分支、fstats/sfs 计划、keep 掩码、`build_accs`、样本数）；驱动段（`run(chunk)` 起）保持 `Engine/Io` 不动。`main.rs` `match err.kind()` → 2/1（clap 自身用法错误仍由 clap exit 2）。translate 三文件：`run_*_cli` 签名收成 `Result<(), reed::Error>`，手工 `String` 错误全部 `Error::usage`（stdin/index-exists/-O level/输出类型/--pop 缺失/--fst 方法/hudson-global/--proj 缺失与解析/BED/sites 解析/fstats 角色/`Levels::parse`/`assign_groups`），String helper（`parse_regions`/`parse_sample_keep`/`site_spec`/`parse_pbs_triples`/`parse_bed`/`parse_sites`/`spec_from_flags`）签名不动、调用点 `.map_err(Error::usage)` 包壳；`open_regions` 保留 `IoError` 类型直传（输入不存在 = Runtime）；`build_fstats_request`/`build_ld_request`/`split_roles` 返回类型改 `reed::Error` | `exit_codes_split_usage_from_runtime` 真值表四条（群体缺失 2 / fst_global+hudson 2 / sfs 缺 proj 2 / 输入不存在 1）；既有两条断言 1→2（`--sfs` 缺 `--proj`、index stdin）；`error.rs` 单测六分支 |
+
+### Y6 门（2026-10-11 实测，批 A–D）
+
+| 门 | 结果 |
+|---|---|
+| 测试 | `cargo test --release --workspace`：**402 通过 / 0 失败**（400 → +2：批 D 的退出码真值表；批 A–C 的 joint SFS、BED 窗口） |
+| gold 正文 md5（全量 `-Oz`） | 批 A–C 记录 **`7aedc59ac798729a2674e6e7ef19adfc`**（与 Y5 相同）；批 D 只碰错误路径（输出路径零改动），重跑门为子集对拍（下行） |
+| gold 子集对拍（批 D 重跑门） | `REGION=Chr01:1-2000000`：reed filter vs bcftools full 层，4,051/4,051 位点、348 样本、基因型 mean=0 max=0，`check_parity.py` **PASS** |
+| plink2 LD 夹具 | PASS r²（15 对，1.02e-06）+ PASS prune（3 保留/3 剪除） |
+| easySFS 对拍 | 1D（pop1-6，1.04e-15）与 2D 联合（popA-popB folded/unfolded，0.0）全 PASS |
+| pixy BED 对拍 | PASS：6 行逐列一致（窗口坐标/avg_pi/no_sites/count_diffs/count_comparisons/count_missing） |
+| 四件套 | fmt、clippy（CI 命令）、rustdoc 退出 0；守卫 **29/29 ok**（含 E6-13 pixy 词表、E6-14 ponytail 标记——批 C 曾两处违例，已改中性措辞/`TODO(#)` 形式） |
+
+### Y6 批 E · 前后端收尾（S1，2026-10-11）
+
+规格：`docs/spec/v6_y6/batch_e/`（README / TODO / CODE）。
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| E0 门面 | `lib.rs` 的 `pub mod error` 改 `mod error`（批 D 引入的守卫红色回绿） | `check-doc-drift.sh`「the facade has no pub mod」ok |
+| E1 请求换血 | `StatsRequest` 删 `filter`/`gt_groups`，增 `site: Option<FilterSpec>`、`populations: Populations`、`force_samples`；`Populations::{All, File}` + `group_names()`（names-only）；reed-core 增 `GroupTable::names_from_tsv`（行规则同 `from_tsv`） | 编译 + e2e 十处构造点 |
+| E2 内化 | `run_stats_opened` 开头内化 `assign_groups` 与 `plan::compile`；`n_groups` 由 `group_names.len()` 精确给出，去掉 max+1 推导与样本数检查 | 402 测试全绿 |
+| E3 filter 侧 | `run_filter` 已内化 compile（`filter/mod.rs:189`），本批零改动；grep 确认 `reed-cli/src` 无 `assign_groups`/`plan::compile` | 新守卫「the front end never compiles plans or assigns groups」ok |
+| E4 前端瘦身 | `translate/stats.rs` 删 compile 与 assignment 块，改构造 `site`/`populations`；`.stats` 经 `reed::summary::write_bcftools_stats` 落盘（render 仍在前端） | T6 报告 md5 |
+| E5 门面核对 | `Populations` 为新增导出，`reed::Error`/`ErrorKind` 不变；`grep -c '^pub mod' lib.rs` == 0 | 守卫 30 项全 ok；rustdoc `-D warnings` 退出 0 |
+
+#### Y6 批 E 门（2026-10-11 实测）
+
+| 门 | 结果 |
+|---|---|
+| T0 `cargo test --release --workspace` | **402 通过 / 0 失败**（批 D 后同为 402；批 E 不增删测试） |
+| T1 `cargo clippy --release --workspace --all-targets -- -D warnings` | 退出 0 |
+| T2 `cargo fmt --all --check` | 退出 0 |
+| T3 gold 子集对拍（`REGION=Chr01:1-2000000`，`check_parity`） | **PASS**：4,051 位点、Jaccard 1.000000、348 样本 MATCH、基因型 mean=0 max=0 |
+| T4 plink2 LD（`run_plink2_ld.sh`） | PASS r2（15 对，1.02e-06）+ PASS prune（3 保留/3 剪除） |
+| T5 easySFS（`run_easysfs.sh`） | PASS：1D unfolded/folded max rel 1.0e-15 / 4.4e-16（rtol 1e-6）；2D 联合谱 PASS |
+| T5 pixy BED（`run_pixy_bed.sh`） | PASS：6 行逐列一致 |
+| T5 pixy bypass 对拍（子集 4,051 位点） | π 与 dxy 各 60 行 300 单元，最大相对误差 2.1e-14（`reed stats --bypass-invariant-check` vs `pixy --bypass_invariant_check`，窗口与计数逐列一致） |
+| T6 报告 md5（全量 `clean.vcf.gz`，`--freq --hardy --het --missing --depth --summary`） | afreq `b2884092`、hardy `fd8fbf27`、het `790293d9`、idepth `a4b6dd3a`、ldepth.mean `475ee083`、smiss `5f4fe4f8`、stats `189e025b`、vmiss `7c325d64`：**8 件前缀与 Y0 记录全部一致**（`.stats` 写出路径改走 `write_bcftools_stats` 后不变） |
+| T7 守卫 / rustdoc | `check-doc-drift.sh` 全 ok；`RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps` 退出 0 |
+
+#### Y6 批 E 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| pixy 默认模式未在子集上验证 | pixy 默认模式（非 bypass）要求输入含不变位点，子集只有变异位点会被拒绝。本批只对拍 bypass 模式；默认模式需全量 `clean.vcf.gz`，本轮未跑 |
+| `StatsRequest::default()` 语义变化 | 旧版默认 `gt_groups` 为空，运行即报错；新版默认 `Populations::All`，可直接运行（全样本一群）。无测试依赖旧行为 |
+| pops 文件读两遍 | 前端 `group_names()` 读一次取组名，后端 `assign_groups` 再读一次做分配；KB 级文件，零测量成本，换来前端不碰 header 样本表 |
+| `n_groups` 推导 | 旧版由 `gt_groups` 的 max+1 推导；新版取 `group_names.len()`。两者恒等（`EmptyGroup` 保证每组至少一个样本），输出无变化 |
+| e2e pops 文件 | 测试用 `OnceLock` 每进程只写一次 pops 文件；首次并行写入曾致 0 群体的竞态（已修） |
+
+### Y6 批 F · job.rs 拆分 + sink 数据化（S4，2026-10-11）
+
+规格：`docs/spec/v6_y6/batch_f/`（README / TODO / CODE）。F0 先留存批 E 二进制与三类输出的
+md5 清单（`/tmp/reed-baseline-E` + `/tmp/be-base/MD5S.txt`），每一步与它逐字节比对。
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| F1 拆分 | `stats/job.rs`（2,303 行）按顶层项切四文件：`request.rs` 806 / `run.rs` 681 / `sink.rs` 435 / `driver.rs` 367（driver 段因 run.rs 超 900 门独立，README §3 as-built）；`mod.rs` 四 `pub mod` + 四 `pub use *`；跨文件私有项 `pub(super)`，公开面不变 | 输出三类逐字节 == F0 基线；402 测试 |
+| F2 sink 数据化 | `StatsSink` 删 `rows`/文本分支与 `kinds` 字段，`write_row` 只 push `WindowRow`；`SinkOutput`/`StatsReport` 删 `rows`/`tsv`；`writers::windows::render_tsv` 接管宽表；CLI 改调 writer | 宽表（默认与 window,contig,genome 两档）`cmp` 逐字节 == 基线 |
+| F3 md5 全族 | 窗口布局 4 件 + 报告 8 件 + 宽表 2 档与基线逐一相同 | `diff MD5S.txt` 空 |
+| F4 归属 | `wc -l` 最大 806 < 900；守卫：既有 LD 守卫改指 `stats/` 目录，新增「拆分归属」「无 `pub tsv`」两条 | 守卫 32/32 ok |
+
+#### Y6 批 F 门（2026-10-11 实测）
+
+| 门 | 结果 |
+|---|---|
+| T0 测试 | **402 通过 / 0 失败** |
+| T1 clippy（CI 命令）/ T2 fmt | 退出 0 / `--check` 退出 0 |
+| T3 宽表 | 默认层级 20 行、`--levels window,contig,genome` 22 行，两份 `cmp` 与基线逐字节相同 |
+| T4 窗口布局文件 | pi/dxy/theta/tajima_d 四件 md5 == 基线 |
+| T5 报告 8 件（全量） | afreq `b2884092`…等 8 前缀 == Y0 记录 |
+| T6 守卫 / rustdoc | 32/32 ok；`RUSTDOCFLAGS=-D warnings cargo doc` 退出 0 |
+| F3 内存门（宽表路径，子集） | maxRSS 55,208 KB（基线）→ 57,220 KB（+3.6%，门 ≤ 5%）；wall 0.02 s 不变 |
+
+#### Y6 批 F 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| 四文件而非三文件 | `run.rs` 按规格三切后 1,032 行超「< 900」门；driver 段（`run_stats`/`run_stats_opened`）独立为 `driver.rs`。上游 §S4 的 `{request,run,sink}` 表述按 as-built 修正 |
+| `render_tsv` 无 `keys` 参数 | keys 在函数内由 `kinds.iter().map(StatKind::key)` 算出，`StatKey` 不进公开面（CODE §2/§5 已按 as-built 修正） |
+| `StatsReport.tsv` 删除（破坏性） | 公开字段删除；唯一生产消费者 CLI 已改调 `reed::windows::render_tsv`。库外部使用者需同步 |
+| `layout: None` 路径内存 | 每窗多一份 `WindowRow`（`accs.to_vec()`），实测 +3.6%（子集 20 窗）；登记为已知代价 |
+| `variant_only` 参数化 | 旧 `write_row` 由 `layout` 推导；新 `render_tsv` 由调用方传入（CLI 宽表传 `false`，与旧 `layout: None` 推导一致） |
+| 提交 | 批 F 与批 A–E 一样留在工作树，未单独提交（与当前树的提交纪律一致） |
+
+### Y6 批 G · 往返测试（S3，2026-10-11）
+
+规格：`docs/spec/v6_y6/batch_g/`（README / TODO / CODE）。
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| G1 `StatsRequest::to_args` | 新 `stats/render.rs`：inherent impl，收 `group_names`（PBS/fstats 的名字拼写需要）；渲染窗口化请求的旗语族（kinds/sfs/fstats/ld/grid/levels/layout/force_samples/site）；无旗语形态（per_bp、StatKind::Sfs、混合 Fst/Pbs、Regions grid、decay_bin_bp≠1000）panic 并带契约注释，`#[allow(clippy::panic)]` 附理由 | `stats_request_round_trips_through_the_flags` |
+| G2 `WriteIndex::to_args` | reed-io：渲染 index 子命令拼写（`Csi→["--csi"]`、`Tbi→["--tbi"]`、`None→[]`） | reed-io 单测 + `index_args_round_trip`（cli 单测：to_args → `Cli::try_parse_from` → IndexCli 位 → WriteIndex） |
+| G3 请求构造抽取 | `translate/stats.rs`：`WindowedContext` + `pub(crate) build_windowed_request(&StatsCli, ctx)`（谓词/校验/kinds/sfs/fstats/ld/levels/构造全段）；`run_stats_cli` 去解构改 `args.` 字段访问；宽表与报告路径不动 | T4 窗口 md5 == 批 F 基线；往返单测 |
+| G3 二进制夹具 | cli_contract.rs `index_and_stats_run_on_the_minimal_fixture`：真实 `reed index`（.csi 非空）+ `reed stats --pi --variant-only`（PREFIX_pi.txt 表头） | 通过 |
+| G4 `open_regions` 消费自建索引 | `e2e_index.rs`：run_index 建 CSI 后 `open_regions` 按区域 seek，区域命中的记录（chr1:100/250）全部到达；记录谓词属 job 层（既有测试覆盖），此处只锁索引切片不丢记录 | 通过 |
+
+#### Y6 批 G 门（2026-10-11 实测）
+
+| 门 | 结果 |
+|---|---|
+| T0 测试 | **407 通过 / 0 失败**（402 → +5：stats 往返、index 往返 ×2、真实夹具、open_regions） |
+| T1 clippy（CI 命令）/ T2 fmt | 退出 0 / `--check` 退出 0 |
+| T3 守卫 / rustdoc | 32/32 ok；`-D warnings` 退出 0 |
+| T4 子集窗口布局 md5 | pi/dxy/theta/tajima_d 四件 == 批 F 基线（重构后语义不变） |
+
+#### Y6 批 G 偏差登记
+
+| 项 | 说明 |
+|---|---|
+| 函数级往返测试的落位 | `reed-cli` 只有 `[[bin]]` 无 lib target，cli_contract.rs 只能跑二进制；stats 往返测试放 `translate/stats.rs` 单测（与 filter 的 `spec_to_args_round_trips` 同位），cli_contract.rs 只加真实夹具。上游 CODE §6「测试放 cli_contract.rs」按结构事实修正 |
+| `to_args` 带 `group_names` 参数 | PBS/fstats 的 CLI 拼写是群体名，typed 形态存索引；与 `FilterSpec::to_args(&self)` 签名不同，属必要扩展 |
+| fstats/ld 强制 `VariantOnly` | builder 的 invariant 规则：fstats 或 ld 请求恒 VariantOnly。往返测试的 layout 必须是该 CLI 形态（Require + fstats 的请求 CLI 产不出）；测试断言锁死这一点 |
+| 窗口化路径 `skip_empty` 恒 false | builder 现状（`--skip-empty` 只对宽表路径生效）；`to_args` 渲染的 `--skip-empty` 在窗口化重建中被恒 false 吸收，往返测试取 false |
+| 未渲染字段 | keep_samples（解析后掩码）、regions/targets、header 合并的 contig_lengths、Regions grid（无路径）、sfs_int（写出选项）；往返测试这些字段取默认，缺口登记 |
+| render.rs 的 panic | 无旗语形态是契约违反（调用侧 bug），panic 带注释并 `#[allow(clippy::panic)]`（与 Y0 的三条例外同先例） |
+| G1 渲染分支不单测 | 每个 kind 族的单测由往返测试的组合例覆盖（YAGNI），不逐分支复制 |
+
+### Y6 偏差登记（截至批 D）
+
+| 项 | 说明 |
+|---|---|
+| 联合谱触发方式 | 规格初稿写 `SfsRequest.joint: bool` 开关；落地改为「≥2 群体自动产出全部两两对」——与 easySFS 行为一致，且全量 3pop 的 `--sfs` 门不需要新参数。`SfsRequest` 因此不加字段（类型面更小） |
+| 二维折叠语义 | CODE.md 初稿写「逐轴 minor 投影」；实测 dadi `Spectrum.fold` 是**全局**折叠（`i+j` 对 `(n1+n2)/2`，对角 0.5 分裂，mask = 角点 ∪ 折叠区）。CODE.md 已修正，实现按实测 |
+| dadi 头行群体标签 | easySFS 写 `5 5 folded "popA" "popB"`；reed 与 1D 写出器一致不写标签。对拍走 values 行（`compare_sfs.py` 既有约定） |
+| `ContigRegions` 形态 | 规格初稿是 `WindowGrid::Regions(Arc<RegionSet>)`（无 contig 维度）；落地 `Arc<ContigRegions>`（按 contig 的 `HashMap<Vec<u8>, Arc<RegionSet>>`），BED 本就是多 contig 的 |
+| pixy BED 对拍的文件系统障碍 | 本机 `/sri`（dpc）的 mtime 滞后写时刻数分钟，htslib 拒绝新鲜索引（"older than the data file"）；对拍脚本的 bgzip/tabix/pixy 全部迁 `/dev/shm` staging（tmpfs），仅比较读回 `$OUT` |
+| `RegionAccs.totals` | contig/genome 级聚合按「每站点至多一次」计（重叠窗不重复计），`RegionAccs` 自带 totals 而非 fold 全部区间求和 |
+| `Spec(FilterError::Io/Decode)` 归类 | S2/CODE §1 初稿按类型把 `EngineError::Job` 判 Usage；落地改为校验段显式抛 `Error::usage` 后 `Engine(_)` 整体归 Runtime，`Spec` 按变体拆（`Spec/Format` → Usage 2，`Io/Decode` → Runtime 1）。`batch_d/` 三件按实现修正了 CODE §1 的初稿真值表 |
+| `keep_list_from_names` 的样本名错误 | run_filter 内部（filter/mod.rs:778）的「样本不在 header」走 `FilterError::Spec`（→ Usage 2），与 translate 层 `parse_sample_keep` 的 `Error::usage` 同类同码；错误类型不同是层次使然（库内其他站点仍用 FilterError），退出码语义一致 |
+| 批 D 的 gold 门为子集 | 批 D 零输出路径改动（diff 仅错误路径 + main 分派 + 测试 + 文档），全量 gold 重跑以 `REGION=Chr01:1-2000000` 子集门替代（4,051 位点、348 样本、基因型全同 PASS）；全量 md5 记录由批 A–C 背书 |
+
 ## tag
 
 `v0.3.0` 打在 Y0 的收口提交上（`git describe --tags` 从此可解析）。

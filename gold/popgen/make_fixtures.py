@@ -78,6 +78,15 @@ def sfs(out: str) -> None:
     ]
     write(os.path.join(out, "sfs.vcf"), samples_header(names), rows)
     write_pops(os.path.join(out, "sfs.pops"), [(n, "pop1") for n in names])
+    # BED windows with an overlapping pair (rows 2 and 3 share position 10),
+    # for the pixy --bed_file parity (`run_pixy_bed.sh`).
+    with open(os.path.join(out, "sfs.bed"), "w") as fh:
+        fh.write("chr1\t0\t5\nchr1\t5\t10\nchr1\t9\t13\n")
+    # The joint (2D) case: the same sites split s0,s1 | s2,s3, projection 4,4.
+    write_pops(
+        os.path.join(out, "sfs2.pops"),
+        [("s0", "popA"), ("s1", "popA"), ("s2", "popB"), ("s3", "popB")],
+    )
 
 
 def multiallelic(out: str) -> None:

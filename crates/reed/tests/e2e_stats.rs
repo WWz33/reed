@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use reed::{Levels, StatsRequest, assign_groups, default_kinds, run_stats};
+use reed::{Levels, Populations, StatsRequest, assign_groups, default_kinds, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::fst::FstKind;
 use reed_stats::request::StatKind;
@@ -57,6 +57,21 @@ fn request(kinds: Vec<StatKind>, levels: Levels, skip_empty: bool) -> StatsReque
     request_with(kinds, levels, skip_empty, HashMap::new())
 }
 
+/// The 3-population assignment matching `fixture_text` (`s0`→pop1,
+/// `s1`→pop2, `s2`→pop3), written once per process: the request carries the
+/// file, the driver does the assignment.
+fn pops_fixture() -> std::path::PathBuf {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("reed-stats-pops-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        std::fs::write(&path, "s0\tpop1\ns1\tpop2\ns2\tpop3\n").expect("invariant: pops");
+        path
+    })
+    .clone()
+}
+
 fn request_with(
     kinds: Vec<StatKind>,
     levels: Levels,
@@ -65,9 +80,11 @@ fn request_with(
 ) -> StatsRequest {
     StatsRequest {
         kinds,
-        gt_groups: vec![Some(0), Some(1), Some(2)],
-        window_size: 100,
-        step: 100,
+        populations: Populations::File(pops_fixture()),
+        grid: reed::WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        },
         levels,
         skip_empty,
         contig_lengths,
@@ -167,7 +184,8 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
             &budget,
         )
         .expect("invariant: fixture run succeeds");
-        assert_eq!(report.tsv, expected, "threads = {threads}");
+        let tsv = reed::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+        assert_eq!(tsv, expected, "threads = {threads}");
         assert_eq!(report.n_windows, 3);
         assert_eq!(report.n_records, 3);
         assert_eq!(report.n_multiallelic_skipped, 1);
@@ -188,7 +206,8 @@ fn skip_empty_drops_window_rows_only() {
         &budget,
     )
     .expect("invariant: fixture run succeeds");
-    let got = rows(&report.tsv);
+    let tsv = reed::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+    let got = rows(&tsv);
     assert_eq!(got.len(), 2, "the empty middle window is skipped");
     assert_eq!(got[0][..3], ["chr1", "1", "100"]);
     assert_eq!(got[1][..3], ["chr1", "201", "300"]);
@@ -211,7 +230,8 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     )
     .expect("invariant: fixture run succeeds");
 
-    let got = rows(&report.tsv);
+    let tsv = reed::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+    let got = rows(&tsv);
     assert_eq!(got.len(), 5, "3 window rows + contig row + genome row");
     // Window order is preserved, then the contig row, then the genome row.
     assert_eq!(got[0][0], "chr1");
@@ -358,7 +378,6 @@ chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t0/0
 chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
 ";
     let path = write_fixture("d7-no-length", text);
-    let gt_groups = vec![Some(0), Some(1), Some(2)];
 
     let err = run_stats(
         Some(path.as_path()),
@@ -416,11 +435,15 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
         },
     )
     .expect("invariant: declared run");
+    let kinds = vec![StatKind::Pi {
+        group: 0,
+        per_bp: true,
+    }];
     assert_eq!(
-        with_file.tsv, reference.tsv,
+        reed::windows::render_tsv(&with_file.windows, &kinds, false),
+        reed::windows::render_tsv(&reference.windows, &kinds, false),
         "supplemented lengths must match a header-declared run"
     );
-    let _ = gt_groups;
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
     let _ = std::fs::remove_dir_all(declared.parent().expect("invariant: temp dir path"));
 }
@@ -484,4 +507,112 @@ chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
     .expect_err("invariant: position beyond the contig length is refused");
     assert!(err.to_string().contains("exceeds contig"), "{err}");
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+}
+
+/// `--bed-file` windows: the BED intervals become the windows (1-based
+/// `[start+1, end]`), overlapping regions each accumulate the site, and
+/// `--skip-empty` drops untouched regions (pixy `--bed_file` parity;
+/// `gold/popgen/run_pixy_bed.sh`).
+#[test]
+fn bed_file_windows_match_pixy_layout() {
+    let dir = std::env::temp_dir().join(format!("reed-bed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    // 13 sites, 4 diploid samples (the sfs fixture plus two extra rows so
+    // the overlapping windows differ).
+    let text = "##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/0\t0/1
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/0
+chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t0/1
+chr1\t4\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/0
+chr1\t5\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/1\t0/0
+chr1\t6\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/1\t0/0\t0/0
+chr1\t7\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/1\t0/1\t0/0
+chr1\t8\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t1/1\t0/0\t0/0
+chr1\t9\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t1/1\t1/0\t0/0
+chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t1/1\t1/1\t0/0
+chr1\t11\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t1/1\t1/1\t1/0
+chr1\t12\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t1/1
+chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
+";
+    let vcf = write_fixture("bed.vcf", text);
+    let bed = dir.join("win.bed");
+    std::fs::write(&bed, "chr1\t0\t5\nchr1\t5\t10\nchr1\t9\t13\n").expect("invariant: bed");
+
+    let budget = reed::budget::ThreadBudget {
+        threads: 2,
+        mem: reed::budget::MemBudget::from_bytes(u64::MAX),
+    };
+    let request = reed::StatsRequest {
+        kinds: vec![reed::StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        }],
+        populations: reed::Populations::File({
+            let pops = dir.join("pops.tsv");
+            std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+            pops
+        }),
+        grid: reed::WindowGrid::Regions(std::sync::Arc::new(
+            reed::ContigRegions::new([(
+                b"chr1".to_vec(),
+                vec![
+                    reed::Interval0::new(reed::Pos0(0), reed::Pos0(5)),
+                    reed::Interval0::new(reed::Pos0(5), reed::Pos0(10)),
+                    reed::Interval0::new(reed::Pos0(9), reed::Pos0(13)),
+                ],
+            )])
+            .expect("invariant: bed intervals"),
+        )),
+        levels: reed::Levels {
+            window: true,
+            contig: false,
+            genome: false,
+        },
+        skip_empty: false,
+        contig_lengths: std::collections::HashMap::new(),
+        layout: Some(reed::WindowLayoutOptions {
+            invariant: reed::InvariantMode::Bypass,
+        }),
+        regions: Vec::new(),
+        targets: Vec::new(),
+        targets_exclude: Vec::new(),
+        keep_samples: None,
+        site: None,
+        force_samples: false,
+        sfs: None,
+        fstats: None,
+        ld: None,
+    };
+    let report = reed::run_stats(Some(&vcf), request, &budget).expect("invariant: run");
+    // Three windows in input order; rows are (pop, start1, end0).
+    let rows: Vec<(String, u64, u64)> = report
+        .windows
+        .iter()
+        .map(|w| (w.contig.clone(), w.start1, w.end0))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("chr1".into(), 1, 5),
+            ("chr1".into(), 6, 10),
+            ("chr1".into(), 10, 13),
+        ]
+    );
+    // The overlap rule: position 10 feeds both window 2 and window 3, so
+    // their site counts sum past the fixture's 11 sites.
+    let n_sites: Vec<u64> = report
+        .windows
+        .iter()
+        .map(|w| {
+            let reed_stats::StatAcc::Pi(pi) = &w.accs[0] else {
+                panic!("pi acc");
+            };
+            pi.counts().comparable / 6 // 2 diploid samples: 6 comparisons per site
+        })
+        .collect();
+    assert_eq!(n_sites, [5, 5, 4], "{n_sites:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

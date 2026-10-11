@@ -193,7 +193,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 | `--fst [wc84\|hudson]` | 成对 Fst，所有群体对；默认 `wc84` | Weir & Cockerham 1984；Hudson 1992 / Bhatia 2013 | 已对拍 |
 | **`--fst-global`** | 布尔开关：三个群体以上时算**合并**的 r 群体 WC84（一个值），而非成对；默认成对 | Weir & Cockerham 1984（r 群体） | **【待实现】**（05 §3.2；裁决 2026-10-09） |
 | `--pbs A,B,C [--pbs-normed]` | PBS，A 为焦点群体；可重复 | Yi et al. 2010；PBSn1：Malaspinas 2016 | 已对拍 allel |
-| **`--sfs [folded] --proj N[,N…]`** | 投影 SFS（1 群体一维，2 群体二维） | Marth 2004；Gutenkunst 2009 | **【待实现】**（05 §3.1，W5 进行中） |
+| `--sfs [folded] --proj N[,N…]` | 投影 SFS：每群体一维；两群体起另写每对联合（二维）谱 | Marth 2004；Gutenkunst 2009 | 已对拍 easySFS（`run_easysfs.sh`，含二维联合谱） |
 | `--freq` / `--hardy [midp]` / `--het` / `--missing` | 逐位点频率 / HWE 与杂合度 / 个体 F / 缺失率 | Wigginton 2005；Graffelman 2013 | 已对拍 plink2 |
 | `--depth` | 逐样本、逐位点平均深度 | — | 已对拍 vcftools |
 | `--summary` | bcftools stats 格式 QC 汇总 | — | 已对拍 |
@@ -212,7 +212,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 | `--contig-lengths FILE` | header 缺 `##contig` 长度时补充（`.fai` 两列）；缺失即报错，不编造 | 已实现 |
 | `--variant-only` | 声明只有变异位点：窗口内未出现的位置视为单态且全部调用，计入 π/dxy/θ 分母 | 已实现（== vcftools `--window-pi`） |
 | `--bypass-invariant-check` | 不含不变位点也不声明时强行只统计出现的位点（高估 π/dxy，警告） | 已实现 |
-| `--bed-file BED`、`--sites-file FILE` | BED 给定窗口；只统计列出的位点 | **【待实现】**（doc_v2 承诺，X6） |
+| `--bed-file BED`、`--sites-file FILE` | BED3（0-based 半开）给定窗口，区间可重叠、各自成窗；`CHROM<TAB>POS`（1-based）只统计列出的位点；`--bed-file` 与 `--window/--step` 互斥 | 已实现（BED 与 pixy `--bed_file` 逐列对拍，`gold/popgen/run_pixy_bed.sh`） |
 
 ### 7.4 输出（`-o PREFIX`；坐标 1-based 闭区间；缺失写 `NA`）
 
@@ -225,7 +225,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 | θ | `PREFIX_watterson_theta.txt` | `pop chromosome window_pos_1 window_pos_2 avg_watterson_theta no_sites raw_watterson_theta no_var_sites weighted_no_sites` |
 | Tajima's D | `PREFIX_tajima_d.txt` | `pop chromosome window_pos_1 window_pos_2 tajima_d no_sites raw_pi raw_watterson_theta tajima_d_stdev` |
 | PBS | `PREFIX_pbs.txt` | `pop1 pop2 pop3 chromosome window_pos_1 window_pos_2 pbs no_snps fst_12 fst_13 fst_23` |
-| SFS | `PREFIX_sfs/dadi/<pop>-<n>.sfs`、`PREFIX_sfs/fastsimcoal2/<pop>_MAFpop0.obs`（二维：`<A>-<B>-<nA>-<nB>.sfs`、`jointMAFpop1_0.obs`） | dadi / fastsimcoal2 标准格式，含 mask 行【待实现】 |
+| SFS | `PREFIX_sfs/dadi/<pop>-<n>.sfs`、`PREFIX_sfs/fastsimcoal2/<pop>_MAFpop0.obs`；联合（二维，每对一份）：`PREFIX_sfs/dadi/<A>-<B>.sfs`、`PREFIX_sfs/fastsimcoal2/<prefix>_jointMAFpop<idxB>_<idxA>.obs` | dadi / fastsimcoal2 标准格式，含 mask 行（easySFS 实测布局） |
 | freq / hardy / het / missing | `PREFIX.afreq .hardy .het .smiss .vmiss` | plink2 列布局 |
 | depth | `PREFIX.idepth`、`PREFIX.ldepth.mean` | vcftools 列布局 |
 | summary | `PREFIX.stats` | bcftools stats 文本 |
@@ -239,7 +239,7 @@ reed stats allsites.vcf.gz --pop pops.txt --pi --dxy --fst --tajima-d --window 1
 reed stats clean.vcf.gz --pop pops.txt --variant-only --pi --fst --fst-global --window 100k --step 50k -o out
 reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc
 reed stats clean.vcf.gz --pop pops.txt --variant-only --min-dp 5 --min-gq 20 --geno 0.1 --maf 0.05 --pi --window 100k -o out
-reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out        # 【待实现】
+reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
 
 ---
@@ -266,7 +266,7 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out        # 【待
 
 | # | 差异 | 处理 |
 |---|---|---|
-| D-1 | `--bed-file`、`--sites-file`（doc_v2 §5.3）未实现 | 路线 X6 |
+| ~~D-1~~ | `--bed-file`、`--sites-file`（doc_v2 §5.3）已实现（Y6） | 完成 |
 | D-2 | `-q/-Q` 的 `:type` 后缀未实现 | 路线 X6 |
 | D-3 | stats `--tmp-dir` 帮助文本过期（"read twice"） | 路线 X1 |
 | D-4 | `reed qc` 隐藏子命令仍在 | 路线 X1（03 C-2） |

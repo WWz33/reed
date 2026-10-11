@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use reed::{FilterOptions, run_filter};
-use reed::{Levels, StatsRequest, WindowLayoutOptions, run_stats};
+use reed::{Levels, Populations, StatsRequest, WindowLayoutOptions, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_filter::spec::FilterSpec;
 
@@ -72,12 +72,27 @@ fn budget() -> ThreadBudget {
     }
 }
 
+/// s1,s2 -> A; s3 -> B; s4 belongs to no group.
+fn pops_file() -> PathBuf {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("reed-bcf-pops-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        std::fs::write(&path, "s1\tA\ns2\tA\ns3\tB\n").expect("invariant: pops");
+        path
+    })
+    .clone()
+}
+
 fn request() -> StatsRequest {
     StatsRequest {
         kinds: reed::window_kinds(2, true, true, true, false, None, None),
-        gt_groups: vec![Some(0), Some(0), Some(1)],
-        window_size: 1000,
-        step: 1000,
+        populations: Populations::File(pops_file()),
+        grid: reed::WindowGrid::Bp {
+            size: 1000,
+            step: 1000,
+        },
         levels: Levels {
             window: true,
             contig: false,
@@ -98,7 +113,13 @@ fn stats_output_is_identical_across_formats() {
     let bcf = run_stats(Some(&fixture("fix.bcf")), request(), &budget()).expect("invariant: bcf");
     let vcf =
         run_stats(Some(&fixture("fix.vcf.gz")), request(), &budget()).expect("invariant: vcf.gz");
-    assert_eq!(bcf.tsv, vcf.tsv);
+    // The request uses `InvariantMode::VariantOnly`, so the flat table is
+    // rendered with the variant-only denominators (as the old sink did).
+    let kinds = reed::window_kinds(2, true, true, true, false, None, None);
+    assert_eq!(
+        reed::windows::render_tsv(&bcf.windows, &kinds, true),
+        reed::windows::render_tsv(&vcf.windows, &kinds, true)
+    );
     assert_eq!(bcf.n_records, vcf.n_records);
 }
 

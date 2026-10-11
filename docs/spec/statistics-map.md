@@ -131,7 +131,7 @@
 
 - **KING/relatedness**:plink2 `plink2_matrix_calc.cc:1558-1580`(`φ = 0.5 − (4·ibs0 + het1hom2 + het2hom1)/(4·smaller_het_ct)`);vcftools Yang(`:4842-4858`)/Manichaikul(`:4752`,已知与原文有偏差);sgkit pc_relate(Conomos 2016)。
 - **Garud H**:sgkit `popgen.py:610-632` + allel `selection.py:797`(DJBX33A 单倍型哈希)。
-- **SFS**:allel `sf.py:34-99`(folded:`mac = amin(ac,axis=1)`,bincount;fold_sfs 折半合并)。
+- **SFS**:allel `sf.py:34-99`(folded:`mac = amin(ac,axis=1)`,bincount;fold_sfs 折半合并)。联合(二维)谱:dadi `Spectrum.from_data_dict` 的逐位点外积累加 + 全局折叠(按 `i+j` 对 `(n1+n2)/2` 镜像,对角 0.5 分裂),easySFS `dadi_twoD_sfs_combinations` 是文件布局参照。
 - **πN/πS/dN/dS**:SNPGenie 唯一参考(Nei-Gojobori 分数位点表 `within_group.pl:1625-1721` + 路径平均差异 `:1728+`;GPL——规则从 Nelson et al. 2015 论文重写)。
 - **传输层**:htslib `kfunc.c`(lgamma/erfc/betai/Fisher)、`vcfutils.h:91`(bcf_calc_ac)、`vcf.h:245-258`(bcf1_t 惰性)、CSI bin 数学 `hts.h:899`;noodles 惰性 Series(`variant/record/samples/series.rs:13`);rust-htslib **Record 构造即 `bcf_unpack(BCF_UN_ALL)`**(`src/bcf/record.rs:186`)——我们基准结果的机制级解释。
 - **vcfstats**:`formula.py`(Y~X Lark 语法)、`macros.py`(三类装饰器注册)、`instance.py`(单遍流 + 末端聚合)——统计即插拔定义的架构范本;无窗口机制。

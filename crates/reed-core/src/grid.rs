@@ -32,8 +32,57 @@ pub enum WindowGrid {
         /// Stride in sites.
         step: u32,
     },
-    /// Windows given explicitly as regions (BED-style, may overlap).
-    Regions(Arc<RegionSet>),
+    /// Windows given explicitly as regions (BED-style, may overlap),
+    /// per contig.
+    Regions(Arc<ContigRegions>),
+}
+
+/// The per-contig window regions of a `Regions` grid (`--bed-file`): each
+/// interval is one window, kept in input order; contigs carry the names the
+/// BED file used.
+#[derive(Clone, Debug, Default)]
+pub struct ContigRegions {
+    by_contig: std::collections::HashMap<Vec<u8>, Arc<RegionSet>>,
+}
+
+impl ContigRegions {
+    /// Builds the map; empty or reversed intervals are rejected.
+    pub fn new(
+        entries: impl IntoIterator<Item = (Vec<u8>, Vec<Interval0>)>,
+    ) -> Result<Self, CoreError> {
+        let mut by_contig = std::collections::HashMap::new();
+        for (contig, intervals) in entries {
+            let set = RegionSet::new(intervals)?;
+            by_contig.insert(contig, Arc::new(set));
+        }
+        Ok(Self { by_contig })
+    }
+
+    /// The windows of one contig, in input order (`None` = no regions).
+    #[must_use]
+    pub fn get(&self, contig: &[u8]) -> Option<Arc<RegionSet>> {
+        self.by_contig.get(contig).cloned()
+    }
+
+    /// Number of contigs with regions.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_contig.len()
+    }
+
+    /// Whether there are no regions at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_contig.is_empty()
+    }
+}
+
+impl Default for WindowGrid {
+    /// The historical default grid: 1 bp windows (callers override before
+    /// running; a request built field-by-field needs *some* value).
+    fn default() -> Self {
+        Self::Bp { size: 1, step: 1 }
+    }
 }
 
 impl WindowGrid {
@@ -44,7 +93,12 @@ impl WindowGrid {
             Self::Sites { n_sites, step } if *n_sites == 0 || *step == 0 => {
                 Err(CoreError::InvalidWindow)
             }
-            Self::Regions(regions) => regions.validate(),
+            Self::Regions(regions) => {
+                for set in regions.by_contig.values() {
+                    set.validate()?;
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -196,6 +250,24 @@ impl RegionSet {
     #[must_use]
     pub fn windows(&self) -> &[Interval0] {
         &self.intervals
+    }
+
+    /// Indices of the regions covering `pos0`, in input order. Regions are
+    /// kept in input order and a sorted merged copy backs the probe: walk
+    /// the merged spans whose end is past `pos0` and collect their members.
+    /// Overlapping regions each match (the BED-window convention).
+    #[must_use]
+    pub fn stab(&self, pos0: u64) -> Vec<usize> {
+        // Candidate spans: merged spans that contain or start after pos0
+        // are not enough for overlaps (a long span can start before pos0).
+        // The intervals are few (a BED line each); a linear pass is exact
+        // and simple. TODO(#1): O(n) per site; index by span if BEDs grow.
+        self.intervals
+            .iter()
+            .enumerate()
+            .filter(|(_, iv)| iv.start.0 <= pos0 && pos0 < iv.end.0)
+            .map(|(idx, _)| idx)
+            .collect()
     }
 
     /// Total covered base pairs inside `span`.

@@ -5,7 +5,9 @@
 //! here they are pinned as literals.
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{InvariantMode, Levels, StatKind, StatsRequest, WindowLayoutOptions, run_stats};
+use reed::{
+    InvariantMode, Levels, Populations, StatKind, StatsRequest, WindowLayoutOptions, run_stats,
+};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -28,12 +30,40 @@ const VCFTOOLS_PER_SITE: [(u64, f64); 5] = [
     (5, -0.090_909_1),
 ];
 
+fn pops_file() -> std::path::PathBuf {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("reed-fstg-pops-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        std::fs::write(&path, "s0\tA\ns1\tA\ns2\tB\ns3\tB\ns4\tC\ns5\tC\n")
+            .expect("invariant: pops");
+        path
+    })
+    .clone()
+}
+
+/// Two populations over s0..s3; s4 and s5 belong to no group.
+fn pops_two_file() -> std::path::PathBuf {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("reed-fstg-2pop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let path = dir.join("pops.tsv");
+        std::fs::write(&path, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+        path
+    })
+    .clone()
+}
+
 fn request(window: u64, levels: Levels) -> StatsRequest {
     StatsRequest {
         kinds: vec![StatKind::FstGlobal],
-        gt_groups: vec![Some(0), Some(0), Some(1), Some(1), Some(2), Some(2)],
-        window_size: window,
-        step: window,
+        populations: Populations::File(pops_file()),
+        grid: reed::WindowGrid::Bp {
+            size: window,
+            step: window,
+        },
         levels,
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
@@ -45,7 +75,8 @@ fn request(window: u64, levels: Levels) -> StatsRequest {
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         keep_samples: None,
-        filter: None,
+        site: None,
+        force_samples: false,
         sfs: None,
         fstats: None,
         ld: None,
@@ -138,7 +169,7 @@ fn hudson_has_no_global_form() {
             genome: false,
         },
     );
-    two.gt_groups = vec![Some(0), Some(0), Some(1), Some(1), None, None];
+    two.populations = Populations::File(pops_two_file());
     let report = run_stats(Some(&vcf), two, &budget).expect("invariant: run");
     // Two populations: the global value equals the pairwise WC84 value.
     let global = report.windows[0].accs[0]
@@ -152,9 +183,15 @@ fn hudson_has_no_global_form() {
                 b: 1,
                 kind: reed::FstKind::WeirCockerham84,
             }],
-            gt_groups: vec![Some(0), Some(0), Some(1), Some(1), None, None],
-            window_size: 1,
-            step: 1,
+            populations: Populations::File({
+                let dir =
+                    std::env::temp_dir().join(format!("reed-fstg-2pop-{}", std::process::id()));
+                std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+                let path = dir.join("pops.tsv");
+                std::fs::write(&path, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+                path
+            }),
+            grid: reed::WindowGrid::Bp { size: 1, step: 1 },
             levels: Levels {
                 window: true,
                 contig: false,

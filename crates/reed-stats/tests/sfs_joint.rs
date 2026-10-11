@@ -2,7 +2,7 @@
 //! spectrum with folding.
 
 use reed_core::count::SiteGroupCounts;
-use reed_stats::individual::JointSfsAcc;
+use reed_stats::sfs::JointSfsAcc;
 
 #[test]
 fn joint_sfs_counts_and_folds() {

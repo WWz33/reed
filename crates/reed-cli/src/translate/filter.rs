@@ -316,9 +316,7 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     Ok(spec)
 }
 
-pub(crate) fn run_filter_cli(
-    cli: FilterCli,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     let FilterCli {
         input,
         out,
@@ -335,14 +333,14 @@ pub(crate) fn run_filter_cli(
         ..
     } = &cli;
     verbosity.init_tracing();
-    let spec = spec_from_flags(&cli)?;
+    let spec = spec_from_flags(&cli).map_err(reed::Error::usage)?;
     let strategy = strategy
         .as_deref()
         .map(|s| match s {
             "single_pass" => Ok(reed::plan::ExecStrategy::SinglePass),
             "two_pass_reparse" => Ok(reed::plan::ExecStrategy::TwoPassReparse),
             "sketch_then_emit" => Ok(reed::plan::ExecStrategy::SketchThenEmit),
-            other => Err(format!("unknown strategy {other:?}")),
+            other => Err(reed::Error::usage(format!("unknown strategy {other:?}"))),
         })
         .transpose()?;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
@@ -363,7 +361,7 @@ pub(crate) fn run_filter_cli(
             } else {
                 level
                     .parse::<u8>()
-                    .map_err(|_| format!("invalid -O level in {spec:?}"))?
+                    .map_err(|_| reed::Error::usage(format!("invalid -O level in {spec:?}")))?
             };
             match kind {
                 "v" => (out.clone().map(PathBuf::from), level, Some(false)),
@@ -377,7 +375,7 @@ pub(crate) fn run_filter_cli(
                     output_bcf = Some(0);
                     (out.clone().map(PathBuf::from), 0, None)
                 }
-                other => return Err(format!("unknown output type {other:?}").into()),
+                other => return Err(reed::Error::usage(format!("unknown output type {other:?}"))),
             }
         }
     };
@@ -386,7 +384,7 @@ pub(crate) fn run_filter_cli(
         (Some(list), _) => Some(list.clone()),
         (None, Some(path)) => Some(
             std::fs::read_to_string(path)
-                .map_err(|e| format!("{path}: {e}"))?
+                .map_err(|e| reed::Error::usage(format!("{path}: {e}")))?
                 .lines()
                 .collect::<Vec<_>>()
                 .join(","),
@@ -396,7 +394,7 @@ pub(crate) fn run_filter_cli(
     if let Some(list) = &indexed_list {
         for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             let parsed = reed::spec::Region::parse(token)
-                .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+                .map_err(|e| reed::Error::usage(format!("invalid region {token:?}: {e}")))?;
             regions.push(reed::chunk::region::Region {
                 contig: parsed.contig.clone(),
                 start1: parsed.start,

@@ -262,3 +262,108 @@ mod tests {
         assert_eq!(a.value_per_pair(), b.value_per_pair());
     }
 }
+
+/// Per-region accumulators for a `Regions` grid (`--bed-file`): one
+/// accumulator set per interval, in input order; a site stabs every
+/// covering region (overlaps each accumulate it — BED-window semantics).
+/// Merge is component-wise per region index; workers on the same contig
+/// share one `RegionSet` (Arc), so the indices line up by construction.
+///
+/// `totals` receives each site at most once (a site inside several
+/// overlapping regions still folds once) — the contig-level aggregation.
+#[derive(Clone, Debug)]
+pub struct RegionAccs {
+    regions: std::sync::Arc<reed_core::grid::RegionSet>,
+    accs: Vec<Vec<StatAcc>>,
+    totals: Vec<StatAcc>,
+    touched: Vec<bool>,
+    n_sites: u64,
+}
+
+impl RegionAccs {
+    /// Fresh accumulators for every region of `regions`.
+    #[must_use]
+    pub fn new(regions: std::sync::Arc<reed_core::grid::RegionSet>, seed: &[StatAcc]) -> Self {
+        let n = regions.windows().len();
+        Self {
+            regions,
+            accs: vec![seed.to_vec(); n],
+            totals: seed.to_vec(),
+            touched: vec![false; n],
+            n_sites: 0,
+        }
+    }
+
+    /// Absorbs one site into every covering region (and once into the
+    /// contig totals when it landed in at least one).
+    pub fn push_site(&mut self, pos0: u64, row: &[SiteGroupCounts], all_variant: bool) {
+        let mut any = false;
+        for idx in self.regions.stab(pos0) {
+            for acc in &mut self.accs[idx] {
+                acc.push(row, all_variant);
+            }
+            self.touched[idx] = true;
+            any = true;
+        }
+        if any {
+            for acc in &mut self.totals {
+                acc.push(row, all_variant);
+            }
+        }
+        self.n_sites += 1;
+    }
+
+    /// Merges another partial's regions (same `RegionSet` by construction).
+    pub fn merge_regions(&mut self, other: &Self) {
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&self.regions, &other.regions),
+            "invariant: one RegionSet per contig"
+        );
+        for ((dst, src), (dt, st)) in self
+            .accs
+            .iter_mut()
+            .zip(&other.accs)
+            .zip(self.touched.iter_mut().zip(&other.touched))
+        {
+            for (d, s) in dst.iter_mut().zip(src) {
+                d.merge(s);
+            }
+            *dt |= *st;
+        }
+        for (d, s) in self.totals.iter_mut().zip(&other.totals) {
+            d.merge(s);
+        }
+        self.n_sites += other.n_sites;
+    }
+
+    /// Whether any site landed in region `idx`.
+    #[must_use]
+    pub fn touched(&self, idx: usize) -> bool {
+        self.touched[idx]
+    }
+
+    /// Region `idx`'s accumulators (caller decides empty-window policy).
+    #[must_use]
+    pub fn accs(&self, idx: usize) -> &[StatAcc] {
+        &self.accs[idx]
+    }
+
+    /// Merges the contig totals into `totals` (each site counted once).
+    pub fn fold(&self, totals: &mut [StatAcc]) {
+        for (dst, src) in totals.iter_mut().zip(&self.totals) {
+            dst.merge(src);
+        }
+    }
+
+    /// The region set.
+    #[must_use]
+    pub fn regions(&self) -> &reed_core::grid::RegionSet {
+        &self.regions
+    }
+
+    /// Sites absorbed.
+    #[must_use]
+    pub const fn n_sites(&self) -> u64 {
+        self.n_sites
+    }
+}

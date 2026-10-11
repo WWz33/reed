@@ -144,3 +144,66 @@ fn index_bytes_are_thread_count_independent() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Y6 batch G: the index `run_index` wrote is the same artifact
+/// `open_regions` consumes for `-r`-style seeks — opening with a region must
+/// yield exactly that region's records (the record predicate the filter and
+/// stats drivers rely on).
+#[test]
+fn open_regions_consumes_its_own_index() {
+    let (dir, vcf) = write_fixture("open-regions", &rows());
+    let outcome = run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
+
+    let mut opened = reed::open_regions(
+        Some(&vcf),
+        &[reed::chunk::region::Region {
+            contig: "chr1".into(),
+            start1: Some(50),
+            end1: Some(300),
+        }],
+    )
+    .expect("invariant: open with the built index");
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut text = String::new();
+    while let Some(chunk) = opened.source.next_chunk().expect("invariant: chunk read") {
+        let bytes = chunk.compressed.as_slice();
+        let mut rest = bytes;
+        while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
+            let mut out = Vec::new();
+            inflater
+                .inflate_block(&rest[..total], &mut out)
+                .expect("invariant: block inflates");
+            text.push_str(&String::from_utf8_lossy(&out));
+            rest = &rest[total..];
+        }
+    }
+    // The seek is byte-range only (the record predicate is the job's target
+    // filter, covered elsewhere); the contract here is that every record the
+    // region names arrives through the index-sliced source. Bin granularity
+    // may add out-of-region records, so assert on the region's own records.
+    let records: Vec<(String, u64)> = text
+        .lines()
+        // The first chunk may start mid-header-line (the header tail rides
+        // the region slice); record lines start with the contig name.
+        .filter(|l| l.starts_with("chr1\t") || l.starts_with("chr2\t"))
+        .map(|l| {
+            let mut it = l.split('\t');
+            (
+                it.next().expect("invariant: contig").to_string(),
+                it.next()
+                    .expect("invariant: pos")
+                    .parse::<u64>()
+                    .expect("invariant: pos numeric"),
+            )
+        })
+        .collect();
+    let inside: Vec<u64> = records
+        .iter()
+        .filter(|(c, p)| c == "chr1" && (50..=300).contains(p))
+        .map(|(_, p)| *p)
+        .collect();
+    assert_eq!(inside, [100, 250], "{records:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = outcome;
+}

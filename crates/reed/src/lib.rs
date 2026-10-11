@@ -52,6 +52,7 @@
 #![allow(unreachable_pub)]
 
 mod bcf_input;
+mod error;
 mod filter;
 mod filtered;
 mod index;
@@ -59,12 +60,14 @@ mod input;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).
+pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
 pub use crate::index::run_index;
 pub use crate::stats::{
-    FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode, LdReport, LdRequest, Levels,
-    PbsKind, SfsReport, SfsRequest, StatKind, StatsReport, StatsRequest, WindowLayoutOptions,
-    assign_groups, default_kinds, run_stats, run_stats_opened, window_kinds,
+    FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode, JointSfsReport, LdReport,
+    LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest, StatKind, StatsReport,
+    StatsRequest, WindowLayoutOptions, assign_groups, default_kinds, run_stats, run_stats_opened,
+    window_kinds,
 };
 pub use reed_stats::ld::LdWindow;
 
@@ -82,6 +85,8 @@ pub use crate::input::open_regions;
 
 // Front-end re-exports (08 §6.2): the parallel budgets, the region type and
 // the BGZF helpers the tests write fixtures with.
+pub use reed_core::coord::{Interval0, Pos0};
+pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_engine::budget;
 pub use reed_engine::metrics;
 pub use reed_io::{bgzf, chunk, header};

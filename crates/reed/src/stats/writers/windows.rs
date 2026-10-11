@@ -7,9 +7,60 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use reed_stats::request::StatKind;
+use reed_stats::request::{StatKey, StatKind};
 
-use crate::stats::{InvariantMode, StatsReport, WindowLayoutOptions};
+use crate::stats::{InvariantMode, StatsReport, WindowLayoutOptions, WindowRow};
+
+/// Renders the flat wide table (the `layout: None` debug output): a header
+/// (`contig`, `start`, `end`, then one column per statistic key) and one row
+/// per window. Cell rules match the window-layout writers: SFS bins are
+/// `;`-joined, a missing value is `.`, and `variant_only` picks the
+/// variant-only denominator.
+#[must_use]
+pub fn render_tsv(rows: &[WindowRow], kinds: &[StatKind], variant_only: bool) -> String {
+    let keys: Vec<StatKey> = kinds.iter().map(StatKind::key).collect();
+    let mut out = String::from("contig\tstart\tend");
+    for key in &keys {
+        out.push('\t');
+        out.push_str(key.as_str());
+    }
+    out.push('\n');
+    for row in rows {
+        out.push_str(&row.contig);
+        out.push('\t');
+        out.push_str(&row.start1.to_string());
+        out.push('\t');
+        out.push_str(&row.end0.to_string());
+        for (kind, acc) in kinds.iter().zip(&row.accs) {
+            out.push('\t');
+            match acc.sfs_bins() {
+                Some(bins) => {
+                    for (i, bin) in bins.iter().enumerate() {
+                        if i > 0 {
+                            out.push(';');
+                        }
+                        out.push_str(&bin.to_string());
+                    }
+                }
+                None => {
+                    let value = if variant_only {
+                        acc.value_variant_only(kind, row.bp)
+                    } else {
+                        acc.value(kind, row.bp)
+                    };
+                    match value {
+                        Some(value) => {
+                            write!(out, "{value}").expect("invariant: writing to String");
+                        }
+                        None => out.push('.'),
+                    }
+                }
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
 
 /// Writes the requested window-layout files plus the run log.
 ///

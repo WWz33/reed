@@ -6,7 +6,12 @@
 //! `reed::summary` through the crate-root re-exports; splitting them
 //! further (per-format files) is pending.
 
-pub mod job;
+pub mod driver;
+pub mod render;
+pub mod request;
+pub mod run;
+pub mod sink;
 pub mod writers;
 
-pub use job::*;
+pub use driver::*;
+pub use request::*;

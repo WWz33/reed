@@ -350,3 +350,204 @@ impl ProjectedSfsAcc {
         (self.n_sites, self.n_skipped_m_lt_n)
     }
 }
+
+// ------------------------------------------------------------------- joint
+
+/// The joint (2D) site-frequency spectrum of two groups (§9.9, allel
+/// `sf.js`/dadi semantics): bin (i, j) counts sites with i alt alleles in
+/// group 1 and j in group 2 over complete-case sites. Folding projects
+/// both axes to the minor side. Projection support arrives through the
+/// same `reed_stats::sfs::projection_weights` product when needed; this
+/// accumulator is the complete-case core (the M7 deliverable — the dadi
+/// export is the writer's job).
+#[derive(Clone, Debug)]
+pub struct JointSfsAcc {
+    g1: usize,
+    g2: usize,
+    n1: u32,
+    n2: u32,
+    folded: bool,
+    /// `bins[i * (n2 + 1) + j]` for i in 0..=n1, j in 0..=n2 (Neumaier for
+    /// projected support later; complete-case counts are u64 — the sums
+    /// stay Neumaier so a projected variant can share the layout).
+    bins: Vec<NeumaierSum>,
+    n_sites: u64,
+    n_skipped: u64,
+}
+
+impl JointSfsAcc {
+    /// Accumulator over the `g1`/`g2` pair.
+    #[must_use]
+    pub fn new(g1: usize, g2: usize, n_chrom1: u32, n_chrom2: u32, folded: bool) -> Self {
+        Self {
+            g1,
+            g2,
+            n1: n_chrom1,
+            n2: n_chrom2,
+            folded,
+            bins: vec![NeumaierSum::new(); (n_chrom1 as usize + 1) * (n_chrom2 as usize + 1)],
+            n_sites: 0,
+            n_skipped: 0,
+        }
+    }
+
+    /// Absorbs one site (complete-case: any missing allele in either group
+    /// skips the site).
+    pub fn push(&mut self, row: &[SiteGroupCounts]) {
+        let (c1, c2) = (&row[self.g1], &row[self.g2]);
+        let n_group1 = self.n1 / 2;
+        let n_group2 = self.n2 / 2;
+        if c1.n_missing_alleles(n_group1) != 0 || c2.n_missing_alleles(n_group2) != 0 {
+            self.n_skipped += 1;
+            return;
+        }
+        self.n_sites += 1;
+        let (mut i, mut j) = (u64::from(c1.n_alt_alleles), u64::from(c2.n_alt_alleles));
+        if self.folded {
+            i = i.min(self.n1 as u64 - i);
+            j = j.min(self.n2 as u64 - j);
+        }
+        let idx = i as usize * (self.n2 as usize + 1) + j as usize;
+        self.bins[idx].add(1.0);
+    }
+
+    /// Component-wise merge.
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(self.bins.len(), other.bins.len(), "invariant: same shape");
+        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
+            dst.merge(src);
+        }
+        self.n_sites += other.n_sites;
+        self.n_skipped += other.n_skipped;
+    }
+
+    /// Bin (i, j).
+    #[must_use]
+    pub fn at(&self, i: u32, j: u32) -> f64 {
+        self.bins[i as usize * (self.n2 as usize + 1) + j as usize].value()
+    }
+
+    /// Projected / skipped site tally.
+    #[must_use]
+    pub const fn site_tally(&self) -> (u64, u64) {
+        (self.n_sites, self.n_skipped)
+    }
+}
+
+// ------------------------------------------------------------- joint projected
+
+/// The projected joint (2D) spectrum: each site's per-group 1D Marth weights
+/// combine as an outer product, and folding follows dadi's **global** rule
+/// (`Spectrum.fold`: `i + j` against `total/2`, with the diagonal split
+/// 0.5/0.5) — not a per-axis minor projection. Layout matches the dadi 2D
+/// data line (row-major `i * (n2 + 1) + j`).
+#[derive(Clone, Debug)]
+pub struct JointProjectedAcc {
+    n1: u32,
+    n2: u32,
+    folded: bool,
+    bins: Vec<NeumaierSum>,
+    n_sites: u64,
+    n_skipped: u64,
+}
+
+impl JointProjectedAcc {
+    /// Accumulator projected to `(n1, n2)`; `None` when either is below 2.
+    #[must_use]
+    pub fn new(n1: u32, n2: u32, folded: bool) -> Option<Self> {
+        (n1 >= 2 && n2 >= 2).then(|| Self {
+            n1,
+            n2,
+            folded,
+            bins: vec![NeumaierSum::new(); (n1 as usize + 1) * (n2 as usize + 1)],
+            n_sites: 0,
+            n_skipped: 0,
+        })
+    }
+
+    /// The projection sizes.
+    #[must_use]
+    pub const fn shape(&self) -> (u32, u32) {
+        (self.n1, self.n2)
+    }
+
+    /// Whether the spectrum is folded.
+    #[must_use]
+    pub const fn folded(&self) -> bool {
+        self.folded
+    }
+
+    /// Absorbs one site from the two groups' pre-fetched 1D weight vectors;
+    /// `None` on either side = that group's `m < n`, so the site is skipped
+    /// (easySFS/dadi semantics).
+    pub fn push_weighted(&mut self, w1: Option<&[(u32, f64)]>, w2: Option<&[(u32, f64)]>) {
+        let (Some(w1), Some(w2)) = (w1, w2) else {
+            self.n_skipped += 1;
+            return;
+        };
+        self.n_sites += 1;
+        let stride = self.n2 as usize + 1;
+        for &(i, a) in w1 {
+            for &(j, b) in w2 {
+                let w = a * b;
+                if self.folded {
+                    self.add_folded(i, j, w, stride);
+                } else {
+                    self.bins[i as usize * stride + j as usize].add(w);
+                }
+            }
+        }
+    }
+
+    /// dadi's `Spectrum.fold`: mirror entries above the anti-diagonal, split
+    /// the diagonal (only when `n1 + n2` is even) 0.5/0.5 between mirrors.
+    fn add_folded(&mut self, i: u32, j: u32, w: f64, stride: usize) {
+        let total = self.n1 + self.n2;
+        let here = i as usize * stride + j as usize;
+        let mirror = (self.n1 - i) as usize * stride + (self.n2 - j) as usize;
+        match (i + j) * 2 {
+            s if s < total => self.bins[here].add(w),
+            s if s == total => {
+                self.bins[here].add(0.5 * w);
+                self.bins[mirror].add(0.5 * w);
+            }
+            _ => self.bins[mirror].add(w),
+        }
+    }
+
+    fn index(&self, i: u32, j: u32) -> usize {
+        i as usize * (self.n2 as usize + 1) + j as usize
+    }
+
+    /// Component-wise merge.
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(
+            (self.n1, self.n2, self.folded),
+            (other.n1, other.n2, other.folded),
+            "invariant: same shape and folding"
+        );
+        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
+            dst.merge(src);
+        }
+        self.n_sites += other.n_sites;
+        self.n_skipped += other.n_skipped;
+    }
+
+    /// Bin (i, j).
+    #[must_use]
+    pub fn at(&self, i: u32, j: u32) -> f64 {
+        self.bins[self.index(i, j)].value()
+    }
+
+    /// Site tallies: absorbed / skipped (either group `m < n`).
+    #[must_use]
+    pub const fn site_tally(&self) -> (u64, u64) {
+        (self.n_sites, self.n_skipped)
+    }
+
+    /// The spectrum in the dadi 2D data-line order (row-major).
+    #[must_use]
+    pub fn values(&self) -> Vec<f64> {
+        self.bins.iter().map(NeumaierSum::value).collect()
+    }
+}

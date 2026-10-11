@@ -12,9 +12,7 @@ use crate::cli::IndexCli;
 ///
 /// Unknown index types, stdin input (the index needs a seekable file),
 /// transport failures and unsorted input.
-pub(crate) fn run_index_cli(
-    args: IndexCli,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
     let IndexCli {
         input,
         csi: _,
@@ -29,11 +27,10 @@ pub(crate) fn run_index_cli(
     // the input; stdin can do neither (doc_v4 01 F4-4). Fail with the reason
     // instead of a `No such file` from the transport.
     if input == "-" {
-        return Err(
+        return Err(reed::Error::usage(
             "reed index needs a seekable file: stdin is not supported (the index stores \
-             the file's end offset and re-reads it)"
-                .into(),
-        );
+             the file's end offset and re-reads it)",
+        ));
     }
     let flavor = if tbi {
         WriteIndex::Tbi
@@ -46,11 +43,10 @@ pub(crate) fn run_index_cli(
         None => WriteIndex::path_for(flavor, Path::new(&input)),
     };
     if index_path.exists() && !force {
-        return Err(format!(
+        return Err(reed::Error::usage(format!(
             "{}: index exists (use -f/--force to overwrite)",
             index_path.display()
-        )
-        .into());
+        )));
     }
     let threads = threads.unwrap_or_else(|| {
         std::thread::available_parallelism()
