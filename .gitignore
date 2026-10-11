@@ -23,3 +23,5 @@
 /.agents/
 /.zedcode
 /crates/*/tests/
+/skills-lock.json
+/CHANGELOG.md
