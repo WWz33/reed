@@ -787,7 +787,7 @@ pub(crate) fn build_windowed_request(
         ld: ld_request,
         grid: ctx.grid.clone(),
         levels,
-        skip_empty: false,
+        skip_empty: args.skip_empty,
         contig_lengths: ctx.contig_lengths,
         layout: Some(layout),
     };

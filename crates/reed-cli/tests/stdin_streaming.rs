@@ -725,3 +725,69 @@ fn indep_pairwise_accepts_integer_r2() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-13: `--skip-empty` reaches the windowed route (it was hardcoded
+/// false) and `--levels contig` suppresses the window rows.
+#[test]
+fn skip_empty_and_levels_apply_to_windowed_stats() {
+    let dir = std::env::temp_dir().join(format!("reed-lv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    // Sites at 1 and 10 leave eight empty 1 bp windows between them.
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=Chr01,length=100000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\n\
+         Chr01\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
+         Chr01\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t0/1\n",
+    )
+    .expect("invariant: fixture");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tpopA\ns1\tpopA\ns2\tpopA\n").expect("invariant: pops");
+    let run_pi = |name: &str, extra: &[&str]| -> String {
+        let prefix = dir.join(name);
+        let mut argv = vec![
+            "stats",
+            vcf.to_str().unwrap(),
+            "--pop",
+            pops.to_str().unwrap(),
+            "--pi",
+            "--variant-only",
+            "--size",
+            "1",
+            "--step",
+            "1",
+            "-o",
+        ];
+        let prefix_s = prefix.display().to_string();
+        argv.push(&prefix_s);
+        argv.extend_from_slice(extra);
+        let out = run(&argv, None);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::read_to_string(format!("{prefix_s}_pi.txt")).expect("invariant: pi file")
+    };
+    let data_rows = |text: &str| text.lines().filter(|l| !l.starts_with("pop\t")).count();
+
+    let all = run_pi("all", &["--levels", "window,contig"]);
+    let empty = run_pi("empty", &["--levels", "window,contig", "--skip-empty"]);
+    let contig = run_pi("contig", &["--levels", "contig"]);
+    assert!(
+        data_rows(&empty) < data_rows(&all),
+        "--skip-empty must drop the empty windows: {} vs {}",
+        data_rows(&empty),
+        data_rows(&all)
+    );
+    assert_eq!(
+        data_rows(&contig),
+        1,
+        "--levels contig writes only the contig row: {contig:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -180,7 +180,15 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
         };
         let report = run_stats(
             Some(path.as_path()),
-            request(KINDS_TEST.to_vec(), Levels::default(), false),
+            request(
+                KINDS_TEST.to_vec(),
+                Levels {
+                    window: true,
+                    contig: false,
+                    genome: false,
+                },
+                false,
+            ),
             &budget,
         )
         .expect("invariant: fixture run succeeds");
@@ -202,7 +210,15 @@ fn skip_empty_drops_window_rows_only() {
     };
     let report = run_stats(
         Some(path.as_path()),
-        request(KINDS_TEST.to_vec(), Levels::default(), true),
+        request(
+            KINDS_TEST.to_vec(),
+            Levels {
+                window: true,
+                contig: false,
+                genome: false,
+            },
+            true,
+        ),
         &budget,
     )
     .expect("invariant: fixture run succeeds");
