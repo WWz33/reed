@@ -618,29 +618,39 @@ impl FStatAcc {
     }
 
     pub(super) fn row(&self) -> Option<FStatRow> {
-        // Additive statistics (f2/f3/f4) report Σnum, with the jackknife
-        // deleting one block from that same sum; the ratios (D, f4-ratio)
-        // report Σnum/Σden over the pair.
-        let (estimate, _se) = match self.test {
+        // Additive statistics (f2/f3/f4) report Σnum with a sum-scale
+        // delete-one-block SE — admixtools reports f2 as a (weighted) sum
+        // over sites, so estimate and se share the sum scale (doc_v7 D7-9).
+        // The ratios (D, f4-ratio) report Σnum/Σden over the pair.
+        let (estimate, se, n_blocks) = match self.test {
             FStatTest::Dstat { .. } | FStatTest::F4Ratio { .. } => {
                 let den = self.den.value();
                 if den == 0.0 {
                     return None;
                 }
-                (self.num.value() / den, f64::NAN)
+                let (_, se, nb) = self
+                    .jk
+                    .jackknife()
+                    .unwrap_or((self.num.value() / den, f64::NAN, 0));
+                (self.num.value() / den, se, nb)
             }
-            _ => (self.num.value(), f64::NAN),
+            _ => {
+                let (_, se, nb) = self
+                    .jk
+                    .jackknife_sum()
+                    .unwrap_or((self.num.value(), f64::NAN, 0));
+                (self.num.value(), se, nb)
+            }
         };
-        let (est_jk, se_jk, n_blocks) = self.jk.jackknife().unwrap_or((estimate, f64::NAN, 0));
-        let z = if se_jk.is_finite() && se_jk > 0.0 {
-            est_jk / se_jk
+        let z = if se.is_finite() && se > 0.0 {
+            estimate / se
         } else {
             f64::NAN
         };
         Some(FStatRow {
             test: self.test.clone(),
             estimate,
-            se: se_jk,
+            se,
             z,
             n_blocks,
             n_sites: self.n_sites,

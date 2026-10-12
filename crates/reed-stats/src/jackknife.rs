@@ -140,6 +140,29 @@ impl BlockJackknife {
     pub fn n_blocks(&self) -> usize {
         self.blocks.len() + usize::from(self.open.is_some())
     }
+
+    /// The delete-one-block jackknife for an additive statistic
+    /// (`den ≡ 1`): `(Σnum, se, n_blocks)` (doc_v7 D7-9).
+    #[must_use]
+    pub fn jackknife_sum(&self) -> Option<(f64, f64, usize)> {
+        let n_blocks = self.n_blocks();
+        if n_blocks < 2 {
+            return None;
+        }
+        let total = self.total.0.value();
+        let mut vj = Vec::with_capacity(n_blocks);
+        let mut each = |num_b: f64| vj.push(total - num_b);
+        for (num_b, _, _) in self.blocks.values() {
+            each(num_b.value());
+        }
+        if let Some((_, num_b, _, _)) = &self.open {
+            each(num_b.value());
+        }
+        let n = vj.len() as f64;
+        let mean = vj.iter().sum::<f64>() / n;
+        let sv = ((n - 1.0) / n) * vj.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>();
+        Some((total, sv.sqrt(), vj.len()))
+    }
 }
 
 /// A bp-blocked jackknife (docs/rounds/v5/05-algorithms.md §3.3): blocks are
@@ -223,6 +246,28 @@ impl BpBlockJackknife {
     #[must_use]
     pub fn n_blocks(&self) -> usize {
         self.blocks.len()
+    }
+
+    /// The delete-one-block jackknife for an **additive** statistic
+    /// (`den ≡ 1`, i.e. f2/f3/f4): the pseudo-values are the sums over the
+    /// remaining blocks, so `se` is on the same scale as the reported
+    /// Σnum. admixtools reports f2 as a (weighted) sum over sites, so the
+    /// SE must be a sum-scale SE too (doc_v7 D7-9). Returns
+    /// `(Σnum, se, n_blocks)`.
+    #[must_use]
+    pub fn jackknife_sum(&self) -> Option<(f64, f64, usize)> {
+        if self.blocks.len() < 2 {
+            return None;
+        }
+        let total = self.total.0.value();
+        let mut vj = Vec::with_capacity(self.blocks.len());
+        for (num_b, _, _) in self.blocks.values() {
+            vj.push(total - num_b.value());
+        }
+        let n = vj.len() as f64;
+        let mean = vj.iter().sum::<f64>() / n;
+        let sv = ((n - 1.0) / n) * vj.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>();
+        Some((total, sv.sqrt(), vj.len()))
     }
 
     /// Contributing site count.

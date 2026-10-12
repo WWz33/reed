@@ -114,6 +114,18 @@ fn fstats_match_scikit_allel() {
         // 1 bp blocks: one block per site (5 sites at distinct positions).
         assert_eq!(row.n_blocks, 5);
         assert!(row.se.is_finite() && row.se >= 0.0, "se {}", row.se);
+        // doc_v7 D7-9: the additive statistics' estimate and se share the
+        // sum scale, so estimate / se == z (the old code mixed a sum
+        // estimate with a per-site-mean se).
+        if !matches!(row.test, FStatTest::Dstat { .. }) && row.se > 0.0 {
+            assert!(
+                (row.estimate / row.se - row.z).abs() <= 1e-9 * row.z.abs().max(1.0),
+                "{:?}: estimate/se {} vs z {}",
+                row.test,
+                row.estimate / row.se,
+                row.z
+            );
+        }
     }
 
     let _ = std::fs::remove_dir_all(&dir);
