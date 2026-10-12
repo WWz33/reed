@@ -246,6 +246,93 @@ pub struct TailRules {
     /// HWE test flavour (`exact` only for M5; `midp` is M7).
     #[serde(default)]
     pub hwe_mode: HweMode,
+    /// Genotype-class rules (`-g/--genotype [^](hom|het|miss)`): the record
+    /// must satisfy **every** listed rule (repeated flags AND, a deliberate
+    /// superset of bcftools, which keeps the last `-g` only). Compiled after
+    /// masking, over the kept samples; a half-call (`0/.`) reads as missing
+    /// (bcftools `bcf_gt_type` UNKN). Haploid calls follow the ploidy
+    /// policy: rejected by default, read as missing (half-call) under
+    /// `allow_haploid` — bcftools instead reads them as hom.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gt_class: Vec<GtClassRule>,
+}
+
+/// One genotype-class site rule (bcftools `-g/--genotype`; `TailRules::gt_class`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GtClassRule {
+    /// `hom`: at least one homozygous call.
+    #[serde(rename = "hom")]
+    Hom,
+    /// `het`: at least one heterozygous call.
+    #[serde(rename = "het")]
+    Het,
+    /// `miss`: at least one missing genotype — `./.`, `.`, **or a
+    /// half-call** (`0/.`; bcftools `bcf_gt_type` UNKN).
+    #[serde(rename = "miss")]
+    Miss,
+    /// `^hom`: no homozygous call.
+    #[serde(rename = "^hom")]
+    NoHom,
+    /// `^het`: no heterozygous call.
+    #[serde(rename = "^het")]
+    NoHet,
+    /// `^miss`: no missing genotype (half-calls included).
+    #[serde(rename = "^miss")]
+    NoMiss,
+}
+
+impl GtClassRule {
+    /// Parses the CLI spelling: `[^](hom|het|miss)`, case-insensitive.
+    ///
+    /// # Errors
+    ///
+    /// The supported list for an unknown token.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let (exclude, name) = match text.strip_prefix('^') {
+            Some(rest) => (true, rest),
+            None => (false, text),
+        };
+        // Exact spelling, case-insensitive only (bcftools `strcasecmp`;
+        // no whitespace is tolerated).
+        let class = name.to_ascii_lowercase();
+        Ok(match (exclude, class.as_str()) {
+            (false, "hom") => Self::Hom,
+            (false, "het") => Self::Het,
+            (false, "miss") => Self::Miss,
+            (true, "hom") => Self::NoHom,
+            (true, "het") => Self::NoHet,
+            (true, "miss") => Self::NoMiss,
+            _ => {
+                return Err(format!(
+                    "unknown genotype class {text:?} \
+                     (expected hom, het, miss, ^hom, ^het or ^miss)"
+                ));
+            }
+        })
+    }
+
+    /// The canonical CLI spelling.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Hom => "hom",
+            Self::Het => "het",
+            Self::Miss => "miss",
+            Self::NoHom => "^hom",
+            Self::NoHet => "^het",
+            Self::NoMiss => "^miss",
+        }
+    }
+
+    /// The class this rule tests (`hom`, `het` or `miss`).
+    #[must_use]
+    pub const fn class(self) -> &'static str {
+        match self {
+            Self::Hom | Self::NoHom => "hom",
+            Self::Het | Self::NoHet => "het",
+            Self::Miss | Self::NoMiss => "miss",
+        }
+    }
 }
 
 /// HWE test flavour.
@@ -298,4 +385,32 @@ pub enum MultiallelicPolicy {
 
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GtClassRule as R;
+
+    /// `-g/--genotype` spellings: case-insensitive class names, `^`
+    /// excludes; `id()` is the canonical spelling the CLI renders back.
+    #[test]
+    fn gt_class_rule_parse_and_render() {
+        for (text, rule) in [
+            ("hom", R::Hom),
+            ("Het", R::Het),
+            ("MISS", R::Miss),
+            ("^hom", R::NoHom),
+            ("^Het", R::NoHet),
+            ("^MISS", R::NoMiss),
+        ] {
+            assert_eq!(R::parse(text).expect("valid"), rule, "{text}");
+            // `id()` round-trips and its class part agrees with `class()`.
+            assert_eq!(R::parse(rule.id()).expect("canonical"), rule);
+            assert_eq!(rule.id().trim_start_matches('^'), rule.class());
+        }
+        // No whitespace tolerance (bcftools `strcasecmp` is exact).
+        for bad in ["", "^", "homo", "hom,het", "^hom^", " HOM ", "hom "] {
+            assert!(R::parse(bad).is_err(), "{bad:?}");
+        }
+    }
 }

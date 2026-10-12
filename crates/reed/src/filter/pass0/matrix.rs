@@ -72,6 +72,10 @@ pub(crate) struct MatrixPartial {
     pub flat: Vec<u64>,
     /// The sites' 0-based positions, aligned with `flat`.
     pub pos0: Vec<u64>,
+    /// Whether each site's record carried a GT field, aligned with `flat`
+    /// (the mid stage's `-g/--genotype` short-circuit needs it: a GT-less
+    /// record and an all-`./.` record have identical planes).
+    pub has_gt: Vec<bool>,
     /// Contig runs over the sites: `(first site offset, contig name)`.
     pub contigs: Vec<(usize, Vec<u8>)>,
     /// This unit's funnel (head hits, decode policies).
@@ -94,6 +98,9 @@ pub(crate) struct MatrixScratch {
     site: Vec<u64>,
     flat: Vec<u64>,
     pos0: Vec<u64>,
+    /// Whether each retained site's record carried a GT field, aligned
+    /// with `pos0` (the mid stage's `-g` short-circuit).
+    has_gt: Vec<bool>,
     contigs: Vec<(usize, Vec<u8>)>,
     /// Native BCF input buffers (doc_v4 O-4).
     native: Option<NativeScratch>,
@@ -155,6 +162,7 @@ impl MatrixJob {
             site: vec![0; self.stride()],
             flat: Vec::new(),
             pos0: Vec::new(),
+            has_gt: Vec::new(),
             contigs: Vec::new(),
             native: match (&self.bcf_input, &self.gt_table) {
                 (Some(_), Some(table)) => Some(NativeScratch::new(
@@ -207,6 +215,7 @@ impl MatrixJob {
         scratch.n_head = 0;
         scratch.flat.clear();
         scratch.pos0.clear();
+        scratch.has_gt.clear();
         scratch.contigs.clear();
     }
 
@@ -236,11 +245,13 @@ impl MatrixJob {
         flat: &mut Vec<u64>,
         pos0: &mut Vec<u64>,
         contigs: &mut Vec<(usize, Vec<u8>)>,
+        has_gt: &mut Vec<bool>,
         codes: &[GtCode],
         mask_rule: &[u16],
         masked: &reed_core::Bitset,
         contig: &[u8],
         pos1: u64,
+        record_has_gt: bool,
     ) {
         let w = self.w;
         site.iter_mut().for_each(|word| *word = 0);
@@ -308,6 +319,7 @@ impl MatrixJob {
             }
             flat.extend_from_slice(site);
             pos0.push(pos1.saturating_sub(1));
+            has_gt.push(record_has_gt);
         }
     }
 
@@ -324,6 +336,7 @@ impl MatrixJob {
             flat,
             pos0,
             contigs,
+            has_gt,
             ..
         } = scratch;
         let processed = pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
@@ -334,11 +347,13 @@ impl MatrixJob {
                 flat,
                 pos0,
                 contigs,
+                has_gt,
                 view.scan.codes,
                 view.mask_rule,
                 view.masked,
                 view.site.contig_name,
                 view.pos1,
+                view.scan.has_gt,
             );
             Ok(())
         })?;
@@ -373,6 +388,7 @@ impl MatrixJob {
             flat,
             pos0,
             contigs,
+            has_gt,
             ..
         } = scratch;
         let processed = pipeline.process_scanned(
@@ -386,6 +402,7 @@ impl MatrixJob {
                 int_columns: &native.int_columns,
                 float_columns: &native.float_columns,
                 counters: &native.counters,
+                has_gt: native.has_gt,
             },
             |view| {
                 self.survivor_body(
@@ -395,11 +412,13 @@ impl MatrixJob {
                     flat,
                     pos0,
                     contigs,
+                    has_gt,
                     view.scan.codes,
                     view.mask_rule,
                     view.masked,
                     view.site.contig_name,
                     view.pos1,
+                    view.scan.has_gt,
                 );
                 Ok(())
             },
@@ -428,6 +447,7 @@ impl MatrixJob {
             called,
             flat: std::mem::take(&mut scratch.flat),
             pos0: std::mem::take(&mut scratch.pos0),
+            has_gt: std::mem::take(&mut scratch.has_gt),
             contigs: std::mem::take(&mut scratch.contigs),
             funnel: std::mem::take(&mut scratch.funnel),
         }
@@ -518,6 +538,10 @@ pub(crate) struct SiteMatrix {
     base: Vec<usize>,
     /// Every site's 0-based position (ascending).
     pos0: Vec<u64>,
+    /// Whether each site's record carried a GT field, aligned with `pos0`
+    /// (the mid stage's `-g/--genotype` short-circuit; empty when the mode
+    /// retains nothing).
+    has_gt: Vec<bool>,
 }
 
 impl SiteMatrix {
@@ -531,19 +555,22 @@ impl SiteMatrix {
             blocks: Vec::new(),
             base: vec![0],
             pos0: Vec::new(),
+            has_gt: Vec::new(),
         }
     }
 
     /// Appends one stream unit's sites: `flat` is
     /// `positions.len() · (4 + R) · w` words.
-    pub fn push_block(&mut self, flat: Vec<u64>, pos0: Vec<u64>) {
+    pub fn push_block(&mut self, flat: Vec<u64>, pos0: Vec<u64>, has_gt: Vec<bool>) {
         if pos0.is_empty() {
             return;
         }
         debug_assert_eq!(flat.len(), pos0.len() * self.stride());
+        debug_assert_eq!(has_gt.len(), pos0.len());
         let n = self.pos0.len() + pos0.len();
         self.blocks.push(flat);
         self.pos0.extend(pos0);
+        self.has_gt.extend(has_gt);
         self.base.push(n);
     }
 
@@ -560,6 +587,12 @@ impl SiteMatrix {
     /// Every site's 0-based position (ascending).
     pub fn pos0(&self) -> &[u64] {
         &self.pos0
+    }
+
+    /// Whether one site's record carried a GT field (`true` when the
+    /// vector is absent — a matrix built without retention is never asked).
+    pub fn has_gt(&self, local: usize) -> bool {
+        self.has_gt.get(local).copied().unwrap_or(true)
     }
 
     /// Estimated resident size in bytes (the `--memory` judgment, Y1f).
@@ -865,9 +898,10 @@ impl MatrixSink {
             let stride = self.pending.as_ref().map_or(1, SiteMatrix::stride);
             let flat = partial.flat[offset * stride..end * stride].to_vec();
             let pos0 = partial.pos0[offset..end].to_vec();
+            let has_gt = partial.has_gt[offset..end].to_vec();
             self.total_sites += pos0.len();
             if let Some(matrix) = self.pending.as_mut() {
-                matrix.push_block(flat, pos0);
+                matrix.push_block(flat, pos0, has_gt);
             }
         }
         Ok(())

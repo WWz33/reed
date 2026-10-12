@@ -112,9 +112,9 @@ impl ThetaAcc {
         raw
     }
 
-    /// Window-**average** θ = `raw / n_sites` (pixy `avg_watterson_theta`,
-    /// the CLI's `avg_watterson_theta` column). `raw_theta()` is the window
-    /// total (pixy `raw_watterson_theta`, the oracle's `total_theta`); the
+    /// Window-**average** θ = `raw / n_sites` (the CLI's
+    /// `avg_watterson_theta` column). `raw_theta()` is the window total
+    /// (the `raw_watterson_theta` column; the oracle's `total_theta`); the
     /// old name `value_total` was misleading — this is a per-site mean
     /// (doc_v7 D7-17).
     #[must_use]

@@ -188,4 +188,9 @@ pub(crate) struct SiteFilterArgs {
     /// HWE exact-test p lower bound (`P`, optional `midp`)
     #[arg(long, value_name = "P [midp]", num_args = 1..=2)]
     pub hwe: Vec<String>,
+    /// Keep sites with/without a genotype class: [^](hom|het|miss); a
+    /// half-call counts as missing (bcftools -g; repeated flags AND —
+    /// bcftools keeps only the last)
+    #[arg(short = 'g', long = "genotype", value_name = "[^](hom|het|miss)")]
+    pub genotype: Vec<String>,
 }

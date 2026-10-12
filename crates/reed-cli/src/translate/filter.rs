@@ -195,6 +195,11 @@ pub(crate) fn site_spec(
             spec.site_after_mask.hwe_mode = reed::spec::HweMode::MidP;
         }
     }
+    for text in &cli.genotype {
+        spec.site_after_mask
+            .gt_class
+            .push(reed::spec::GtClassRule::parse(text)?);
+    }
 
     Ok(spec)
 }
@@ -553,6 +558,31 @@ mod tests {
             spec_from_flags(&cli_from(&rendered)).expect("invariant: the rendered flags translate");
         assert_eq!(first, second, "round trip differs; rendered: {rendered:?}");
         assert_eq!(rendered, flags, "the rendering is the canonical spelling");
+    }
+
+    /// `-g/--genotype` (bcftools): repeated flags AND (bcftools keeps the
+    /// last one); the spec renders them back in order, in the canonical
+    /// lowercase spelling.
+    #[test]
+    fn genotype_rules_round_trip() {
+        let flags: Vec<String> = ["-g", "het", "-g", "^miss", "-g", "Hom"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translates");
+        use reed::spec::GtClassRule as R;
+        assert_eq!(
+            first.site_after_mask.gt_class,
+            vec![R::Het, R::NoMiss, R::Hom]
+        );
+        let rendered = first.to_args();
+        assert_eq!(&rendered[..4], &["-g", "het", "-g", "^miss", ]);
+        let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
+        assert_eq!(first, second);
+        // Bad tokens are usage errors at parse time.
+        let err = spec_from_flags(&cli_from(&["-g".into(), "homo".into()]))
+            .expect_err("unknown class must fail");
+        assert!(err.contains("hom, het, miss"), "{err}");
     }
 
     /// `--mind` is the dynamic sample rule the spec renders as a threshold

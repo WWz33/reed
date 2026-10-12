@@ -235,6 +235,9 @@ pub enum TailRule {
     MaxMac(u32),
     /// HWE exact-test p lower bound.
     MinHweP(f64),
+    /// One genotype-class site rule (bcftools `-g/--genotype`); a record
+    /// carrying several must satisfy every one of them.
+    GtClass(crate::spec::GtClassRule),
 }
 
 impl TailRule {
@@ -251,6 +254,7 @@ impl TailRule {
             Self::MinMac(_) => "after_mask.mac".to_string(),
             Self::MaxMac(_) => "after_mask.max_mac".to_string(),
             Self::MinHweP(_) => "after_mask.hwe".to_string(),
+            Self::GtClass(rule) => format!("after_mask.gt_class.{}", rule.id()),
         }
     }
 }
@@ -603,6 +607,28 @@ pub fn compile(
         }
         tail.push(TailRule::MinHweP(p));
     }
+    // `-g/--genotype` (repeated flags AND, unlike bcftools' last-wins):
+    // exact duplicates collapse; requiring a class and its absence is
+    // unsatisfiable — reject at compile time rather than silently drop
+    // every record.
+    let mut gt_rules: Vec<crate::spec::GtClassRule> =
+        Vec::with_capacity(spec.site_after_mask.gt_class.len());
+    for &rule in &spec.site_after_mask.gt_class {
+        if gt_rules.contains(&rule) {
+            continue; // an exact duplicate: AND is idempotent
+        }
+        if let Some(prior) = gt_rules.iter().find(|r| r.class() == rule.class()) {
+            return Err(FilterError::Spec(format!(
+                "-g/--genotype rules {:?} and {:?} are contradictory \
+                 (a site cannot have and lack a {} call)",
+                prior.id(),
+                rule.id(),
+                rule.class(),
+            )));
+        }
+        gt_rules.push(rule);
+    }
+    tail.extend(gt_rules.into_iter().map(TailRule::GtClass));
 
     // `--set-gts .` turns the `FMT/` expressions into per-sample mask rules
     // (bcftools `filter -S .`); genotype-derived site fields stay tail rules.
@@ -793,6 +819,59 @@ fn compile_regions(rule: &RegionRule) -> Result<Option<RegionLists>, FilterError
         parse_regions(&rule.include)?,
         parse_regions(&rule.exclude)?,
     )))
+}
+
+#[cfg(test)]
+mod gt_class_tests {
+    use super::*;
+    use crate::spec::GtClassRule as R;
+
+    fn compile_gt(rules: Vec<R>) -> Result<FilterPlan, FilterError> {
+        let spec = FilterSpec {
+            site_after_mask: crate::spec::TailRules {
+                gt_class: rules,
+                ..crate::spec::TailRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        compile(&spec, &TagTable::new(), "", true)
+    }
+
+    /// Repeated flags AND: exact duplicates collapse to one rule, so the
+    /// funnel never counts the same predicate twice.
+    #[test]
+    fn duplicate_gt_rules_dedupe() {
+        let plan = compile_gt(vec![R::Het, R::Het]).expect("invariant: compiles");
+        let gt: Vec<_> = plan
+            .tail
+            .iter()
+            .filter(|r| matches!(r, TailRule::GtClass(_)))
+            .collect();
+        assert_eq!(gt.len(), 1);
+        assert_eq!(gt[0].id(), "after_mask.gt_class.het");
+        let plan = compile_gt(vec![R::Het, R::Miss, R::Het, R::Miss])
+            .expect("invariant: compiles");
+        let ids: Vec<_> = plan.tail.iter().map(TailRule::id).collect();
+        assert_eq!(ids, ["after_mask.gt_class.het", "after_mask.gt_class.miss"]);
+    }
+
+    /// Requiring a class and its absence is unsatisfiable: rejected at
+    /// compile time, not silently true for no record.
+    #[test]
+    fn opposite_polarities_are_a_compile_error() {
+        for rules in [
+            vec![R::Hom, R::NoHom],
+            vec![R::NoHet, R::Het],
+            vec![R::Miss, R::NoMiss],
+            vec![R::Het, R::Het, R::NoHet],
+        ] {
+            let err = compile_gt(rules).expect_err("must reject");
+            let FilterError::Spec(text) = &err else {
+                panic!("expected a spec error, got {err:?}");
+            };
+            assert!(text.contains("contradictory"), "{text}");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -59,6 +59,30 @@ pub fn eval_tail(
                     .map_or(1.0, |(n, mac, het)| hwe.p_exact(n, mac, het))
                     >= *p
             }
+            // bcftools `-g/--genotype`: `miss` counts `./.` **and** the
+            // half-calls (bcftools `bcf_gt_type` UNKN); `hom` counts both
+            // homozygous classes. A record with no GT field skips the
+            // check entirely (bcftools `bcf_get_fmt` finds no GT, so its
+            // whole check block never runs and the record survives).
+            TailRule::GtClass(rule) => {
+                if counts.has_gt {
+                    let (has_hom, has_het, has_miss) = (
+                        counts.hom_ref + counts.hom_alt > 0,
+                        counts.het > 0,
+                        counts.n_missing + counts.n_half_called > 0,
+                    );
+                    match rule {
+                        crate::spec::GtClassRule::Hom => has_hom,
+                        crate::spec::GtClassRule::Het => has_het,
+                        crate::spec::GtClassRule::Miss => has_miss,
+                        crate::spec::GtClassRule::NoHom => !has_hom,
+                        crate::spec::GtClassRule::NoHet => !has_het,
+                        crate::spec::GtClassRule::NoMiss => !has_miss,
+                    }
+                } else {
+                    true
+                }
+            }
         };
         if !ok {
             return false;
@@ -139,6 +163,8 @@ mod tests {
             hom_ref,
             het,
             hom_alt,
+            n_half_called: 0,
+            has_gt: true,
         }
     }
 
@@ -218,6 +244,97 @@ mod tests {
             &mut [0],
             &mut HweCache::new()
         ));
+    }
+
+    /// bcftools `-g/--genotype` class presence over every call shape:
+    /// full calls split hom/het, `./.` and half-calls (`0/.`, haploid
+    /// `.` normalized) are missing. Each rule ANDs.
+    #[test]
+    fn gt_class_rules_cover_every_call_shape() {
+        use crate::spec::GtClassRule as R;
+        let base = |hom_ref: u64, het: u64, hom_alt: u64, n_missing: u64, half: u64| SiteCounts {
+            ac: 0,
+            an: 0,
+            ns: hom_ref + het + hom_alt + half,
+            n_missing,
+            hom_ref,
+            het,
+            hom_alt,
+            n_half_called: half,
+            has_gt: true,
+        };
+        let run = |c: &SiteCounts, rules: &[TailRule]| {
+            let v = values(c);
+            let mut hits = vec![0_u64; rules.len()];
+            eval_tail(&v, c, 4, rules, &mut hits, &mut HweCache::new())
+        };
+        // Shapes: hom_ref only / het only / hom_alt only / all-missing /
+        // half-call only / one of each.
+        let hom_only = base(2, 0, 0, 0, 0);
+        let het_only = base(0, 2, 0, 0, 0);
+        let miss_only = base(0, 0, 0, 2, 0);
+        let half_only = base(0, 0, 0, 0, 2);
+        let mixed = base(1, 1, 1, 1, 1);
+        assert!(run(&hom_only, &[TailRule::GtClass(R::Hom)]));
+        assert!(!run(&hom_only, &[TailRule::GtClass(R::Het)]));
+        assert!(!run(&hom_only, &[TailRule::GtClass(R::Miss)]));
+        assert!(run(&het_only, &[TailRule::GtClass(R::Het)]));
+        assert!(!run(&het_only, &[TailRule::GtClass(R::Hom)]));
+        assert!(run(&miss_only, &[TailRule::GtClass(R::Miss)]));
+        assert!(!run(&miss_only, &[TailRule::GtClass(R::Hom)]));
+        assert!(run(&half_only, &[TailRule::GtClass(R::Miss)]));
+        assert!(!run(&half_only, &[TailRule::GtClass(R::Hom)]));
+        assert!(!run(&half_only, &[TailRule::GtClass(R::Het)]));
+        // `^` forms: half-calls block `^miss` exactly like `./.` does.
+        assert!(run(&hom_only, &[TailRule::GtClass(R::NoHet)]));
+        assert!(!run(&hom_only, &[TailRule::GtClass(R::NoHom)]));
+        assert!(!run(&half_only, &[TailRule::GtClass(R::NoMiss)]));
+        assert!(!run(&miss_only, &[TailRule::GtClass(R::NoMiss)]));
+        assert!(run(&het_only, &[TailRule::GtClass(R::NoMiss)]));
+        // Repeated rules AND (bcftools keeps the last one instead).
+        let and_rules = [TailRule::GtClass(R::Het), TailRule::GtClass(R::Miss)];
+        assert!(run(&mixed, &and_rules));
+        assert!(!run(&het_only, &and_rules));
+        assert!(!run(&miss_only, &and_rules));
+    }
+
+    /// A record whose FORMAT lacks the GT key skips every `-g` rule and
+    /// survives (bcftools `bcf_get_fmt` finds no GT, so its check block
+    /// never runs) — even though its counts look all-missing, which a GT
+    /// whose values are all `./.` would fail `^miss` on.
+    #[test]
+    fn gt_class_rules_skip_records_without_a_gt_field() {
+        use crate::spec::GtClassRule as R;
+        let no_gt = SiteCounts {
+            ac: 0,
+            an: 0,
+            ns: 0,
+            n_missing: 4, // every sample decoded as missing
+            hom_ref: 0,
+            het: 0,
+            hom_alt: 0,
+            n_half_called: 0,
+            has_gt: false,
+        };
+        let all_missing_gt = SiteCounts {
+            has_gt: true,
+            ..no_gt
+        };
+        let rules: Vec<TailRule> = [R::Hom, R::Het, R::Miss, R::NoHom, R::NoHet, R::NoMiss]
+            .into_iter()
+            .map(TailRule::GtClass)
+            .collect();
+        let run = |c: &SiteCounts, rules: &[TailRule]| {
+            let v = values(c);
+            let mut hits = vec![0_u64; rules.len()];
+            eval_tail(&v, c, 4, rules, &mut hits, &mut HweCache::new())
+        };
+        for rule in &rules {
+            assert!(run(&no_gt, std::slice::from_ref(rule)), "{rule:?}");
+        }
+        // The all-`./.` control still behaves as a missing-heavy site.
+        assert!(run(&all_missing_gt, &[TailRule::GtClass(R::Miss)]));
+        assert!(!run(&all_missing_gt, &[TailRule::GtClass(R::NoMiss)]));
     }
 
     #[test]
