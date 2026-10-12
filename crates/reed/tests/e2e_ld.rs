@@ -549,3 +549,69 @@ fn ld_cohort_excludes_removed_samples() {
     assert_eq!(a.pairs, b.pairs, "removed samples must not enter the pairs");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-19: the streaming prune caps concurrent per-contig threads.
+/// With `threads` below the contig count the oldest job is joined early, so
+/// the multi-contig result must still be thread-count independent.
+#[test]
+fn prune_multi_contig_is_thread_count_independent() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-multi-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=c1,length=1000>\n\
+         ##contig=<ID=c2,length=1000>\n\
+         ##contig=<ID=c3,length=1000>\n\
+         ##contig=<ID=c4,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\ts4\ts5\n",
+    );
+    for c in ["c1", "c2", "c3", "c4"] {
+        text.push_str(&format!(
+            "{c}\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t1/1\t0/1\t0/0\n\
+             {c}\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t1/1\t0/1\t0/0\n\
+             {c}\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t0/1\t0/0\t0/1\t1/1\n"
+        ));
+    }
+    let vcf = dir.join("multi.vcf");
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let run = |threads: usize, out: &std::path::Path| -> Vec<(String, u64)> {
+        let opts = reed::FilterOptions {
+            threads,
+            output: Some(out.to_path_buf()),
+            ..reed::FilterOptions::default()
+        };
+        let mut spec = prune_spec();
+        spec.ld_prune = Some(reed::spec::LdPruneSpec {
+            window: 10,
+            kb: false,
+            step: 1,
+            r2: 0.5,
+        });
+        reed::run_filter(Some(&vcf), &spec, &opts).expect("invariant: filter runs");
+        std::fs::read_to_string(out)
+            .expect("invariant: output")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| {
+                let mut it = l.split('\t');
+                (
+                    it.next().expect("CHROM").to_string(),
+                    it.next().expect("POS").parse().expect("pos"),
+                )
+            })
+            .collect()
+    };
+    let reference = run(1, &dir.join("t1.vcf"));
+    assert!(!reference.is_empty());
+    for threads in [2_usize, 4, 8] {
+        let out = dir.join(format!("t{threads}.vcf"));
+        assert_eq!(
+            run(threads, &out),
+            reference,
+            "threads={threads} must match the one-thread prune"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -687,6 +687,9 @@ struct MatrixSink {
     prune_config: Option<super::prune::PruneConfig>,
     /// The memory budget the per-contig matrices are judged against.
     budget_bytes: u64,
+    /// Upper bound on concurrently running per-contig prune threads (doc_v7
+    /// D7-19: without a cap, M contigs keep M matrices resident).
+    max_prune: usize,
     /// The final keep bitmap the streaming pruner excludes over (doc_v7 D7-4).
     keep_words: Arc<[u64]>,
     called: Vec<u64>,
@@ -699,6 +702,8 @@ struct MatrixSink {
     open: Option<OpenChunk>,
     chunks: Vec<ChunkSites>,
     prune_jobs: Vec<std::thread::JoinHandle<super::prune::PruneOutcome>>,
+    /// Prune results already joined to respect `max_prune` (doc_v7 D7-19).
+    prune_done: Vec<super::prune::PruneOutcome>,
     out: Arc<Mutex<Option<MatrixOutput>>>,
 }
 
@@ -735,6 +740,11 @@ impl OrderedSink<MatrixPartial> for MatrixSink {
             let mut pruned = 0_u64;
             let mut per_contig = Vec::new();
             let started = std::time::Instant::now();
+            for outcome in self.prune_done.drain(..) {
+                seen += outcome.n_seen;
+                pruned += outcome.n_pruned;
+                per_contig.extend(outcome.keep.per_contig);
+            }
             for handle in self.prune_jobs.drain(..) {
                 let outcome = handle
                     .join()
@@ -891,6 +901,16 @@ impl MatrixSink {
                 budget_bytes: self.budget_bytes,
             });
         }
+        // Bound the number of concurrently running prune threads so M contigs
+        // cannot keep M matrices resident (doc_v7 D7-19): join the oldest
+        // when the cap is reached, keeping its outcome for `finish`.
+        if self.prune_jobs.len() >= self.max_prune {
+            let handle = self.prune_jobs.remove(0);
+            let outcome = handle
+                .join()
+                .map_err(|_| EngineError::job("the per-contig prune worker panicked"))?;
+            self.prune_done.push(outcome);
+        }
         let n_samples = self.n_samples;
         let keep_words = Arc::clone(&self.keep_words);
         self.prune_jobs.push(std::thread::spawn(move || {
@@ -973,6 +993,7 @@ pub(crate) fn run_matrix_pass(
         track_chunks: mode.rule_bits,
         prune_config,
         budget_bytes,
+        max_prune: opts.threads.max(1),
         keep_words: keep_words.into(),
         called: Vec::new(),
         n_head: 0,
@@ -989,6 +1010,7 @@ pub(crate) fn run_matrix_pass(
         open: None,
         chunks: Vec::new(),
         prune_jobs: Vec::new(),
+        prune_done: Vec::new(),
         out: Arc::clone(&out),
     };
     let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
