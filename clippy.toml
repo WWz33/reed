@@ -1,0 +1,4 @@
+# Test code may unwrap/panic/expect freely (failures point at the test).
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-expect-in-tests = true
