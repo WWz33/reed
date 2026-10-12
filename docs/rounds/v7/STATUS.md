@@ -32,7 +32,7 @@
 | D7-17 | P1 | 已修 | `value_total`→`value_avg`（CLI 已同时输出 avg/raw，pixy 布局） |
 | D7-18 | P1 | 已修 | `indep_pairwise_accepts_integer_r2` |
 | D7-19 | P1 | 已修 | `prune_multi_contig_is_thread_count_independent` |
-| D7-20 | — | **非 bug** | 多群体 Fst 与 scikit-allel 一致（代码注释 + 文档） |
+| D7-20 | — | **非 bug（跟随 vcftools）** | 某群体 `an_i=0` 的位点被整点跳过：**vcftools 对齐**（成对实测 0.15==0.15，逐位点 −0.333/0/0.625 相同）；与 pixy/allel 不同（后者保留有限 c，成对 0.125、r=3 0.1698 vs reed 0.2195） |
 | D7-21 | P1 | 已修 | `variant_only_denominator_does_not_overflow` |
 | D7-22 | P1 | 已修 | 重导出 7 类型；`FilterOptions` 默认压缩 6；`to_args` 补 af_kind/ld_prune |
 | D7-23 | P2 | **设计意图** | variant-only 单一估计器（文档说明） |

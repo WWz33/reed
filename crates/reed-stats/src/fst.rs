@@ -145,6 +145,11 @@ impl FstAcc {
         }
 
         // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
+        // Skipping a group with no called alleles matches vcftools
+        // (--weir-fst-pop prints `-nan` for the site and drops it from the
+        // weighted mean); pixy / scikit-allel instead keep the finite `c`
+        // component (a paired demo with an all-missing group: reed/vcftools
+        // 0.150 vs pixy/allel 0.125). Documented divergence, doc_v7 D7-20.
         if n_a == 0 || n_b == 0 {
             self.wc.n_skipped += 1;
         } else {
@@ -285,12 +290,14 @@ impl WcMultiAcc {
             self.n_skipped += 1;
             return;
         }
-        // No per-group `n_i == 0` skip here: scikit-allel's weir_cockerham_fst
-        // does not skip such a site (it computes n = an // 2 and lets the
-        // zero-contributing group stay), so the multi-population path matches
-        // allel exactly. The pairwise path's extra `n1 == 0` guard is
-        // redundant for r = 2 (n_C <= 0 catches it) and never disagrees
-        // (doc_v7 D7-20).
+        // No per-group `n_i == 0` skip here (only `an_i == 0` above): matches
+        // vcftools, which drops a site whose WEIR_AND_COCKERHAM_FST is `-nan`.
+        // NOTE (doc_v7 D7-20): this differs from pixy / scikit-allel, which
+        // keep allel's finite `c` component for an all-missing group
+        // (pairwise demo, one group all-missing: reed/vcftools 0.15 vs
+        // pixy/allel 0.125; r=3 likewise 0.2195 vs 0.1698). reed follows the
+        // vcftools/hierfstat reference the docs name for the multi-group
+        // WC84, not pixy (which has no r-population merged form).
         let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
         let n_total: f64 = n.iter().sum();
         let n_bar = n_total / r as f64;
