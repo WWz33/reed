@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # The clippy gate below needs the component; the toolchain file
+          # alone does not install it (every run failed on
+          # "'cargo-clippy' is not installed for the toolchain '1.99'").
+          components: clippy
       # Compiling the workspace is the first gate (doc_v5 A5-4: the trunk
       # must never sit in a "tests do not compile" state).
       - name: build (release, all targets)

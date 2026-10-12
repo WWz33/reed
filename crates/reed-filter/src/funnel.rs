@@ -272,10 +272,14 @@ mod tests {
     /// `reset` (it was omitted from both).
     #[test]
     fn merge_and_reset_carry_the_ld_prune_count() {
-        let mut a = FunnelPartial::default();
-        a.n_ld_pruned = 2;
-        let mut b = FunnelPartial::default();
-        b.n_ld_pruned = 3;
+        let mut a = FunnelPartial {
+            n_ld_pruned: 2,
+            ..FunnelPartial::default()
+        };
+        let b = FunnelPartial {
+            n_ld_pruned: 3,
+            ..FunnelPartial::default()
+        };
         a.merge(&b);
         assert_eq!(a.n_ld_pruned, 5);
         a.reset(1, 1, 1);
