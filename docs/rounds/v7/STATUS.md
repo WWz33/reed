@@ -5,8 +5,8 @@
 
 ## 结论总览
 
-29 条发现：**24 条改为真修**（含 5 条 P0、9 条 P1、其余 P2 代码/测试改动），
-**5 条经核实为"非 bug / 文档或设计说明"**（D7-20、D7-23、D7-25、D7-26、D7-27），
+29 条发现：**25 条改为真修**（含 5 条 P0、10 条 P1、其余 P2 代码/测试改动），
+**4 条经核实为"非 bug / 文档或设计说明"**（D7-23、D7-25、D7-26、D7-27），
 逐条给出了独立提交。
 
 ## 缺陷状态
@@ -32,7 +32,7 @@
 | D7-17 | P1 | 已修 | `value_total`→`value_avg`（CLI 已同时输出 avg/raw，pixy 布局） |
 | D7-18 | P1 | 已修 | `indep_pairwise_accepts_integer_r2` |
 | D7-19 | P1 | 已修 | `prune_multi_contig_is_thread_count_independent` |
-| D7-20 | — | **非 bug（跟随 vcftools）** | 某群体 `an_i=0` 的位点被整点跳过：**vcftools 对齐**（成对实测 0.15==0.15，逐位点 −0.333/0/0.625 相同）；与 pixy/allel 不同（后者保留有限 c，成对 0.125、r=3 0.1698 vs reed 0.2195） |
+| D7-20 | P1 | **已修（行为翻转）** | 某群体 `an_i=0` 的位点原为整点跳过（vcftools 语义）；经实测定案翻转为 **pixy/scikit-allel 语义：保留有限 c 分量**（成对 0.15→0.125 == pixy，r=3 0.2195→0.16981 == allel）。依据：pixy 的 dxy 在该类位点同为跳过（其"无偏"主张不涉及 WC84 的 keep-c，那是 allel `nansum` 副产品），且成对 WC84 的命名参考就是 pixy；masked Chr01 实测 reed == pixy 到 13 位有效数字（0.0086203/0.0020595/−0.0005171），r=3 == allel（0.003237）；vcftools/hierfstat 各是另两种语义（丢弃 / reduced-r），vcftools 金门不受影响（基准数据无此类位点） |
 | D7-21 | P1 | 已修 | `variant_only_denominator_does_not_overflow` |
 | D7-22 | P1 | 已修 | 重导出 7 类型；`FilterOptions` 默认压缩 6；`to_args` 补 af_kind/ld_prune |
 | D7-23 | P2 | **设计意图** | variant-only 单一估计器（文档说明） |

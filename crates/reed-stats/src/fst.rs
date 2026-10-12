@@ -145,13 +145,21 @@ impl FstAcc {
         }
 
         // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
-        // Skipping a group with no called alleles matches vcftools
-        // (--weir-fst-pop prints `-nan` for the site and drops it from the
-        // weighted mean); pixy / scikit-allel instead keep the finite `c`
-        // component (a paired demo with an all-missing group: reed/vcftools
-        // 0.150 vs pixy/allel 0.125). Documented divergence, doc_v7 D7-20.
+        // A group with no called alleles leaves a, b undefined (NaN in
+        // allel) while c = h̄/2 stays finite over the typed group; allel's
+        // `nansum` keeps c, and so do we (pixy parity, doc_v7 D7-20).
+        // vcftools/plink2 drop the site instead — documented divergence
+        // (masked Chr01: pixy 0.0086203 vs vcftools 0.0086449). Both
+        // groups empty → c is NaN too, the site contributes nothing.
         if n_a == 0 || n_b == 0 {
-            self.wc.n_skipped += 1;
+            let n_total = (n_a / 2 + n_b / 2) as f64;
+            if n_total == 0.0 {
+                self.wc.n_skipped += 1;
+            } else {
+                let h_bar = u64::from(a.n_het + b.n_het) as f64 / n_total;
+                self.wc.c.add(h_bar);
+                self.wc.n_sites += 1;
+            }
         } else {
             let (n1, n2) = ((n_a / 2) as f64, (n_b / 2) as f64);
             let n_total = n1 + n2;
@@ -247,8 +255,10 @@ impl FstAcc {
 /// `weir_cockerham_fst` — the r-population ANOVA with n_i = an_i // 2
 /// floor semantics and h̄ from the count table's n_het).
 ///
-/// Sums (a, b, c) are per-site NeumaierSums over the contributing sites
-/// (all populations must have n_i ≥ 1 and the totals must define n_C > 0).
+/// Sums (a, b, c) are per-site NeumaierSums over the contributing sites.
+/// A site where some (not all) groups have `an_i = 0` contributes only
+/// the finite c component (allel `nansum` semantics, doc_v7 D7-20); the
+/// `n̄ ≤ 1` / `n_C ≤ 0` guards still skip.
 #[derive(Clone, Debug)]
 pub struct WcMultiAcc {
     groups: Vec<usize>,
@@ -287,17 +297,23 @@ impl WcMultiAcc {
             .map(|c| u64::from(c.n_ref_alleles + c.n_alt_alleles))
             .collect();
         if an.contains(&0) {
-            self.n_skipped += 1;
+            // Same keep-c rule as the pair path (doc_v7 D7-20): with a
+            // typed remainder the site contributes only c = h̄/2 over the
+            // typed groups (allel `nansum` parity; vcftools drops the
+            // site, hierfstat recomputes with r′ groups — masked Chr01
+            // r=3: allel 0.003237 vs vcftools 0.0032631). Every group
+            // empty → the site contributes nothing.
+            let n_typed: f64 = an.iter().map(|&a| (a / 2) as f64).sum();
+            if n_typed == 0.0 {
+                self.n_skipped += 1;
+            } else {
+                let h_bar =
+                    counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_typed;
+                self.c.add(h_bar / 2.0);
+                self.n_sites += 1;
+            }
             return;
         }
-        // No per-group `n_i == 0` skip here (only `an_i == 0` above): matches
-        // vcftools, which drops a site whose WEIR_AND_COCKERHAM_FST is `-nan`.
-        // NOTE (doc_v7 D7-20): this differs from pixy / scikit-allel, which
-        // keep allel's finite `c` component for an all-missing group
-        // (pairwise demo, one group all-missing: reed/vcftools 0.15 vs
-        // pixy/allel 0.125; r=3 likewise 0.2195 vs 0.1698). reed follows the
-        // vcftools/hierfstat reference the docs name for the multi-group
-        // WC84, not pixy (which has no r-population merged form).
         let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
         let n_total: f64 = n.iter().sum();
         let n_bar = n_total / r as f64;

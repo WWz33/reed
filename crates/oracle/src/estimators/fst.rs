@@ -151,8 +151,22 @@ pub fn fst(
         match estimator {
             FstEstimator::Hudson => {}
             FstEstimator::WeirCockerham84 => {
+                // pixy/allel semantics (doc_v7 D7-20): a group with no
+                // called alleles leaves a, b undefined (NaN) while
+                // c = h̄/2 stays finite over the typed group; `nansum`
+                // keeps c. vcftools/plink2 drop the site instead —
+                // documented divergence. Both groups empty → c is NaN
+                // too, the site contributes nothing.
                 if n_a == 0 || n_b == 0 {
-                    wc.n_skipped += 1;
+                    let n_total = (n_a / 2 + n_b / 2) as f64;
+                    if n_total == 0.0 {
+                        wc.n_skipped += 1;
+                        continue;
+                    }
+                    let het_1 = window.genotype_counts(site, samples_a).het as f64;
+                    let het_2 = window.genotype_counts(site, samples_b).het as f64;
+                    wc.c += (het_1 + het_2) / n_total;
+                    wc.n_sites += 1;
                     continue;
                 }
                 // allel semantics (fst.py:163): n = an // 2 — integer floor,

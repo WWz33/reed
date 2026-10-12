@@ -4,7 +4,7 @@
 //! matrix request shape.
 
 use reed_core::count::SiteGroupCounts;
-use reed_stats::fst::{FstKind, FstMatrixAcc, WcMultiAcc};
+use reed_stats::fst::{FstAcc, FstKind, FstMatrixAcc, WcMultiAcc};
 
 fn row(ans: &[u32], alts: &[u32], hets: &[u32]) -> Vec<SiteGroupCounts> {
     ans.iter()
@@ -100,11 +100,58 @@ fn wc84_two_populations_agrees_with_the_pair_estimator() {
 }
 
 #[test]
-fn wc84_skips_degenerate_sites() {
+fn wc84_all_missing_group_contributes_only_c() {
+    // pixy/allel semantics (D7-20): the anA = 0 site leaves a, b undefined
+    // and keeps c = h̄/2 over the typed groups. h̄ = (2+4)/(5+6) = 6/11,
+    // c = 3/11; Fst = 0/(0+0+3/11) = 0.
     let mut acc = WcMultiAcc::new(vec![0, 1, 2]);
     acc.push(&row(&[0, 10, 12], &[0, 5, 6], &[0, 2, 4])); // anA = 0
+    assert_eq!(acc.site_tally(), (1, 0));
+    assert_eq!(acc.value(), Some(0.0));
+}
+
+#[test]
+fn wc84_single_typed_group_contributes_only_c() {
+    // Only C typed: a, b undefined, c = h̄/2 = (4/6)/2 = 1/3 → Fst = 0.
+    let mut acc = WcMultiAcc::new(vec![0, 1, 2]);
+    acc.push(&row(&[0, 0, 12], &[0, 0, 6], &[0, 0, 4]));
+    assert_eq!(acc.site_tally(), (1, 0));
+    assert_eq!(acc.value(), Some(0.0));
+}
+
+#[test]
+fn wc84_all_groups_empty_contributes_nothing() {
+    // c is NaN there too — the site drops out entirely (allel `nansum`).
+    let mut acc = WcMultiAcc::new(vec![0, 1, 2]);
+    acc.push(&row(&[0, 0, 0], &[0, 0, 0], &[0, 0, 0]));
     assert_eq!(acc.site_tally(), (0, 1));
     assert!(acc.value().is_none());
+}
+
+#[test]
+fn wc84_pair_keeps_finite_c_for_an_all_missing_group() {
+    // pixy / scikit-allel on this fixture: 0.125; vcftools (drops the
+    // site): 0.15 (doc_v7 D7-20).
+    let mut acc = FstAcc::new(0, 1);
+    acc.push(&row(&[6, 6], &[3, 3], &[1, 1]));
+    acc.push(&row(&[6, 0], &[3, 0], &[1, 0])); // group B all missing
+    acc.push(&row(&[6, 6], &[3, 3], &[3, 3]));
+    acc.push(&row(&[6, 6], &[0, 4], &[0, 2]));
+    let v = acc.value_wc84().expect("contributing sites");
+    assert!((v - 0.125).abs() < 1e-12, "{v}");
+}
+
+#[test]
+fn wc84_global_keeps_finite_c_for_an_all_missing_group() {
+    // scikit-allel r=3 `nansum` on this fixture: 0.16981132075471697;
+    // vcftools x3 (drops the site): 0.219512 (doc_v7 D7-20).
+    let mut acc = WcMultiAcc::new(vec![0, 1, 2]);
+    acc.push(&row(&[4, 4, 4], &[1, 3, 1], &[1, 1, 1]));
+    acc.push(&row(&[4, 0, 4], &[1, 0, 3], &[1, 0, 1])); // group B all missing
+    acc.push(&row(&[4, 4, 4], &[2, 2, 1], &[2, 0, 1]));
+    acc.push(&row(&[4, 4, 4], &[0, 2, 4], &[0, 2, 0]));
+    let v = acc.value().expect("contributing sites");
+    assert!((v - 0.169_811_320_754_716_97).abs() < 1e-12, "{v}");
 }
 
 #[test]
