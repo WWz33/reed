@@ -161,6 +161,119 @@ fn filter_indep_pairwise_keeps_the_plink2_set() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v7 D7-4: `--indep-pairwise` must run on the post-filter data — the
+/// static sample subset and the genotype mask both drop samples from every
+/// r²/major-frequency computation, so pruning a `-s` subset (or a set the
+/// mask empties) must equal pruning a VCF that holds only those samples.
+const LD_SEL_VCF: &str = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"DP\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:30\t0/1:30\t0/0:5\t1/1:5
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:30\t0/1:30\t0/0:5\t1/1:5
+chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:30\t0/0:30\t0/1:5\t0/0:5
+";
+
+/// The same three sites with only s0 and s1.
+const LD_SEL_SUBSET_VCF: &str = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1
+chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+";
+
+fn prune_positions(
+    vcf: &std::path::Path,
+    spec: &reed::spec::FilterSpec,
+    out: &std::path::Path,
+) -> Vec<u64> {
+    let opts = reed::FilterOptions {
+        threads: 2,
+        output: Some(out.to_path_buf()),
+        ..reed::FilterOptions::default()
+    };
+    reed::run_filter(Some(vcf), spec, &opts).expect("invariant: filter runs");
+    std::fs::read_to_string(out)
+        .expect("invariant: output")
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').nth(1).expect("POS").parse().expect("pos"))
+        .collect()
+}
+
+fn prune_spec() -> reed::spec::FilterSpec {
+    let mut spec = reed::spec::FilterSpec::default();
+    spec.ld_prune = Some(reed::spec::LdPruneSpec {
+        window: 10,
+        kb: false,
+        step: 1,
+        r2: 0.5,
+    });
+    spec
+}
+
+#[test]
+fn indep_pairwise_respects_the_static_sample_subset() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-subset-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let full = dir.join("full.vcf");
+    std::fs::write(&full, LD_SEL_VCF).expect("invariant: write");
+    let subset_vcf = dir.join("subset.vcf");
+    std::fs::write(&subset_vcf, LD_SEL_SUBSET_VCF).expect("invariant: write");
+
+    // Whole cohort: sites 1 and 2 are identical over all four samples.
+    let all = prune_positions(&full, &prune_spec(), &dir.join("all.out.vcf"));
+
+    // `-s s0,s1`: over the two kept samples sites 1 and 2 carry zero
+    // variance, so nothing prunes.
+    let mut spec = prune_spec();
+    spec.sample_select = Some(reed::spec::SampleSelect {
+        keep: Some(reed::spec::SampleList::Names(vec!["s0".into(), "s1".into()])),
+        remove: None,
+    });
+    let kept_subset = prune_positions(&full, &spec, &dir.join("subset.out.vcf"));
+
+    // The same result as pruning a VCF that holds only s0 and s1.
+    let reference = prune_positions(&subset_vcf, &prune_spec(), &dir.join("ref.out.vcf"));
+
+    assert_eq!(
+        kept_subset, reference,
+        "-s subset must prune like the subset VCF"
+    );
+    assert_ne!(all, reference, "the full cohort must prune differently");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn indep_pairwise_respects_the_genotype_mask() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-mask-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let full = dir.join("full.vcf");
+    std::fs::write(&full, LD_SEL_VCF).expect("invariant: write");
+    let subset_vcf = dir.join("subset.vcf");
+    std::fs::write(&subset_vcf, LD_SEL_SUBSET_VCF).expect("invariant: write");
+
+    // `--min-dp 20` masks s2 and s3 (DP=5), leaving s0/s1 — the subset.
+    let mut spec = prune_spec();
+    spec.genotype = reed::spec::GenotypeRules {
+        mask_if: vec![reed::spec::GenotypeMaskRule {
+            field: "DP".into(),
+            when: "< 20".into(),
+            on_missing: reed::spec::OnMissing::Keep,
+        }],
+        ..reed::spec::GenotypeRules::default()
+    };
+    let masked = prune_positions(&full, &spec, &dir.join("masked.out.vcf"));
+    let reference = prune_positions(&subset_vcf, &prune_spec(), &dir.join("ref.out.vcf"));
+    assert_eq!(masked, reference, "the mask must drop s2/s3 from the prune");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn ld_is_identical_across_thread_counts() {
     let dir = std::env::temp_dir().join(format!("reed-ld-det-{}", std::process::id()));

@@ -410,6 +410,7 @@ pub fn run_filter(
                         .expect("invariant: guarded by indep_requested"),
                 ),
                 n_samples_in,
+                &pass0::keep_words_of(&keep),
             )
         } else {
             m.prune.clone().expect("invariant: the streaming prune ran")
