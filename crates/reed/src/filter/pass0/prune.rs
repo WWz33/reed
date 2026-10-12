@@ -22,6 +22,12 @@ pub(crate) struct PruneConfig {
 
 /// The kept sites, per contig, sorted by position (pass1 binary-searches
 /// this: worker chunks are unordered, so an ordinal bitmap cannot be used).
+///
+/// Keyed by `(contig, pos0)`: multiple records at one position (rare;
+/// e.g. a split multiallelic) share the prune decision — all kept or all
+/// dropped (doc_v7 D7-25, the same position-keyed convention as
+/// vcftools/plink2's `.prune.in`). A contig absent from `per_contig` counts
+/// as fully pruned.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SiteKeepSet {
     /// `(contig, sorted 0-based positions)`.
