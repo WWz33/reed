@@ -331,6 +331,12 @@ fn declared_total(head: &[u8], text: &[u8]) -> Option<usize> {
         return reed_io::bcf::declared_len(head);
     }
     let need = 8 - head.len();
+    // A truncated tail can leave too little text to complete the 8-byte
+    // prefix; report "unknown" instead of slicing out of bounds (doc_v7
+    // D7-16; the bcf_input twin already guarded this).
+    if text.len() < need {
+        return None;
+    }
     let mut buf = [0_u8; 8];
     buf[..head.len()].copy_from_slice(head);
     buf[head.len()..].copy_from_slice(&text[..need]);

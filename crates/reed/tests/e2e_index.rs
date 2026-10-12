@@ -257,3 +257,24 @@ fn bcf_input_refuses_tbi() {
     run_index(&bcf, WriteIndex::Csi, Some(&out), 4).expect("BCF + CSI must work");
     let _ = std::fs::remove_file(&out);
 }
+
+/// doc_v7 D7-16: a truncated BCF must produce an error, never an
+/// out-of-bounds panic in `declared_total`.
+#[test]
+fn truncated_bcf_errors_without_panicking() {
+    let src =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
+    let bytes = std::fs::read(&src).expect("invariant: fixture");
+    let dir = std::env::temp_dir().join(format!("reed-bcf-trunc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    // Several cut points exercise different crossing-record cases.
+    for frac in [10_usize, 20, 50, 75, 90, 99] {
+        let cut = bytes.len() * frac / 100;
+        let out = dir.join(format!("in{frac}.bcf"));
+        std::fs::write(&out, &bytes[..cut]).expect("invariant: write");
+        let _ = run_index(&out, WriteIndex::Csi, None, 4)
+            .expect_err("a truncated BCF must be reported, not panic");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
