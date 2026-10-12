@@ -480,6 +480,19 @@ pub fn run_index(
     };
     // The compressed file size bounds the last record's chunk.
     let eof_voff = std::fs::metadata(input).map_err(EngineError::Io)?.len() << 16;
+    // `reed index` writes tabix/CSI indexes, which address BGZF blocks; a
+    // plain VCF or a regular gzip stream has none, so indexing it would
+    // silently produce all-zero virtual offsets (doc_v7 D7-3).
+    let format = crate::input::detect_format(input).map_err(job)?;
+    if !matches!(
+        format,
+        reed_io::format::Format::VcfBgzf | reed_io::format::Format::Bcf
+    ) {
+        return Err(crate::error::Error::usage(
+            "reed index needs a BGZF-compressed VCF or BCF input \
+             (recompress plain VCF/regular gzip with bgzip)",
+        ));
+    }
     let mut opened = crate::input::open(Some(input)).map_err(job)?;
     let is_bcf = opened.bcf.is_some();
     let contig_names: Arc<[Vec<u8>]> = Arc::from(

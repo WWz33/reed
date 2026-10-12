@@ -207,3 +207,39 @@ fn open_regions_consumes_its_own_index() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = outcome;
 }
+
+/// Regular gzip (no BGZF `BC` block) of the same text.
+fn gzip(text: &str) -> Vec<u8> {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(text.as_bytes()).expect("invariant: gzip write");
+    enc.finish().expect("invariant: gzip finish")
+}
+
+/// doc_v7 D7-3: tabix/CSI address BGZF blocks; a plain VCF or a regular gzip
+/// stream has none, so indexing it must be refused — not silently written as
+/// an all-zero-offset index.
+#[test]
+fn plain_and_gzip_inputs_are_refused() {
+    let dir = std::env::temp_dir().join(format!("reed-index-plain-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+
+    let plain = dir.join("in.vcf");
+    std::fs::write(&plain, rows()).expect("invariant: write plain");
+    let err = run_index(&plain, WriteIndex::Csi, None, 4).expect_err("plain VCF must be refused");
+    assert!(err.to_string().contains("BGZF"), "{err}");
+
+    let gz = dir.join("in.vcf.gz");
+    std::fs::write(&gz, gzip(&rows())).expect("invariant: write gzip");
+    let err = run_index(&gz, WriteIndex::Csi, None, 4).expect_err("regular gzip must be refused");
+    assert!(err.to_string().contains("BGZF"), "{err}");
+
+    // Control: the BGZF form still indexes.
+    let (dir2, bgzf_path) = write_fixture("plain-control", &rows());
+    run_index(&bgzf_path, WriteIndex::Csi, None, 4).expect("BGZF still indexes");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+}

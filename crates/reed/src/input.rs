@@ -101,6 +101,18 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
     })
 }
 
+/// Detects a file's input format from its magic bytes without opening the
+/// whole stream (used to reject unindexable inputs up front, doc_v7 D7-3).
+///
+/// # Errors
+///
+/// [`IoError`] when the file cannot be read or no known magic matches.
+pub fn detect_format(path: &Path) -> Result<Format, IoError> {
+    let mut probe = std::fs::File::open(path)?;
+    let (prefix, inflated) = sniff(&mut probe)?;
+    Format::detect(&prefix, inflated.as_deref())
+}
+
 /// Reads enough of the stream to detect its format: the whole first BGZF
 /// block when the bytes are BGZF (the inflated content tells BGZF-VCF from
 /// BGZF-BCF), else a short prefix. The raw bytes are returned so the caller
