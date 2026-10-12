@@ -151,7 +151,7 @@ pub fn fst(
         match estimator {
             FstEstimator::Hudson => {}
             FstEstimator::WeirCockerham84 => {
-                // pixy/allel semantics (doc_v7 D7-20): a group with no
+                // allel `nansum` semantics (doc_v7 D7-20): a group with no
                 // called alleles leaves a, b undefined (NaN) while
                 // c = h̄/2 stays finite over the typed group; `nansum`
                 // keeps c. vcftools/plink2 drop the site instead —

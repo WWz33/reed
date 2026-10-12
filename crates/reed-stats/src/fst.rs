@@ -147,10 +147,10 @@ impl FstAcc {
         // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
         // A group with no called alleles leaves a, b undefined (NaN in
         // allel) while c = h̄/2 stays finite over the typed group; allel's
-        // `nansum` keeps c, and so do we (pixy parity, doc_v7 D7-20).
-        // vcftools/plink2 drop the site instead — documented divergence
-        // (masked Chr01: pixy 0.0086203 vs vcftools 0.0086449). Both
-        // groups empty → c is NaN too, the site contributes nothing.
+        // `nansum` keeps c, and so do we (doc_v7 D7-20). vcftools/plink2
+        // drop the site instead — documented divergence (masked Chr01:
+        // 0.0086203 vs vcftools 0.0086449). Both groups empty → c is NaN
+        // too, the site contributes nothing.
         if n_a == 0 || n_b == 0 {
             let n_total = (n_a / 2 + n_b / 2) as f64;
             if n_total == 0.0 {
