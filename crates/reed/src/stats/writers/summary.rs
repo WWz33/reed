@@ -197,6 +197,13 @@ impl QcJob {
             .alleles
             .expect("invariant: the summary requires tracking_alleles");
         let dp_column = out.int_columns.first().map_or(&[][..], Vec::as_slice);
+        // bcftools' variant typing for the PSC/IDD sections (doc_v7 D7-7):
+        // a record is a "SNP row" when any ALT is an SNV or there is no ALT
+        // (VCF_REF), and an "indel row" when any ALT is an indel.
+        let record_is_snp = any_snp || n_alt == 0;
+        let record_is_indel = classes
+            .iter()
+            .any(|c| matches!(c, reed_core::site::VariantClass::Indel));
         for (i, [a, b]) in raw_alleles.as_chunks::<2>().0.iter().enumerate() {
             let pair = [*a, *b];
             for allele in pair {
@@ -211,7 +218,10 @@ impl QcJob {
                     None => {}
                 }
             }
-            // PSC genotype classes (SNP rows only; ALT=. counts as SNP).
+            // PSC (bcftools vcfstats.c; doc_v7 D7-7): hom-ref, missing and
+            // half-calls are counted on every record; the non-ref hom / het
+            // classes only on SNP (or REF) rows; indel genotypes separately
+            // (any non-missing, non-hom-ref call on an indel row).
             let psc = &mut acc.psc[i];
             let [a, b] = pair;
             if a.is_none() && b.is_none() {
@@ -223,38 +233,41 @@ impl QcJob {
                     Some(_) => psc.hap_alt += 1,
                     None => {}
                 }
-            } else {
+            } else if a == Some(0) && b == Some(0) {
+                psc.hom_rr += 1;
+            } else if record_is_snp {
                 match (a, b) {
-                    (Some(0), Some(0)) => psc.hom_rr += 1,
                     (Some(x), Some(y)) if x == y => psc.hom_aa += 1,
                     (Some(_), Some(_)) => psc.hets += 1,
                     _ => {}
                 }
             }
-            // Per-sample ts/tv: only SNP rows with a non-ref genotype.
-            if any_snp && pair != [Some(0), Some(0)] {
-                for allele in [a, b].into_iter().flatten() {
-                    if allele == 0 {
-                        continue;
-                    }
-                    if let (Some(_r), Some(idx)) =
-                        (acgt(reference[0]), usize::from(allele).checked_sub(1))
-                    {
-                        if idx >= classes.len() {
-                            continue;
-                        }
-                        let alt = alt_of(idx);
-                        if alt.len() != 1 {
-                            continue;
-                        }
-                        if let Some(sub) = subst_index(reference[0], alt[0]) {
-                            let _ = sub;
-                        }
-                        if is_transition(reference[0], alt[0]) {
-                            psc.ts += 1;
-                        } else {
-                            psc.tv += 1;
-                        }
+            if record_is_indel
+                && !(a == Some(0) && b == Some(0))
+                && !(a.is_none() && b.is_none())
+            {
+                psc.n_indels += 1;
+            }
+            // Per-sample ts/tv: only SNP rows with a non-ref genotype, one
+            // count per genotype (bcftools classifies the call by its ALT
+            // allele, so a hom-alt 1/1 counts once, not once per allele;
+            // doc_v7 D7-7).
+            if any_snp
+                && pair != [Some(0), Some(0)]
+                && let Some(idx) = [a, b]
+                    .into_iter()
+                    .flatten()
+                    .find(|&allele| allele != 0)
+                    .and_then(|allele| usize::from(allele).checked_sub(1))
+                && acgt(reference[0]).is_some()
+                && idx < classes.len()
+            {
+                let alt = alt_of(idx);
+                if alt.len() == 1 {
+                    if is_transition(reference[0], alt[0]) {
+                        psc.ts += 1;
+                    } else {
+                        psc.tv += 1;
                     }
                 }
             }
@@ -393,18 +406,17 @@ impl QcJob {
             if class == reed_core::site::VariantClass::Indel {
                 acc.af.indels[bin.min(acc.af.m_af - 1)] += 1;
             }
-            // IDD: signed indel length.
+            // IDD (bcftools vcfstats.c; doc_v7 D7-7): deletions (|len|,
+            // printed negative) and insertions (len, printed positive) go to
+            // separate length histograms; one count per ALT allele.
             if class == reed_core::site::VariantClass::Indel {
                 let len = alt.len() as i64 - reference.len() as i64;
-                let hist = &mut acc.idd;
+                let bucket = u32::try_from(len.unsigned_abs()).unwrap_or(u32::MAX);
                 if len < 0 {
-                    for _ in 0..(-len).min(60) {
-                        hist.push(0); // placeholder replaced below
-                    }
+                    acc.idd.push(bucket);
+                } else if len > 0 {
+                    acc.idd_ins.push(bucket);
                 }
-                // The histogram stores unsigned lengths; deletions and
-                // insertions need separate buckets — see the writer.
-                let _ = len;
             }
         }
 
@@ -469,7 +481,7 @@ pub fn write_bcftools_stats(path: &std::path::Path, text: &str) -> Result<(), cr
 
 /// Renders the `bcftools stats`-compatible text (§10.3).
 #[must_use]
-pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
+pub fn render_bcftools_stats(r: &QcReportAcc, sample_names: &[String]) -> String {
     let mut out = String::new();
     out.push_str(
         "# This file was produced by reed stats and can be plotted using plot-vcfstats.\n",
@@ -565,16 +577,18 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
             continue;
         }
         let qval = |dist: &reed_stats::summary::histogram::QualDist| -> Option<f64> {
-            (i < dist.nbins()).then(|| {
+            if i < dist.nbins() {
                 let (beg, _) = reed_stats::summary::histogram::QualDist::bin_range(i);
-                if beg == 0 {
-                    -1.0
-                } else {
+                // Bin 0 is the missing/negative-QUAL bucket: bcftools prints
+                // "." (doc_v7 D7-7), so it must not resolve to a number.
+                (beg != 0).then(|| {
                     // bcftools stores qval in a C float: the product
                     // rounds through f32 (visible only above 2^22).
                     f64::from((0.1 * f64::from(beg - 1)) as f32)
-                }
-            })
+                })
+            } else {
+                None
+            }
         };
         let qv = qval(&r.qual.snv_ts)
             .or_else(|| qval(&r.qual.snv_tv))
@@ -668,9 +682,22 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
     }
 
     out.push_str("# IDD, InDel distribution:\n# IDD\t[2]id\t[3]length (deletions negative)\t[4]number of sites\t[5]number of genotypes\t[6]mean VAF\n");
-    for (len, n) in r.idd.iter() {
+    // Deletions first, ascending signed (= descending |len|), then
+    // insertions ascending; the mean-VAF column is "." (doc_v7 D7-7, the
+    // observed bcftools output). The overflow bucket (61) is omitted.
+    let mut deletions: Vec<(u32, u64)> = r
+        .idd
+        .iter()
+        .filter(|(len, n)| *n > 0 && *len <= 60)
+        .collect();
+    deletions.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
+    for (len, n) in deletions {
+        writeln!(out, "IDD\t0\t{}\t{n}\t0\t.", -(len as i64))
+            .expect("invariant: writing to String");
+    }
+    for (len, n) in r.idd_ins.iter() {
         if n > 0 && len <= 60 {
-            writeln!(out, "IDD\t0\t{}\t{n}\t0\t0.000000", len as i64 - 1)
+            writeln!(out, "IDD\t0\t{}\t{n}\t0\t.", len as i64)
                 .expect("invariant: writing to String");
         }
     }
@@ -682,9 +709,15 @@ pub fn render_bcftools_stats(r: &QcReportAcc) -> String {
         } else {
             0.0
         };
+        // The header's real sample name (doc_v7 D7-7); the synthetic
+        // `sample_{i}` only stands in when the caller supplied no names.
+        let name = sample_names
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| format!("sample_{i}"));
         writeln!(
             out,
-            "PSC\t0\tsample_{i}\t{}\t{}\t{}\t{}\t{}\t{}\t{dp:.1}\t{}\t{}\t{}\t{}",
+            "PSC\t0\t{name}\t{}\t{}\t{}\t{}\t{}\t{}\t{dp:.1}\t{}\t{}\t{}\t{}",
             p.hom_rr,
             p.hom_aa,
             p.hets,

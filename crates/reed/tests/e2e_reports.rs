@@ -152,3 +152,67 @@ fn reports_match_hand_computed_values() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-7 fixture: SNPs, insertions, deletions, a missing QUAL and a
+/// missing genotype, over two samples (matches `bcftools stats -s -`).
+const D77: &str = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2
+chr1\t10\t.\tA\tG\t50\tPASS\tAC=1;AN=4\tGT\t0/1\t0/0
+chr1\t20\t.\tA\tAT\t60\tPASS\tAC=1;AN=4\tGT\t0/1\t0/0
+chr1\t30\t.\tAT\tA\t.\tPASS\tAC=1;AN=4\tGT\t0/1\t0/0
+chr1\t40\t.\tATGC\tA\t40\tPASS\tAC=2;AN=4\tGT\t1/1\t0/0
+chr1\t50\t.\tA\tAGG\t50\tPASS\tAC=1;AN=4\tGT\t.\t0/1
+chr1\t60\t.\tACGT\tA\t.\tPASS\tAC=1;AN=4\tGT\t0/1\t./.
+chr1\t70\t.\tA\tT\t30\tPASS\tAC=2;AN=4\tGT\t1/1\t1/1
+";
+
+/// doc_v7 D7-7: IDD, QUAL and PSC must match `bcftools stats -s -`. The
+/// expected lines are byte-for-byte `bcftools` 1.24 output on this fixture
+/// (verified); IDD lengths are signed, the QUAL missing bin is `.`, and PSC
+/// carries the real sample names with nIndels and SNP-gated genotype
+/// classes.
+#[test]
+fn summary_idd_qual_psc_match_bcftools() {
+    let dir = std::env::temp_dir().join(format!("reed-reports-d77-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("in.vcf.gz");
+    let mut file = std::fs::File::create(&vcf).expect("invariant: fixture file");
+    file.write_all(&bgzf(D77)).expect("invariant: write");
+    drop(file);
+    let prefix = dir.join("out");
+    let request = ReportRequest {
+        summary: true,
+        prefix: prefix.clone(),
+        ..ReportRequest::default()
+    };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let outcome = run_reports(Some(&vcf), &request, &budget).expect("invariant: run");
+    let qc = outcome.qc.expect("invariant: summary requested");
+    let names = vec!["S1".to_string(), "S2".to_string()];
+    let text = reed::summary::render_bcftools_stats(&qc, &names);
+    for line in [
+        "QUAL\t0\t.\t0\t0\t0\t2",
+        "QUAL\t0\t30.0\t1\t0\t1\t0",
+        "QUAL\t0\t40.0\t0\t0\t0\t1",
+        "QUAL\t0\t50.0\t1\t1\t0\t1",
+        "QUAL\t0\t60.0\t0\t0\t0\t1",
+        "IDD\t0\t-3\t2\t0\t.",
+        "IDD\t0\t-1\t1\t0\t.",
+        "IDD\t0\t1\t1\t0\t.",
+        "IDD\t0\t2\t1\t0\t.",
+        "PSC\t0\tS1\t0\t1\t1\t1\t1\t4\t0.0\t5\t0\t0\t1",
+        "PSC\t0\tS2\t4\t1\t0\t0\t1\t1\t0.0\t1\t0\t0\t1",
+    ] {
+        assert!(text.contains(line), "missing {line:?}\n{text}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

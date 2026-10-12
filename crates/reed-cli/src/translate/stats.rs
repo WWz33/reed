@@ -369,7 +369,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             let mut path = std::ffi::OsString::from(&prefix);
             path.push(".stats");
             let path = std::path::PathBuf::from(path);
-            let text = reed::summary::render_bcftools_stats(qc);
+            let text = reed::summary::render_bcftools_stats(qc, &sample_names);
             reed::summary::write_bcftools_stats(&path, &text)?;
             files.push(path);
         }

@@ -111,7 +111,7 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
         for path in &outcome.files {
             hasher.update(std::fs::read(path).expect("invariant: report file"));
         }
-        hasher.update(reed::summary::render_bcftools_stats(&qc).as_bytes());
+        hasher.update(reed::summary::render_bcftools_stats(&qc, &[]).as_bytes());
         digests.push(format!("{:x}", hasher.finalize()));
     }
     let unique: std::collections::HashSet<&String> = digests.iter().collect();
