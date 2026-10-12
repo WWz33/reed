@@ -285,6 +285,12 @@ impl WcMultiAcc {
             self.n_skipped += 1;
             return;
         }
+        // No per-group `n_i == 0` skip here: scikit-allel's weir_cockerham_fst
+        // does not skip such a site (it computes n = an // 2 and lets the
+        // zero-contributing group stay), so the multi-population path matches
+        // allel exactly. The pairwise path's extra `n1 == 0` guard is
+        // redundant for r = 2 (n_C <= 0 catches it) and never disagrees
+        // (doc_v7 D7-20).
         let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
         let n_total: f64 = n.iter().sum();
         let n_bar = n_total / r as f64;
