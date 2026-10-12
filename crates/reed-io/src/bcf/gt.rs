@@ -235,6 +235,9 @@ pub struct GtQuery<'a> {
 /// Decodes a whole record's GT column into `codes` (one per sample),
 /// mirroring the text scanner: an absent GT field yields [`GtCode::MISSING`]
 /// for every sample, and a sample-count disagreement is the scanner's error.
+/// The `bool` result is whether the record carried a GT field at all (the
+/// all-`MISSING` outcome of a GT-less record must stay distinguishable from
+/// a GT whose values are all `./.`).
 ///
 /// The error locus is built lazily from `query` — the happy path allocates
 /// nothing.
@@ -250,7 +253,7 @@ pub fn decode_record_gt(
     table: &GtTable,
     codes: &mut Vec<GtCode>,
     counters: &mut PolicyCounters,
-) -> Result<(), IoError> {
+) -> Result<bool, IoError> {
     let GtQuery {
         gt_key,
         n_samples,
@@ -293,7 +296,7 @@ pub fn decode_record_gt(
     }
     let Some((ty, count, start)) = found else {
         codes.resize(n_samples, GtCode::MISSING);
-        return Ok(());
+        return Ok(false);
     };
     // The error locus stays borrowed (A6-11: no per-record String; the
     // `Locus` is built only when an error carries it).
@@ -312,7 +315,7 @@ pub fn decode_record_gt(
             codes.push(table.decode_slow(ty, data, &locus, counters, &mut text)?);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// The FORMAT dictionary index of `tag`, resolved once per run (the fast

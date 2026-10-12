@@ -37,6 +37,10 @@ pub struct ScanOutput<'s> {
     /// [`GenotypeScanner::tracking_alleles`] is on: the multi-allelic index
     /// survives here for consumers that count per allele.
     pub alleles: Option<&'s [Option<u16>]>,
+    /// The record's FORMAT carried a GT key. `false` decodes every sample as
+    /// missing — distinct from a GT whose values are all `./.` (bcftools
+    /// skips `-g/--genotype` when the GT key is absent).
+    pub has_gt: bool,
 }
 
 /// Single-pass sample-region decoder with reusable buffers.
@@ -208,6 +212,7 @@ impl GenotypeScanner {
             int_columns,
             float_columns,
             alleles: track_alleles.then_some(alleles.as_slice()),
+            has_gt: gt_index.is_some(),
         })
     }
 }

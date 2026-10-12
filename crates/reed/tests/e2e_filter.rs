@@ -24,6 +24,28 @@ fn bgzf(text: &str, block_data: usize) -> Vec<u8> {
     out
 }
 
+/// Inflates a BGZF/VCF.GZ fixture back to text (assertion diagnostics).
+fn inflate_to_string(path: &std::path::Path) -> String {
+    let bytes = std::fs::read(path).expect("invariant: read");
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut out = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let block = &bytes[offset..];
+        let Some(size) = reed_io::bgzf::block::parse_block_size(block) else {
+            break;
+        };
+        if reed_io::bgzf::block::is_eof_block(&block[..size]) {
+            break;
+        }
+        inflater
+            .inflate_block(&block[..size], &mut out)
+            .expect("invariant: inflates");
+        offset += size;
+    }
+    String::from_utf8(out).expect("invariant: utf8")
+}
+
 const HEADER: &str = "\
 ##fileformat=VCFv4.2
 ##contig=<ID=Chr01,length=100000>
@@ -1237,6 +1259,141 @@ fn mind_counts_ignore_tail_rules() {
         let rule = report.sample_rule.as_ref().expect("sample rule reported");
         assert_eq!(rule.n_dropped, 1, "{name}: only s2 crosses 0.5");
         assert_eq!(report.n_samples_out, 3, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `-g/--genotype` (bcftools) over every call shape: full calls split
+/// hom/het, `./.` and half-calls (`0/.`) are missing; repeated rules AND
+/// (bcftools keeps the last one). The three strategies must agree and the
+/// funnel must attribute the drops to the `-g` rules.
+#[test]
+fn genotype_class_rules_filter_every_call_shape() {
+    use reed_filter::spec::{GtClassRule as R, TailRules};
+    // pos 1: hom only; pos 2: het only; pos 3: missing + half-call only;
+    // pos 4: hom + het; pos 5: half-calls + full calls mixed.
+    let mut text = String::from(HEADER);
+    for (pos, gts) in [
+        (1, ["0/0", "1/1", "0/0", "0/0"]),
+        (2, ["0/1", "0/1", "0/1", "0/0"]),
+        (3, ["./.", "0/.", "./.", "./1"]),
+        (4, ["0/0", "0/1", "1/1", "0/0"]),
+        (5, ["0/.", "0/1", "1/1", "0/0"]),
+    ] {
+        let _ = writeln!(
+            text,
+            "Chr01\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t{}",
+            gts.join("\t")
+        );
+    }
+    let dir = std::env::temp_dir().join(format!("reed-gtclass-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&text, 256)).expect("invariant: write");
+
+    // (rules, kept positions). Half-calls read as missing: pos 3 and 5
+    // fail `^miss`, pos 3 fails `hom`/`het`.
+    let cases: &[(&[R], &[u64])] = &[
+        (&[R::Hom], &[1, 2, 4, 5]),
+        (&[R::Het], &[2, 4, 5]),
+        (&[R::Miss], &[3, 5]),
+        (&[R::NoHom], &[3]),
+        (&[R::NoHet], &[1, 3]),
+        (&[R::NoMiss], &[1, 2, 4]),
+        // Repeated rules AND (bcftools would keep only `^miss` here).
+        (&[R::Het, R::NoMiss], &[2, 4]),
+        (&[R::Hom, R::Het], &[2, 4, 5]),
+    ];
+    for strategy in [
+        reed_filter::plan::ExecStrategy::SinglePass,
+        reed_filter::plan::ExecStrategy::TwoPassReparse,
+        reed_filter::plan::ExecStrategy::SketchThenEmit,
+    ] {
+        for (rules, kept) in cases {
+            let spec = FilterSpec {
+                site_after_mask: TailRules {
+                    gt_class: rules.to_vec(),
+                    ..TailRules::default()
+                },
+                ..FilterSpec::default()
+            };
+            let out = dir.join("out.vcf.gz");
+            let report = run_filter(
+                Some(&path),
+                &spec,
+                &options(Some(strategy), &out),
+            )
+            .unwrap_or_else(|e| panic!("{strategy:?} {rules:?}: {e}"));
+            let kept_pos: Vec<String> = inflate_to_string(&out)
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.split('\t').nth(1).unwrap().to_string())
+                .collect();
+            assert_eq!(
+                report.n_output_records,
+                kept.len() as u64,
+                "{strategy:?} {rules:?}: kept pos {kept_pos:?}, want {kept:?}"
+            );
+            // Every `-g` rule appears in the funnel with its own id.
+            let ids: Vec<&str> = report.funnel.iter().map(|s| s.rule.as_str()).collect();
+            for rule in *rules {
+                let want = format!("after_mask.gt_class.{}", rule.id());
+                assert!(ids.contains(&want.as_str()), "{strategy:?}: {ids:?} lacks {want}");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A record whose FORMAT lacks the GT key skips every `-g` rule and
+/// survives (bcftools' `bcf_get_fmt` null check), while a GT whose values
+/// are all `./.` is still a real missing-heavy site. The three strategies
+/// must agree — the sketch path carries the bit through `SiteMatrix`.
+#[test]
+fn genotype_class_rules_skip_gt_less_records() {
+    use reed_filter::spec::{GtClassRule as R, TailRules};
+    // pos 1: no GT field at all; pos 2: hom only; pos 3: GT present, all `./.`.
+    let text = format!(
+        "{HEADER}Chr01\t1\t.\tA\tG\t50\tPASS\t.\t.\t.\t.\t.\t.\n\
+         Chr01\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/0\t0/0\n\
+         Chr01\t3\t.\tA\tG\t50\tPASS\t.\tGT\t./.\t./.\t./.\t./.\n"
+    );
+    let dir = std::env::temp_dir().join(format!("reed-gtless-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&text, 256)).expect("invariant: write");
+
+    for strategy in [
+        reed_filter::plan::ExecStrategy::SinglePass,
+        reed_filter::plan::ExecStrategy::TwoPassReparse,
+        reed_filter::plan::ExecStrategy::SketchThenEmit,
+    ] {
+        for (rule, kept) in [
+            (R::Hom, &[1_u64, 2][..]),
+            (R::Het, &[1][..]),
+            (R::Miss, &[1, 3][..]),
+            (R::NoHom, &[1, 3][..]),
+            (R::NoHet, &[1, 2, 3][..]),
+            (R::NoMiss, &[1, 2][..]),
+        ] {
+            let spec = FilterSpec {
+                site_after_mask: TailRules {
+                    gt_class: vec![rule],
+                    ..TailRules::default()
+                },
+                ..FilterSpec::default()
+            };
+            let out = dir.join("out.vcf.gz");
+            let report = run_filter(Some(&path), &spec, &options(Some(strategy), &out))
+                .unwrap_or_else(|e| panic!("{strategy:?} {rule:?}: {e}"));
+            let kept_pos: Vec<u64> = inflate_to_string(&out)
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.split('\t').nth(1).unwrap().parse().unwrap())
+                .collect();
+            assert_eq!(kept_pos, kept, "{strategy:?} -g {}", rule.id());
+            assert_eq!(report.n_output_records, kept.len() as u64);
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

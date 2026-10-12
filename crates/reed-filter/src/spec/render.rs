@@ -145,6 +145,9 @@ impl FilterSpec {
                 args.push("midp".to_string());
             }
         }
+        for rule in &self.site_after_mask.gt_class {
+            flag(&mut args, "-g", rule.id());
+        }
 
         // ---- INFO ----
         if !self.recompute.drop_stale.is_empty() {

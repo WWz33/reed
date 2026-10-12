@@ -223,6 +223,8 @@ pub(crate) struct NativeScan<'a> {
     /// Policy triggers the native decode produced (report parity with the
     /// text path).
     pub(crate) counters: &'a PolicyCounters,
+    /// The record's FORMAT carried a GT key (see [`ScanOutput::has_gt`]).
+    pub(crate) has_gt: bool,
 }
 
 impl RecordPipeline {
@@ -269,6 +271,7 @@ impl RecordPipeline {
             int_columns: native.int_columns,
             float_columns: native.float_columns,
             alleles: None,
+            has_gt: native.has_gt,
         };
         run_stages(
             &lr,
@@ -311,6 +314,8 @@ pub(crate) struct NativeScratch {
     pub(crate) float_columns: Vec<Vec<f32>>,
     /// Policy triggers from the GT decode.
     pub(crate) counters: PolicyCounters,
+    /// Whether the last decoded record's FORMAT carried a GT key.
+    pub(crate) has_gt: bool,
 }
 
 impl NativeScratch {
@@ -332,6 +337,7 @@ impl NativeScratch {
             int_columns: vec![Vec::with_capacity(n_samples); int_keys.len()],
             float_columns: vec![Vec::with_capacity(n_samples); float_keys.len()],
             counters: PolicyCounters::default(),
+            has_gt: false,
         }
     }
 
@@ -360,7 +366,7 @@ impl NativeScratch {
             .ok_or_else(|| EngineError::job("BCF contig index is not in the dictionary"))?;
         let pos1 = u64::try_from(header.pos0).unwrap_or(0) + 1;
         self.counters = PolicyCounters::default();
-        reed_io::bcf::decode_record_gt(
+        self.has_gt = reed_io::bcf::decode_record_gt(
             &rec,
             &header,
             &reed_io::bcf::GtQuery {
@@ -425,6 +431,7 @@ where
     masked.clear();
     mask_rule.fill(u16::MAX);
     *counts = SiteCounts::default();
+    counts.has_gt = scan.has_gt;
     let evaluated = |i: usize| opts.mask_all_samples || keep.get(i).copied().unwrap_or(true);
     // Site context for the `--set-gts .` expressions (no genotype-derived
     // fields: the plan rejects those, so the counts are not needed).
@@ -571,8 +578,10 @@ where
                     (0, 0) => counts.hom_ref += 1,
                     (0, 1) => counts.het += 1,
                     (0, _) => counts.hom_alt += 1,
-                    // Half-calls feed AN/AC/NS but no genotype class.
-                    _ => {}
+                    // Half-calls feed AN/AC/NS but no genotype class; the
+                    // `-g/--genotype` rule reads them as missing (bcftools
+                    // `bcf_gt_type` UNKN).
+                    _ => counts.n_half_called += 1,
                 }
             }
         }

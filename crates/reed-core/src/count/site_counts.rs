@@ -33,6 +33,18 @@ pub struct SiteCounts {
     pub het: u64,
     /// Samples homozygous ALT (full calls only).
     pub hom_alt: u64,
+    /// Half-calls (`0/.`, `./1`; haploid-as-half-call included): one called
+    /// allele, already counted in [`SiteCounts::ns`]/`an`/`ac`, never in a
+    /// genotype class. bcftools' `bcf_gt_type` reports these as UNKN, so
+    /// the `-g/--genotype` rule reads them as missing (`miss` sees
+    /// `n_missing + n_half_called`).
+    pub n_half_called: u64,
+    /// The record carried a GT field at all. `false` when the FORMAT lacks
+    /// the GT key (or the record has no FORMAT): every sample then decodes
+    /// as missing, but that is **not** the same as a GT whose values are
+    /// all `./.` — bcftools skips `-g/--genotype` entirely on such records
+    /// (`bcf_get_fmt` finds no GT), and so does the filter's tail stage.
+    pub has_gt: bool,
 }
 
 impl SiteCounts {
@@ -105,8 +117,9 @@ impl SiteCounts {
 /// nothing to any denominator (their output column is removed too).
 ///
 /// Half-calls (`0/.`, `./1`, ...) count the single present allele toward
-/// AN/AC and the sample toward NS, but never toward a genotype class and
-/// never toward [`SiteCounts::n_missing`]. A trailing odd element of `gt`
+/// AN/AC and the sample toward NS, never toward a genotype class and never
+/// toward [`SiteCounts::n_missing`] — they land in
+/// [`SiteCounts::n_half_called`]. A trailing odd element of `gt`
 /// (no partner allele) is ignored.
 pub fn count_site(gt: &[i8], retain: Option<&[bool]>) -> SiteCounts {
     let mut c = SiteCounts::default();
@@ -131,14 +144,18 @@ pub fn count_site(gt: &[i8], retain: Option<&[bool]>) -> SiteCounts {
             }
             (true, false) | (false, true) => {
                 // Half-call: fill-tags counts the one present allele (a
-                // hemizygous call), so it feeds AN/AC/NS only.
+                // hemizygous call), so it feeds AN/AC/NS plus the
+                // half-call tally, but no genotype class.
                 c.ns += 1;
                 c.an += 1;
                 c.ac += u64::from(a1.max(a2) > 0);
+                c.n_half_called += 1;
             }
             (false, false) => c.n_missing += 1,
         }
     }
+    // Counting a GT vector is counting a record that has one.
+    c.has_gt = true;
     c
 }
 
@@ -197,7 +214,9 @@ mod tests {
     }
 
     /// Half-calls: one present allele feeds AN/AC/NS, never a genotype
-    /// class, never missing. Mirrors reed-filter's hemizygous handling.
+    /// class, never `n_missing` — the half-call tally holds them (the
+    /// `-g/--genotype` rule reads it as missing, bcftools `bcf_gt_type`
+    /// UNKN). Mirrors reed-filter's hemizygous handling.
     #[test]
     fn half_calls_count_one_allele() {
         // 0/. contributes one REF allele; ./1 contributes one ALT allele.
@@ -205,15 +224,18 @@ mod tests {
         assert_eq!((c.ac, c.an, c.ns), (1, 2, 2));
         assert_eq!((c.hom_ref, c.het, c.hom_alt), (0, 0, 0));
         assert_eq!(c.n_missing, 0);
+        assert_eq!(c.n_half_called, 2);
         assert!((c.maf() - 0.5).abs() < 1e-12);
 
         // The allele side is irrelevant to the AC contribution: 1/. and ./1.
         let c = count_site(&[1, -1, -1, 1], None);
         assert_eq!((c.ac, c.an), (2, 2));
+        assert_eq!(c.n_half_called, 2);
 
         // ./0: present REF allele, no ALT contribution.
         let c = count_site(&[-1, 0], None);
         assert_eq!((c.ac, c.an, c.ns), (0, 1, 1));
+        assert_eq!(c.n_half_called, 1);
         assert_eq!(c.maf(), 0.0);
     }
 

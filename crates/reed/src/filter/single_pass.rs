@@ -417,6 +417,7 @@ impl FilterJob {
             int_columns,
             float_columns,
             counters,
+            has_gt,
             ..
         } = native;
         // The survivor render buffer is moved out for the closure and put
@@ -453,6 +454,7 @@ impl FilterJob {
                 int_columns: &int_columns[..],
                 float_columns: &float_columns[..],
                 counters,
+                has_gt: *has_gt,
             },
             |view| {
                 // The native `-Ob` branch encodes the framed record directly

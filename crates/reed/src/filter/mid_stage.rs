@@ -74,6 +74,9 @@ pub(super) struct PlaneCounts {
     pub het: u64,
     /// Full calls, both ALT.
     pub hom_alt: u64,
+    /// Half-calls among the kept, unmasked samples (exactly one called
+    /// slot).
+    pub n_half_called: u64,
     /// Called-to-missing transitions this site's mask performed.
     pub masked_gt: u64,
 }
@@ -114,6 +117,8 @@ pub(super) fn count_site_planes(
         c.het += (full & (p0a ^ p1a)).count_ones() as u64;
         c.hom_alt += (full & p0a & p1a).count_ones() as u64;
         c.hom_ref += (full & !p0a & !p1a).count_ones() as u64;
+        // Half-calls: kept and unmasked, exactly one slot missing.
+        c.n_half_called += (kept_raw & (p0m ^ p1m)).count_ones() as u64;
 
         // Masked samples that were called before the mask: the called→
         // missing transitions.
@@ -301,6 +306,8 @@ fn decide_chunk_inner(
             hom_ref: c.hom_ref,
             het: c.het,
             hom_alt: c.hom_alt,
+            n_half_called: c.n_half_called,
+            has_gt: matrix.has_gt(local),
         };
         let tail_values = reed_filter::expr::SiteValues::from_counts(reed_filter::expr::GtCounts {
             ac: counts.ac,
@@ -368,6 +375,7 @@ mod tests {
         assert_eq!(c.an, 5);
         assert_eq!(c.ns, 3);
         assert_eq!(c.n_missing, 1);
+        assert_eq!(c.n_half_called, 1); // s3
         assert_eq!(c.het, 1);
         assert_eq!(c.hom_alt, 1);
         assert_eq!(c.hom_ref, 0);
@@ -387,6 +395,7 @@ mod tests {
         assert_eq!(c.an, 3);
         assert_eq!(c.ns, 2);
         assert_eq!(c.n_missing, 0);
+        assert_eq!(c.n_half_called, 1); // s3
         assert_eq!(c.hom_alt, 1);
     }
 
