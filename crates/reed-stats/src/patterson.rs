@@ -349,8 +349,12 @@ impl F4Acc {
 /// f4-ratio: Σ(num quadruples) / Σ(den quadruples) over two sets of f4
 /// statistics (§9.5; snputils semantics — the ratio of sums, with the
 /// block jackknife providing the SE).
+///
+/// Both operands are f4 statistics, and an f4 statistic's value is its
+/// numerator sum, so the denominator here is `den.num` (not `den.den`, the
+/// D-statistic denominator that is not part of the f4 value — doc_v7 D7-10).
 #[must_use]
 pub fn f4_ratio(num: &F4Acc, den: &F4Acc) -> Option<f64> {
-    let d = den.den.value();
+    let d = den.num.value();
     (num.n_sites > 0 && den.n_sites > 0 && d != 0.0).then(|| num.num.value() / d)
 }

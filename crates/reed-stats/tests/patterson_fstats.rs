@@ -145,7 +145,9 @@ fn f4_ratio_is_the_ratio_of_sums() {
     den_acc.push(&row([10_u32, 12, 8, 14], [4, 6, 2, 8]));
     den_acc.push(&row([6, 10, 12, 8], [1, 5, 7, 3]));
     let ratio = f4_ratio(&num_acc, &den_acc).expect("invariant: den ≠ 0");
-    let (n, d) = (num_acc.sums().0.value(), den_acc.sums().1.value());
+    // Both operands are f4 statistics, so the denominator is the second
+    // f4's *numerator* sum, not its D-statistic denominator (doc_v7 D7-10).
+    let (n, d) = (num_acc.sums().0.value(), den_acc.sums().0.value());
     assert!((ratio - n / d).abs() < 1e-12);
 }
 
