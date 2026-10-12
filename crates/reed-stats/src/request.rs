@@ -269,6 +269,17 @@ impl StatAcc {
         }
     }
 
+    /// Registers a present-but-uncountable site (a skipped multiallelic
+    /// record): only the variant-only pi/dxy denominator reads it, every
+    /// other statistic ignores it (doc_v7 D7-11).
+    pub fn note_skipped(&mut self) {
+        match self {
+            Self::Pi(acc) => acc.note_skipped_site(),
+            Self::Dxy(acc) => acc.note_skipped_site(),
+            _ => {}
+        }
+    }
+
     /// Component-wise merge (associative; exact integer components).
     ///
     /// # Panics

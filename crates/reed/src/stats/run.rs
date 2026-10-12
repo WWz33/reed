@@ -44,6 +44,16 @@ impl ContigAcc {
         }
     }
 
+    /// Registers a present-but-uncountable site (a skipped multiallelic
+    /// record) so the variant-only pi/dxy denominator counts it as present
+    /// (doc_v7 D7-11).
+    pub(super) fn push_skipped(&mut self, pos0: u64) {
+        match self {
+            Self::Bins(bins) => bins.push_skipped(pos0),
+            Self::Regions(regions) => regions.push_skipped(pos0),
+        }
+    }
+
     pub(super) fn fold(&self, totals: &mut [StatAcc]) {
         match self {
             Self::Bins(bins) => bins.fold(totals),
@@ -340,6 +350,12 @@ impl StatsJob {
         }
         if n_alt > 1 {
             partial.n_multiallelic_skipped += 1;
+            // The file contains this site even though pi/dxy skip it, so the
+            // variant-only denominator must not treat it as absent
+            // (doc_v7 D7-11).
+            if let Some(segment) = current.as_mut() {
+                segment.acc.push_skipped(pos0);
+            }
             return Ok(None);
         }
         Ok(Some(pos0))
