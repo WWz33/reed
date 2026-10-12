@@ -309,7 +309,10 @@ impl WcMultiAcc {
             .map(|(&ni, &pi)| ni * (pi - p_bar) * (pi - p_bar))
             .sum::<f64>()
             / (n_bar * (r as f64 - 1.0));
-        // h̄ = Σ n_het_i / n_total (from the count table).
+        // h̄ = Σ n_het_i / n_total (from the count table). `n_het` counts
+        // genotypes with both alleles called and different (a half call is
+        // not a full heterozygote) — the same rule as scikit-allel's
+        // `count_het`, so h̄ matches allel (doc_v7 D7-27).
         let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
         let a = (n_bar / n_c)
             * (s2
