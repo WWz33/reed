@@ -119,3 +119,19 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-22: the facade must re-export every type that appears in its
+/// public signatures (so a library caller can name them), and the
+/// `FilterOptions` default compression level must be htslib's 6.
+#[test]
+fn facade_exports_its_signature_types_and_sane_defaults() {
+    // These annotations compile only if the re-exports exist.
+    let _: Option<reed::WindowRow> = None;
+    let _: Option<reed::FStatRow> = None;
+    let _: Option<reed::DecayBin> = None;
+    fn _stat_acc(_: &reed::StatAcc) {}
+    fn _qc(_: &reed::QcReportAcc) {}
+    fn _index(_: reed::IndexOutcome) {}
+    fn _opened(_: reed::OpenedInput) {}
+    assert_eq!(reed::FilterOptions::default().compress_level, 6);
+}

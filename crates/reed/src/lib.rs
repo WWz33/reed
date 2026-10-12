@@ -62,13 +62,19 @@ mod stats;
 // Requests, drivers and their reports (08 §6.2).
 pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
-pub use crate::index::run_index;
+pub use crate::index::{IndexOutcome, run_index};
+pub use crate::input::OpenedInput;
 pub use crate::stats::{
-    FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode, JointSfsReport, LdReport,
-    LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest, StatKind, StatsReport,
-    StatsRequest, WindowLayoutOptions, assign_groups, default_kinds, run_stats, run_stats_opened,
-    window_kinds,
+    DecayBin, FStatRow, FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode,
+    JointSfsReport, LdReport, LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest,
+    StatKind, StatsReport, StatsRequest, WindowLayoutOptions, WindowRow, assign_groups,
+    default_kinds, run_stats, run_stats_opened, window_kinds,
 };
+// The accumulator and report types that appear in the facade's public
+// signatures (doc_v7 D7-22: they were `pub` in private modules but never
+// re-exported, so a library caller could not name them).
+pub use reed_stats::request::StatAcc;
+pub use reed_stats::summary::report::QcReportAcc;
 pub use reed_stats::ld::LdWindow;
 
 // The output writers (08 §6.2 `reed::writers`): window layout, per-site reports

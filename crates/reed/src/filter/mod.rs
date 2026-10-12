@@ -53,7 +53,7 @@ use single_pass::{FilterJob, FilterPartial};
 pub use reed_io::write::index::WriteIndex;
 
 /// Run options.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct FilterOptions {
     /// Worker threads (clamped to ≥ 1).
     pub threads: usize,
@@ -99,6 +99,32 @@ pub struct FilterOptions {
     /// the body is the deterministic artefact and the header is not
     /// (doc_v4 01 F4-8).
     pub no_command: bool,
+}
+
+impl Default for FilterOptions {
+    /// `compress_level` defaults to htslib's 6 (doc_v7 D7-22: the derived
+    /// default was 0, contradicting the field's own documentation and
+    /// silently disabling compression for library callers).
+    fn default() -> Self {
+        Self {
+            threads: 0,
+            output: None,
+            write_index: WriteIndex::default(),
+            compress_level: 6,
+            strategy: None,
+            command_line: String::new(),
+            timing: None,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: None,
+            output_bcf: None,
+            mem_bytes: None,
+            no_version: false,
+            no_command: false,
+        }
+    }
 }
 
 /// Pass1's source: the still-unconsumed first open (single-pass runs), else

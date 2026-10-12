@@ -8,7 +8,7 @@
 //! `-i QUAL>=P`, and typed INFO predicates (`site.info`) become no flag at
 //! all — the CLI carries INFO rules as expressions in `site.include`.
 
-use super::{FilterSpec, HweMode, OnMissing, SampleList};
+use super::{AfKind, FilterSpec, HweMode, OnMissing, SampleList};
 
 /// Appends a flag plus its value.
 fn flag(args: &mut Vec<String>, name: &str, value: impl std::fmt::Display) {
@@ -118,10 +118,10 @@ impl FilterSpec {
 
         // ---- after-mask thresholds (02-cli.md §6 step 6 order) ----
         if let Some(af) = self.site_after_mask.min_af {
-            flag(&mut args, "-q", f(af));
+            flag(&mut args, "-q", af_arg(af, self.site_after_mask.min_af_kind));
         }
         if let Some(af) = self.site_after_mask.max_af {
-            flag(&mut args, "-Q", f(af));
+            flag(&mut args, "-Q", af_arg(af, self.site_after_mask.max_af_kind));
         }
         if let Some(rate) = self.site_after_mask.max_missing {
             flag(&mut args, "--geno", rate.render());
@@ -163,7 +163,31 @@ impl FilterSpec {
             args.push("-I".to_string());
         }
 
+        // ---- LD pruning (docs/rounds/v5/05-algorithms.md §3.4.1) ----
+        // `--indep-pairwise W[kb] [S] R2`; omitting it made `to_args` lossy
+        // for a spec that prunes (doc_v7 D7-22).
+        if let Some(prune) = &self.ld_prune {
+            let window = if prune.kb {
+                format!("{}kb", prune.window)
+            } else {
+                prune.window.to_string()
+            };
+            args.push("--indep-pairwise".to_string());
+            args.push(window);
+            args.push(prune.step.to_string());
+            args.push(f(prune.r2));
+        }
+
         args
+    }
+}
+
+/// The `-q/-Q` argument text: the value plus the `:type` suffix for a
+/// non-default [`AfKind`] (doc_v7 D7-22).
+fn af_arg(value: f64, kind: Option<AfKind>) -> String {
+    match kind {
+        Some(k) if k != AfKind::Nref => format!("{}:{}", f(value), k.id()),
+        _ => f(value),
     }
 }
 
