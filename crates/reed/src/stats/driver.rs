@@ -181,7 +181,9 @@ pub fn run_stats_opened(
     // the exact sum of the group sums (docs/rounds/v6/02-models.md §2.2).
     let ld_layout = ld_plan.is_some().then(|| {
         Arc::new(reed_stats::SampleLayout::from_assignments(
-            &gt_groups, n_groups,
+            &gt_groups,
+            n_groups,
+            request.keep_samples.as_deref(),
         ))
     });
     let accs = build_accs(&request.kinds, &group_sizes)

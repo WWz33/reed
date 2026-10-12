@@ -46,8 +46,17 @@ impl SampleLayout {
     /// Builds the layout from the per-sample group assignment: group `g`
     /// owns exactly the samples with `Some(g)`; `None` samples land in a
     /// trailing slice. Groups are packed in order, each padded to a word.
+    ///
+    /// `keep` (when given) drops the samples `--keep`/`--remove` selected
+    /// out before anything else: a dropped sample gets no plane bit, so it
+    /// never enters the cohort or a group sum (doc_v7 D7-5).
     #[must_use]
-    pub fn from_assignments(assignments: &[Option<u32>], n_groups: usize) -> Self {
+    pub fn from_assignments(
+        assignments: &[Option<u32>],
+        n_groups: usize,
+        keep: Option<&[bool]>,
+    ) -> Self {
+        let kept = |sample: usize| keep.is_none_or(|k| k.get(sample).copied().unwrap_or(true));
         let mut dest = vec![u32::MAX; assignments.len()];
         let mut slices = Vec::with_capacity(n_groups + 1);
         let mut cursor = 0_usize;
@@ -55,7 +64,7 @@ impl SampleLayout {
             let start = cursor;
             let want = u32::try_from(group).expect("invariant: group count fits u32");
             for (sample, slot) in assignments.iter().enumerate() {
-                if *slot == Some(want) {
+                if *slot == Some(want) && kept(sample) {
                     dest[sample] = u32::try_from(cursor).expect("invariant: sample count fits u32");
                     cursor += 1;
                 }
@@ -68,7 +77,7 @@ impl SampleLayout {
         }
         let start = cursor;
         for (sample, slot) in assignments.iter().enumerate() {
-            if slot.is_none() {
+            if slot.is_none() && kept(sample) {
                 dest[sample] = u32::try_from(cursor).expect("invariant: sample count fits u32");
                 cursor += 1;
             }

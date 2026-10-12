@@ -489,3 +489,63 @@ fn mind_and_indep_pairwise_combine() {
     assert_eq!(body, vec![1, 6], "the earliest site of each group");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Truncates every record to the first `keep` sample columns.
+fn drop_columns(text: &str, keep: usize) -> String {
+    let mut out = String::new();
+    for l in text.lines() {
+        if l.starts_with("##") {
+            out.push_str(l);
+        } else {
+            let mut f: Vec<&str> = l.split('\t').collect();
+            f.truncate(9 + keep);
+            out.push_str(&f.join("\t"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// doc_v7 D7-5: the LD cohort must not include samples dropped by
+/// `-s/-S/--keep/--remove`. With `Populations::All` every sample is
+/// ungrouped, so it lands in the trailing slice; a dropped sample must get
+/// no plane bit, or it pollutes the cohort sums. Pruning the six-sample
+/// fixture down to s0..s3 must equal the four-sample VCF.
+#[test]
+fn ld_cohort_excludes_removed_samples() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-keep-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let full = dir.join("full.vcf");
+    std::fs::write(&full, VCF).expect("invariant: write");
+    let four = dir.join("four.vcf");
+    std::fs::write(&four, drop_columns(VCF, 4)).expect("invariant: write");
+
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let ld = || LdRequest {
+        decay_max_bp: Some(100_000),
+        decay_bin_bp: 1000,
+        pairs: true,
+    };
+
+    let mut kept = request(ld());
+    kept.keep_samples = Some(vec![true, true, true, true, false, false]);
+    let a = run_stats(Some(&full), kept, &budget)
+        .expect("invariant: run")
+        .ld
+        .expect("invariant: LD requested");
+
+    let b = run_stats(Some(&four), request(ld()), &budget)
+        .expect("invariant: run")
+        .ld
+        .expect("invariant: LD requested");
+
+    assert_eq!(
+        a.decay, b.decay,
+        "removed samples must not enter the cohort decay"
+    );
+    assert_eq!(a.pairs, b.pairs, "removed samples must not enter the pairs");
+    let _ = std::fs::remove_dir_all(&dir);
+}
