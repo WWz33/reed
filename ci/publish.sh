@@ -10,7 +10,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-PUB_PATHS=".gitignore Cargo.toml Cargo.lock README.md README.zh-CN.md crates ci"
+# The public subset: source, manifests, tool config and the CI guards. Kept
+# in sync with origin/main's tree (LICENSE-*, .github/, the lint configs).
+PUB_PATHS=".gitignore .github Cargo.toml Cargo.lock LICENSE-APACHE LICENSE-MIT \
+README.md README.zh-CN.md clippy.toml deny.toml rust-toolchain.toml rustfmt.toml crates ci"
 
 # Safety net: never let an internal path into the published tree.
 for p in docs/rounds/v1/design.md docs bench; do
