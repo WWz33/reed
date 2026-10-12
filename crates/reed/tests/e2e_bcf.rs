@@ -552,3 +552,51 @@ fn vcf44_phasing_and_negative_zero_survive_the_round_trip() {
     assert_eq!(rendered, expected, "-Ob read-back equals -Oz body");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-1: the sketch path (`--mind`, or `--mind --indep-pairwise`)
+/// renders VCF text and has no BCF encoder. Combining it with BCF output must
+/// be refused up front — never written as a BCF magic followed by text lines.
+#[test]
+fn sketch_path_rejects_bcf_output() {
+    let dir = dir("sketch-bcf");
+    let spec = FilterSpec {
+        mind: Some(reed_filter::spec::MissingRate::from_f64(0.1).expect("invariant: rate")),
+        // The fixture carries a haploid call (chr2:500).
+        policy: reed_filter::spec::PolicyRules {
+            ploidy: reed_filter::spec::PloidyPolicy::AllowHaploid,
+            ..reed_filter::spec::PolicyRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let opts = FilterOptions {
+        threads: 4,
+        output: Some(dir.join("x.bcf")),
+        write_index: reed::WriteIndex::None,
+        compress_level: 1,
+        strategy: None,
+        command_line: "test".into(),
+        timing: None,
+        report_json: None,
+        force_samples: false,
+        regions: Vec::new(),
+        tmp_dir: None,
+        output_compressed: None,
+        output_bcf: Some(6),
+        mem_bytes: None,
+        no_version: false,
+        no_command: false,
+    };
+    let err = run_filter(Some(&fixture("fix.vcf.gz")), &spec, &opts)
+        .expect_err("sketch + BCF output must be refused");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("BCF output requires the streaming path"),
+        "unexpected error: {msg}"
+    );
+    assert!(
+        !dir.join("x.bcf").exists(),
+        "no corrupt file may be written"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+

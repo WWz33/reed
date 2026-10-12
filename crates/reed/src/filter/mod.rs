@@ -460,6 +460,15 @@ pub fn run_filter(
             _ => None,
         },
     };
+    // The sketch path (`--mind`, and `--mind --indep-pairwise`) edits VCF text
+    // lines and has no BCF encoder; the header below is already written as a
+    // BCF magic, so the file would be a BCF magic followed by text (doc_v7 D7-1).
+    if bcf_level.is_some() && sketch_out.is_some() {
+        return Err(crate::error::Error::usage(
+            "BCF output requires the streaming path: drop --mind/--indep-pairwise, \
+             or write text with -Oz/-Ov",
+        ));
+    }
     match bcf_level {
         Some(_) => {
             // BCF file header: magic + l_text + NUL-terminated text
