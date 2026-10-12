@@ -495,6 +495,14 @@ pub fn run_index(
     }
     let mut opened = crate::input::open(Some(input)).map_err(job)?;
     let is_bcf = opened.bcf.is_some();
+    // Tabix has no BCF flavour (doc_v7 D7-15; the filter path already
+    // refuses this combination). Writing a VCF-format .tbi for a BCF would
+    // be an index no reader can use.
+    if is_bcf && flavor == WriteIndex::Tbi {
+        return Err(crate::error::Error::usage(
+            "BCF input supports only a CSI index (-c, not -t): Tabix has no BCF flavour",
+        ));
+    }
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
         opened
             .facts

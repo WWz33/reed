@@ -243,3 +243,17 @@ fn plain_and_gzip_inputs_are_refused() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dir2);
 }
+
+/// doc_v7 D7-15: Tabix has no BCF flavour, so `reed index -t` on a BCF input
+/// must be refused (it used to write a VCF-format .tbi for a BCF).
+#[test]
+fn bcf_input_refuses_tbi() {
+    let bcf =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
+    let err = run_index(&bcf, WriteIndex::Tbi, None, 4).expect_err("BCF + TBI must be refused");
+    assert!(err.to_string().contains("CSI"), "{err}");
+    // CSI still works on the same BCF.
+    let out = std::env::temp_dir().join(format!("reed-bcf-csi-{}.csi", std::process::id()));
+    run_index(&bcf, WriteIndex::Csi, Some(&out), 4).expect("BCF + CSI must work");
+    let _ = std::fs::remove_file(&out);
+}
