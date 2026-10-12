@@ -214,6 +214,68 @@ fn multi_pass_stdin_spills_and_cleans_up() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v7 D7-2: `--indep-pairwise` runs a prune pass0 that consumes the
+/// stream, so stdin must spill even without `--mind`; otherwise pass1 reopens
+/// stdin, reads EOF and the run fails with `input is empty`.
+#[test]
+fn indep_pairwise_stdin_spills_without_mind() {
+    let dir = std::env::temp_dir().join(format!("reed-o5-indep-{}", std::process::id()));
+    let tmp = dir.join("tmp");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&tmp).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+    let out_file = dir.join("file.vcf.gz");
+    let out_stdin = dir.join("stdin.vcf.gz");
+
+    let from_file = run(
+        &[
+            "filter",
+            input.to_str().unwrap(),
+            "--indep-pairwise",
+            "50",
+            "5",
+            "0.2",
+            "-Oz",
+            "-o",
+            out_file.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(
+        from_file.status.success(),
+        "{}",
+        String::from_utf8_lossy(&from_file.stderr)
+    );
+    let from_stdin = run(
+        &[
+            "filter",
+            "-",
+            "--indep-pairwise",
+            "50",
+            "5",
+            "0.2",
+            "-Oz",
+            "-o",
+            out_stdin.to_str().unwrap(),
+            "--tmp-dir",
+            tmp.to_str().unwrap(),
+        ],
+        Some(&fixture()),
+    );
+    assert!(
+        from_stdin.status.success(),
+        "{}",
+        String::from_utf8_lossy(&from_stdin.stderr)
+    );
+    assert_eq!(
+        record_lines(&out_file),
+        record_lines(&out_stdin),
+        "streamed stdin matches the file run"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The spill guard deletes the file on early error returns too.
 #[test]
 fn spill_is_removed_on_error_exit() {

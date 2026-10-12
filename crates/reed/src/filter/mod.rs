@@ -152,9 +152,10 @@ pub fn run_filter(
         ));
     }
     // ---- input: stdin streams straight into the single-pass pipeline;
-    // multi-pass runs (`--mind`) spill it once and delete the
-    // spill on every exit path (03-performance.md O5). The first open doubles
-    // as pass0's source when nothing consumes it before pass1. ----
+    // multi-pass runs (`--mind`, and `--indep-pairwise` whose prune pass0 also
+    // consumes the stream) spill it once and delete the spill on every exit
+    // path (03-performance.md O5). The first open doubles as pass0's source
+    // when nothing consumes it before pass1. ----
     let _spill: Option<crate::input::StdinSpill>;
     let mut replay_path: Option<PathBuf> = input.map(Path::to_path_buf);
     let mut first: Option<crate::input::OpenedInput>;
@@ -163,7 +164,7 @@ pub fn run_filter(
             first = Some(crate::input::open_regions(Some(p), &opts.regions).map_err(io_err)?);
             _spill = None;
         }
-        None if spec.mind.is_some() => {
+        None if spec.mind.is_some() || spec.ld_prune.is_some() => {
             let guard = crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
             let path = guard.path().to_path_buf();
             first = Some(crate::input::open_regions(Some(&path), &opts.regions).map_err(io_err)?);
