@@ -529,3 +529,83 @@ fn stats_site_filters_match_the_filter_then_stats_composition() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-6: report mode parsed `-s/-S/--keep/--remove` and the
+/// site/threshold flags and silently ignored them. It must refuse them
+/// instead; `--sites-file` now reaches report mode and narrows the rows.
+#[test]
+fn report_mode_rejects_unapplied_filters() {
+    let dir = std::env::temp_dir().join(format!("reed-reports-flags-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+    let out = dir.join("rep");
+
+    // A sample subset is not applied by report mode → usage error (exit 2).
+    let kept = run(
+        &[
+            "stats",
+            input.to_str().unwrap(),
+            "--freq",
+            "-s",
+            "s0",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        kept.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&kept.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&kept.stderr).contains("does not apply"),
+        "{}",
+        String::from_utf8_lossy(&kept.stderr)
+    );
+
+    // A site/threshold filter likewise.
+    let maf = run(
+        &[
+            "stats",
+            input.to_str().unwrap(),
+            "--freq",
+            "--maf",
+            "0.01",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(maf.status.code(), Some(2));
+
+    // `--sites-file` is applied: only the listed site's row appears.
+    let sites = dir.join("sites.txt");
+    std::fs::write(&sites, "Chr01\t3\n").expect("invariant: sites");
+    let out2 = dir.join("rep2");
+    let ok = run(
+        &[
+            "stats",
+            input.to_str().unwrap(),
+            "--freq",
+            "--sites-file",
+            sites.to_str().unwrap(),
+            "-o",
+            out2.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let afreq = std::fs::read_to_string(format!("{}.afreq", out2.display())).expect("afreq");
+    let rows: Vec<&str> = afreq.lines().filter(|l| !l.starts_with('#')).collect();
+    assert_eq!(rows.len(), 1, "only the sites-file site: {afreq:?}");
+    assert_eq!(rows[0].split('\t').nth(1), Some("Chr01_3"), "{:?}", rows[0]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

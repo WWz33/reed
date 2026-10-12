@@ -318,6 +318,16 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             }),
     };
 
+    // `--sites-file` narrows the counted sites for every route; parse it
+    // before the report branch so report mode sees it too (doc_v7 D7-6;
+    // it was parsed after the report branch's early return and so never
+    // reached it).
+    if let Some(path) = &args.sites_file {
+        for (contig, pos1) in parse_sites(path).map_err(reed::Error::usage)? {
+            targets.push((contig, Some(pos1), Some(pos1)));
+        }
+    }
+
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts. One pass
     // serves every requested family — the QC summary accumulates inside the
@@ -328,6 +338,15 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
                 "report mode writes files: pass -o PREFIX",
             ));
         };
+        // doc_v7 D7-6: report mode does not apply the sample subset or the
+        // site/threshold filters; refuse instead of silently ignoring them.
+        if keep_samples.is_some() || site.is_some() {
+            return Err(reed::Error::usage(
+                "report mode (--freq/--hardy/--het/--missing/--depth/--summary) does not \
+                 apply -s/-S/--keep/--remove or site/threshold filters yet; run \
+                 `reed filter` first and feed its output to reed stats",
+            ));
+        }
         let request = reed::reports::ReportRequest {
             freq: args.freq,
             hardy: args.hardy,
@@ -407,11 +426,6 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             step: if args.step == 0 { args.size } else { args.step },
         },
     };
-    if let Some(path) = &args.sites_file {
-        for (contig, pos1) in parse_sites(path).map_err(reed::Error::usage)? {
-            targets.push((contig, Some(pos1), Some(pos1)));
-        }
-    }
 
     let windowed_route = args.pi
         || args.dxy
