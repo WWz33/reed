@@ -119,7 +119,7 @@ fn observe(accs: &[StatAcc], kinds: &[StatKind], window_bp: u64) -> Vec<Obs> {
                     bins: vec![],
                     value: match kind {
                         StatKind::ThetaW { per_bp: true, .. } => a.value_per_bp(window_bp),
-                        _ => a.value_total(),
+                        _ => a.value_avg(),
                     },
                 }
             }

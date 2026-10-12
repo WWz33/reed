@@ -311,7 +311,7 @@ impl StatAcc {
             (Self::Fst(acc), StatKind::Fst { kind, .. }) => acc.value(*kind),
             (Self::FstGlobal(acc), StatKind::FstGlobal) => acc.value(),
             (Self::Pbs(acc), StatKind::Pbs { kind, .. }) => acc.value(*kind),
-            (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => acc.value_total(),
+            (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => acc.value_avg(),
             (Self::Theta(acc), StatKind::ThetaW { per_bp: true, .. }) => {
                 acc.value_per_bp(window_bp)
             }
