@@ -41,6 +41,13 @@ pub fn open(path: Option<&Path>) -> Result<OpenedInput, IoError> {
     open_regions(path, &[])
 }
 
+/// Opens `p`, tagging a failure with the path so the operator sees which
+/// file failed (doc_v7 D7-24: the plain `io::Error` conversion dropped it).
+fn open_path(p: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(p)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("cannot open {}: {e}", p.display())))
+}
+
 /// Like `open`, but with an index-accelerated region restriction
 /// (`-r/-R`): the reader seeks to the compressed range the index maps the
 /// regions to. Records outside the regions are the caller's predicate to
@@ -60,11 +67,11 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
         ));
     };
     let format = {
-        let mut probe = std::fs::File::open(p)?;
+        let mut probe = open_path(p)?;
         let (prefix, inflated) = sniff(&mut probe)?;
         Format::detect(&prefix, inflated.as_deref())?
     };
-    let file = std::fs::File::open(p)?;
+    let file = open_path(p)?;
     let (_, facts) = BgzfChunkSource::open(file)?;
     // The index sits next to the input as `.csi` or `.tbi`.
     let mut csi = p.as_os_str().to_os_string();
@@ -80,7 +87,7 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
             "regions need an index next to the input (.csi or .tbi; build one with `reed index`)",
         ));
     };
-    let file = std::fs::File::open(p)?;
+    let file = open_path(p)?;
     let source = RegionChunkSource::open(
         std::io::BufReader::with_capacity(1 << 20, file),
         &index,
@@ -108,7 +115,7 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
 ///
 /// [`IoError`] when the file cannot be read or no known magic matches.
 pub fn detect_format(path: &Path) -> Result<Format, IoError> {
-    let mut probe = std::fs::File::open(path)?;
+    let mut probe = open_path(path)?;
     let (prefix, inflated) = sniff(&mut probe)?;
     Format::detect(&prefix, inflated.as_deref())
 }
@@ -204,7 +211,7 @@ fn open_all(path: Option<&Path>) -> Result<OpenedInput, IoError> {
 
 fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
     let (prefix, inflated) = {
-        let mut file = std::fs::File::open(p)?;
+        let mut file = open_path(p)?;
         sniff(&mut file)?
     };
     match Format::detect(&prefix, inflated.as_deref())? {
@@ -217,7 +224,7 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
             })
         }
         Format::Vcf => {
-            let file = std::fs::File::open(p)?;
+            let file = open_path(p)?;
             let (source, facts) = PlainChunkSource::open_vcf(file)?;
             Ok(OpenedInput {
                 source: Box::new(source),
@@ -226,7 +233,7 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
             })
         }
         Format::VcfGzip => {
-            let file = std::fs::File::open(p)?;
+            let file = open_path(p)?;
             warn_serial_gzip();
             let (source, facts) = PlainChunkSource::open_gzip(file)?;
             Ok(OpenedInput {
@@ -253,10 +260,10 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
 /// no copies, no read syscalls), else the streaming reader. Both cut chunks
 /// by the same rule, so the choice cannot change the output.
 fn open_bgzf(p: &Path) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
-    match reed_io::chunk::bgzf::MmapChunkSource::open(std::fs::File::open(p)?) {
+    match reed_io::chunk::bgzf::MmapChunkSource::open(open_path(p)?) {
         Ok((source, facts)) => Ok((Box::new(source), facts)),
         Err(_) => {
-            let (source, facts) = BgzfChunkSource::open(std::fs::File::open(p)?)?;
+            let (source, facts) = BgzfChunkSource::open(open_path(p)?)?;
             Ok((Box::new(source), facts))
         }
     }

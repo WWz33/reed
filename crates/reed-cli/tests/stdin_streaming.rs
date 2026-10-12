@@ -695,6 +695,23 @@ fn missing_sample_file_errors() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v7 D7-24: a missing input file must name the file in the error.
+#[test]
+fn missing_input_names_the_file() {
+    let missing = "/definitely/not/here.vcf";
+    let out = run(&["stats", missing, "--pi", "-o", "/tmp/reed-nope"], None);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an unreadable input is a runtime error"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(missing),
+        "the error must name the file: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// doc_v7 D7-18: an integer r² threshold parses by position
 /// (`--indep-pairwise 50 5 1`), instead of being mistaken for the step.
 #[test]
