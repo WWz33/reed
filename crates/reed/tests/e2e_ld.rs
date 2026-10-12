@@ -568,11 +568,12 @@ fn prune_multi_contig_is_thread_count_independent() {
          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\ts4\ts5\n",
     );
     for c in ["c1", "c2", "c3", "c4"] {
-        text.push_str(&format!(
+        let _ = write!(
+            text,
             "{c}\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t1/1\t0/1\t0/0\n\
              {c}\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t1/1\t0/1\t0/0\n\
              {c}\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t0/1\t0/0\t0/1\t1/1\n"
-        ));
+        );
     }
     let vcf = dir.join("multi.vcf");
     std::fs::write(&vcf, text).expect("invariant: write");
@@ -604,7 +605,7 @@ fn prune_multi_contig_is_thread_count_independent() {
             .collect()
     };
     let reference = run(1, &dir.join("t1.vcf"));
-    assert!(!reference.is_empty());
+    assert_ne!(reference.len(), 0, "the one-thread prune kept nothing");
     for threads in [2_usize, 4, 8] {
         let out = dir.join(format!("t{threads}.vcf"));
         assert_eq!(
