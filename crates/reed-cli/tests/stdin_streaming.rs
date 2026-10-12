@@ -694,3 +694,34 @@ fn missing_sample_file_errors() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-18: an integer r² threshold parses by position
+/// (`--indep-pairwise 50 5 1`), instead of being mistaken for the step.
+#[test]
+fn indep_pairwise_accepts_integer_r2() {
+    let dir = std::env::temp_dir().join(format!("reed-indep-int-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+    let out = run(
+        &[
+            "filter",
+            input.to_str().unwrap(),
+            "--indep-pairwise",
+            "50",
+            "5",
+            "1",
+            "-Oz",
+            "-o",
+            dir.join("o.vcf.gz").to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
