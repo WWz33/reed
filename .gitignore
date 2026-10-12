@@ -16,7 +16,6 @@
 
 # dev-only content (committed on dev, never merged to main)
 /bench/
-/ci/
 /docs/
 /gold/
 /.claude/
@@ -25,3 +24,6 @@
 /crates/*/tests/
 /skills-lock.json
 /CHANGELOG.md
+# Graphify analysis output (tool artefact, never tracked)
+/graphify-out/
+/crates/graphify-out/
