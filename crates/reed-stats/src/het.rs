@@ -14,7 +14,9 @@ use reed_core::sample::SampleMask;
 /// *biallelic* sites: O_hom = hom-ref + hom-alt full calls, N = full
 /// diploid calls at biallelic sites (a half call is not a full call,
 /// doc_v7 D7-14), E_hom = N − Σ 2p(1−p) where p is the alt frequency of
-/// the site. All three are additive per sample.
+/// the site. All three are additive per sample. (The old notation
+/// `N·(1 − 2p(1−p))` was imprecise — the sum is per site, doc_v7 D7-26;
+/// the implementation was already exact.)
 #[derive(Clone, Debug, Default)]
 pub struct IndividualFAcc {
     /// Per sample: homozygous (ref-ref or alt-alt) full-call count at
