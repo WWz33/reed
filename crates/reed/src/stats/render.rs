@@ -155,11 +155,19 @@ impl StatsRequest {
                         "--dstat",
                         format!("{},{};{},{}", name(*a), name(*b), name(*c), name(*d)),
                     ),
-                    // Mirror of `build_fstats_request`'s split_roles(_, 3):
-                    // parts[0] = a(=b), parts[1] = o(=c), parts[2] = x.
-                    FStatTest::F4Ratio { o, a, x, .. } => (
+                    // Mirror of `build_fstats_request`: `A,B;C,D;X` →
+                    // a = parts[0], o = parts[1], c = parts[2], b = parts[3],
+                    // x = parts[4] (doc_v7 D7-8).
+                    FStatTest::F4Ratio { o, a, x, b, c } => (
                         "--f4-ratio",
-                        format!("{};{};{}", name(*a), name(*o), name(*x)),
+                        format!(
+                            "{},{};{},{};{}",
+                            name(*a),
+                            name(*o),
+                            name(*c),
+                            name(*b),
+                            name(*x)
+                        ),
                     ),
                 };
                 flag(&mut args, flag_name, value);

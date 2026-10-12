@@ -840,15 +840,17 @@ fn build_fstats_request(
         });
     }
     for spec in f4_ratio {
-        let parts = split_roles(spec, 3, "--f4-ratio")?;
-        // A,B;C,D;X → f4(A, O; X, C) / f4(A, O; B, C) with O = the outgroup
-        // written last in the spec's first role group.
+        let parts = split_roles(spec, 5, "--f4-ratio")?;
+        // A,B;C,D;X → f4(A, O; X, C) / f4(A, O; B, C): A = parts[0],
+        // O = parts[1] (the outgroup, last of the first role group),
+        // C = parts[2], B = parts[3], X = parts[4] (doc_v7 D7-8; the CLI
+        // used to take only three names and hardcode b = a, c = o).
         tests.push(reed::FStatTest::F4Ratio {
-            o: index(&parts[1])?,
             a: index(&parts[0])?,
-            x: index(&parts[2])?,
-            b: index(&parts[0])?,
-            c: index(&parts[1])?,
+            o: index(&parts[1])?,
+            c: index(&parts[2])?,
+            b: index(&parts[3])?,
+            x: index(&parts[4])?,
         });
     }
     if tests.is_empty() {
@@ -901,6 +903,7 @@ fn split_roles(spec: &str, roles: usize, flag: &str) -> Result<Vec<String>, reed
             match roles {
                 2 => "A,B",
                 3 => "C;A,B",
+                5 => "A,B;C,D;X",
                 _ => "A,B;C,D",
             },
             names.len()

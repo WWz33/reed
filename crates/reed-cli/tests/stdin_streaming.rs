@@ -609,3 +609,52 @@ fn report_mode_rejects_unapplied_filters() {
     assert_eq!(rows[0].split('\t').nth(1), Some("Chr01_3"), "{:?}", rows[0]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-8: `--f4-ratio A,B;C,D;X` names five populations; the parser
+/// used to accept only three and hardcode b = a, c = o.
+#[test]
+fn f4_ratio_accepts_five_populations() {
+    let dir = std::env::temp_dir().join(format!("reed-f4ratio-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=Chr01,length=100000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tP1\tP2\tP3\tP4\tP5\n\
+         Chr01\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t0/1\t1/1\t0/0\n\
+         Chr01\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t1/1\t0/0\n\
+         Chr01\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/1\t1/1\n\
+         Chr01\t4\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t1/1\t0/1\t0/1\n",
+    )
+    .expect("invariant: fixture");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "P1\tA\nP2\tO\nP3\tX\nP4\tC\nP5\tB\n").expect("invariant: pops");
+    let prefix = dir.join("out");
+    let out = run(
+        &[
+            "stats",
+            vcf.to_str().unwrap(),
+            "--pop",
+            pops.to_str().unwrap(),
+            "--f4-ratio",
+            "A,O;X,C;B",
+            "-o",
+            prefix.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let wrote = std::fs::read_dir(&dir)
+        .expect("invariant: dir")
+        .filter_map(Result::ok)
+        .any(|e| e.file_name().to_string_lossy().starts_with("out"));
+    assert!(wrote, "the f4-ratio output file must be written");
+    let _ = std::fs::remove_dir_all(&dir);
+}
