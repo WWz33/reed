@@ -23,7 +23,22 @@ pub(super) fn plan_mode(mind: bool, sketch_shape: bool, indep: bool) -> MatrixMo
         retain: sketch_shape || indep,
         rule_bits: sketch_shape,
         tail_inline: !mind && !sketch_shape,
+        // The pruner excludes masked and non-kept samples (doc_v7 D7-4), so
+        // the effective mask bitmap rides along whenever it runs.
+        mask_plane: indep,
     }
+}
+
+/// Packs a per-sample keep vector into the bitmap words the pruner excludes
+/// over (doc_v7 D7-4).
+pub(super) fn keep_words_of(keep: &[bool]) -> Vec<u64> {
+    let mut words = vec![0_u64; keep.len().div_ceil(64).max(1)];
+    for (i, &k) in keep.iter().enumerate() {
+        if k {
+            words[i / 64] |= 1 << (i % 64);
+        }
+    }
+    words
 }
 
 /// Resolves the `--mind` keep set from the pass0 counts (doc_v4 02 回退版

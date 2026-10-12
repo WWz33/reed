@@ -145,6 +145,11 @@ impl FstAcc {
         }
 
         // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
+        // Skipping a group with no called alleles matches vcftools
+        // (--weir-fst-pop prints `-nan` for the site and drops it from the
+        // weighted mean); pixy / scikit-allel instead keep the finite `c`
+        // component (a paired demo with an all-missing group: reed/vcftools
+        // 0.150 vs pixy/allel 0.125). Documented divergence, doc_v7 D7-20.
         if n_a == 0 || n_b == 0 {
             self.wc.n_skipped += 1;
         } else {
@@ -285,6 +290,14 @@ impl WcMultiAcc {
             self.n_skipped += 1;
             return;
         }
+        // No per-group `n_i == 0` skip here (only `an_i == 0` above): matches
+        // vcftools, which drops a site whose WEIR_AND_COCKERHAM_FST is `-nan`.
+        // NOTE (doc_v7 D7-20): this differs from pixy / scikit-allel, which
+        // keep allel's finite `c` component for an all-missing group
+        // (pairwise demo, one group all-missing: reed/vcftools 0.15 vs
+        // pixy/allel 0.125; r=3 likewise 0.2195 vs 0.1698). reed follows the
+        // vcftools/hierfstat reference the docs name for the multi-group
+        // WC84, not pixy (which has no r-population merged form).
         let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
         let n_total: f64 = n.iter().sum();
         let n_bar = n_total / r as f64;
@@ -309,7 +322,10 @@ impl WcMultiAcc {
             .map(|(&ni, &pi)| ni * (pi - p_bar) * (pi - p_bar))
             .sum::<f64>()
             / (n_bar * (r as f64 - 1.0));
-        // h̄ = Σ n_het_i / n_total (from the count table).
+        // h̄ = Σ n_het_i / n_total (from the count table). `n_het` counts
+        // genotypes with both alleles called and different (a half call is
+        // not a full heterozygote) — the same rule as scikit-allel's
+        // `count_het`, so h̄ matches allel (doc_v7 D7-27).
         let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
         let a = (n_bar / n_c)
             * (s2

@@ -31,6 +31,20 @@ pub struct PairSums {
 /// part of the population and never enters any mask).
 #[must_use]
 pub fn pair_sums(x: [&[u64]; 4], y: [&[u64]; 4], n_samples: usize) -> PairSums {
+    pair_sums_ex(x, y, n_samples, &[], &[])
+}
+
+/// [`pair_sums`] with a per-site sample-exclusion bitmap: bits set in
+/// `x_exclude`/`y_exclude` are dropped from the valid mask (the `--indep-pairwise`
+/// path excludes masked and non-kept samples, doc_v7 D7-4).
+#[must_use]
+pub fn pair_sums_ex(
+    x: [&[u64]; 4],
+    y: [&[u64]; 4],
+    n_samples: usize,
+    x_exclude: &[u64],
+    y_exclude: &[u64],
+) -> PairSums {
     let mut s = PairSums::default();
     for w in 0..x[0].len().min(n_samples.div_ceil(64)) {
         let (x0a, x0m, x1a, x1m) = (x[0][w], x[1][w], x[2][w], x[3][w]);
@@ -41,9 +55,12 @@ pub fn pair_sums(x: [&[u64]; 4], y: [&[u64]; 4], n_samples: usize) -> PairSums {
         } else {
             (1_u64 << (n_samples % 64)) - 1
         };
-        // Valid: both slots of both sites called.
-        let vx = real & !(x0m | x1m);
-        let vy = real & !(y0m | y1m);
+        // Valid: both slots of both sites called, and neither site excludes
+        // the sample.
+        let x_ex = x_exclude.get(w).copied().unwrap_or(0);
+        let y_ex = y_exclude.get(w).copied().unwrap_or(0);
+        let vx = real & !(x0m | x1m) & !x_ex;
+        let vy = real & !(y0m | y1m) & !y_ex;
         let v = vx & vy;
         let n = v.count_ones() as i64;
         if n == 0 {
@@ -299,6 +316,8 @@ struct PruneSite {
     /// The arrival index (window slots are counted in arrival space).
     arrival: usize,
     planes: Vec<u64>,
+    /// Per-sample exclusion bitmap (masked or non-kept), `w` words.
+    exclude: Vec<u64>,
     maj_freq: f64,
 }
 
@@ -340,6 +359,20 @@ impl LdPruner {
         planes: [&[u64]; 4],
         stats: SitePruneStats,
     ) -> bool {
+        self.push_ex(ordinal, pos0, planes, stats, Vec::new())
+    }
+
+    /// [`Self::push`] with a per-sample exclusion bitmap (doc_v7 D7-4): the
+    /// excluded samples are dropped from every pair's valid mask (the
+    /// `--indep-pairwise` path excludes masked and non-kept samples).
+    pub fn push_ex(
+        &mut self,
+        ordinal: usize,
+        pos0: u64,
+        planes: [&[u64]; 4],
+        stats: SitePruneStats,
+        exclude: Vec<u64>,
+    ) -> bool {
         let arrival = self.seen;
         self.seen += 1;
         self.last_pos0 = pos0;
@@ -375,6 +408,7 @@ impl LdPruner {
             ordinal,
             arrival,
             planes: flat,
+            exclude,
             maj_freq: stats.maj_freq,
         });
         // The site survives unless this window's scan removed it. `pruned`
@@ -475,10 +509,12 @@ impl LdPruner {
                 &s.planes[3 * w..4 * w],
             ]
         }
-        let sums = pair_sums(
+        let sums = pair_sums_ex(
             planes_of(&self.sites[first], self.w),
             planes_of(&self.sites[second], self.w),
             self.n_samples,
+            &self.sites[first].exclude,
+            &self.sites[second].exclude,
         );
         let n = i128::from(sums.n);
         let cov = n * i128::from(sums.sum_xy) - i128::from(sums.sum_x) * i128::from(sums.sum_y);

@@ -1,6 +1,0 @@
-# cargo-deny configuration (§14.6): license whitelist, GPL/LGPL forbidden.
-[licenses]
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Zlib", "Unicode-3.0", "CDLA-Permissive-2.0"]
-
-[bans]
-multiple-versions = "warn"

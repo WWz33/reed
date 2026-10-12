@@ -113,7 +113,7 @@ fn parse_sample_keep(
         Ok(text
             .lines()
             .map(str::trim)
-            .filter(|l| !l.is_empty())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .map(str::to_string)
             .collect())
     };
@@ -150,11 +150,17 @@ fn parse_sample_keep(
     }
     let mut keep = vec![true; header_samples.len()];
     let mut touched = false;
-    if let Some(names) = inline_keep.or_else(|| {
-        file_keep
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| names_of(&t).ok())
-    }) {
+    // A `-S`/`--keep`/`--remove` file that cannot be read is an error, not a
+    // silent "no filter" (doc_v7 D7-12; the old `.ok()` chain swallowed it).
+    let file_names = match file_keep {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| format!("cannot read sample file {p}: {e}"))?;
+            Some(names_of(&text)?)
+        }
+        None => None,
+    };
+    if let Some(names) = inline_keep.or(file_names) {
         keep.iter_mut().for_each(|k| *k = false);
         for name in &names {
             match index.get(name.as_str()) {
@@ -165,12 +171,15 @@ fn parse_sample_keep(
         touched = true;
     }
     let mut drop = vec![false; header_samples.len()];
-    if let Some(names) = inline_remove.or_else(|| {
-        args.remove
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| names_of(&t).ok())
-    }) {
+    let remove_names = match &args.remove {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| format!("cannot read sample file {p}: {e}"))?;
+            Some(names_of(&text)?)
+        }
+        None => None,
+    };
+    if let Some(names) = inline_remove.or(remove_names) {
         for name in &names {
             match index.get(name.as_str()) {
                 Some(&i) => drop[i] = true,
@@ -318,6 +327,16 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             }),
     };
 
+    // `--sites-file` narrows the counted sites for every route; parse it
+    // before the report branch so report mode sees it too (doc_v7 D7-6;
+    // it was parsed after the report branch's early return and so never
+    // reached it).
+    if let Some(path) = &args.sites_file {
+        for (contig, pos1) in parse_sites(path).map_err(reed::Error::usage)? {
+            targets.push((contig, Some(pos1), Some(pos1)));
+        }
+    }
+
     // Per-site/per-sample report mode (02-cli.md §5.4): PREFIX.afreq,
     // .hardy, .het, .smiss/.vmiss, .stats in the reference layouts. One pass
     // serves every requested family — the QC summary accumulates inside the
@@ -328,6 +347,15 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
                 "report mode writes files: pass -o PREFIX",
             ));
         };
+        // doc_v7 D7-6: report mode does not apply the sample subset or the
+        // site/threshold filters; refuse instead of silently ignoring them.
+        if keep_samples.is_some() || site.is_some() {
+            return Err(reed::Error::usage(
+                "report mode (--freq/--hardy/--het/--missing/--depth/--summary) does not \
+                 apply -s/-S/--keep/--remove or site/threshold filters yet; run \
+                 `reed filter` first and feed its output to reed stats",
+            ));
+        }
         let request = reed::reports::ReportRequest {
             freq: args.freq,
             hardy: args.hardy,
@@ -350,7 +378,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             let mut path = std::ffi::OsString::from(&prefix);
             path.push(".stats");
             let path = std::path::PathBuf::from(path);
-            let text = reed::summary::render_bcftools_stats(qc);
+            let text = reed::summary::render_bcftools_stats(qc, &sample_names);
             reed::summary::write_bcftools_stats(&path, &text)?;
             files.push(path);
         }
@@ -407,11 +435,6 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             step: if args.step == 0 { args.size } else { args.step },
         },
     };
-    if let Some(path) = &args.sites_file {
-        for (contig, pos1) in parse_sites(path).map_err(reed::Error::usage)? {
-            targets.push((contig, Some(pos1), Some(pos1)));
-        }
-    }
 
     let windowed_route = args.pi
         || args.dxy
@@ -764,7 +787,7 @@ pub(crate) fn build_windowed_request(
         ld: ld_request,
         grid: ctx.grid.clone(),
         levels,
-        skip_empty: false,
+        skip_empty: args.skip_empty,
         contig_lengths: ctx.contig_lengths,
         layout: Some(layout),
     };
@@ -826,15 +849,17 @@ fn build_fstats_request(
         });
     }
     for spec in f4_ratio {
-        let parts = split_roles(spec, 3, "--f4-ratio")?;
-        // A,B;C,D;X → f4(A, O; X, C) / f4(A, O; B, C) with O = the outgroup
-        // written last in the spec's first role group.
+        let parts = split_roles(spec, 5, "--f4-ratio")?;
+        // A,B;C,D;X → f4(A, O; X, C) / f4(A, O; B, C): A = parts[0],
+        // O = parts[1] (the outgroup, last of the first role group),
+        // C = parts[2], B = parts[3], X = parts[4] (doc_v7 D7-8; the CLI
+        // used to take only three names and hardcode b = a, c = o).
         tests.push(reed::FStatTest::F4Ratio {
-            o: index(&parts[1])?,
             a: index(&parts[0])?,
-            x: index(&parts[2])?,
-            b: index(&parts[0])?,
-            c: index(&parts[1])?,
+            o: index(&parts[1])?,
+            c: index(&parts[2])?,
+            b: index(&parts[3])?,
+            x: index(&parts[4])?,
         });
     }
     if tests.is_empty() {
@@ -887,6 +912,7 @@ fn split_roles(spec: &str, roles: usize, flag: &str) -> Result<Vec<String>, reed
             match roles {
                 2 => "A,B",
                 3 => "C;A,B",
+                5 => "A,B;C,D;X",
                 _ => "A,B;C,D",
             },
             names.len()

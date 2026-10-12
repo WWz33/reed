@@ -81,6 +81,16 @@ impl ContigBins {
         self.n_sites += 1;
     }
 
+    /// Registers a present-but-uncountable site in its bin (doc_v7 D7-11).
+    pub fn push_skipped(&mut self, pos0: u64) {
+        let bin = pos0 / self.width;
+        let seed = &self.seed;
+        let accs = self.bins.entry(bin).or_insert_with(|| seed.clone());
+        for acc in accs {
+            acc.note_skipped();
+        }
+    }
+
     /// Merges another partial's bins into this one, consuming `other`.
     pub fn merge_bins(&mut self, other: &mut Self) {
         debug_assert_eq!(self.width, other.width, "invariant: same bin width");
@@ -308,6 +318,25 @@ impl RegionAccs {
         if any {
             for acc in &mut self.totals {
                 acc.push(row, all_variant);
+            }
+        }
+        self.n_sites += 1;
+    }
+
+    /// Registers a present-but-uncountable site in every covering region
+    /// (doc_v7 D7-11).
+    pub fn push_skipped(&mut self, pos0: u64) {
+        let mut any = false;
+        for idx in self.regions.stab(pos0) {
+            for acc in &mut self.accs[idx] {
+                acc.note_skipped();
+            }
+            self.touched[idx] = true;
+            any = true;
+        }
+        if any {
+            for acc in &mut self.totals {
+                acc.note_skipped();
             }
         }
         self.n_sites += 1;

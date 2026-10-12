@@ -269,6 +269,17 @@ impl StatAcc {
         }
     }
 
+    /// Registers a present-but-uncountable site (a skipped multiallelic
+    /// record): only the variant-only pi/dxy denominator reads it, every
+    /// other statistic ignores it (doc_v7 D7-11).
+    pub fn note_skipped(&mut self) {
+        match self {
+            Self::Pi(acc) => acc.note_skipped_site(),
+            Self::Dxy(acc) => acc.note_skipped_site(),
+            _ => {}
+        }
+    }
+
     /// Component-wise merge (associative; exact integer components).
     ///
     /// # Panics
@@ -311,7 +322,7 @@ impl StatAcc {
             (Self::Fst(acc), StatKind::Fst { kind, .. }) => acc.value(*kind),
             (Self::FstGlobal(acc), StatKind::FstGlobal) => acc.value(),
             (Self::Pbs(acc), StatKind::Pbs { kind, .. }) => acc.value(*kind),
-            (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => acc.value_total(),
+            (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => acc.value_avg(),
             (Self::Theta(acc), StatKind::ThetaW { per_bp: true, .. }) => {
                 acc.value_per_bp(window_bp)
             }
@@ -323,6 +334,13 @@ impl StatAcc {
     /// π/dxy/θ with the `--variant-only` denominator completion
     /// (04-algorithms.md §3); ratio statistics (Fst, PBS, Tajima's D) are
     /// unaffected.
+    ///
+    /// `per_bp` is intentionally ignored here: the design fixes one
+    /// variant-only estimator per statistic (the `absent`-completion
+    /// denominator changes, the point estimate does not), and the CLI only
+    /// builds `per_bp: false` kinds for this route, so the `pi.bp` /
+    /// `theta_w.bp` columns never carry a per-pair quantity in practice
+    /// (doc_v7 D7-23).
     #[must_use]
     pub fn value_variant_only(&self, kind: &StatKind, window_bp: u64) -> Option<f64> {
         match (self, kind) {

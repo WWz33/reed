@@ -16,6 +16,8 @@ pub struct DxyAcc {
     sum_site_means: NeumaierSum,
     n_variant_sites: u64,
     n_invariant_sites: u64,
+    /// Sites present but uncountable (skipped multiallelic; doc_v7 D7-11).
+    n_skipped_present: u64,
 }
 
 impl DxyAcc {
@@ -25,12 +27,18 @@ impl DxyAcc {
         Self {
             group_a,
             group_b,
-            total_pairs: u64::from(n_group_a) * 2 * (u64::from(n_group_b) * 2),
+            total_pairs: (u64::from(n_group_a) * 2).saturating_mul(u64::from(n_group_b) * 2),
             counts: PairAcc::default(),
             sum_site_means: NeumaierSum::new(),
             n_variant_sites: 0,
             n_invariant_sites: 0,
+            n_skipped_present: 0,
         }
+    }
+
+    /// Registers a site present but uncountable (doc_v7 D7-11).
+    pub fn note_skipped_site(&mut self) {
+        self.n_skipped_present += 1;
     }
 
     /// Absorbs one site.
@@ -58,6 +66,7 @@ impl DxyAcc {
         self.sum_site_means.merge(&other.sum_site_means);
         self.n_variant_sites += other.n_variant_sites;
         self.n_invariant_sites += other.n_invariant_sites;
+        self.n_skipped_present += other.n_skipped_present;
     }
 
     /// Integer audit trail.
@@ -86,13 +95,23 @@ impl DxyAcc {
         self.n_variant_sites + self.n_invariant_sites
     }
 
+    /// File sites including the skipped (multiallelic) ones — the
+    /// variant-only `absent` completion (doc_v7 D7-11).
+    #[must_use]
+    pub const fn n_present_file(&self) -> u64 {
+        self.n_present() + self.n_skipped_present
+    }
+
     /// dxy with the `--variant-only` denominator completion: absent window
     /// positions count as monomorphic with all called, adding
     /// `(L − |S|) · 2N_A · 2N_B` comparable cross pairs (04-algorithms.md §3).
     #[must_use]
     pub fn value_variant_only(&self, window_bp: u64) -> Option<f64> {
-        let absent = window_bp.saturating_sub(self.n_present());
-        let comparable = self.counts.comparable + absent * self.total_pairs;
+        let absent = window_bp.saturating_sub(self.n_present_file());
+        // u128 accumulation: `absent · total_pairs` can exceed u64 (doc_v7
+        // D7-21, the same fix as pi.rs).
+        let comparable =
+            u128::from(self.counts.comparable) + u128::from(absent) * u128::from(self.total_pairs);
         (comparable > 0).then(|| self.counts.diffs as f64 / comparable as f64)
     }
 }

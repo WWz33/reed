@@ -331,6 +331,12 @@ fn declared_total(head: &[u8], text: &[u8]) -> Option<usize> {
         return reed_io::bcf::declared_len(head);
     }
     let need = 8 - head.len();
+    // A truncated tail can leave too little text to complete the 8-byte
+    // prefix; report "unknown" instead of slicing out of bounds (doc_v7
+    // D7-16; the bcf_input twin already guarded this).
+    if text.len() < need {
+        return None;
+    }
     let mut buf = [0_u8; 8];
     buf[..head.len()].copy_from_slice(head);
     buf[head.len()..].copy_from_slice(&text[..need]);
@@ -480,8 +486,29 @@ pub fn run_index(
     };
     // The compressed file size bounds the last record's chunk.
     let eof_voff = std::fs::metadata(input).map_err(EngineError::Io)?.len() << 16;
+    // `reed index` writes tabix/CSI indexes, which address BGZF blocks; a
+    // plain VCF or a regular gzip stream has none, so indexing it would
+    // silently produce all-zero virtual offsets (doc_v7 D7-3).
+    let format = crate::input::detect_format(input).map_err(job)?;
+    if !matches!(
+        format,
+        reed_io::format::Format::VcfBgzf | reed_io::format::Format::Bcf
+    ) {
+        return Err(crate::error::Error::usage(
+            "reed index needs a BGZF-compressed VCF or BCF input \
+             (recompress plain VCF/regular gzip with bgzip)",
+        ));
+    }
     let mut opened = crate::input::open(Some(input)).map_err(job)?;
     let is_bcf = opened.bcf.is_some();
+    // Tabix has no BCF flavour (doc_v7 D7-15; the filter path already
+    // refuses this combination). Writing a VCF-format .tbi for a BCF would
+    // be an index no reader can use.
+    if is_bcf && flavor == WriteIndex::Tbi {
+        return Err(crate::error::Error::usage(
+            "BCF input supports only a CSI index (-c, not -t): Tabix has no BCF flavour",
+        ));
+    }
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
         opened
             .facts

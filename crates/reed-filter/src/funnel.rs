@@ -226,6 +226,7 @@ impl FunnelPartial {
         self.tail_hits = vec![0; n_tail];
         self.mask_hits = vec![0; n_mask];
         self.masked_gt = 0;
+        self.n_ld_pruned = 0;
         self.n_input = 0;
         self.n_output = 0;
         self.policy = PolicyCounters::default();
@@ -252,6 +253,7 @@ impl FunnelPartial {
             *dst += src;
         }
         self.masked_gt += other.masked_gt;
+        self.n_ld_pruned += other.n_ld_pruned;
         self.n_input += other.n_input;
         self.n_output += other.n_output;
         self.policy.haploid_as_half_call += other.policy.haploid_as_half_call;
@@ -259,5 +261,24 @@ impl FunnelPartial {
         self.policy.haploid_as_missing += other.policy.haploid_as_missing;
         self.policy.half_call_as_missing += other.policy.half_call_as_missing;
         self.policy.multiallelic_collapsed += other.policy.multiallelic_collapsed;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FunnelPartial;
+
+    /// doc_v7 D7-28: `n_ld_pruned` must survive `merge` and be cleared by
+    /// `reset` (it was omitted from both).
+    #[test]
+    fn merge_and_reset_carry_the_ld_prune_count() {
+        let mut a = FunnelPartial::default();
+        a.n_ld_pruned = 2;
+        let mut b = FunnelPartial::default();
+        b.n_ld_pruned = 3;
+        a.merge(&b);
+        assert_eq!(a.n_ld_pruned, 5);
+        a.reset(1, 1, 1);
+        assert_eq!(a.n_ld_pruned, 0, "reset must clear the LD-prune count");
     }
 }

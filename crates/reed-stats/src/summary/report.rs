@@ -43,8 +43,12 @@ pub struct QcReportAcc {
     pub dp_genotypes: IntHistogram,
     /// DP: per-site depth histogram (INFO/DP).
     pub dp_sites: IntHistogram,
-    /// IDD: indel length distribution (negative = deletion).
+    /// IDD: deletion length distribution (bins hold `|len|`, printed
+    /// negative).
     pub idd: IntHistogram,
+    /// IDD: insertion length distribution (bins hold `len`, printed
+    /// positive; doc_v7 D7-7 splits the two, matching bcftools).
+    pub idd_ins: IntHistogram,
     /// PSC: per-sample counters.
     pub psc: Vec<PscAcc>,
 }
@@ -192,6 +196,7 @@ impl QcReportAcc {
             dp_genotypes: IntHistogram::new(500),
             dp_sites: IntHistogram::new(500),
             idd: IntHistogram::new(60),
+            idd_ins: IntHistogram::new(60),
             psc: vec![PscAcc::default(); n_samples as usize],
         }
     }
@@ -254,6 +259,7 @@ impl QcReportAcc {
         self.dp_genotypes.merge(&other.dp_genotypes);
         self.dp_sites.merge(&other.dp_sites);
         self.idd.merge(&other.idd);
+        self.idd_ins.merge(&other.idd_ins);
         for (dst, src) in self.psc.iter_mut().zip(&other.psc) {
             let PscAcc {
                 hom_rr,

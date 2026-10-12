@@ -21,25 +21,29 @@ fn parse_indep_pairwise(args: &[String]) -> Result<Option<reed::spec::LdPruneSpe
     if args.is_empty() {
         return Ok(None);
     }
-    let mut window_token = None;
-    let mut step = 1_usize;
-    let mut r2 = None;
-    for token in args {
-        if window_token.is_none() {
-            window_token = Some(token.clone());
-        } else if r2.is_none() && token.contains('.') {
-            r2 = Some(token.clone());
-        } else if r2.is_none() {
-            step = token
+    // `W[kb] [S] R2`: the r² threshold is always the LAST token, so parse by
+    // position — an integer r² (`50 5 1`, `50 5 0`) must be accepted (doc_v7
+    // D7-18; the old "does the token contain a dot" heuristic mistook the
+    // integer for the step).
+    let window_token = args
+        .first()
+        .expect("invariant: args is non-empty")
+        .clone();
+    let (step, r2_token) = match args.len() {
+        2 => (1_usize, &args[1]),
+        3 => (
+            args[1]
                 .parse()
-                .map_err(|_| format!("invalid --indep-pairwise step {token:?}"))?;
-        } else {
-            return Err(format!("unexpected --indep-pairwise value {token:?}"));
+                .map_err(|_| format!("invalid --indep-pairwise step {:?}", args[1]))?,
+            &args[2],
+        ),
+        n => {
+            return Err(format!(
+                "--indep-pairwise wants `W[kb] [S] R2`, got {n} value(s)"
+            ));
         }
-    }
-    let window_token = window_token.expect("invariant: args is non-empty");
-    let r2: f64 = r2
-        .ok_or("--indep-pairwise needs an r² threshold (W[kb] [S] R2)")?
+    };
+    let r2: f64 = r2_token
         .parse()
         .map_err(|_| "--indep-pairwise r² must be a number".to_string())?;
     // `parse_size` scales the full token itself (`50kb` → 50,000); stripping

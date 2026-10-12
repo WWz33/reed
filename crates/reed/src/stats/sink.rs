@@ -322,8 +322,12 @@ impl StatsSink {
         while s.saturating_add(size) <= watermark {
             let end = s + size;
             let range = (s / width)..end.div_ceil(width);
-            let skip = self.skip_empty && !bins.any_bin_in(range.clone());
-            if !skip {
+            let empty = self.skip_empty && !bins.any_bin_in(range.clone());
+            // The window span advances whether or not the row is written, so
+            // the contig row's bp stays correct when `--levels` drops the
+            // window rows (doc_v7 D7-13).
+            cur.span_end = end;
+            if self.levels.window && !empty {
                 let accs = bins.finish_bins(range);
                 self.write_row(
                     &String::from_utf8_lossy(&cur.name),
@@ -332,7 +336,6 @@ impl StatsSink {
                     end - s,
                     &accs,
                 );
-                cur.span_end = end;
                 self.n_windows += 1;
             }
             s = s.saturating_add(step);
@@ -370,11 +373,11 @@ impl StatsSink {
                 while s < len && s <= cur.last_pos0 {
                     let end = s.saturating_add(size).min(len);
                     let range = (s / width)..end.div_ceil(width);
-                    let skip = self.skip_empty && !bins.any_bin_in(range.clone());
-                    if !skip {
+                    let empty = self.skip_empty && !bins.any_bin_in(range.clone());
+                    cur.span_end = end;
+                    if self.levels.window && !empty {
                         let accs = bins.finish_bins(range);
                         self.write_row(&contig, s + 1, end, end - s, &accs);
-                        cur.span_end = end;
                         self.n_windows += 1;
                     }
                     s = s.saturating_add(step);
@@ -389,15 +392,17 @@ impl StatsSink {
                 let intervals: Vec<reed_core::coord::Interval0> =
                     regions.regions().windows().to_vec();
                 for (idx, interval) in intervals.iter().enumerate() {
-                    if self.skip_empty && !regions.touched(idx) {
-                        continue;
-                    }
                     let start0 = interval.start.0;
                     let end0 = interval.end.0;
+                    // The span covers every region even when the row is
+                    // dropped by `--levels` (doc_v7 D7-13).
+                    cur.span_end = cur.span_end.max(end0);
+                    if !self.levels.window || (self.skip_empty && !regions.touched(idx)) {
+                        continue;
+                    }
                     let bp = end0.saturating_sub(start0);
                     let accs = regions.accs(idx);
                     self.write_row(&contig, start0 + 1, end0, bp, accs);
-                    cur.span_end = cur.span_end.max(end0);
                     self.n_windows += 1;
                 }
             }

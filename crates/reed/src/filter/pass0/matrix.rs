@@ -47,6 +47,9 @@ pub(crate) struct MatrixMode {
     /// Evaluate the tail rules inline (the keep set is already final: no
     /// `--mind`); the matrix then holds exactly the sites the pruner sees.
     pub tail_inline: bool,
+    /// Record the per-site effective mask bitmap (the pruner excludes
+    /// masked samples, doc_v7 D7-4). Set whenever the pruner runs.
+    pub mask_plane: bool,
 }
 
 /// One pass0 partial: a chunk body's or a seam record's stream unit. The
@@ -167,7 +170,9 @@ impl MatrixJob {
 
     /// Words one site occupies in the flat buffer.
     fn stride(&self) -> usize {
-        (4 + usize::from(self.mode.rule_bits) * self.plan.mask.len()) * self.w
+        (4 + usize::from(self.mode.rule_bits) * self.plan.mask.len()
+            + usize::from(self.mode.mask_plane))
+            * self.w
     }
 
     /// The pipeline options this mode asks of the shared stages: the mask
@@ -258,6 +263,18 @@ impl MatrixJob {
                 && let Some(slot) = site.get_mut(4 * w + usize::from(rule) * w + word)
             {
                 *slot |= bit;
+            }
+        }
+        // The per-site effective mask bitmap the pruner excludes over
+        // (doc_v7 D7-4), stored past the four genotype planes and the rule
+        // bitmaps.
+        if self.mode.mask_plane {
+            let base = (4 + usize::from(self.mode.rule_bits) * self.plan.mask.len()) * w;
+            for wi in 0..w {
+                let m = masked.words().get(wi).copied().unwrap_or(0);
+                if let Some(slot) = site.get_mut(base + wi) {
+                    *slot = m;
+                }
             }
         }
         // --mind (doc_v4 02 回退版 §3.2): the post-mask miss planes' moving
@@ -492,6 +509,9 @@ pub(crate) struct SiteMatrix {
     pub w: usize,
     /// Number of rule bitmaps (`R` in the stride; 0 without the mid stage).
     pub n_rules: usize,
+    /// One effective mask bitmap per site rides past the rule bitmaps
+    /// (the pruner's sample exclusion, doc_v7 D7-4).
+    pub has_mask: bool,
     /// Flat site-major blocks, one per contributing stream unit.
     blocks: Vec<Vec<u64>>,
     /// First site index of each block; `base.len() == blocks.len() + 1`.
@@ -502,11 +522,12 @@ pub(crate) struct SiteMatrix {
 
 impl SiteMatrix {
     /// An empty matrix for one contig.
-    pub fn new(contig: Vec<u8>, w: usize, n_rules: usize) -> Self {
+    pub fn new(contig: Vec<u8>, w: usize, n_rules: usize, has_mask: bool) -> Self {
         Self {
             contig,
             w,
             n_rules,
+            has_mask,
             blocks: Vec::new(),
             base: vec![0],
             pos0: Vec::new(),
@@ -528,7 +549,7 @@ impl SiteMatrix {
 
     /// Words one site occupies.
     pub const fn stride(&self) -> usize {
-        (4 + self.n_rules) * self.w
+        (4 + self.n_rules + self.has_mask as usize) * self.w
     }
 
     /// Sites in the matrix.
@@ -579,6 +600,15 @@ impl SiteMatrix {
         let b = self.block_of(i);
         let row = self.stride();
         let k = (i - self.base[b]) * row + (4 + r) * self.w;
+        &self.blocks[b][k..k + self.w]
+    }
+
+    /// The effective mask bitmap at site `i` (all-zero without
+    /// `mode.mask_plane`): the samples the mask turned missing (doc_v7 D7-4).
+    pub fn mask_plane(&self, i: usize) -> &[u64] {
+        let b = self.block_of(i);
+        let row = self.stride();
+        let k = (i - self.base[b]) * row + (4 + self.n_rules) * self.w;
         &self.blocks[b][k..k + self.w]
     }
 }
@@ -646,6 +676,8 @@ pub(crate) struct MatrixOutput {
 struct MatrixSink {
     w: usize,
     n_rules: usize,
+    /// Record the per-site effective mask bitmap (pruner exclusion).
+    mask_plane: bool,
     want_counts: bool,
     n_samples: usize,
     /// Record the per-chunk stream bookkeeping (the mid stage's input;
@@ -655,6 +687,11 @@ struct MatrixSink {
     prune_config: Option<super::prune::PruneConfig>,
     /// The memory budget the per-contig matrices are judged against.
     budget_bytes: u64,
+    /// Upper bound on concurrently running per-contig prune threads (doc_v7
+    /// D7-19: without a cap, M contigs keep M matrices resident).
+    max_prune: usize,
+    /// The final keep bitmap the streaming pruner excludes over (doc_v7 D7-4).
+    keep_words: Arc<[u64]>,
     called: Vec<u64>,
     n_head: u64,
     funnel: FunnelPartial,
@@ -665,6 +702,8 @@ struct MatrixSink {
     open: Option<OpenChunk>,
     chunks: Vec<ChunkSites>,
     prune_jobs: Vec<std::thread::JoinHandle<super::prune::PruneOutcome>>,
+    /// Prune results already joined to respect `max_prune` (doc_v7 D7-19).
+    prune_done: Vec<super::prune::PruneOutcome>,
     out: Arc<Mutex<Option<MatrixOutput>>>,
 }
 
@@ -701,6 +740,11 @@ impl OrderedSink<MatrixPartial> for MatrixSink {
             let mut pruned = 0_u64;
             let mut per_contig = Vec::new();
             let started = std::time::Instant::now();
+            for outcome in self.prune_done.drain(..) {
+                seen += outcome.n_seen;
+                pruned += outcome.n_pruned;
+                per_contig.extend(outcome.keep.per_contig);
+            }
             for handle in self.prune_jobs.drain(..) {
                 let outcome = handle
                     .join()
@@ -810,7 +854,12 @@ impl MatrixSink {
             let same = self.pending.as_ref().is_some_and(|m| m.contig == *contig);
             if !same {
                 self.close_pending()?;
-                self.pending = Some(SiteMatrix::new(contig.clone(), self.w, self.n_rules));
+                self.pending = Some(SiteMatrix::new(
+                    contig.clone(),
+                    self.w,
+                    self.n_rules,
+                    self.mask_plane,
+                ));
                 self.contig_base.push(self.total_sites);
             }
             let stride = self.pending.as_ref().map_or(1, SiteMatrix::stride);
@@ -852,9 +901,20 @@ impl MatrixSink {
                 budget_bytes: self.budget_bytes,
             });
         }
+        // Bound the number of concurrently running prune threads so M contigs
+        // cannot keep M matrices resident (doc_v7 D7-19): join the oldest
+        // when the cap is reached, keeping its outcome for `finish`.
+        if self.prune_jobs.len() >= self.max_prune {
+            let handle = self.prune_jobs.remove(0);
+            let outcome = handle
+                .join()
+                .map_err(|_| EngineError::job("the per-contig prune worker panicked"))?;
+            self.prune_done.push(outcome);
+        }
         let n_samples = self.n_samples;
+        let keep_words = Arc::clone(&self.keep_words);
         self.prune_jobs.push(std::thread::spawn(move || {
-            super::prune::prune_one(matrix, &config, None, 0, n_samples)
+            super::prune::prune_one(matrix, &config, None, 0, n_samples, &keep_words)
         }));
         Ok(())
     }
@@ -917,14 +977,24 @@ pub(crate) fn run_matrix_pass(
     };
     let crate::input::OpenedInput { mut source, .. } = opened;
     let out: Arc<Mutex<Option<MatrixOutput>>> = Arc::new(Mutex::new(None));
+    let w = n_samples.div_ceil(64).max(1);
+    let mut keep_words = vec![0_u64; w];
+    for (i, &k) in keep.iter().enumerate() {
+        if k {
+            keep_words[i / 64] |= 1 << (i % 64);
+        }
+    }
     let sink = MatrixSink {
-        w: n_samples.div_ceil(64).max(1),
+        w,
         n_rules: usize::from(mode.rule_bits) * plan.mask.len(),
+        mask_plane: mode.mask_plane,
         want_counts,
         n_samples,
         track_chunks: mode.rule_bits,
         prune_config,
         budget_bytes,
+        max_prune: opts.threads.max(1),
+        keep_words: keep_words.into(),
         called: Vec::new(),
         n_head: 0,
         funnel: FunnelPartial {
@@ -940,6 +1010,7 @@ pub(crate) fn run_matrix_pass(
         open: None,
         chunks: Vec::new(),
         prune_jobs: Vec::new(),
+        prune_done: Vec::new(),
         out: Arc::clone(&out),
     };
     let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;

@@ -22,6 +22,12 @@ pub(crate) struct PruneConfig {
 
 /// The kept sites, per contig, sorted by position (pass1 binary-searches
 /// this: worker chunks are unordered, so an ordinal bitmap cannot be used).
+///
+/// Keyed by `(contig, pos0)`: multiple records at one position (rare;
+/// e.g. a split multiallelic) share the prune decision — all kept or all
+/// dropped (doc_v7 D7-25, the same position-keyed convention as
+/// vcftools/plink2's `.prune.in`). A contig absent from `per_contig` counts
+/// as fully pruned.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SiteKeepSet {
     /// `(contig, sorted 0-based positions)`.
@@ -54,9 +60,14 @@ pub(crate) struct PruneOutcome {
 /// One site's plink2 aggregates over all samples, from its four planes:
 /// the major-allele frequency and the hom-ref / hom-alt / het counts
 /// (`FillVaggs`).
-pub(crate) fn site_prune_stats(
+/// One site's plink2 aggregates over the kept, unmasked samples, from its
+/// four planes plus the per-sample exclusion bitmap (doc_v7 D7-4): the
+/// major-allele frequency and the hom-ref / hom-alt / het counts
+/// (`FillVaggs`).
+pub(crate) fn site_prune_stats_ex(
     planes: [&[u64]; 4],
     n_samples: usize,
+    exclude: &[u64],
 ) -> reed_stats::ld::SitePruneStats {
     let mut alt = 0_u64;
     let mut called = 0_u64;
@@ -69,7 +80,8 @@ pub(crate) fn site_prune_stats(
         } else {
             (1_u64 << (n_samples % 64)) - 1
         };
-        let miss = (planes[1][w] | planes[3][w]) & real;
+        let excl = exclude.get(w).copied().unwrap_or(0);
+        let miss = (planes[1][w] | planes[3][w] | excl) & real;
         let called_w = real & !miss;
         let alt0 = planes[0][w] & called_w;
         let alt1 = planes[2][w] & called_w;
@@ -107,6 +119,7 @@ pub(crate) fn prune_one(
     survivor: Option<&[u64]>,
     base: usize,
     n_samples: usize,
+    keep_words: &[u64],
 ) -> PruneOutcome {
     let w = matrix.w;
     let mut pruner = LdPruner::new(config.threshold, config.window, config.step, w, n_samples);
@@ -119,8 +132,21 @@ pub(crate) fn prune_one(
         }
         n_seen += 1;
         let planes = matrix.planes(i);
-        let stats = site_prune_stats(planes, n_samples);
-        pruner.push(i, pos0, planes, stats);
+        // doc_v7 D7-4: the pruner sees the post-mask, kept-only genotypes.
+        // The site's mask plane carries the fired mask; the keep bitmap
+        // removes the samples the static subset (and `--mind`) dropped.
+        let mask = matrix.mask_plane(i);
+        let mut exclude = vec![0_u64; w];
+        for (wi, e) in exclude.iter_mut().enumerate() {
+            let keep = if keep_words.is_empty() {
+                !0_u64
+            } else {
+                keep_words.get(wi).copied().unwrap_or(0)
+            };
+            *e = mask.get(wi).copied().unwrap_or(0) | !keep;
+        }
+        let stats = site_prune_stats_ex(planes, n_samples, &exclude);
+        pruner.push_ex(i, pos0, planes, stats, exclude);
     }
     pruner.finish_contig();
     // A later pair can prune an earlier site, so `push`'s return is
@@ -154,6 +180,7 @@ pub(crate) fn prune_matrices(
     bases: &[usize],
     config: &PruneConfig,
     n_samples: usize,
+    keep_words: &[u64],
 ) -> PruneOutcome {
     let started = std::time::Instant::now();
     let per_contig: Vec<PruneOutcome> = matrices
@@ -161,7 +188,7 @@ pub(crate) fn prune_matrices(
         .enumerate()
         .map(|(index, matrix)| {
             let base = bases.get(index).copied().unwrap_or(0);
-            prune_one(matrix, config, survivor, base, n_samples)
+            prune_one(matrix, config, survivor, base, n_samples, keep_words)
         })
         .collect();
     let mut outcome = PruneOutcome::default();
