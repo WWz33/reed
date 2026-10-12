@@ -658,3 +658,39 @@ fn f4_ratio_accepts_five_populations() {
     assert!(wrote, "the f4-ratio output file must be written");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v7 D7-12: a `-S`/`--keep`/`--remove` file that cannot be read is a
+/// usage error, not a silent "no filter".
+#[test]
+fn missing_sample_file_errors() {
+    let dir = std::env::temp_dir().join(format!("reed-keepfile-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: write fixture");
+    let missing = dir.join("nope.txt");
+    let out = run(
+        &[
+            "stats",
+            input.to_str().unwrap(),
+            "--pi",
+            "-S",
+            missing.to_str().unwrap(),
+            "-o",
+            dir.join("p").to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("cannot read sample file"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

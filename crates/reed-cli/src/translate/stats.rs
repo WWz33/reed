@@ -113,7 +113,7 @@ fn parse_sample_keep(
         Ok(text
             .lines()
             .map(str::trim)
-            .filter(|l| !l.is_empty())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .map(str::to_string)
             .collect())
     };
@@ -150,11 +150,17 @@ fn parse_sample_keep(
     }
     let mut keep = vec![true; header_samples.len()];
     let mut touched = false;
-    if let Some(names) = inline_keep.or_else(|| {
-        file_keep
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| names_of(&t).ok())
-    }) {
+    // A `-S`/`--keep`/`--remove` file that cannot be read is an error, not a
+    // silent "no filter" (doc_v7 D7-12; the old `.ok()` chain swallowed it).
+    let file_names = match file_keep {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| format!("cannot read sample file {p}: {e}"))?;
+            Some(names_of(&text)?)
+        }
+        None => None,
+    };
+    if let Some(names) = inline_keep.or(file_names) {
         keep.iter_mut().for_each(|k| *k = false);
         for name in &names {
             match index.get(name.as_str()) {
@@ -165,12 +171,15 @@ fn parse_sample_keep(
         touched = true;
     }
     let mut drop = vec![false; header_samples.len()];
-    if let Some(names) = inline_remove.or_else(|| {
-        args.remove
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| names_of(&t).ok())
-    }) {
+    let remove_names = match &args.remove {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| format!("cannot read sample file {p}: {e}"))?;
+            Some(names_of(&text)?)
+        }
+        None => None,
+    };
+    if let Some(names) = inline_remove.or(remove_names) {
         for name in &names {
             match index.get(name.as_str()) {
                 Some(&i) => drop[i] = true,
