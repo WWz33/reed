@@ -10,19 +10,20 @@ use reed_core::sample::SampleMask;
 
 /// Per-sample additive counters for plink's `--het` inbreeding
 /// coefficient: F = (O_hom − E_hom) / (N − E_hom) with
-/// E_hom = N − Σ_k p_k(1−p_k)·… — plink's per-sample moment over
-/// *biallelic* sites: O_hom = hom-ref + hom-alt calls, N = called
-/// genotypes at biallelic sites, E_hom = N·(1 − 2p(1−p)) where p is the
-/// alt frequency of the site. All three are additive per sample.
+/// E_hom = N − Σ_k 2·p_k(1−p_k) — plink's per-sample moment over
+/// *biallelic* sites: O_hom = hom-ref + hom-alt full calls, N = full
+/// diploid calls at biallelic sites (a half call is not a full call,
+/// doc_v7 D7-14), E_hom = N − Σ 2p(1−p) where p is the alt frequency of
+/// the site. All three are additive per sample.
 #[derive(Clone, Debug, Default)]
 pub struct IndividualFAcc {
-    /// Per sample: homozygous (ref-ref or alt-alt) genotype count at
+    /// Per sample: homozygous (ref-ref or alt-alt) full-call count at
     /// biallelic sites.
     pub o_hom: Vec<u64>,
-    /// Per sample: called genotypes at biallelic sites.
+    /// Per sample: full diploid calls at biallelic sites.
     pub n_called: Vec<u64>,
     /// Per sample: Σ 2p(1−p) over the biallelic sites where the sample
-    /// was called (E_hom = n_called − this sum).
+    /// was fully called (E_hom = n_called − this sum).
     pub hetero_expected: Vec<NeumaierSum>,
     n_samples: usize,
 }
@@ -60,8 +61,13 @@ impl IndividualFAcc {
             let s0m = (planes.slot0_miss[word] & bit) != 0;
             let s1a = (planes.slot1_alt[word] & bit) != 0;
             let s1m = (planes.slot1_miss[word] & bit) != 0;
-            if s0m && s1m {
-                continue; // missing: not a called genotype
+            // Only full diploid calls enter O(HOM)/N: a half call (`./0`,
+            // `./1`) is not a called genotype under the allele-level policy,
+            // matching `count/mod.rs`'s n_half_called and plink2's
+            // `--vcf-half-call m` (doc_v7 D7-14 — the missing slot's alt bit
+            // is 0, so a half call used to be miscounted as hom/het).
+            if s0m || s1m {
+                continue;
             }
             self.n_called[i] += 1;
             self.hetero_expected[i].add(het_exp);

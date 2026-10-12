@@ -127,3 +127,31 @@ fn individual_f_merge_is_additive() {
         assert_eq!(x, &y);
     }
 }
+
+/// doc_v7 D7-14: a half call (`./0`) is not a full diploid call, so it
+/// enters neither O(HOM) nor N (the missing slot's alt bit is 0, which used
+/// to make it look homozygous).
+#[test]
+fn half_calls_are_not_counted_as_genotypes() {
+    let block = block_from(&[[
+        (None, Some(0)), // ./0 half call
+        (Some(0), Some(0)),
+        (Some(0), Some(1)),
+        (Some(1), Some(1)),
+    ]]);
+    let samples = SampleTable::from_names(["s0", "s1", "s2", "s3"]).unwrap();
+    let groups = reed_core::group::GroupTable::from_assignment(
+        &samples,
+        &[("s0", "P"), ("s1", "P"), ("s2", "P"), ("s3", "P")],
+    )
+    .unwrap();
+    let mask = groups.masks()[0].clone();
+
+    let mut acc = IndividualFAcc::new(4);
+    acc.push_site(&block, 0, &mask, 3.0 / 7.0);
+    assert_eq!(acc.n_called[0], 0, "a half call is not a called genotype");
+    assert_eq!(acc.o_hom[0], 0, "a half call is not homozygous");
+    assert_eq!((acc.o_hom[1], acc.n_called[1]), (1, 1)); // 0/0
+    assert_eq!((acc.o_hom[2], acc.n_called[2]), (0, 1)); // 0/1 het
+    assert_eq!((acc.o_hom[3], acc.n_called[3]), (1, 1)); // 1/1
+}
