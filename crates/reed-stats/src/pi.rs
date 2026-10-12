@@ -54,7 +54,7 @@ impl PiAcc {
         Self {
             group,
             n_chrom,
-            total_pairs: n_chrom * n_chrom.saturating_sub(1) / 2,
+            total_pairs: n_chrom.saturating_mul(n_chrom.saturating_sub(1)) / 2,
             counts: PairAcc::default(),
             sum_site_means: NeumaierSum::new(),
             n_variant_sites: 0,
@@ -66,7 +66,7 @@ impl PiAcc {
     pub fn push(&mut self, row: &[SiteGroupCounts], all_variant: bool) {
         let c = &row[self.group];
         let n = u64::from(c.n_ref_alleles + c.n_alt_alleles);
-        let comps = n * n.saturating_sub(1) / 2;
+        let comps = n.saturating_mul(n.saturating_sub(1)) / 2;
         let diffs = u64::from(c.n_ref_alleles) * u64::from(c.n_alt_alleles);
         self.counts.add(diffs, comps, self.total_pairs);
         if comps > 0 {
@@ -133,7 +133,28 @@ impl PiAcc {
     #[must_use]
     pub fn value_variant_only(&self, window_bp: u64) -> Option<f64> {
         let absent = window_bp.saturating_sub(self.n_present());
-        let comparable = self.counts.comparable + absent * self.total_pairs;
+        // `absent · total_pairs` can exceed u64 well before the sample count
+        // is physically absurd (≈10⁵ samples × a whole-chromosome window);
+        // accumulate in u128 so the denominator never wraps (doc_v7 D7-21).
+        let comparable =
+            u128::from(self.counts.comparable) + u128::from(absent) * u128::from(self.total_pairs);
         (comparable > 0).then(|| self.counts.diffs as f64 / comparable as f64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v7 D7-21: a large sample count times a whole-chromosome window
+    /// overflows the old `absent * total_pairs` u64 multiplication (a debug
+    /// build panicked); the u128 accumulation keeps it finite.
+    #[test]
+    fn variant_only_denominator_does_not_overflow() {
+        let acc = PiAcc::new(0, 100_000); // 200 000 chromosomes
+        let value = acc
+            .value_variant_only(1_000_000_000)
+            .expect("invariant: comparable > 0");
+        assert_eq!(value, 0.0); // no sites pushed → no diffs
     }
 }
