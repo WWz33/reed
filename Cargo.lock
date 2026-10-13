@@ -990,6 +990,7 @@ name = "reed-engine"
 version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
+ "rayon",
  "reed-core",
  "reed-io",
  "thiserror",

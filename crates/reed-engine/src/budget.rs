@@ -35,6 +35,21 @@ impl ThreadBudget {
         self.threads.saturating_sub(2).max(1)
     }
 
+    /// Thread count for the auxiliary rayon stages and per-contig caps
+    /// (`docs/rounds/v8` D8-1): the mid-stage decisions, the LD prune and
+    /// the LD decay take their parallelism from this one place, so no
+    /// stage can outgrow the budget and land on the rayon global pool.
+    /// Sequential budgets stay at 1: the auxiliary stages must run serial
+    /// when the pipeline does.
+    #[must_use]
+    pub fn auxiliary(&self) -> usize {
+        if self.is_sequential() {
+            1
+        } else {
+            self.workers()
+        }
+    }
+
     /// Ticket-window capacity: the hard upper bound on in-flight chunks.
     #[must_use]
     pub fn tickets(&self) -> usize {
@@ -52,6 +67,39 @@ impl Default for ThreadBudget {
     fn default() -> Self {
         Self::all()
     }
+}
+
+/// Runs `f` on the auxiliary stage's parallelism: a throwaway rayon pool of
+/// exactly `budget.auxiliary()` threads (doc_v8 D8-1) — never the rayon
+/// global pool, whose thread count would escape the budget. Sequential
+/// budgets skip rayon entirely: `f` receives `parallel == false` and must
+/// run plain iterators (a par_iter inside a serial f would still lazily
+/// spawn the global pool).
+///
+/// # Errors
+///
+/// `String` when the pool cannot be built (thread creation refused).
+///
+/// # Panics
+///
+/// Propagates `f`'s panics.
+pub fn run_auxiliary<T, F>(budget: &ThreadBudget, f: F) -> Result<T, String>
+where
+    F: FnOnce(bool) -> T + Send,
+    T: Send,
+{
+    let n = budget.auxiliary();
+    if n <= 1 {
+        // Serial: f(false) must run plain iterators — a par_iter in the
+        // closure would lazily spawn the rayon *global* pool (all cores),
+        // the exact escape doc_v8 D8-1 closes.
+        return Ok(f(false));
+    }
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(n)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(pool.install(|| f(true)))
 }
 
 /// In-memory upper bound for in-flight chunk data (§7.7, §2 principle 11).
@@ -187,6 +235,32 @@ mod tests {
         assert_eq!(threads(2).workers(), 1);
         assert_eq!(threads(56).workers(), 54);
         assert_eq!(threads(56).tickets(), 108);
+    }
+
+    #[test]
+    fn auxiliary_stages_share_the_worker_budget() {
+        // doc_v8 D8-1a: the rayon stages and per-contig caps take their
+        // thread count from one place, so `--threads 8` bounds them at 6,
+        // not at the rayon global pool's core count.
+        assert_eq!(threads(8).auxiliary(), 6);
+        assert_eq!(threads(1).auxiliary(), 1);
+        assert_eq!(threads(2).auxiliary(), 1);
+        assert_eq!(threads(56).auxiliary(), 54);
+    }
+
+    #[test]
+    fn auxiliary_pool_stays_inside_the_budget() {
+        // doc_v8 D8-1: the throwaway pool must have exactly auxiliary()
+        // threads; the sequential budget runs on the calling thread, where
+        // rayon reports the ambient global pool (whose size is irrelevant
+        // because no par_iter executes on that path).
+        let seen = |b: &ThreadBudget| {
+            run_auxiliary(b, |_| rayon::current_num_threads()).expect("invariant: pool builds")
+        };
+        assert_eq!(seen(&threads(8)), 6);
+        assert_eq!(seen(&threads(56)), 54);
+        assert_eq!(seen(&threads(1)), rayon::current_num_threads());
+        assert_eq!(seen(&threads(2)), rayon::current_num_threads());
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::stats::request::{
 use crate::stats::run::{ContigAcc, GridMode, SegmentPartial, StatsPartial, decay_contig};
 use reed_core::ChunkId;
 use reed_core::grid::RegionSet;
+use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::OrderedSink;
 use reed_stats::ld::LdDecayAcc;
@@ -89,6 +90,13 @@ pub(super) struct StatsSink {
     /// Per-contig decay jobs in contig order (joined at `finish`, so the
     /// analysis overlaps the decode instead of stalling the reducer).
     pub(super) ld_jobs: Vec<std::thread::JoinHandle<LdResult>>,
+    /// Decay results already joined mid-run by the in-flight cap — `finish`
+    /// starts its merge from these (doc_v8 D8-2).
+    pub(super) ld_merged: Option<LdResult>,
+    /// In-flight decay-job cap and the budget the decay scan runs on
+    /// (doc_v8 D8-1/D8-2).
+    pub(super) max_ld_jobs: usize,
+    pub(super) ld_budget: ThreadBudget,
     /// The LD plan (the analysis needs the window and the bin edges).
     pub(super) ld: Option<LdPlan>,
     pub(super) genome_span: u64,
@@ -127,7 +135,7 @@ impl OrderedSink<StatsPartial> for StatsSink {
                         .as_ref()
                         .is_some_and(|m| m.contig() == run.contig.as_slice());
                     if !same {
-                        self.finalize_ld();
+                        self.finalize_ld()?;
                         self.ld_matrix = Some(reed_stats::ContigMatrix::new(
                             run.contig,
                             Arc::clone(&layout),
@@ -172,9 +180,10 @@ impl OrderedSink<StatsPartial> for StatsSink {
     }
 
     fn finish(mut self) -> Result<u64, EngineError> {
-        self.finalize_ld();
-        let mut ld = None;
+        self.finalize_ld()?;
+        let mut ld = self.ld_merged.take();
         self.join_ld(&mut ld)?;
+        let ld = ld.or(self.ld_merged.take());
         if let Some(current) = self.current.take() {
             self.close_contig(current)?;
         }
@@ -219,17 +228,32 @@ impl StatsSink {
     /// Hands the pending contig's matrix to a decay worker: the analysis
     /// runs off the reducer thread (it overlaps the decode), and `finish`
     /// joins the jobs in contig order — the merge order the deterministic
-    /// output requires (docs/rounds/v6/02-models.md §2.2).
-    pub(super) fn finalize_ld(&mut self) {
+    /// output requires (docs/rounds/v6/02-models.md §2.2). In-flight jobs
+    /// are capped at `budget.auxiliary()`: M contigs cannot keep M matrices
+    /// resident (doc_v8 D8-2, the same cap as the prune path's D7-19) —
+    /// the oldest job is joined when the cap is reached.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Job`] when a capped-out join hits a panicked worker
+    /// (fail here, not at `finish`, so the run stops at the cause).
+    pub(super) fn finalize_ld(&mut self) -> Result<(), EngineError> {
         let Some(matrix) = self.ld_matrix.take() else {
-            return;
+            return Ok(());
         };
-        let Some(plan) = &self.ld else { return };
+        let Some(plan) = &self.ld else { return Ok(()) };
         let edges = plan.decay_edges();
         let max_bp = plan.decay_max_bp.unwrap_or(100_000);
         let collect = plan.pairs;
+        let budget = self.ld_budget;
+        if self.ld_jobs.len() >= self.max_ld_jobs {
+            // join_ld merges in contig order; the oldest job is the head.
+            let mut merged = self.ld_merged.take();
+            self.join_ld(&mut merged)?;
+            self.ld_merged = merged;
+        }
         self.ld_jobs.push(std::thread::spawn(move || {
-            let set = decay_contig(&matrix, max_bp, &edges, collect);
+            let set = decay_contig(&matrix, max_bp, &edges, collect, &budget);
             LdResult {
                 cohort: set.cohort,
                 groups: set.groups,
@@ -240,9 +264,12 @@ impl StatsSink {
                     .collect(),
             }
         }));
+        Ok(())
     }
 
-    /// Joins the per-contig decay jobs in contig order.
+    /// Joins the per-contig decay jobs in contig order, merging into `out`
+    /// — which starts from (and returns to) the caller's accumulator, so
+    /// the mid-run capped joins and `finish` see every contig.
     ///
     /// # Errors
     ///

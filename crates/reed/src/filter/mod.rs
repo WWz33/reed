@@ -305,6 +305,15 @@ pub fn run_filter(
     let budget_bytes = opts
         .mem_bytes
         .unwrap_or_else(|| reed_engine::budget::MemBudget::default_half_memory().bytes);
+    // Constructed once here; the pass0/mid/prune stages and the pipeline
+    // runs below all take their parallelism from it (doc_v8 D8-1).
+    let budget = ThreadBudget {
+        threads: opts.threads.max(1),
+        mem: opts.mem_bytes.map_or_else(
+            reed_engine::budget::MemBudget::default_half_memory,
+            reed_engine::budget::MemBudget::from_bytes,
+        ),
+    };
     let static_keep: Arc<[bool]> = Arc::from(keep_vec.clone());
     let mut matrix: Option<MatrixOutput> = if mind_requested || indep_requested || sketch_shape {
         let opened = first
@@ -402,6 +411,7 @@ pub fn run_filter(
             &plan,
             n_samples_out,
             &mut funnel,
+            &budget,
         );
         timing_phases.push(("mid", mid_start.elapsed().as_secs_f64()));
         sketch_out = Some((funnel, map));
@@ -437,6 +447,7 @@ pub fn run_filter(
                 ),
                 n_samples_in,
                 &pass0::keep_words_of(&keep),
+                &budget,
             )
         } else {
             m.prune.clone().expect("invariant: the streaming prune ran")
@@ -585,13 +596,6 @@ pub fn run_filter(
         .as_ref()
         .filter(|_| gz_out && opts.write_index.is_some())
         .map(|p| opts.write_index.path_for(p));
-    let budget = ThreadBudget {
-        threads: opts.threads.max(1),
-        mem: opts.mem_bytes.map_or_else(
-            reed_engine::budget::MemBudget::default_half_memory,
-            reed_engine::budget::MemBudget::from_bytes,
-        ),
-    };
 
     // The report funnel: the FilterJob paths collect it in the sink slot;
     // the sketch path assembled it during the mid stage.
