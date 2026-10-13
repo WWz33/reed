@@ -14,6 +14,7 @@ use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::line_edit::InfoValueOut;
 
+use reed_engine::budget::ThreadBudget;
 use super::pass0::matrix::{ChunkSites, SiteMatrix};
 
 /// One survivor's pass1 emit data (§11.4).
@@ -173,6 +174,7 @@ struct MidPartial {
     n_output: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn mid_stage(
     chunks: &[ChunkSites],
     matrices: &[SiteMatrix],
@@ -181,6 +183,7 @@ pub(super) fn mid_stage(
     plan: &FilterPlan,
     n_samples_out: usize,
     funnel: &mut FunnelPartial,
+    budget: &ThreadBudget,
 ) -> std::collections::HashMap<u64, Arc<ChunkDecision>> {
     // Clean-padded keep words (the count math anchors on this).
     let w = keep.len().div_ceil(64);
@@ -192,21 +195,32 @@ pub(super) fn mid_stage(
     }
     // Independent per-chunk decisions, computed in parallel (middle stage,
     // doc_v3 03 O9); the funnel fold below stays in chunk order, so the
-    // result is thread-count independent.
+    // result is thread-count independent. The pool comes from the budget,
+    // never the rayon global pool (doc_v8 D8-1).
     use rayon::prelude::*;
-    let decisions: Vec<(u64, ChunkDecision, MidPartial)> = chunks
-        .par_iter()
-        .map(|chunk| {
-            decide_chunk(
-                chunk,
-                matrices,
-                contig_base,
-                &keep_words,
-                plan,
-                n_samples_out,
-            )
+    let decisions: Vec<(u64, ChunkDecision, MidPartial)> =
+        reed_engine::budget::run_auxiliary(budget, |parallel| {
+            if parallel {
+                chunks
+                    .par_iter()
+                    .map(|chunk| {
+                        decide_chunk(
+                            chunk, matrices, contig_base, &keep_words, plan, n_samples_out,
+                        )
+                    })
+                    .collect()
+            } else {
+                chunks
+                    .iter()
+                    .map(|chunk| {
+                        decide_chunk(
+                            chunk, matrices, contig_base, &keep_words, plan, n_samples_out,
+                        )
+                    })
+                    .collect()
+            }
         })
-        .collect();
+        .expect("invariant: the auxiliary pool builds");
     let mut map = std::collections::HashMap::with_capacity(decisions.len());
     for (id, decision, partial) in decisions {
         funnel.masked_gt += partial.masked_gt;

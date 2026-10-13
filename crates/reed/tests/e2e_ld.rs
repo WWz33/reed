@@ -616,3 +616,60 @@ fn prune_multi_contig_is_thread_count_independent() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v8 D8-2: the sink's in-flight decay jobs are capped at
+/// `budget.auxiliary()`, so a many-contig run joins the oldest job mid-run
+/// instead of keeping every contig's matrix resident. The cap must not
+/// change the output: joins stay in contig order, so the merged decay and
+/// pair tables are identical across thread counts (the single-thread
+/// budget has auxiliary() == 1, exercising the join path on every contig).
+#[test]
+fn ld_sink_caps_in_flight_decay_jobs() {
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n",
+    );
+    for contig in 0..10 {
+        let _ = writeln!(text, "##contig=<ID=chr{contig},length=10000>");
+    }
+    text.push_str(
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\ts4\ts5\n",
+    );
+    for contig in 0..10 {
+        for pos in 1..=3 {
+            let _ = writeln!(
+                text,
+                "chr{contig}\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t\
+                 0/1\t0/1\t0/0\t1/1\t0/1\t0/0"
+            );
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("reed-ld-cap-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, text).expect("invariant: fixture write");
+
+    let mut values = Vec::new();
+    for threads in [1_usize, 8] {
+        let budget = ThreadBudget {
+            threads,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let report = run_stats(
+            Some(&vcf),
+            request(LdRequest {
+                decay_max_bp: Some(100_000),
+                decay_bin_bp: 1000,
+                pairs: true,
+            }),
+            &budget,
+        )
+        .expect("invariant: run");
+        let ld = report.ld.expect("invariant: LD requested");
+        assert_eq!(ld.pairs.len(), 10 * 3, "every contig's pairs survive");
+        values.push((ld.pairs.clone(), ld.decay.clone(), ld.group_decay.clone()));
+    }
+    assert_eq!(values[0], values[1], "the cap must not change the output");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -142,4 +142,22 @@ check "reed-cli has a build.rs for --version provenance (doc_v6 E6-11)" \
 check "LICENSE-MIT and LICENSE-APACHE exist (doc_v6 E6-10)" \
     bash -c '[ -f LICENSE-MIT ] && [ -f LICENSE-APACHE ]'
 
+# doc_v8 01 §1 / D8-5b + D8-6: every rayon par_iter/into_par_iter in
+# production src sits inside a run_auxiliary closure's *parallel branch*
+# (`if parallel {`), never on the rayon global pool. D8-6 taught the lesson:
+# a par_iter in the serial path still lazily spawns the 56-thread global
+# pool. New par_* outside an `if parallel {` arm fails here and must be
+# registered in docs/rounds/v8/01-review.md §1 first.
+check "rayon parallelism is behind the parallel branch (doc_v8 D8-1/D8-6)" \
+    bash -c 'for f in $(grep -rl "par_iter\|into_par_iter" crates/reed/src --include=*.rs); do
+        n_par=$(grep -c "par_iter\|into_par_iter" "$f")
+        n_guard=$(grep -cE "if parallel \{" "$f")
+        [ "$n_par" -le "$n_guard" ] || { echo "unguarded par_iter in $f"; exit 1; }
+    done; exit 0'
+
+# doc_v8 D8-4: the per-contig caps read budget.auxiliary(), not the raw CLI
+# thread count.
+check "per-contig caps use budget.auxiliary (doc_v8 D8-4)" \
+    bash -c '! grep -rn "max_prune: opts.threads\|max_ld_jobs: opts.threads" crates/reed/src'
+
 exit "$fail"

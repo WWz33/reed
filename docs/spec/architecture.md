@@ -800,10 +800,13 @@ worker 对一个 chunk 一口气完成：**inflate → 认领行 → 解析（�
 | worker | max(1, N − 2) | 全部 CPU 重活 |
 
 - 进程里不允许出现第二个线程池（不用 noodles MT reader/writer；rayon 只在 pass 之间的批量运算里使用，
-  例如 sketch 的尾部判定，并且复用同一个预算）。
+  例如 sketch 的尾部判定，并且复用同一个预算）。**落地形态（doc_v8 D8-1/D8-6）**：rayon 阶段不使用
+  全局池，经 `ThreadBudget::auxiliary()`（= `workers()`，顺序预算 = 1）建每调用一次的临时池；
+  串行预算下闭包收到 `parallel == false`，必须走普通迭代器（`par_iter` 在串行分支仍会惰性
+  拉起全局池，D8-6 的教训）；per-contig 线程上限（filter pass0 的 `max_prune`、stats LD sink
+  的 in-flight cap）同取此值。
 - N ≤ 2 时退化为 reader 和 worker 合一的顺序模式。结果必须与并行模式逐字节相同（测试锁定）。
-  **现状（2026-10-10，doc_v6 F6-6）**：`run()` 无条件走并行路径，顺序模式尚未实现；
-  `ThreadBudget::is_sequential` 无调用者。实现或改规范由 Y5 裁决（docs/rounds/v6/06-roadmap.md）。
+  辅助 rayon 阶段与 per-contig 线程同样走串行/受限路径（`auxiliary() == 1`，doc_v8 D8-1）。
 
 ### 7.4 背压：票据窗口【规】
 

@@ -8,6 +8,7 @@ use reed_core::genotype::{
     GenotypePolicies, GtCode, MultiallelicPolicy, PloidyPolicy, PolicyCounters,
 };
 use reed_core::grid::{ContigRegions, RegionSet};
+use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::ChunkJob;
 use reed_io::bcf::BcfDict;
@@ -170,12 +171,14 @@ const LD_BLOCK: usize = 4096;
 /// every predecessor within `max_bp` — read-only, so the blocks are
 /// independent; the results merge in block order, which is the serial
 /// `(later site, earlier site)` order, keeping the output deterministic
-/// across thread counts.
+/// across thread counts. The pool comes from the budget, never the rayon
+/// global pool (doc_v8 D8-1).
 pub(super) fn decay_contig(
     m: &reed_stats::ContigMatrix,
     max_bp: u64,
     edges: &[u64],
     collect_pairs: bool,
+    budget: &ThreadBudget,
 ) -> reed_stats::LdDecaySet {
     use rayon::prelude::*;
     let n = m.n_sites();
@@ -186,10 +189,21 @@ pub(super) fn decay_contig(
         .step_by(LD_BLOCK)
         .map(|s| s..(s + LD_BLOCK).min(n))
         .collect();
-    let parts: Vec<reed_stats::LdDecaySet> = ranges
-        .par_iter()
-        .map(|r| reed_stats::decay_range(m, r.clone(), max_bp, edges, collect_pairs))
-        .collect();
+    let parts: Vec<reed_stats::LdDecaySet> =
+        reed_engine::budget::run_auxiliary(budget, |parallel| {
+            if parallel {
+                ranges
+                    .par_iter()
+                    .map(|r| reed_stats::decay_range(m, r.clone(), max_bp, edges, collect_pairs))
+                    .collect()
+            } else {
+                ranges
+                    .iter()
+                    .map(|r| reed_stats::decay_range(m, r.clone(), max_bp, edges, collect_pairs))
+                    .collect()
+            }
+        })
+        .expect("invariant: the auxiliary pool builds");
     let mut set = reed_stats::LdDecaySet::new(edges, m.layout().n_groups());
     for part in &parts {
         set.merge(part);

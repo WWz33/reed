@@ -1027,7 +1027,7 @@ pub(crate) fn run_matrix_pass(
         track_chunks: mode.rule_bits,
         prune_config,
         budget_bytes,
-        max_prune: opts.threads.max(1),
+        max_prune: budget.auxiliary(),
         keep_words: keep_words.into(),
         called: Vec::new(),
         n_head: 0,
