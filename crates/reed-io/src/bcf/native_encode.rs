@@ -1422,4 +1422,54 @@ mod tests {
         assert_eq!(gt_shape(b"|1"), (1, 1));
         assert_eq!(gt_shape(b"."), (1, 0));
     }
+
+    /// doc_v10 D10-1: the GT integer width follows the *encoded value* domain
+    /// `(allele+1)<<1 | phased` — whose maximum for allele `a` is `2a+3` —
+    /// not the allele domain. So INT8 ends at allele 62 (`2*62+3 = 127`) and
+    /// INT16 at 16382 (`2*16382+3 = 32767`); allele 16383 encodes to 32768
+    /// and must take INT32. The old allele-domain threshold (`<= 32766`
+    /// alleles → INT16) silently truncated those codes with `as i16`
+    /// (htslib judges the encoded values: `bcf_enc_vint`, vcf.c:2955-2993,
+    /// `BCF_MAX_BT_INT16 = 0x7fff`, vcf.h:1539).
+    #[test]
+    fn gt_width_follows_the_encoded_value_domain() {
+        const GT_HEADER: &[u8] = b"##fileformat=VCFv4.2\n\
+            ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n";
+        let header: vcf::Header = std::str::from_utf8(GT_HEADER)
+            .expect("invariant: utf-8")
+            .parse()
+            .expect("invariant: header");
+        let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+        // (allele, expected descriptor type, expected first code)
+        let cases: &[(u64, u8, i64)] = &[
+            (62, value_type::INT8, 126),
+            (63, value_type::INT16, 128),
+            (16382, value_type::INT16, 32766),
+            (16383, value_type::INT32, 32768),
+            (32766, value_type::INT32, 65534),
+            (32767, value_type::INT32, 65536),
+        ];
+        for &(allele, want_ty, want_code) in cases {
+            let line = format!("Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t{allele}/{allele}\n");
+            let lr = LineRef::parse(line.as_bytes()).expect("invariant: 10 columns");
+            let site = SiteView::parse(&lr).expect("invariant: site");
+            let mut out = Vec::new();
+            enc.encode_text(&lr, &site, 1, &EditPlan::default(), &mut out)
+                .expect("invariant: encode");
+            let rec = record_ref(&out).expect("invariant: framed record");
+            let mut c = Cursor::new(rec.indiv);
+            let _key = c.typed_int().expect("invariant: GT key");
+            let (ty, count) = c.typed().expect("invariant: GT descriptor");
+            assert_eq!(count, 2, "allele {allele}");
+            assert_eq!(ty, want_ty, "allele {allele}: descriptor type");
+            assert_eq!(
+                c.int_value(ty).expect("invariant: code"),
+                want_code,
+                "allele {allele}: encoded code"
+            );
+        }
+    }
 }

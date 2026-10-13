@@ -567,3 +567,112 @@ pub fn run_index(
         .expect("invariant: sink finish stored the count");
     Ok(IndexOutcome { path, n_records })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reed_engine::budget::MemBudget;
+
+    /// A chunk source with a test-sized chunk target (production is 1 MiB;
+    /// the fixtures here are a few KB, so seams need a tiny target).
+    struct SmallChunkSource {
+        reader: reed_io::chunk::bgzf::BgzfChunkReader<std::io::Cursor<Vec<u8>>>,
+    }
+
+    impl reed_io::chunk::ChunkSource for SmallChunkSource {
+        fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, reed_io::IoError> {
+            self.reader.next_chunk()
+        }
+    }
+
+    /// doc_v10 D10-5: chunk cuts are block-aligned, so records spanning a
+    /// chunk seam are the norm once records approach the chunk size. The
+    /// text index must carry the crossing record to the reducer and decode
+    /// it exactly once, when its bytes are complete (the pattern
+    /// `BcfIndexJob` already uses). The old worker-side eager parse of the
+    /// head/tail fragments failed with "record line has fewer than 9
+    /// columns" on every seam-crossing record.
+    #[test]
+    fn index_handles_records_spanning_chunk_seams() {
+        let mut text = String::from(
+            "##fileformat=VCFv4.3\n\
+             ##contig=<ID=chr1,length=100000>\n\
+             ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n",
+        );
+        for i in 0..60_u64 {
+            let _ = std::fmt::Write::write_fmt(
+                &mut text,
+                format_args!("chr1\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n", 10 + i * 3),
+            );
+        }
+        // 32-byte BGZF blocks force the chunk cuts (target 40) mid-record.
+        let mut deflater =
+            reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
+        let mut bytes = Vec::new();
+        for block in text.as_bytes().chunks(32) {
+            deflater
+                .deflate_block(block, &mut bytes)
+                .expect("invariant: block fits");
+        }
+        bytes.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+        let eof_voff = (bytes.len() as u64) << 16;
+
+        let dir = std::env::temp_dir().join(format!("reed-index-seams-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+
+        let build = |path: PathBuf, threads: usize| -> u64 {
+            let mut reader = reed_io::chunk::bgzf::BgzfChunkReader::with_chunk_target(
+                std::io::Cursor::new(bytes.clone()),
+                40,
+            );
+            let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+            reader
+                .scan_header(&mut inflater)
+                .expect("invariant: header present");
+            let mut source = SmallChunkSource { reader };
+
+            let contig_names: Arc<[Vec<u8>]> =
+                Arc::from(vec![b"chr1".to_vec()].into_boxed_slice());
+            let indexer = Indexer::new(WriteIndex::Csi, &contig_names).expect("invariant: csi");
+            let out: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+            let sink = IndexSink {
+                indexer,
+                path: path.clone(),
+                contig_names: Arc::clone(&contig_names),
+                pending: None,
+                prev_continues: false,
+                last_pos1: None,
+                n_records: 0,
+                eof_voff,
+                out: Arc::clone(&out),
+            };
+            let budget = ThreadBudget {
+                threads,
+                mem: MemBudget::default_half_memory(),
+            };
+            let abort = reed_engine::abort::abort_for(&budget);
+            let job = IndexJob {
+                contig_names: Arc::clone(&contig_names),
+            };
+            run(&mut source, &job, sink, &budget, &abort)
+                .expect("seam-crossing records must index");
+            out.lock()
+                .expect("invariant: slot not poisoned")
+                .take()
+                .expect("invariant: sink stored the count")
+        };
+
+        let four = build(dir.join("four.csi"), 4);
+        assert_eq!(four, 60, "every record is indexed once (4 threads)");
+        let one = build(dir.join("one.csi"), 1);
+        assert_eq!(one, 60, "every record is indexed once (sequential)");
+        assert_eq!(
+            std::fs::read(dir.join("four.csi")).expect("invariant: 4-thread index"),
+            std::fs::read(dir.join("one.csi")).expect("invariant: sequential index"),
+            "the parallel and sequential indexes must be byte-identical"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

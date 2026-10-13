@@ -745,6 +745,104 @@ mod tests {
         assert_eq!(count_records_in_stream(&stream, 64), 60);
     }
 
+    /// A BGZF header whose BSIZE declares `total` bytes.
+    fn header_with_total(total: usize) -> [u8; BGZF_HEADER_LEN] {
+        let mut h = [0_u8; BGZF_HEADER_LEN];
+        h[0] = 0x1f;
+        h[1] = 0x8b;
+        h[2] = 0x08;
+        h[3] = 0x04; // FEXTRA
+        h[10] = 6; // XLEN
+        h[12] = b'B';
+        h[13] = b'C';
+        h[14] = 2;
+        h[15] = 0;
+        let bsize = u16::try_from(total - 1).expect("invariant: test sizes fit u16");
+        h[16..18].copy_from_slice(&bsize.to_le_bytes());
+        h
+    }
+
+    /// doc_v10 D10-4: a BSIZE below the 18-byte header length is malformed
+    /// (htslib `bgzf.c:1219-1225` rejects it). Reed used to hand such a block
+    /// to `read_exact(&mut block[18..])` (a slice panic) and to
+    /// `block_inflated_size` (`n - 4` underflow). Every entry point must
+    /// report `MalformedBgzf` instead of panicking.
+    #[test]
+    fn undersized_blocks_error_instead_of_panicking() {
+        for total in [1_usize, 4, 17] {
+            // Entry 1: the streaming header scan over the raw fake header.
+            let header = header_with_total(total);
+            let mut reader = BgzfChunkReader::with_chunk_target(Cursor(header.to_vec()), 64);
+            let mut inflater = crate::bgzf::inflate::Inflater::new();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reader.scan_header(&mut inflater).map(|_| ())
+            }));
+            match outcome {
+                Ok(Err(err)) => assert!(err.to_string().contains("BGZF"), "total={total}: {err}"),
+                Ok(Ok(())) => panic!("total={total}: scan accepted an undersized block"),
+                Err(_) => panic!("total={total}: scan_header panicked on an undersized block"),
+            }
+
+            // A valid header block followed by the undersized one, so the
+            // walk (not the header scan) meets it.
+            let text = record_text(4);
+            let mut stream = compress_lines(&[&text], 64);
+            stream.extend_from_slice(&header);
+            stream.resize(stream.len() + 32, 0); // room for the short block
+
+            // Entry 2: the streaming chunk walk.
+            let mut reader = BgzfChunkReader::with_chunk_target(Cursor(stream.clone()), 64);
+            let mut inflater = crate::bgzf::inflate::Inflater::new();
+            reader
+                .scan_header(&mut inflater)
+                .expect("invariant: the first block carries the header");
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                loop {
+                    match reader.next_chunk() {
+                        Ok(Some(_)) => {}
+                        Ok(None) => break Ok(()),
+                        Err(err) => break Err(err),
+                    }
+                }
+            }));
+            match outcome {
+                Ok(Err(err)) => assert!(err.to_string().contains("BGZF"), "total={total}: {err}"),
+                Ok(Ok(())) => panic!("total={total}: chunk walk accepted an undersized block"),
+                Err(_) => panic!("total={total}: next_chunk panicked on an undersized block"),
+            }
+
+            // Entry 3: the mmap chunk source.
+            let mut path = std::env::temp_dir();
+            path.push(format!(
+                "reed_bad_bsize_{}_{}_{}.bgz",
+                std::process::id(),
+                total,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("invariant: clock")
+                    .as_nanos()
+            ));
+            std::fs::write(&path, &stream).expect("invariant: temp file");
+            let file = std::fs::File::open(&path).expect("invariant: file exists");
+            let _ = std::fs::remove_file(&path);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let (mut source, _) = MmapChunkSource::open(file)?;
+                loop {
+                    match crate::chunk::ChunkSource::next_chunk(&mut source) {
+                        Ok(Some(_)) => {}
+                        Ok(None) => break Ok(()),
+                        Err(err) => break Err(err),
+                    }
+                }
+            }));
+            match outcome {
+                Ok(Err(err)) => assert!(err.to_string().contains("BGZF"), "total={total}: {err}"),
+                Ok(Ok(())) => panic!("total={total}: mmap walk accepted an undersized block"),
+                Err(_) => panic!("total={total}: mmap source panicked"),
+            }
+        }
+    }
+
     /// A6-7: the streaming and mmap sources must produce identical chunk
     /// metadata (offsets, block tables, payloads) even when empty members
     /// sit mid-chunk and at chunk starts — the index's virtual offsets and
