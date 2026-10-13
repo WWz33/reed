@@ -33,6 +33,11 @@ use crate::reorder::ReorderBuffer;
 /// (`docs/rounds/v6/03-architecture.md` A6-2).
 pub const MAX_RECORD_BYTES: usize = 1 << 30;
 
+/// Message for an input whose last record has no terminating newline. Shared
+/// with the BCF path (`reed/src/bcf_input.rs`) so every input format reports
+/// the same failure (doc_v9 D9-3).
+pub const TRUNCATED_INPUT: &str = "input ends inside a record (truncated file)";
+
 /// One chunk's work output: the reduced partial plus the seam fragments the
 /// reducer needs (`head` belongs to the previous chunk's last record).
 pub struct ChunkOutput<P> {
@@ -178,6 +183,18 @@ impl NewlineStitcher {
             self.grow(tail)?;
         }
         Ok(())
+    }
+
+    /// Consumes the stitcher and returns the fragment left after the last
+    /// chunk, or `None` when the stream ended on a record boundary.
+    ///
+    /// A `Some` result is an unterminated final record: the caller rejects it
+    /// (doc_v9 D9-3). This is the stream's end — it is **not**
+    /// [`push_head(None)`](Self::push_head), which only means "this chunk has
+    /// no head fragment".
+    #[must_use]
+    pub fn finish(self) -> Option<Vec<u8>> {
+        (!self.fragment.is_empty()).then_some(self.fragment)
     }
 }
 
@@ -406,12 +423,13 @@ where
                     let wait_started = Instant::now();
                     let sent = crossbeam_channel::select! {
                         recv(signal.receiver()) -> _ => false,
-                        send(chunk_tx, InFlightChunk { chunk, guard }) -> _ => true,
+                        send(chunk_tx, InFlightChunk { chunk, guard }) -> res => res.is_ok(),
                     };
                     reader_wait_ns
                         .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
                     if !sent || first.failed() {
-                        // Abort won: the guard is still a local and drops here.
+                        // Abort won, or no worker is left to receive: the
+                        // guard is a local and drops here either way (D9-2).
                         break;
                     }
                 }
@@ -503,10 +521,12 @@ where
                                 partial,
                                 head,
                                 tail,
-                            }) -> _ => true,
+                            }) -> res => res.is_ok(),
                         };
                         if !sent {
-                            break; // Unsent message drops with its guard.
+                            // Aborted, or the reducer dropped its receiver: the
+                            // unsent message drops with its guard (doc_v9 D9-2).
+                            break;
                         }
                     }
                 }
@@ -519,9 +539,12 @@ where
         drop(chunk_rx);
 
         // Reducer (this thread): deliver in chunk order, chain-stitching
-        // seam records between chunks (§6.2 step 4, §7.6 rule 3). Errors
-        // return immediately — the dropped senders/receivers unblock every
-        // other stage, and `run` reports the recorded cause.
+        // seam records between chunks (§6.2 step 4, §7.6 rule 3).
+        //
+        // A reducer-side error or panic must exit through `bail`: recording
+        // into `first` is what fires the abort that unblocks the reader's
+        // ticket wait — without it the scope join deadlocks instead of
+        // failing the run (doc_v9 D9-1/D9-1c).
         let mut ring: ReorderBuffer<WorkerMsg<J::Partial>> = ReorderBuffer::new(window);
         let mut stitcher = NewlineStitcher::default();
         let mut seam_scratch = J::Scratch::default();
@@ -532,8 +555,21 @@ where
             ($id:expr, $msg:expr) => {{
                 let mut msg = $msg;
                 if let Some(seam) = stitcher.push_head(msg.head.take().as_deref())? {
+                    // The seam runs on the reducer, not a worker: count it in
+                    // job_time *and* worker_busy (so `worker_busy >= inflate +
+                    // job` still holds) or the work is invisible to the
+                    // metrics (doc_v9 D9-6).
+                    let seam_job_started = Instant::now();
                     let mut partial = job.run_seam($id, &seam, &mut seam_scratch)?;
+                    let seam_ns = seam_job_started.elapsed().as_nanos() as u64;
+                    job_ns.fetch_add(seam_ns, Ordering::AcqRel);
+                    worker_busy_ns.fetch_add(seam_ns, Ordering::AcqRel);
+                    let seam_accept_started = Instant::now();
                     sink.accept($id, &mut partial)?;
+                    reduce_ns.fetch_add(
+                        seam_accept_started.elapsed().as_nanos() as u64,
+                        Ordering::AcqRel,
+                    );
                 }
                 let accept_started = Instant::now();
                 let accepted = sink.accept($id, &mut msg.partial);
@@ -546,58 +582,77 @@ where
                 delivered += 1;
             }};
         }
-        'outer: loop {
-            if first.failed() {
-                drop(result_rx);
-                return Err(EngineError::Aborted);
-            }
-            while ring.ready() {
-                let Some((id, msg)) = ring.take_ready() else {
-                    break;
-                };
-                deliver!(id, msg);
-            }
-            if first.failed() {
-                drop(result_rx);
-                return Err(EngineError::Aborted);
-            }
-            let wait_started = Instant::now();
-            let msg = crossbeam_channel::select! {
-                recv(signal.receiver()) -> _ => None,
-                recv(result_rx) -> msg => match msg {
-                    Ok(msg) => Some(msg),
-                    Err(_) => {
-                        // All senders gone: deliver whatever is already in
-                        // the ring, then finish.
-                        reducer_wait_ns
-                            .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
-                        while let Some((id, msg)) = ring.take_ready() {
-                            deliver!(id, msg);
-                        }
-                        break 'outer;
-                    }
-                },
-            };
-            reducer_wait_ns.fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
-            match msg {
-                Some(msg) => {
-                    ring.insert(msg.id, msg);
-                }
-                None => {
-                    drop(result_rx);
+        // The whole reducer body runs under `catch_unwind` (as the workers'
+        // per-chunk work does): a panic anywhere — `accept`, `run_seam`,
+        // `finish` — becomes `ReducerPanicked` instead of unwinding out of
+        // the scope, which would deadlock the join like any reducer error.
+        let reducer = catch_unwind(AssertUnwindSafe(|| -> Result<_, EngineError> {
+            'outer: loop {
+                if first.failed() {
                     return Err(EngineError::Aborted);
                 }
+                while ring.ready() {
+                    let Some((id, msg)) = ring.take_ready() else {
+                        break;
+                    };
+                    deliver!(id, msg);
+                }
+                if first.failed() {
+                    return Err(EngineError::Aborted);
+                }
+                let wait_started = Instant::now();
+                let msg = crossbeam_channel::select! {
+                    recv(signal.receiver()) -> _ => None,
+                    recv(result_rx) -> msg => match msg {
+                        Ok(msg) => Some(msg),
+                        Err(_) => {
+                            // All senders gone: deliver whatever is already in
+                            // the ring, then finish.
+                            reducer_wait_ns
+                                .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+                            while let Some((id, msg)) = ring.take_ready() {
+                                deliver!(id, msg);
+                            }
+                            break 'outer;
+                        }
+                    },
+                };
+                reducer_wait_ns
+                    .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+                match msg {
+                    Some(msg) => {
+                        ring.insert(msg.id, msg);
+                    }
+                    None => return Err(EngineError::Aborted),
+                }
             }
+            // Draining finished; dropping the receiver unblocks any worker
+            // still sending, so the scope join below cannot deadlock.
+            drop(result_rx);
+            if first.failed() {
+                return Err(EngineError::Aborted);
+            }
+            let deflate_time = sink.deflate_time();
+            // A tail fragment left after the last chunk is an unterminated
+            // final record: reject it exactly as the BCF path does (D9-3).
+            if stitcher.finish().is_some() {
+                return Err(EngineError::job(TRUNCATED_INPUT));
+            }
+            let sink_report = sink.finish()?;
+            Ok((delivered, sink_report, deflate_time))
+        }));
+        match reducer {
+            Ok(Ok(report)) => Ok(report),
+            Ok(Err(err)) => Err(bail(first, err)),
+            Err(panic) => Err(bail(
+                first,
+                EngineError::ReducerPanicked {
+                    // `delivered` is how many chunks landed before the panic.
+                    chunk: ChunkId(delivered),
+                    message: panic_message(&panic),
+                },
+            )),
         }
-        // Draining finished; dropping the receiver unblocks any worker
-        // still sending, so the scope join below cannot deadlock.
-        drop(result_rx);
-        if first.failed() {
-            return Err(EngineError::Aborted);
-        }
-        let deflate_time = sink.deflate_time();
-        let sink_report = sink.finish()?;
-        Ok((delivered, sink_report, deflate_time))
     });
 
     let (delivered, sink_report, deflate_time) = scope_result?;
@@ -647,6 +702,7 @@ where
     let mut reduce_time = Duration::ZERO;
     let mut chunks_read = 0_u64;
     let mut delivered = 0_u64;
+    let mut in_flight_peak = 0_u64;
 
     loop {
         if abort.is_aborted() {
@@ -667,6 +723,7 @@ where
                 budget_bytes: budget.mem.bytes,
             });
         }
+        in_flight_peak = in_flight_peak.max(footprint);
 
         let started = Instant::now();
         let view = inflate_chunk(&chunk, &mut inflater, &mut inflate_scratch)?;
@@ -704,6 +761,12 @@ where
         delivered += 1;
     }
 
+    // A tail fragment left after the last chunk is an unterminated final
+    // record: reject it as the BCF path does (doc_v9 D9-3). Only the Newline
+    // framing produces fragments; Raw jobs own their own framing.
+    if stitcher.finish().is_some() {
+        return Err(EngineError::job(TRUNCATED_INPUT));
+    }
     let deflate_time = sink.deflate_time();
     let sink_report = sink.finish()?;
     Ok((
@@ -712,7 +775,9 @@ where
         StageMetrics {
             n_chunks_read: chunks_read,
             worker_busy: inflate_time + job_time,
-            in_flight_peak_bytes: 0,
+            // One chunk at a time here: the peak is the largest footprint
+            // that was in flight (doc_v9 D9-5).
+            in_flight_peak_bytes: in_flight_peak,
             in_flight_final_bytes: 0,
             reader_time,
             reduce_time,
@@ -744,6 +809,18 @@ struct InFlightChunk {
     guard: PermitGuard,
 }
 
+/// The reducer's single error exit (doc_v9 §2.2, 规约 W2): record `err` so
+/// `FirstError` triggers the abort, then return the `Aborted` consequence.
+///
+/// The reader blocks on its *ticket* wait, which only the abort signal can
+/// unblock (the ticket sender lives until `run_parallel` returns, i.e. until
+/// the scope join completes) — so recording is what prevents the deadlock;
+/// `run` then reports the recorded cause over this `Aborted` (`run`).
+fn bail(first: &FirstError, err: EngineError) -> EngineError {
+    first.record(err);
+    EngineError::Aborted
+}
+
 /// Extracts a printable message from a panic payload.
 fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = panic.downcast_ref::<&str>() {
@@ -773,7 +850,9 @@ mod tests {
         // An unterminated head keeps chaining.
         stitcher.push_tail(Some(b"x")).unwrap();
         assert!(stitcher.push_head(Some(b"y")).unwrap().is_none());
-        assert!(stitcher.push_head(None).unwrap().is_none());
+        // `finish` (not `push_head(None)`) is the stream's end: the leftover
+        // fragment is an unterminated final record (doc_v9 D9-3/D9-8).
+        assert_eq!(stitcher.finish().unwrap(), b"xy");
     }
 
     #[test]

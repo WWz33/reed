@@ -23,6 +23,19 @@ pub enum EngineError {
         /// The panic payload, when it carried a string.
         message: String,
     },
+    /// The reducer (the caller's thread) panicked while delivering a chunk
+    /// or finalizing the sink (`docs/rounds/v9/02-architecture.md` §2.4).
+    ///
+    /// Distinct from [`EngineError::WorkerPanicked`]: the panic came from the
+    /// output/sink side, not the inflate/job side, so `chunk` is the chunk
+    /// being delivered when it happened.
+    #[error("reducer panicked on chunk {chunk}: {message}")]
+    ReducerPanicked {
+        /// The chunk being delivered when the reducer panicked.
+        chunk: reed_core::ChunkId,
+        /// The panic payload, when it carried a string.
+        message: String,
+    },
     /// In-flight bytes exceeded the memory budget (§7.7); never a silent OOM.
     #[error("memory budget exceeded: in-flight {peak_bytes} bytes > budget {budget_bytes} bytes")]
     MemBudgetExceeded {

@@ -26,7 +26,6 @@ use reed_engine::pipeline::ChunkJob;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::chunk::ChunkBytes;
-use reed_io::vcf::line::LineRef;
 use reed_io::vcf::line_edit::{EditPlan, edit_vcf_line};
 
 use crate::filter::record_pipeline::{PipelineOptions, RecordPipeline};
@@ -324,9 +323,9 @@ impl<J: ChunkJob> ChunkJob for FilteredJob<J> {
             return self.inner.run_seam(id, line, &mut scratch.inner);
         }
         self.start_chunk(scratch);
-        if LineRef::parse(line).is_none() {
-            return Ok(J::Partial::default());
-        }
+        // No special case for a malformed seam line: it must fail exactly as
+        // the same line would in a chunk body (`process` reports it), whether
+        // or not it happens to straddle a seam (doc_v9 D9-4, 规约 E1).
         if self.records.is_some() {
             self.scan_line(line, scratch)?;
             if scratch.spans.is_empty() {
@@ -343,5 +342,116 @@ impl<J: ChunkJob> ChunkJob for FilteredJob<J> {
             return Ok(J::Partial::default());
         }
         self.inner.run_seam(id, buffer, inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use reed_core::ChunkId;
+    use reed_core::tag_table::{TagNumber, TagTable, TagType};
+    use reed_engine::error::EngineError;
+    use reed_engine::pipeline::ChunkJob;
+    use reed_filter::plan::FilterPlan;
+    use reed_io::chunk::ChunkBytes;
+
+    use super::{FilteredJob, ScannedRecord};
+
+    /// The inner job is irrelevant here: the wrapper's own record pipeline
+    /// rejects the malformed line before any inner entry point runs.
+    struct ProbeJob;
+
+    impl ChunkJob for ProbeJob {
+        type Partial = u64;
+        type Scratch = ();
+        fn run_chunk(
+            &self,
+            _c: &ChunkBytes,
+            body: &[u8],
+            _s: &mut (),
+        ) -> Result<Self::Partial, EngineError> {
+            Ok(body.len() as u64)
+        }
+        fn run_seam(
+            &self,
+            _id: ChunkId,
+            line: &[u8],
+            _s: &mut (),
+        ) -> Result<Self::Partial, EngineError> {
+            Ok(line.len() as u64)
+        }
+    }
+
+    // The `Result` is fixed by the `ScannedRecordFn` signature, not by this
+    // stub's behaviour.
+    #[allow(clippy::unnecessary_wraps)]
+    fn inner_records(
+        _j: &ProbeJob,
+        views: &[ScannedRecord<'_>],
+        _s: &mut (),
+    ) -> Result<u64, EngineError> {
+        Ok(views.len() as u64)
+    }
+
+    fn plan() -> Arc<FilterPlan> {
+        let mut tags = TagTable::new();
+        tags.add_format("GT", TagType::Character, TagNumber::Count(1));
+        let spec = reed_filter::spec::FilterSpec::default();
+        Arc::new(
+            reed_filter::plan::compile(&spec, &tags, "", false).expect("invariant: plan compiles"),
+        )
+    }
+
+    fn job() -> FilteredJob<ProbeJob> {
+        FilteredJob::with_records(
+            Some(plan()),
+            Arc::from(vec![true, true].into_boxed_slice()),
+            inner_records,
+            ProbeJob,
+        )
+    }
+
+    /// doc_v9 D9-4 / 规约 E1: a malformed record must fail through `run_seam`
+    /// exactly as it does through `run_chunk` — the seam path used to return
+    /// `Ok(default)` and silently skip it.
+    #[test]
+    fn malformed_seam_record_is_fatal() {
+        let job = job();
+        let mut scratch = job.build_scratch();
+        let good = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\n";
+        let malformed = b"chr1\t2\t.\tA\tG\n"; // fewer than 9 columns
+
+        // Sanity: the same line inside a chunk body is fatal.
+        let body_err = job
+            .run_chunk(&chunk(), malformed, &mut scratch)
+            .expect_err("a malformed body record must fail");
+        assert!(body_err.to_string().contains("fewer than 9 columns"));
+
+        let mut scratch = job.build_scratch();
+        let seam_err = job
+            .run_seam(ChunkId(1), malformed, &mut scratch)
+            .expect_err("a malformed seam record must fail");
+        assert_eq!(
+            seam_err.to_string(),
+            body_err.to_string(),
+            "seam and body must report the same error"
+        );
+
+        // And a well-formed seam record still passes.
+        let mut scratch = job.build_scratch();
+        assert!(job.run_seam(ChunkId(1), good, &mut scratch).is_ok());
+    }
+
+    /// A minimal `ChunkBytes`; only its id is read by these paths.
+    fn chunk() -> ChunkBytes {
+        ChunkBytes {
+            id: ChunkId(0),
+            compressed: Vec::new().into_boxed_slice().into(),
+            first_in_block_offset: 0,
+            plain: true,
+            compressed_start: 0,
+            blocks: Vec::new(),
+        }
     }
 }

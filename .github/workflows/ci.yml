@@ -24,6 +24,11 @@ jobs:
       # must never sit in a "tests do not compile" state).
       - name: build (release, all targets)
         run: cargo build --release --workspace --all-targets
+      # Debug first: `debug_assert!` is compiled out of the release run below,
+      # so a red assertion test is invisible there (doc_v9 D9-8: the stitcher
+      # test survived two rounds because only release ran).
+      - name: test (debug)
+        run: cargo test --workspace
       - name: test (release)
         run: cargo test --release --workspace
       - name: doctests (facade)
