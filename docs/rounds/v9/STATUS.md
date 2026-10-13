@@ -12,7 +12,7 @@
 | D9-1c reducer panic 挂死 | **P0** | **已修** | 整个 reducer 体（含 `accept`/`run_seam`/`finish`）包 `catch_unwind(AssertUnwindSafe(..))`，unwind 转 `EngineError::ReducerPanicked { chunk, message }`（`error.rs` 新增变体，`#[non_exhaustive]` 非破坏性）；测试 `reducer_panic_returns_instead_of_hanging`、`reducer_finish_error_returns_instead_of_hanging` |
 | D9-2 发送失败当成功 | P1 | **已修** | `worker→result`（原 `:498`）与 `reader→chunk`（原 `:407`）的 `-> _ => true` 改为 `-> res.is_ok()`；守卫 "pipeline sends check their result" |
 | D9-3 末条未换行记录：丢弃/收录/报错三路不一 | **P0** | **已修** | `NewlineStitcher::finish(self) -> Option<Vec<u8>>`；并行与顺序两条路径在 drain 后检查，残留即 `EngineError::job(TRUNCATED_INPUT)`（消息与 BCF 路径逐字一致）。测试 `unterminated_final_record_is_rejected`（并行/顺序 × 两种 chunk 划分）、`terminated_input_delivers_every_record`（防过度收紧，兼真值门）、`stitcher_reassembles_and_caps_fragments`（红测试转绿） |
-| D9-4 `FilteredJob::run_seam` 静默跳过畸形记录 | P1 | **已修** | 删除 `filtered.rs` 的 `LineRef::parse().is_none() → Ok(default)` 提前返回；malformed seam 现在与 body 走同一个 `process`，报同一条错误。e2e `malformed_record_under_site_filter_is_fatal` |
+| D9-4 `FilteredJob::run_seam` 静默跳过畸形记录 | P1 | **已修** | 删除 `filtered.rs` 的 `LineRef::parse().is_none() → Ok(default)` 提前返回；malformed seam 现在与 body 走同一个 `process`，报同一条错误。单元测试 `filtered::tests::malformed_seam_record_is_fatal` **直接调用 `run_seam`**（把旧代码放回去会红——已验证），另加 e2e `malformed_record_under_site_filter_is_fatal` |
 | D9-5 `in_flight_peak_bytes` 口径 | P2 | **已修（选项 A）** | rustdoc 改为"估算足迹 = 压缩 × `MEM_FACTOR`"；顺序路径填真实峰值（原硬编码 0）。测试 `in_flight_peak_is_the_estimated_footprint`（两条路径 peak>0 且为 `MEM_FACTOR` 的整数倍）。**未更名**（字段名保留，只改语义文档——更名会波及 bench/profile 消费方，超出本轮范围） |
 | D9-6 reducer 上的 seam 时间漏计 | P2 | **已修** | 并行 `deliver!` 给 `run_seam` 计时并入 `job_time`、seam 的 `accept` 并入 `reduce_time`；`metrics.rs` 的 `job_time`/`reduce_time` rustdoc 改为跨两条路径同语义。测试 `seam_time_is_counted_on_the_parallel_path`（修复前并行 ~49 µs，修复后 >50 ms） |
 | D9-7 spec §7.7 过时 | P2 | **已修** | `docs/spec/architecture.md` §7.7 回改为背压表述（依据 v2/03 §4.2）；§7.5 追加规约 W2。守卫 "spec §7.7 describes backpressure, not an error" |
@@ -46,6 +46,7 @@
 | 命令 | 结果 |
 |---|---|
 | `cargo test -p reed-engine`（debug） | **39 通过 0 失败**（lib 16 + 集成 23，含 9 个新增 v9 测试） |
+| `cargo test -p reed --lib filtered`（debug） | **1 通过**（`malformed_seam_record_is_fatal`，直接覆盖 seam 路径） |
 | `cargo test --workspace`（debug，CI 新增门） | **52 个 test target 全绿** |
 | `cargo test --release --workspace` | 全绿 |
 | `cargo test -p reed --test e2e_stats` | 12 通过（含新增 `malformed_record_under_site_filter_is_fatal`） |
