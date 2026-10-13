@@ -73,7 +73,7 @@ fn dictionaries_come_from_the_header() {
 /// Appends a typed integer (descriptor + payload), the BCF key encoding.
 fn push_typed_int(out: &mut Vec<u8>, value: i64) {
     out.push(0x11); // count 1, INT8
-    out.push(value as i8 as u8);
+    out.push(u8::try_from(value).expect("invariant: test keys fit u8"));
 }
 
 /// One framed BCF record with a `(NULL, count=1)` descriptor — the INFO
@@ -109,8 +109,8 @@ fn synthetic_null_count_record(null_info: bool) -> Vec<u8> {
         indiv.push(0x10); // (NULL, count 1)
     }
     let mut out = Vec::new();
-    out.extend_from_slice(&(shared.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(indiv.len() as u32).to_le_bytes());
+    out.extend_from_slice(&u32::try_from(shared.len()).expect("invariant: small").to_le_bytes());
+    out.extend_from_slice(&u32::try_from(indiv.len()).expect("invariant: small").to_le_bytes());
     out.extend_from_slice(&shared);
     out.extend_from_slice(&indiv);
     out
@@ -139,7 +139,21 @@ fn null_descriptor_with_nonzero_count_errors_without_panicking() {
         match outcome {
             Ok(Ok(())) => panic!("NULL count=1 must be rejected (null_info={null_info})"),
             Ok(Err(_)) => {}
-            Err(_) => panic!("renderer panicked on a NULL descriptor (null_info={null_info})"),
+            Err(panic) => panic!(
+                "renderer panicked on a NULL descriptor (null_info={null_info}): {}",
+                panic_message(&panic)
+            ),
         }
+    }
+}
+
+/// Extracts a printable message from a panic payload.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_string()
     }
 }

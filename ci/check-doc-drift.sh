@@ -205,4 +205,12 @@ check "the BCF dictionary is sparse and IDX-bounded (doc_v10 D10-3)" \
 check "undersized BGZF blocks are rejected (doc_v10 D10-4)" \
     bash -c 'grep -q "bsize + 1 < BGZF_HEADER_LEN" crates/reed-io/src/bgzf/block.rs'
 
+# doc_v10 D10-5: the text index carries possibly-incomplete lines to the
+# reducer and decodes each record once, whole (`feed`/`CarriedLine`); the
+# worker no longer parses head/tail fragments.
+check "the text index decodes carried fragments on the reducer (doc_v10 D10-5)" \
+    bash -c 'grep -q "fn feed" crates/reed/src/index.rs &&
+        grep -q "CarriedLine" crates/reed/src/index.rs &&
+        grep -q "HeadEntry::Carried" crates/reed/src/index.rs'
+
 exit "$fail"

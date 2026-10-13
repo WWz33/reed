@@ -53,21 +53,40 @@ pub(super) struct RecordStart {
     voff: u64,
 }
 
+/// A record prefix that may end mid-column, carried to the reducer
+/// undecoded (doc_v10 D10-5): workers never parse a fragment whose bytes
+/// are not yet whole — the reducer decodes the assembled record exactly
+/// once.
+#[derive(Clone, Debug)]
+pub(super) struct CarriedLine {
+    /// Virtual offset of the record's first byte.
+    pub voff: u64,
+    /// The record's leading bytes so far.
+    pub bytes: Vec<u8>,
+}
+
+/// A chunk's first line: either already decoded (BCF, where the frame chain
+/// guarantees the record's bytes are whole) or carried undecoded (text,
+/// where the line may end mid-column).
+pub(super) enum HeadEntry {
+    /// Decoded on the worker because the record completed within the chunk.
+    Decoded(RecordStart),
+    /// Carried for the reducer to decode once the record is whole.
+    Carried(CarriedLine),
+}
+
 /// A chunk's slice of the record-start sequence.
 #[derive(Default)]
 pub(super) struct IndexPartial {
-    /// The chunk's first line, when it is a fresh record (the reducer drops
-    /// it when the previous chunk left a partial line to complete).
-    head: Option<RecordStart>,
-    /// Records that start in the body.
+    /// The chunk's first line (a fresh record, or the tail of one that
+    /// started earlier).
+    head: Option<HeadEntry>,
+    /// Records that start and end in the body (complete lines: decoded on
+    /// the worker).
     body: Vec<RecordStart>,
-    /// The trailing partial line, when it starts a record.
-    tail: Option<RecordStart>,
-    /// Whether the chunk's text ends mid-line (the next chunk continues it).
-    continues: bool,
-    /// A seam-record partial: the record's start was already recorded by the
-    /// chunk that held its tail, so this carries nothing and changes nothing.
-    seam: bool,
+    /// The trailing partial line, carried undecoded (it starts a record but
+    /// its columns may not all be present yet).
+    tail: Option<CarriedLine>,
 }
 
 /// Worker scratch.
@@ -101,37 +120,40 @@ impl VoMap<'_> {
     }
 }
 
-/// The chunk job: inflate → walk record starts → virtual offsets.
-struct IndexJob {
-    contig_names: Arc<[Vec<u8>]>,
+/// Decodes one complete record line into its start entry (the worker's body
+/// path and the reducer's carried-fragment path share this).
+fn decode_record(
+    record: &[u8],
+    voff: u64,
+    contigs: &mut ContigTable,
+) -> Result<RecordStart, EngineError> {
+    let Some(lr) = LineRef::parse(record) else {
+        return Err(EngineError::job("record line has fewer than 9 columns"));
+    };
+    let Some(tid) = contigs.id_of(lr.chrom()) else {
+        return Err(EngineError::job(format!(
+            "{}: contig is not declared in the header",
+            String::from_utf8_lossy(lr.chrom())
+        )));
+    };
+    let pos1 = parse_pos1(lr.pos_text(), lr.chrom()).map_err(EngineError::from)?;
+    let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
+    Ok(RecordStart {
+        tid,
+        pos1,
+        ref_len,
+        voff,
+    })
 }
 
-impl IndexJob {
-    fn parse_record(
-        &self,
-        record: &[u8],
-        text_off: usize,
-        map: &VoMap<'_>,
-        contigs: &mut ContigTable,
-    ) -> Result<RecordStart, EngineError> {
-        let Some(lr) = LineRef::parse(record) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
-        };
-        let Some(tid) = contigs.id_of(lr.chrom()) else {
-            return Err(EngineError::job(format!(
-                "{}: contig is not declared in the header",
-                String::from_utf8_lossy(lr.chrom())
-            )));
-        };
-        let pos1 = parse_pos1(lr.pos_text(), lr.chrom()).map_err(EngineError::from)?;
-        let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
-        Ok(RecordStart {
-            tid,
-            pos1,
-            ref_len,
-            voff: map.voff(text_off),
-        })
-    }
+/// The chunk job: inflate → walk record starts → virtual offsets.
+///
+/// Fragment ownership follows doc_v10 N5: a line that may be incomplete
+/// (the chunk's head/tail) is carried as bytes + start offset and decoded
+/// by the reducer, once its bytes are whole. Only complete body lines are
+/// decoded here.
+struct IndexJob {
+    contig_names: Arc<[Vec<u8>]>,
 }
 
 impl ChunkJob for IndexJob {
@@ -160,16 +182,19 @@ impl ChunkJob for IndexJob {
         let contigs = &mut scratch.contigs;
         let mut partial = IndexPartial::default();
 
-        // The first line: a fresh record only when the previous chunk did
-        // not leave a tail (the reducer decides; it owns the ordering).
-        if let Some(head) = view.head.clone()
-            && !view.text[head.clone()].is_empty()
-        {
-            partial.head =
-                Some(self.parse_record(&view.text[head.clone()], head.start, &map, contigs)?);
+        // The head fragment: carried, never decoded (it may end mid-column
+        // and may be the tail of a record that started earlier).
+        if let Some(head) = view.head.clone() {
+            let bytes = &view.text[head.clone()];
+            if !bytes.is_empty() {
+                partial.head = Some(HeadEntry::Carried(CarriedLine {
+                    voff: map.voff(head.start),
+                    bytes: bytes.to_vec(),
+                }));
+            }
         }
         let body = view.body.clone();
-        // Body lines, one at a time.
+        // Body lines, one at a time (complete by construction).
         let mut off = body.start;
         while off < body.end {
             let rest = &view.text[off..body.end];
@@ -178,20 +203,21 @@ impl ChunkJob for IndexJob {
             if !record.is_empty() {
                 partial
                     .body
-                    .push(self.parse_record(record, off, &map, contigs)?);
+                    .push(decode_record(record, map.voff(off), contigs)?);
             }
             off += nl + 1;
         }
-        // The trailing partial line always follows a newline (or is the
-        // whole first chunk); when the whole chunk is one partial line the
-        // framing reports it as the `head`, never as the tail.
-        if let Some(tail) = view.tail.clone()
-            && !view.text[tail.clone()].is_empty()
-        {
-            partial.tail =
-                Some(self.parse_record(&view.text[tail.clone()], tail.start, &map, contigs)?);
+        // The trailing partial line: carried, never decoded (it starts a
+        // record but its columns may not all be present yet).
+        if let Some(tail) = view.tail.clone() {
+            let bytes = &view.text[tail.clone()];
+            if !bytes.is_empty() {
+                partial.tail = Some(CarriedLine {
+                    voff: map.voff(tail.start),
+                    bytes: bytes.to_vec(),
+                });
+            }
         }
-        partial.continues = view.text.last() != Some(&b'\n');
         Ok(partial)
     }
 
@@ -201,13 +227,14 @@ impl ChunkJob for IndexJob {
         _line: &[u8],
         _scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
-        // The seam record's start lives in the previous chunk's tail (or in
-        // this chunk's head when the previous chunk ended line-aligned); the
-        // ordered sink already has it.
-        Ok(IndexPartial {
-            seam: true,
-            ..IndexPartial::default()
-        })
+        // The reducer assembles and decodes the crossing record itself from
+        // the carried head/tail fragments (N5), so the engine-stitched line
+        // needs no work here. The engine's stitcher still runs — it is what
+        // rejects an unterminated final record (doc_v9 D9-3) and caps a
+        // pathological newline-free fragment at MAX_RECORD_BYTES, which
+        // bounds the sink's carry too (its fragment sees the same bytes
+        // first).
+        Ok(IndexPartial::default())
     }
 }
 
@@ -272,7 +299,11 @@ impl ChunkJob for BcfIndexJob {
             }
             body_start = need;
             body_end = walk_bcf_records(text, need);
-            partial.head = Some(entry_at(&carried.head, text, body_start, carried.voff)?);
+            partial.head = Some(HeadEntry::Decoded(entry_at(
+                &carried.head,
+                text,
+                carried.voff,
+            )?));
         }
         // Publish the crossing record of the next chunk (its first 24 bytes
         // carry everything the index decodes).
@@ -346,12 +377,7 @@ fn declared_total(head: &[u8], text: &[u8]) -> Option<usize> {
 /// Decodes a crossing record's entry: `head` holds the record's leading
 /// bytes (length prefix included), completed by the start of `text` when
 /// the previous chunk held fewer than 20 bytes.
-fn entry_at(
-    head: &[u8],
-    text: &[u8],
-    body_start: usize,
-    voff: u64,
-) -> Result<RecordStart, EngineError> {
+fn entry_at(head: &[u8], text: &[u8], voff: u64) -> Result<RecordStart, EngineError> {
     // chrom/pos/rlen sit at record offsets 8..20.
     let mut buf = [0_u8; 20];
     let held = head.len().min(20);
@@ -365,7 +391,6 @@ fn entry_at(
         }
         buf[held..].copy_from_slice(&text[..missing]);
     }
-    let _ = body_start;
     let (tid, pos0, rlen) = record_site(&buf[8..]).map_err(EngineError::from)?;
     Ok(RecordStart {
         tid: ContigId(
@@ -377,14 +402,21 @@ fn entry_at(
     })
 }
 
-/// The ordered sink: pairs consecutive starts into chunks and feeds the
-/// indexer; the last record ends at `eof_voff`.
+/// The ordered sink: decodes the carried fragments the workers handed over
+/// undecoded (doc_v10 D10-5), pairs consecutive starts into chunks and feeds
+/// the indexer; the last record ends at `eof_voff`.
 struct IndexSink {
     indexer: Indexer,
     path: PathBuf,
     contig_names: Arc<[Vec<u8>]>,
+    /// The contig table the reducer decodes carried text lines through.
+    contigs: ContigTable,
     pending: Option<RecordStart>,
-    prev_continues: bool,
+    /// The record spanning the current chunk boundary: its bytes so far and
+    /// the virtual offset of its first byte. `Some` iff the previous chunk
+    /// ended mid-line (doc_v10 N5) — the engine's stitcher tracks the same
+    /// condition, so the two agree on truncation.
+    carry: Option<CarriedLine>,
     last_pos1: Option<(ContigId, u64)>,
     n_records: u64,
     eof_voff: u64,
@@ -419,31 +451,71 @@ impl IndexSink {
             .add(name, entry.tid, entry.pos1, entry.ref_len, entry.voff, end)
             .map_err(job)
     }
+
+    /// Decodes one assembled text line and pushes it.
+    fn push_line(&mut self, line: &[u8], voff: u64) -> Result<(), EngineError> {
+        let entry = decode_record(line, voff, &mut self.contigs)?;
+        self.push(entry)
+    }
+
+    /// Feeds one possibly-incomplete record fragment: appends it to the open
+    /// record (or opens one) and decodes the record the moment its newline
+    /// arrives. Fragments arrive in stream order, so every record is decoded
+    /// exactly once, whole (doc_v10 N5).
+    fn feed(&mut self, bytes: Vec<u8>, voff: u64) -> Result<(), EngineError> {
+        let (line, start) = match self.carry.take() {
+            Some(mut open) => {
+                open.bytes.extend_from_slice(&bytes);
+                (open.bytes, open.voff)
+            }
+            None => (bytes, voff),
+        };
+        if line.last() == Some(&b'\n') {
+            self.push_line(&line, start)?;
+        } else {
+            self.carry = Some(CarriedLine {
+                voff: start,
+                bytes: line,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl OrderedSink<IndexPartial> for IndexSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut IndexPartial) -> Result<(), EngineError> {
-        if partial.seam {
-            return Ok(());
+        if let Some(head) = partial.head.take() {
+            match head {
+                // BCF: the frame chain completed the record's leading bytes,
+                // so the worker could decode it (the BCF path is unchanged).
+                HeadEntry::Decoded(entry) => self.push(entry)?,
+                // Text: assemble with the carried fragment first.
+                HeadEntry::Carried(line) => self.feed(line.bytes, line.voff)?,
+            }
         }
-        // A head is a record start unless the previous chunk left a partial
-        // line for it to complete.
-        if let Some(head) = partial.head.take()
-            && !self.prev_continues
-        {
-            self.push(head)?;
-        }
+        // Body lines are complete by construction; the only way a record is
+        // still open past the head is a whole-chunk fragment (empty body).
+        debug_assert!(
+            self.carry.is_none() || partial.body.is_empty(),
+            "invariant: an open record spans the whole chunk"
+        );
         for entry in &partial.body {
             self.push(*entry)?;
         }
         if let Some(tail) = partial.tail.take() {
-            self.push(tail)?;
+            self.feed(tail.bytes, tail.voff)?;
         }
-        self.prev_continues = partial.continues;
         Ok(())
     }
 
     fn finish(mut self) -> Result<u64, EngineError> {
+        // An open carry here would be an unterminated final record; the
+        // engine's stitcher (which sees the same fragments) already rejected
+        // it with TRUNCATED_INPUT before `finish` runs (doc_v9 D9-3).
+        debug_assert!(
+            self.carry.is_none(),
+            "invariant: the engine rejects an unterminated final record first"
+        );
         if let Some(last) = self.pending.take() {
             self.add(last, self.eof_voff)?;
         }
@@ -523,9 +595,10 @@ pub fn run_index(
     let sink = IndexSink {
         indexer,
         path: path.clone(),
+        contigs: ContigTable::new(contig_names.iter().cloned()),
         contig_names: Arc::clone(&contig_names),
         pending: None,
-        prev_continues: false,
+        carry: None,
         last_pos1: None,
         n_records: 0,
         eof_voff,
@@ -640,9 +713,10 @@ mod tests {
             let sink = IndexSink {
                 indexer,
                 path: path.clone(),
+                contigs: ContigTable::new(contig_names.iter().cloned()),
                 contig_names: Arc::clone(&contig_names),
                 pending: None,
-                prev_continues: false,
+                carry: None,
                 last_pos1: None,
                 n_records: 0,
                 eof_voff,

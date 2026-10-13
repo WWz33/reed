@@ -745,6 +745,17 @@ mod tests {
         assert_eq!(count_records_in_stream(&stream, 64), 60);
     }
 
+    /// Extracts a printable message from a panic payload.
+    fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+        if let Some(s) = panic.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "non-string panic payload".to_string()
+        }
+    }
+
     /// A BGZF header whose BSIZE declares `total` bytes.
     fn header_with_total(total: usize) -> [u8; BGZF_HEADER_LEN] {
         let mut h = [0_u8; BGZF_HEADER_LEN];
@@ -780,7 +791,10 @@ mod tests {
             match outcome {
                 Ok(Err(err)) => assert!(err.to_string().contains("BGZF"), "total={total}: {err}"),
                 Ok(Ok(())) => panic!("total={total}: scan accepted an undersized block"),
-                Err(_) => panic!("total={total}: scan_header panicked on an undersized block"),
+                Err(panic) => panic!(
+                    "total={total}: scan_header panicked on an undersized block: {}",
+                    panic_message(&panic)
+                ),
             }
 
             // A valid header block followed by the undersized one, so the
@@ -808,7 +822,10 @@ mod tests {
             match outcome {
                 Ok(Err(err)) => assert!(err.to_string().contains("BGZF"), "total={total}: {err}"),
                 Ok(Ok(())) => panic!("total={total}: chunk walk accepted an undersized block"),
-                Err(_) => panic!("total={total}: next_chunk panicked on an undersized block"),
+                Err(panic) => panic!(
+                    "total={total}: next_chunk panicked on an undersized block: {}",
+                    panic_message(&panic)
+                ),
             }
 
             // Entry 3: the mmap chunk source.
@@ -838,7 +855,10 @@ mod tests {
             match outcome {
                 Ok(Err(err)) => assert!(err.to_string().contains("BGZF"), "total={total}: {err}"),
                 Ok(Ok(())) => panic!("total={total}: mmap walk accepted an undersized block"),
-                Err(_) => panic!("total={total}: mmap source panicked"),
+                Err(panic) => panic!(
+                    "total={total}: mmap source panicked: {}",
+                    panic_message(&panic)
+                ),
             }
         }
     }
