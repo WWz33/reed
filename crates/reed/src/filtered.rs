@@ -26,7 +26,6 @@ use reed_engine::pipeline::ChunkJob;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::chunk::ChunkBytes;
-use reed_io::vcf::line::LineRef;
 use reed_io::vcf::line_edit::{EditPlan, edit_vcf_line};
 
 use crate::filter::record_pipeline::{PipelineOptions, RecordPipeline};
@@ -324,9 +323,9 @@ impl<J: ChunkJob> ChunkJob for FilteredJob<J> {
             return self.inner.run_seam(id, line, &mut scratch.inner);
         }
         self.start_chunk(scratch);
-        if LineRef::parse(line).is_none() {
-            return Ok(J::Partial::default());
-        }
+        // No special case for a malformed seam line: it must fail exactly as
+        // the same line would in a chunk body (`process` reports it), whether
+        // or not it happens to straddle a seam (doc_v9 D9-4, 规约 E1).
         if self.records.is_some() {
             self.scan_line(line, scratch)?;
             if scratch.spans.is_empty() {

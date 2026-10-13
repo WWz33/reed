@@ -23,9 +23,10 @@
 | 路线与验收门 | **`docs/rounds/v6/06-roadmap.md`** | Y0–Y7；v5/07 的 X0–X7 已落地（未完成项并入 Y6），v4/06 的 W0–W6 已完成 |
 | 缺陷修复（外部审查核实） | **`docs/rounds/v7/01-review.md`** + `docs/rounds/v7/06-roadmap.md` | 对一份外部审查报告的独立核实与修复规范（D7-1…D7-29）；路线 Z0–Z4。v7 是缺陷修复轮，不重开 v6 的 Y 系列结构项 |
 | 线程模型与并行预算 | **`docs/rounds/v8/01-review.md`** + `docs/rounds/v8/06-roadmap.md`** | 全部线程创建点台账与 spec §7.3 的逐条对照；rayon 三阶段与 stats LD sink 脱离 `ThreadBudget` 的修复规范（D8-1…D8-5）；路线 P0–P2。v8 是缺陷修复轮，不重开 v6/v7 的结构项 |
+| 引擎错误路径与终止语义 | **`docs/rounds/v9/01-review.md`** + `docs/rounds/v9/02-architecture.md` + `docs/rounds/v9/06-roadmap.md` | 阻塞点—唤醒来源台账；reducer 侧错误/panic **永久挂死**的实测现场（`eu-stack` 5 线程全 `futex_wait`）与规约 W1/W2（唯一错误出口）；通道发送结果语义 C1；输入截断契约（文本丢弃 / index 收录 / BCF 报错）；seam 与 chunk 体的错误一致性 E1；指标口径（peak = 压缩 × `MEM_FACTOR`、reducer 上的 seam 时间漏计）；缺陷 D9-1…D9-8，路线 Q0–Q3。v9 是缺陷修复轮，不重开 v6/v7/v8 的结构项 |
 | Y5 引擎落地规格 | **`docs/spec/v6_y5/README.md`** + `docs/spec/v6_y5/TODO.md` | A6-1…A6-4 的落地形态（中止原子位 / 许可 drop guard / 接缝上限 / 顺序模式 / 计量）、与 roadmap 附录的差异表、门与执行清单 |
 | Y6 前后端落地规格 | **`docs/spec/v6_y6/README.md`** + `docs/spec/v6_y6/CODE.md` + `docs/spec/v6_y6/TODO.md`；批 D 细化 `docs/spec/v6_y6/batch_d/`（README/TODO/CODE） | F6-13/F6-19 的落地形态（reed::Error / 请求内化 / job.rs 拆分 / C-5 / 联合 SFS / `--bed-file`）、与 roadmap 与 08 §6.2 的差异表、门与执行清单；批 D 的真值表/集成点/退出码契约 |
-| 实施状态 | **`docs/rounds/v6/STATUS.md`** | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
+| 实施状态 | **`docs/rounds/v6/STATUS.md`**；缺陷修复轮各自的状态在 **`docs/rounds/v7/STATUS.md`**（Z0–Z4）、**`docs/rounds/v8/STATUS.md`**（P0–P2，含 D8-6）、**`docs/rounds/v9/STATUS.md`**（Q0–Q3，起始全部未修 + 复审基线与实测记录） | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
 
 ## 历史文档（只作记录，不再修订）
 
@@ -54,6 +55,9 @@
 | v2 05 §2.3"`--max-missing` 方向与 `--geno` 相反，不提供别名" | v4 02 §8：结论保留（不提供别名）；`--max-missing` 已不是 reed 的参数 |
 | v3 04 §C3"`TagTable` 未做" | `docs/rounds/v3/STATUS.md` 更正为**已做**（v4 01 F4-2） |
 | `docs/spec/architecture.md` §13.17 的漏斗 id 示例 | v4 02 §5.3 定名（`after_mask.missing`、`sample.mind`）；§13.17 已就地回改 |
+| `docs/spec/architecture.md` §7.7「超出时报 `EngineError::MemBudgetExceeded`」 | **doc_v9 D9-7（待落地）**：改为背压表述——超出时 reader 阻塞，`MemBudgetExceeded` 只用于"单个 chunk 的足迹超过全部预算"。依据是 `docs/rounds/v2/03-architecture.md` §4.2，实现早已如此，spec 未回改 |
+| `docs/spec/architecture.md` §7.5「所有阻塞点都用 `select!` 等待数据和 abort」 | **doc_v9 02 §2（待落地）**：追加规约 W2——任何线程的错误与 panic 必须先经 `FirstError` 记录（记录即触发 abort），不得绕过它直接返回。§7.5 的机制本身正确，缺的是"没有旁路"这一条 |
+| `v8/STATUS.md:22-23`「`stitcher_reassembles_and_caps_fragments` 失败是预存在的，与本轮无关」 | **doc_v9 D9-8 更正**：预存在属实，但"无关"是误判——它是 D9-3（`NewlineStitcher` 缺 finish 语义）的症状，且暴露了 release-only 验收门对 `debug_assert` 的盲区 |
 
 ## 一致性守卫
 

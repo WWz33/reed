@@ -632,3 +632,58 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
     assert_eq!(n_sites, [5, 5, 4], "{n_sites:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v9 D9-4 / 规约 E1: with a site filter, a record that fails
+/// `LineRef::parse` (fewer than 9 tabs) must fail the run. It used to be
+/// silently dropped when it happened to reach the reducer through `run_seam`;
+/// both body and seam now go through the same `process` call.
+///
+/// shortcut: this fixture fits one chunk, so it exercises the body path; the
+/// seam path differs only in which caller reaches `process`, which the
+/// deletion in `FilteredJob::run_seam` unifies. A literal seam regression
+/// would need a >1 MiB fixture (the chunk target).
+#[test]
+fn malformed_record_under_site_filter_is_fatal() {
+    // 5 tabs, ~400 bytes: well under the 9 required, and long enough that a
+    // 64-byte BGZF block boundary falls inside it.
+    let malformed = format!("chr1\t100\t.\tA\tG\t{}", "X".repeat(400));
+    let header = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+";
+    let valid = fixture_text()
+        .lines()
+        .nth(5)
+        .unwrap_or_default()
+        .to_string();
+    let text = format!("{header}{valid}\n{malformed}\n");
+    let path = write_fixture("malformed-record.vcf.gz", &text);
+    let mut request = request(
+        vec![StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        }],
+        Levels::default(),
+        false,
+    );
+    request.site = Some(reed_filter::spec::FilterSpec {
+        site: reed_filter::spec::SiteRules {
+            min_qual: Some(1.0),
+            ..reed_filter::spec::SiteRules::default()
+        },
+        ..reed_filter::spec::FilterSpec::default()
+    });
+    let budget = ThreadBudget {
+        threads: 4,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let err = run_stats(Some(path.as_path()), request, &budget)
+        .expect_err("malformed line must be fatal");
+    assert!(
+        err.to_string().contains("fewer than 9 columns"),
+        "got {err}"
+    );
+    let _ = std::fs::remove_dir_all(path.parent().expect("temp dir"));
+}

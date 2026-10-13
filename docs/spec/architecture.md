@@ -822,7 +822,10 @@ worker 对一个 chunk 一口气完成：**inflate → 认领行 → 解析（�
 - `AbortSignal`：一个只用来关闭的 crossbeam 通道。所有阻塞点都用 `select!` 同时等待数据和 abort，
   中止即时生效，不再用 20 ms 轮询。
 - `FirstError`：首个错误胜出（沿用 ErrorSlot 语义）。worker panic 时由 `catch_unwind` 转成
-  `EngineError::WorkerPanicked { chunk }`。
+  `EngineError::WorkerPanicked { chunk }`；reducer panic 转成 `EngineError::ReducerPanicked { chunk }`。
+  **任何线程（reader / worker / reducer）的错误与 panic 都必须先经 `FirstError` 记录
+  （记录即触发 abort），不允许绕过它直接返回**——否则其余阻塞点失去唯一的无条件唤醒来源，
+  reducer 侧出错会变成整个 run 的挂死（doc_v9 §2 规约 W2）。
 - 错误必须带定位：`Locus { contig: String, pos1: u64 }` 加 `ChunkId`。
 
 ### 7.6 确定性契约【规】
@@ -838,7 +841,10 @@ worker 对一个 chunk 一口气完成：**inflate → 认领行 → 解析（�
 ### 7.7 内存预算与策略选择接口
 
 `MemBudget`（`--mem`，默认为物理内存的 50%）由 plan 编译器读取，用来在策略之间选择（§11.4）。
-引擎负责运行时监控（在途字节计数），超出时报 `EngineError::MemBudgetExceeded`，不会默默 OOM。
+引擎负责运行时监控（在途**估算足迹**计数，= 压缩字节 × `MEM_FACTOR`）。预算以**背压**方式执行：
+超出时 reader 阻塞等待许可归还，**不报错**；`EngineError::MemBudgetExceeded` 只保留给"单个 chunk
+的足迹就超过全部预算"这种无法继续的情况（依据 `docs/rounds/v2/03-architecture.md` §4.2；
+本段由 doc_v9 D9-7 回改，不改代码）。不会默默 OOM。
 
 ### 7.8 NUMA 与分配器
 

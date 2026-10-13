@@ -778,3 +778,365 @@ fn stage_metrics_split_inflate_and_job_time() {
     assert_eq!(m.in_flight_final_bytes, 0, "no permit may stay checked out");
     assert_eq!(m.n_chunks_read, report.n_chunks, "every chunk is accounted");
 }
+
+// ---------------------------------------------------------------------------
+// doc_v9 (01-review.md §5): reducer-side error paths must return, not hang.
+// The pre-existing fault-injection tests all used fixtures smaller than the
+// ticket window, where the reader reaches EOF before the reducer errors; a
+// reducer error with the reader blocked on a ticket (many chunks) deadlocked
+// the scope join. Every case runs at both scales (index.md §1.3).
+// ---------------------------------------------------------------------------
+
+/// Records every delivered line; can fail or panic on a chosen chunk.
+struct InjectableSink {
+    n_lines: u64,
+    fail_at: Option<u64>,
+    panic_at: Option<u64>,
+}
+
+impl OrderedSink<Vec<Vec<u8>>> for InjectableSink {
+    fn accept(&mut self, _id: ChunkId, partial: &mut Vec<Vec<u8>>) -> Result<(), EngineError> {
+        if let Some(at) = self.fail_at
+            && self.n_lines >= at
+        {
+            return Err(EngineError::job("sink exploded"));
+        }
+        #[allow(clippy::panic, reason = "the panic is the fault under test")]
+        if let Some(at) = self.panic_at
+            && self.n_lines >= at
+        {
+            panic!("sink panicked");
+        }
+        self.n_lines += partial.len() as u64;
+        Ok(())
+    }
+    fn finish(self) -> Result<u64, EngineError> {
+        Ok(self.n_lines)
+    }
+}
+
+/// A job whose `run_seam` always fails (D9-1b).
+struct FailSeamJob;
+
+impl ChunkJob for FailSeamJob {
+    type Partial = Vec<Vec<u8>>;
+    type Scratch = ();
+    fn run_chunk(
+        &self,
+        _chunk: &ChunkBytes,
+        body: &[u8],
+        _s: &mut (),
+    ) -> Result<Self::Partial, EngineError> {
+        Ok(lines_of(body))
+    }
+    fn run_seam(
+        &self,
+        _id: ChunkId,
+        _line: &[u8],
+        _s: &mut (),
+    ) -> Result<Self::Partial, EngineError> {
+        Err(EngineError::job("seam exploded"))
+    }
+}
+
+/// Sink that fails on the *first* delivered chunk.
+struct FirstChunkFailSink;
+impl OrderedSink<Vec<Vec<u8>>> for FirstChunkFailSink {
+    fn accept(&mut self, _id: ChunkId, _p: &mut Vec<Vec<u8>>) -> Result<(), EngineError> {
+        Err(EngineError::job("first chunk exploded"))
+    }
+    fn finish(self) -> Result<u64, EngineError> {
+        Ok(0)
+    }
+}
+
+fn elapsed_secs(started: std::time::Instant) -> f64 {
+    started.elapsed().as_secs_f64()
+}
+
+/// D9-3: an unterminated final record is rejected, not silently dropped, on
+/// both the sequential and parallel paths.
+#[test]
+fn unterminated_final_record_is_rejected() {
+    let mut text = fixture_text(50);
+    assert_eq!(text.pop(), Some(b'\n'), "strip the final newline");
+    for threads in [1_usize, 4] {
+        for chunk_bytes in [40_000usize, 200] {
+            let chunks = make_chunks(&text, chunk_bytes);
+            let mut source = VecSource {
+                chunks: chunks.into_iter(),
+            };
+            let abort = abort();
+            let err = run(
+                &mut source,
+                &CountJob,
+                VecSink::default(),
+                &budget(threads),
+                &abort,
+            )
+            .expect_err("an unterminated final record must fail the run");
+            assert!(
+                err.to_string().contains("ends inside a record"),
+                "threads={threads} chunks={chunk_bytes}: got {err:?}"
+            );
+        }
+    }
+}
+
+/// The complement of the rejection: a normal newline-terminated input still
+/// delivers every record (guards against over-tightening D9-3).
+#[test]
+fn terminated_input_delivers_every_record() {
+    let text = fixture_text(50);
+    for threads in [1_usize, 4] {
+        let chunks = make_chunks(&text, 200);
+        let mut source = VecSource {
+            chunks: chunks.into_iter(),
+        };
+        let abort = abort();
+        let report = run(
+            &mut source,
+            &CountJob,
+            VecSink::default(),
+            &budget(threads),
+            &abort,
+        )
+        .expect("a terminated input must succeed");
+        assert_eq!(report.sink_report, fold_lines(&text), "threads={threads}");
+    }
+}
+
+#[test]
+fn reducer_sink_error_returns_instead_of_hanging() {
+    for (n_records, chunk_bytes) in [(2_000usize, 40_000usize), (20_000, 300)] {
+        let text = fixture_text(n_records);
+        let chunks = make_chunks(&text, chunk_bytes);
+        let mut source = VecSource {
+            chunks: chunks.into_iter(),
+        };
+        let abort = abort();
+        let started = std::time::Instant::now();
+        let err = run(
+            &mut source,
+            &CountJob,
+            InjectableSink {
+                n_lines: 0,
+                fail_at: Some(5),
+                panic_at: None,
+            },
+            &budget(4),
+            &abort,
+        )
+        .unwrap_err();
+        assert!(
+            elapsed_secs(started) < 5.0,
+            "HANG on {n_records} records: reducer sink error did not return"
+        );
+        // The recorded cause, not the Aborted consequence (§2.2 要点 2).
+        match err {
+            EngineError::Job(ref m) if m.to_string().contains("sink exploded") => {}
+            other => panic!("expected the sink error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn reducer_seam_error_returns_instead_of_hanging() {
+    for (n_records, chunk_bytes) in [(2_000usize, 40_000usize), (20_000, 300)] {
+        let text = fixture_text(n_records);
+        let chunks = make_chunks(&text, chunk_bytes);
+        let mut source = VecSource {
+            chunks: chunks.into_iter(),
+        };
+        let abort = abort();
+        let started = std::time::Instant::now();
+        let err = run(
+            &mut source,
+            &FailSeamJob,
+            VecSink::default(),
+            &budget(4),
+            &abort,
+        )
+        .unwrap_err();
+        assert!(
+            elapsed_secs(started) < 5.0,
+            "HANG on {n_records} records: run_seam error did not return"
+        );
+        match err {
+            EngineError::Job(ref m) if m.to_string().contains("seam exploded") => {}
+            other => panic!("expected the seam error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn reducer_panic_returns_instead_of_hanging() {
+    for (n_records, chunk_bytes) in [(2_000usize, 40_000usize), (20_000, 300)] {
+        let text = fixture_text(n_records);
+        let chunks = make_chunks(&text, chunk_bytes);
+        let mut source = VecSource {
+            chunks: chunks.into_iter(),
+        };
+        let abort = abort();
+        let started = std::time::Instant::now();
+        let err = run(
+            &mut source,
+            &CountJob,
+            InjectableSink {
+                n_lines: 0,
+                fail_at: None,
+                panic_at: Some(5),
+            },
+            &budget(4),
+            &abort,
+        )
+        .unwrap_err();
+        assert!(
+            elapsed_secs(started) < 5.0,
+            "HANG on {n_records} records: reducer panic did not return"
+        );
+        match err {
+            EngineError::ReducerPanicked { ref message, .. } => {
+                assert!(
+                    message.contains("sink panicked"),
+                    "panic message lost: {message}"
+                );
+            }
+            other => panic!("expected ReducerPanicked, got {other:?}"),
+        }
+        assert!(abort.signal.is_aborted(), "the panic must abort the run");
+    }
+}
+
+/// `sink.finish` runs on the reducer, outside the per-chunk `deliver!`
+/// (01-review §2.3, D9-1c corner). It is wrapped by the same `catch_unwind`.
+#[test]
+fn reducer_finish_error_returns_instead_of_hanging() {
+    struct FinishFailSink;
+    impl OrderedSink<Vec<Vec<u8>>> for FinishFailSink {
+        fn accept(&mut self, _id: ChunkId, _p: &mut Vec<Vec<u8>>) -> Result<(), EngineError> {
+            Ok(())
+        }
+        fn finish(self) -> Result<u64, EngineError> {
+            Err(EngineError::job("finish exploded"))
+        }
+    }
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 100);
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    let started = std::time::Instant::now();
+    let err = run(&mut source, &CountJob, FinishFailSink, &budget(4), &abort).unwrap_err();
+    assert!(elapsed_secs(started) < 5.0, "finish error hung");
+    match err {
+        EngineError::Job(ref m) if m.to_string().contains("finish exploded") => {}
+        other => panic!("expected the finish error, got {other:?}"),
+    }
+}
+
+/// Smallest D9-1 shape: a sink that fails on its very first chunk, with a
+/// fixture far larger than the ticket window.
+#[test]
+fn reducer_first_chunk_sink_error_returns() {
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 300);
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    let started = std::time::Instant::now();
+    let err = run(
+        &mut source,
+        &CountJob,
+        FirstChunkFailSink,
+        &budget(4),
+        &abort,
+    )
+    .unwrap_err();
+    assert!(elapsed_secs(started) < 5.0, "HANG: first-chunk sink error");
+    assert!(matches!(err, EngineError::Job(_)), "got {err:?}");
+}
+
+/// doc_v9 D9-6: the seam job runs on the reducer; its time must be counted
+/// on the parallel path too (it was invisible — `job_time` measured only the
+/// workers). A sleeping `run_seam` makes the difference unambiguous.
+#[test]
+fn seam_time_is_counted_on_the_parallel_path() {
+    struct SleepSeamJob;
+    impl ChunkJob for SleepSeamJob {
+        type Partial = Vec<Vec<u8>>;
+        type Scratch = ();
+        fn run_chunk(
+            &self,
+            _chunk: &ChunkBytes,
+            body: &[u8],
+            _s: &mut (),
+        ) -> Result<Self::Partial, EngineError> {
+            Ok(lines_of(body))
+        }
+        fn run_seam(
+            &self,
+            _id: ChunkId,
+            line: &[u8],
+            _s: &mut (),
+        ) -> Result<Self::Partial, EngineError> {
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(lines_of(line))
+        }
+    }
+    // 60-byte chunks cut nearly every record → many seams.
+    let text = fixture_text(200);
+    let chunks = make_chunks(&text, 60);
+    assert!(chunks.len() > 100, "need many seams, got {}", chunks.len());
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let abort = abort();
+    let report = run(
+        &mut source,
+        &SleepSeamJob,
+        VecSink::default(),
+        &budget(4),
+        &abort,
+    )
+    .expect("run");
+    // ~130 seams × 1 ms ≈ 130 ms; the buggy parallel path reported < 1 ms.
+    assert!(
+        report.metrics.job_time > Duration::from_millis(50),
+        "parallel job_time must include reducer-side seams, got {:?}",
+        report.metrics.job_time
+    );
+}
+
+/// doc_v9 D9-5: `in_flight_peak_bytes` stores the estimated footprint
+/// (compressed × `MEM_FACTOR`), and the sequential path reports a real peak
+/// rather than a hard-coded zero.
+#[test]
+fn in_flight_peak_is_the_estimated_footprint() {
+    let text = fixture_text(2_000);
+    let chunks = make_chunks(&text, 1_000);
+    assert!(chunks.len() > 3);
+    for threads in [1_usize, 4] {
+        let mut source = VecSource {
+            chunks: chunks.clone().into_iter(),
+        };
+        let abort = abort();
+        let report = run(
+            &mut source,
+            &CountJob,
+            VecSink::default(),
+            &budget(threads),
+            &abort,
+        )
+        .expect("run");
+        let peak = report.metrics.in_flight_peak_bytes;
+        assert!(peak > 0, "threads={threads}: peak must be observed");
+        assert_eq!(
+            peak % reed_engine::budget::MEM_FACTOR,
+            0,
+            "threads={threads}: peak {peak} must be a footprint multiple"
+        );
+    }
+}

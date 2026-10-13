@@ -160,4 +160,25 @@ check "rayon parallelism is behind the parallel branch (doc_v8 D8-1/D8-6)" \
 check "per-contig caps use budget.auxiliary (doc_v8 D8-4)" \
     bash -c '! grep -rn "max_prune: opts.threads\|max_ld_jobs: opts.threads" crates/reed/src'
 
+# doc_v9 D9-7: spec §7.7 describes backpressure, not "over budget → error".
+# The implementation follows v2/03 §4.2; the spec line was stale.
+check "spec §7.7 describes backpressure, not an error (doc_v9 D9-7)" \
+    bash -c '! sed -n "/### 7.7/,/^### 7.8/p" docs/spec/architecture.md | grep -q "超出时报 \`EngineError::MemBudgetExceeded\`"'
+
+# doc_v9 D9-2: the pipeline channels must honour the send result
+# (`res.is_ok()`), never bind it to `_` and report success on a disconnect.
+check "pipeline sends check their result (doc_v9 D9-2)" \
+    bash -c '! grep -q "send(.*) -> _ => true" crates/reed-engine/src/pipeline.rs'
+
+# doc_v9 D9-1: the reducer records its own errors before returning (`bail`):
+# the helper exists and both error exits (the loop's `Err` and the panic arm)
+# call it.
+check "reducer errors go through bail (doc_v9 D9-1)" \
+    bash -c 'grep -q "fn bail" crates/reed-engine/src/pipeline.rs && [ "$(grep -c "bail(" crates/reed-engine/src/pipeline.rs)" -ge 3 ]'
+
+# doc_v9 D9-3: the newline path finalizes the stitcher on both the parallel
+# and sequential paths, so an unterminated final record cannot be dropped.
+check "NewlineStitcher is finalized at stream end (doc_v9 D9-3)" \
+    bash -c '[ "$(grep -c "stitcher.finish()" crates/reed-engine/src/pipeline.rs)" -ge 2 ]'
+
 exit "$fail"
