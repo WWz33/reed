@@ -24,9 +24,10 @@
 | 缺陷修复（外部审查核实） | **`docs/rounds/v7/01-review.md`** + `docs/rounds/v7/06-roadmap.md` | 对一份外部审查报告的独立核实与修复规范（D7-1…D7-29）；路线 Z0–Z4。v7 是缺陷修复轮，不重开 v6 的 Y 系列结构项 |
 | 线程模型与并行预算 | **`docs/rounds/v8/01-review.md`** + `docs/rounds/v8/06-roadmap.md`** | 全部线程创建点台账与 spec §7.3 的逐条对照；rayon 三阶段与 stats LD sink 脱离 `ThreadBudget` 的修复规范（D8-1…D8-5）；路线 P0–P2。v8 是缺陷修复轮，不重开 v6/v7 的结构项 |
 | 引擎错误路径与终止语义 | **`docs/rounds/v9/01-review.md`** + `docs/rounds/v9/02-architecture.md` + `docs/rounds/v9/06-roadmap.md` | 阻塞点—唤醒来源台账；reducer 侧错误/panic **永久挂死**的实测现场（`eu-stack` 5 线程全 `futex_wait`）与规约 W1/W2（唯一错误出口）；通道发送结果语义 C1；输入截断契约（文本丢弃 / index 收录 / BCF 报错）；seam 与 chunk 体的错误一致性 E1；指标口径（peak = 压缩 × `MEM_FACTOR`、reducer 上的 seam 时间漏计）；缺陷 D9-1…D9-8，路线 Q0–Q3。v9 是缺陷修复轮，不重开 v6/v7/v8 的结构项 |
+| BGZF/BCF/VCF 格式兼容性 | **`docs/rounds/v10/01-review.md`** + `docs/rounds/v10/02-architecture.md` + `docs/rounds/v10/06-roadmap.md` | 以工作区 htslib/bcftools 源码为基准的格式处理对照：GT 选宽按编码值（N1，修大等位编号被 `as i16` 静默截断）；NULL 描述符非法（N2）；IDX 限界（N3）；BGZF 最小块长（N4）；文本 index 残片承载（N5，对齐 `BcfIndexJob` 的 FrameChain 模式）；多成员 gzip（N6）；PASS 注入（N7）；计数乘法 checked_mul（N8）。缺陷 D10-1…D10-8，路线 R0–R3。v10 是缺陷修复轮，不重开 v6–v9 的结构项 |
 | Y5 引擎落地规格 | **`docs/spec/v6_y5/README.md`** + `docs/spec/v6_y5/TODO.md` | A6-1…A6-4 的落地形态（中止原子位 / 许可 drop guard / 接缝上限 / 顺序模式 / 计量）、与 roadmap 附录的差异表、门与执行清单 |
 | Y6 前后端落地规格 | **`docs/spec/v6_y6/README.md`** + `docs/spec/v6_y6/CODE.md` + `docs/spec/v6_y6/TODO.md`；批 D 细化 `docs/spec/v6_y6/batch_d/`（README/TODO/CODE） | F6-13/F6-19 的落地形态（reed::Error / 请求内化 / job.rs 拆分 / C-5 / 联合 SFS / `--bed-file`）、与 roadmap 与 08 §6.2 的差异表、门与执行清单；批 D 的真值表/集成点/退出码契约 |
-| 实施状态 | **`docs/rounds/v6/STATUS.md`**；缺陷修复轮各自的状态在 **`docs/rounds/v7/STATUS.md`**（Z0–Z4）、**`docs/rounds/v8/STATUS.md`**（P0–P2，含 D8-6）、**`docs/rounds/v9/STATUS.md`**（Q0–Q3，起始全部未修 + 复审基线与实测记录） | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
+| 实施状态 | **`docs/rounds/v6/STATUS.md`**；缺陷修复轮各自的状态在 **`docs/rounds/v7/STATUS.md`**（Z0–Z4）、**`docs/rounds/v8/STATUS.md`**（P0–P2，含 D8-6）、**`docs/rounds/v9/STATUS.md`**（Q0–Q3，起始全部未修 + 复审基线与实测记录）、**`docs/rounds/v10/STATUS.md`**（R0–R3，起始全部未修 + 复审基线代码证据摘录） | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
 
 ## 历史文档（只作记录，不再修订）
 
