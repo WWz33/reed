@@ -657,6 +657,15 @@ pub enum WindowGrid {
 | BCF 无索引 | 并行 inflate，串行定界（每条记录只读 8 字节长度前缀后跳过），再按批分发 | 定界（廉价） |
 | 普通 gzip / stdin | 串行 inflate 线程 → 按字节切 → 同 BAPP | inflate（警告） |
 
+**块头校验**【规】（doc_v10 N4）：块头解析必须拒绝 `BSIZE + 1 < 18` 的块
+（htslib `bgzf.c:1219-1225` 同款检查）；畸形块走 `MalformedBgzf`，不得让
+下游对短块做切片或长度下溢。
+
+**多成员 gzip**【规】（doc_v10 N6）：普通 gzip 按多成员流解码——第一个成员结束后
+继续读下一个成员，等价 htslib `inflate_gzip_block` 的 `Z_STREAM_END` + `inflateReset`
+（`bgzf.c:832-908`）。`cat a.vcf.gz b.vcf.gz` 必须两个成员全读。BGZF 的空成员
+（EOF marker、串联接缝）同样只跳过、不结束流。
+
 **常量**【规】：`CHUNK_TARGET_COMPRESSED = 1 MiB`（本机约 5 MiB 文本、约 500 条记录），作为引擎常量
 而不是用户参数，因为它参与确定性定义（原则 5）。修改它要升版本并记 ADR。
 
@@ -709,6 +718,20 @@ Flag 判断是否存在；`.` 为 None。
 - BCF 的 FORMAT 是按字段连续存放所有样本（字段主序）。GT 是 int8/int16 向量，编码为 `(allele+1)<<1 | phased`，
   可以直接逐字节（或 SIMD）转成 4 个平面。DP/GQ 是类型化整数数组，直接拷贝。
 - 不支持的情况（如 GT 为 int32 编码的超大等位下标）走 noodles `RecordBuf` 兜底，并记数。
+
+**描述符与字典的合法性**【规】（doc_v10 N2/N3/N8）：
+
+- `(NULL, count > 0)` 是非法描述符（NULL 无载荷），在唯一的描述符读取关卡拒绝，
+  与 htslib `bcf_record_check` 一致（`vcf.c:2231-2236`）；`(NULL, 0)`（INFO flag）合法。
+- 头部 `IDX=` 是外部输入：解析时拒绝 `idx >= INT_MAX - 1`（htslib `vcf.c:877-891`），
+  字典以索引为键稀疏存储，任何 IDX 都不得驱动按值大小的分配（htslib 的
+  `bcf_hdr_set_idx` 会 resize，但以可报告失败收尾，`vcf.c:800-830`）。
+- 记录字段字节数 = `width × count × n_sample`，一律用 checked 乘法计算
+  （htslib 的 FORMAT 2 GiB 上限同源，`vcf.c:2236-2241`）；溢出即畸形记录。
+- **GT 位宽按编码值判**：`(allele+1)<<1 | phased` 的值域决定 INT8/INT16/INT32
+  （等位 ≤ 62 → INT8；≤ 16382 → INT16；否则 INT32），与 htslib `bcf_enc_vint`
+  按编码值扫 min/max 等价（`vcf.c:2955-2993`）。按等位域判宽会在
+  `as i16` 处静默截断（doc_v10 D10-1）。
 
 ### 6.6 写出：worker 内压缩 + 有序 append【规】
 
@@ -1268,6 +1291,11 @@ pub struct FilterReport {
   MAF 按"第二常见等位"口径计算（修复 A7）。
 - 补充的 header 定义使用规范 Number（AC/AF 为 `A`），不再是 `Count(1)`。
 - 退化位点的 HWE 哨兵沿用 fill-tags 口径（p = 1）。
+
+**PASS 声明**【规】（doc_v10 N7）：输出 header 必须声明
+`##FILTER=<ID=PASS,Description="All filters passed">`，输入未声明时补上
+（htslib 读写两侧都注入，`vcf.c:1485-1490`/`1724-1726`）。否则 `FILTER=PASS`
+的记录在 BCF 编码时字典查不到，且写出的 BCF 头缺少 htslib 假设的第 0 位。
 
 ### 11.7 Ascertainment v2 自动推导与回写
 

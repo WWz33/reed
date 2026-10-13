@@ -224,9 +224,80 @@ fn bcf_output_round_trips_to_the_same_records() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v10 D10-7: an input header without `##FILTER=<ID=PASS,...>` still
+/// produces BCF — the output header declares PASS (htslib injects it on
+/// both read and write, vcf.c:1485-1490/1724-1726), so a `FILTER=PASS`
+/// record no longer fails the encoder's dictionary lookup.
+#[test]
+fn pass_is_declared_even_when_the_input_lacks_it() {
+    let dir = dir("pass-injection");
+    // A header without the PASS line, with a PASS record in the data.
+    let header = "##fileformat=VCFv4.2\n\
+                  ##contig=<ID=chr1,length=1000>\n\
+                  ##INFO=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n\
+                  ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+                  #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n";
+    let records = "chr1\t100\t.\tA\tG\t50\tPASS\tDP=5\tGT\t0/1\n\
+                   chr1\t200\t.\tA\tG\t50\t.\tDP=7\tGT\t1/1\n";
+    let text = format!("{header}{records}");
+    let mut deflater =
+        reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
+    let mut bytes = Vec::new();
+    for block in text.as_bytes().chunks(64) {
+        deflater
+            .deflate_block(block, &mut bytes)
+            .expect("invariant: block fits");
+    }
+    bytes.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+    let input = dir.join("no-pass.vcf.gz");
+    std::fs::write(&input, &bytes).expect("invariant: write fixture");
+
+    let out = dir.join("out.bcf");
+    let opts = FilterOptions {
+        threads: 2,
+        output: Some(out.clone()),
+        write_index: reed::WriteIndex::None,
+        compress_level: 6,
+        command_line: "test".into(),
+        output_bcf: Some(6),
+        no_version: true,
+        no_command: true,
+        ..FilterOptions::default()
+    };
+    run_filter(Some(&input), &FilterSpec::default(), &opts)
+        .expect("a PASS record must encode even when the input lacks the declaration");
+
+    // The written BCF header declares PASS, and its dictionary resolves the
+    // record's FILTER index to PASS (index 0, as htslib assumes).
+    let data = {
+        let raw = std::fs::read(&out).expect("invariant: output");
+        let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+        let mut data = Vec::new();
+        let mut rest = &raw[..];
+        while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
+            inflater
+                .inflate_block(&rest[..total], &mut data)
+                .expect("invariant: inflates");
+            rest = &rest[total..];
+        }
+        data
+    };
+    let l_text = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
+    let header_text = String::from_utf8_lossy(&data[9..9 + l_text]).into_owned();
+    assert!(
+        header_text.contains("##FILTER=<ID=PASS,"),
+        "output header must declare PASS: {header_text}"
+    );
+    let dict = reed_io::bcf::BcfDict::from_header(&data[9..9 + l_text]).expect("invariant: header");
+    assert_eq!(dict.tag(0), Some(b"PASS".as_slice()), "PASS sits at index 0");
+    // Both records render (the PASS one resolves its FILTER index).
+    let rendered = render_via_reed(&out);
+    assert!(rendered.contains("chr1\t100\t.\tA\tG\t50\tPASS\t"), "{rendered}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Reads a BCF file back with reed's own decoder, rendering every record.
-fn render_via_reed(path: &Path) -> String {
-    let bytes = std::fs::read(path).expect("invariant: BCF output");
+fn render_via_reed(path: &Path) -> String {    let bytes = std::fs::read(path).expect("invariant: BCF output");
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
     let mut data = Vec::new();
     let mut rest = &bytes[..];

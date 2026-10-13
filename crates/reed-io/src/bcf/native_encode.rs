@@ -30,8 +30,8 @@ use noodles::vcf;
 use super::dict::BcfDict;
 use super::record::{
     BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE,
-    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, malformed, type_width,
-    value_type,
+    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, field_bytes, malformed,
+    type_width, value_type,
 };
 use super::render::int_element;
 
@@ -764,7 +764,7 @@ impl NativeEncoder {
                 .tag(u32::try_from(key).map_err(|_| malformed("BCF INFO key is negative"))?)
                 .ok_or_else(|| malformed("BCF INFO index is not in the dictionary"))?;
             let (ty, count) = c.typed()?;
-            let payload = c.take(type_width(ty) * count)?;
+            let payload = c.take(field_bytes(ty, count, 1)?)?;
             if edit.info_remove.contains(&name) {
                 continue;
             }
@@ -814,7 +814,7 @@ impl NativeEncoder {
             let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
             let (ty, count) = ci.typed()?;
             let start = indiv.len() - ci.remaining();
-            ci.take(type_width(ty) * count * n_sample_in)?;
+            ci.take(field_bytes(ty, count, n_sample_in)?)?;
             self.bcf_fields.push((key, ty, count, start));
         }
         for f in 0..self.bcf_fields.len() {

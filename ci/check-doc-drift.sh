@@ -213,4 +213,22 @@ check "the text index decodes carried fragments on the reducer (doc_v10 D10-5)" 
         grep -q "CarriedLine" crates/reed/src/index.rs &&
         grep -q "HeadEntry::Carried" crates/reed/src/index.rs'
 
+# doc_v10 D10-6: plain gzip is read as a multi-member stream (htslib resets
+# into the next member), not a single-member decoder.
+check "plain gzip is decoded multi-member (doc_v10 D10-6)" \
+    bash -c 'grep -q "MultiGzDecoder" crates/reed-io/src/chunk/plain.rs &&
+        ! grep -qE "[^i]GzDecoder::new" crates/reed-io/src/chunk/plain.rs'
+
+# doc_v10 D10-7: the output header declares PASS even when the input does
+# not (htslib injects it on both sides).
+check "the output header declares PASS (doc_v10 D10-7)" \
+    bash -c 'grep -q "fn ensure_pass_filter" crates/reed/src/filter/mod.rs &&
+        grep -q "ensure_pass_filter(out_header)" crates/reed/src/filter/mod.rs'
+
+# doc_v10 D10-8: record field sizes go through the checked `field_bytes`
+# helper, never a raw `type_width(ty) * count` product.
+check "BCF field sizes are computed with checked multiplication (doc_v10 D10-8)" \
+    bash -c 'grep -q "pub fn field_bytes" crates/reed-io/src/bcf/record.rs &&
+        ! grep -rn "type_width(ty) \* count" crates/reed-io/src/bcf/render.rs crates/reed-io/src/bcf/native_encode.rs'
+
 exit "$fail"

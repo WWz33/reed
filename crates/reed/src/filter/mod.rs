@@ -472,6 +472,7 @@ pub fn run_filter(
         header.clone()
     };
     let mut out_header = ensure_info_defs(out_header, &plan.recompute);
+    out_header = ensure_pass_filter(out_header);
     for (key, value) in plan.provenance.header_lines().into_iter().filter(|(k, _)| {
         if opts.no_version && k.starts_with("reed_") {
             return false;
@@ -885,6 +886,23 @@ fn ensure_info_defs(
             Type::Float,
             "HWE test (PMID:15789306); 1=good, 0=bad",
         );
+    }
+    header
+}
+
+/// Declares PASS when the input header does not (doc_v10 N7, D10-7).
+///
+/// htslib adds the definition on both read and write
+/// (`bcf_hdr_parse`/`bcf_hdr_init`; "The filter PASS must appear first in
+/// the dictionary", vcf.c:1485-1490/1724-1726). Without it a `FILTER=PASS`
+/// record fails the BCF encoder's dictionary lookup, and the written BCF
+/// header lacks the line htslib assumes at index 0.
+fn ensure_pass_filter(mut header: vcf::Header) -> vcf::Header {
+    use noodles::vcf::header::record::value::{Map, map::Filter};
+    if !header.filters().iter().any(|(id, _)| id.as_str() == "PASS") {
+        header
+            .filters_mut()
+            .insert(String::from("PASS"), Map::<Filter>::pass());
     }
     header
 }

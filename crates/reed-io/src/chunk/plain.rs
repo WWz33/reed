@@ -39,11 +39,17 @@ impl PlainChunkSource {
 
     /// Opens a gzip stream (serial inflate) and scans the header.
     ///
+    /// Multi-member input (`cat a.vcf.gz b.vcf.gz`) is read end to end:
+    /// `MultiGzDecoder` continues into the next member where htslib's
+    /// `inflate_gzip_block` peeks and `inflateReset`s (bgzf.c:832-908). A
+    /// plain `GzDecoder` would silently stop after the first member
+    /// (doc_v10 D10-6).
+    ///
     /// # Errors
     ///
     /// [`IoError::Header`] when no `#CHROM` line is found.
     pub fn open_gzip(reader: impl Read + Send + 'static) -> Result<(Self, HeaderFacts), IoError> {
-        let gz = flate2::read::GzDecoder::new(reader);
+        let gz = flate2::read::MultiGzDecoder::new(reader);
         Self::open_inner(Box::new(std::io::BufReader::with_capacity(1 << 20, gz)))
     }
 
@@ -103,5 +109,49 @@ impl crate::chunk::ChunkSource for PlainChunkSource {
             compressed_start: 0,
             blocks: Vec::new(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::ChunkSource as _;
+
+    /// A gzip member of `text` (regular gzip, no BGZF `BC` subfield).
+    fn gzip_member(text: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(text).expect("invariant: gzip write");
+        enc.finish().expect("invariant: gzip finish")
+    }
+
+    /// doc_v10 D10-6: `cat a.vcf.gz b.vcf.gz` must be read end to end (as
+    /// htslib does — `inflate_gzip_block` resets into the next member,
+    /// bgzf.c:832-908). The old single-member `GzDecoder` silently stopped
+    /// after the first member.
+    #[test]
+    fn multi_member_gzip_reads_every_member() {
+        let header = b"##fileformat=VCFv4.3\n\
+                       ##contig=<ID=chr1,length=1000>\n\
+                       #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let a = b"chr1\t10\t.\tA\tG\t.\tPASS\t.\n";
+        let b = b"chr1\t20\t.\tA\tG\t.\tPASS\t.\n";
+        let mut member_a = header.to_vec();
+        member_a.extend_from_slice(a);
+        let mut member_b = header.to_vec();
+        member_b.extend_from_slice(b);
+        let mut stream = gzip_member(&member_a);
+        stream.extend_from_slice(&gzip_member(&member_b));
+
+        let (mut source, facts) = PlainChunkSource::open_gzip(std::io::Cursor::new(stream))
+            .expect("invariant: header present");
+        let mut text = Vec::new();
+        while let Some(chunk) = source.next_chunk().expect("invariant: chunking") {
+            text.extend_from_slice(chunk.compressed.as_slice());
+        }
+        assert_eq!(facts.n_samples(), 0);
+        let text = String::from_utf8(text).expect("invariant: ASCII");
+        assert!(text.contains("chr1\t10\t"), "member a missing: {text}");
+        assert!(text.contains("chr1\t20\t"), "member b missing: {text}");
     }
 }

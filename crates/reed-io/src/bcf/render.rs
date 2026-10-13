@@ -13,8 +13,8 @@
 
 use super::dict::BcfDict;
 use super::record::{
-    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, int_sentinels, malformed, type_width,
-    value_type,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, int_sentinels,
+    malformed, type_width, value_type,
 };
 use crate::error::IoError;
 use crate::vcf::genotype_scan::LocusSource;
@@ -157,7 +157,7 @@ pub fn render_site_part(
                 continue; // a flag: key only
             }
             out.push(b'=');
-            let data = c.take(type_width(ty) * count)?;
+            let data = c.take(field_bytes(ty, count, 1)?)?;
             fmt_array(out, ty, count, data);
         }
     }
@@ -204,7 +204,7 @@ pub fn render_sample_part(
             let key = u32::try_from(key).map_err(|_| bad(locus, "BCF FORMAT key is negative"))?;
             let (ty, count) = ci.typed()?;
             let start = indiv.len() - ci.remaining();
-            ci.take(type_width(ty) * count * n_sample)?;
+            ci.take(field_bytes(ty, count, n_sample)?)?;
             fields.push((key, ty, count, start));
         }
 
@@ -223,7 +223,7 @@ pub fn render_sample_part(
         let mut layout: Vec<(bool, u8, usize, usize, usize)> = Vec::with_capacity(fields.len());
         for &(key, ty, count, field_start) in &fields {
             let is_gt = dict.tag(key) == Some(b"GT".as_slice());
-            layout.push((is_gt, ty, count, field_start, type_width(ty) * count));
+            layout.push((is_gt, ty, count, field_start, field_bytes(ty, count, 1)?));
         }
         for s in 0..n_sample {
             out.push(b'\t');
@@ -310,7 +310,7 @@ pub fn decode_format_columns(
         let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
         let (ty, count) = ci.typed()?;
         let start = indiv.len() - ci.remaining();
-        ci.take(type_width(ty) * count * n_sample)?;
+        ci.take(field_bytes(ty, count, n_sample)?)?;
         fields.push((key, ty, count, start));
     }
     for &(key, ty, count, start) in &fields {
