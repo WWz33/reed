@@ -181,4 +181,28 @@ check "reducer errors go through bail (doc_v9 D9-1)" \
 check "NewlineStitcher is finalized at stream end (doc_v9 D9-3)" \
     bash -c '[ "$(grep -c "stitcher.finish()" crates/reed-engine/src/pipeline.rs)" -ge 2 ]'
 
+# doc_v10 D10-1: the GT width follows the encoded value domain — INT8 ends
+# at allele 62, INT16 at 16382 (2a+3 <= 127 / 32767). A regression to the
+# old allele-domain thresholds (32766) truncates codes with `as i16`.
+check "GT width follows the encoded value domain (doc_v10 D10-1)" \
+    bash -c 'grep -q "fn gt_width" crates/reed-io/src/bcf/native_encode.rs &&
+        grep -q "max_allele <= 16382" crates/reed-io/src/bcf/native_encode.rs &&
+        ! grep -q "max_allele <= 32766" crates/reed-io/src/bcf/native_encode.rs'
+
+# doc_v10 D10-2: a (NULL, count>0) descriptor is rejected at the one read
+# gate (`Cursor::typed`), so the empty payload never reaches the renderers.
+check "null descriptors with a nonzero count are rejected (doc_v10 D10-2)" \
+    grep -q "null-typed descriptor has a nonzero count" crates/reed-io/src/bcf/record.rs
+
+# doc_v10 D10-3: the dictionary is sparse (a BTreeMap), so an attacker
+# `IDX=` cannot drive an allocation; the htslib ceiling is enforced.
+check "the BCF dictionary is sparse and IDX-bounded (doc_v10 D10-3)" \
+    bash -c 'grep -q "strings: BTreeMap<u32, Vec<u8>>" crates/reed-io/src/bcf/dict.rs &&
+        grep -q "IDX_MAX" crates/reed-io/src/bcf/dict.rs'
+
+# doc_v10 D10-4: BSIZE below the 18-byte header length is rejected in
+# `parse_block_size`, before any caller slices or underflows.
+check "undersized BGZF blocks are rejected (doc_v10 D10-4)" \
+    bash -c 'grep -q "bsize + 1 < BGZF_HEADER_LEN" crates/reed-io/src/bgzf/block.rs'
+
 exit "$fail"

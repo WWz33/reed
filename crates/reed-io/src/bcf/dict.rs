@@ -2,20 +2,32 @@
 //! string dictionary in header order, contigs have their own in `##contig`
 //! order. An explicit `IDX=` pins an entry's index; otherwise the next free
 //! index is used — the same rule htslib applies when it reads a BCF header.
+//!
+//! The string dictionary is a sparse map keyed by index: a header `IDX=`
+//! is attacker-controlled input, and a dense `Vec` sized by it turns a few
+//! header bytes into an allocation of the attacker's choosing. htslib
+//! bounds the same input with `idx >= INT_MAX - 1 → skip` and a fallible
+//! resize (`vcf.c:800-830`, `vcf.c:877-891`); the map removes the
+//! allocation entirely (doc_v10 D10-3).
+
+use std::collections::BTreeMap;
 
 use crate::error::IoError;
 
 /// Index → name lookups for one BCF header.
 #[derive(Clone, Debug, Default)]
 pub struct BcfDict {
-    /// String dictionary: index → tag name (holes stay `None`).
-    strings: Vec<Option<Vec<u8>>>,
+    /// String dictionary: index → tag name (indices are sparse).
+    strings: BTreeMap<u32, Vec<u8>>,
     /// Contig names in `##contig` order.
     contigs: Vec<Vec<u8>>,
     /// The header declares VCF ≥ 4.4 (`##fileformat`): GT rendering applies
     /// the prefixed-phasing rules (A6-14, htslib `bcf_format_gt_v2`).
     vcf44: bool,
 }
+
+/// htslib's IDX ceiling (`idx >= INT_MAX - 1` is skipped, vcf.c:877-891).
+const IDX_MAX: u64 = (i32::MAX - 1) as u64;
 
 impl BcfDict {
     /// Builds the dictionaries from the header text embedded in the BCF.
@@ -25,7 +37,7 @@ impl BcfDict {
     /// [`IoError::Header`] when a header line is malformed (no `ID=`).
     pub fn from_header(text: &[u8]) -> Result<Self, IoError> {
         let mut dict = Self::default();
-        let mut next = 0_usize;
+        let mut next = 0_u32;
         for line in text.split(|&b| b == b'\n') {
             if let Some(version) = line.strip_prefix(b"##fileformat=VCFv") {
                 dict.vcf44 = parse_version(version).is_some_and(|v| v >= (4, 4));
@@ -57,16 +69,26 @@ impl BcfDict {
             };
             let idx = field(rest, b"IDX")
                 .and_then(|v| std::str::from_utf8(v).ok())
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or_else(|| {
-                    let i = next;
-                    next += 1;
-                    i
-                });
-            if dict.strings.len() <= idx {
-                dict.strings.resize(idx + 1, None);
-            }
-            dict.strings[idx] = Some(name.to_vec());
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&idx| {
+                    if idx >= IDX_MAX {
+                        tracing::warn!(
+                            "BCF header IDX={idx} is out of range; assigning the next free index"
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .map_or_else(
+                    || {
+                        let i = next;
+                        next += 1;
+                        i
+                    },
+                    |idx| u32::try_from(idx).expect("invariant: bounded by IDX_MAX"),
+                );
+            dict.strings.insert(idx, name.to_vec());
             next = next.max(idx + 1);
         }
         Ok(dict)
@@ -75,7 +97,7 @@ impl BcfDict {
     /// The tag name at `index` (`None` outside the dictionary).
     #[must_use]
     pub fn tag(&self, index: u32) -> Option<&[u8]> {
-        self.strings.get(index as usize).and_then(Option::as_deref)
+        self.strings.get(&index).map(Vec::as_slice)
     }
 
     /// The contig name at `index` (`None` outside the dictionary).
@@ -105,8 +127,8 @@ impl BcfDict {
     pub fn key_of(&self, tag: &[u8]) -> Option<u32> {
         self.strings
             .iter()
-            .position(|entry| entry.as_deref() == Some(tag))
-            .and_then(|i| u32::try_from(i).ok())
+            .find(|(_, name)| name.as_slice() == tag)
+            .map(|(&i, _)| i)
     }
 }
 
@@ -185,5 +207,30 @@ mod tests {
         assert_eq!(dict.tag(7).expect("7"), b"X");
         assert_eq!(dict.tag(8).expect("8"), b"Y");
         assert!(dict.tag(1).is_none());
+    }
+
+    /// doc_v10 D10-3: a huge `IDX=` is attacker-controlled input. The old
+    /// dense `Vec::resize(idx + 1)` turned `IDX=4000000000` into an ~96 GB
+    /// allocation (abort on failure). The sparse map plus the htslib
+    /// ceiling (`idx >= INT_MAX - 1` skipped, vcf.c:877-891) must keep the
+    /// header parseable and tiny.
+    #[test]
+    fn huge_idx_does_not_allocate_and_falls_back() {
+        let text = b"##FILTER=<ID=PASS,Description=\"p\">\n\
+                     ##INFO=<ID=X,Number=1,Type=Integer,IDX=4000000000,Description=\"x\">\n\
+                     ##INFO=<ID=Y,Number=1,Type=Integer,Description=\"y\">\n";
+        let dict = BcfDict::from_header(text).expect("invariant: parses");
+        // The out-of-range IDX is skipped; X takes the next free index (1),
+        // and Y follows (2).
+        assert_eq!(dict.tag(1).expect("1"), b"X");
+        assert_eq!(dict.tag(2).expect("2"), b"Y");
+        assert!(dict.tag(4_000_000_000).is_none());
+
+        // A large-but-legal IDX stays sparse: no allocation proportional to
+        // the index, and the lookup still resolves.
+        let text = b"##INFO=<ID=Z,Number=1,Type=Integer,IDX=1000000,Description=\"z\">\n";
+        let dict = BcfDict::from_header(text).expect("invariant: parses");
+        assert_eq!(dict.tag(1_000_000).expect("1e6"), b"Z");
+        assert_eq!(dict.key_of(b"Z"), Some(1_000_000));
     }
 }
