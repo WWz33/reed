@@ -30,8 +30,8 @@ use noodles::vcf;
 use super::dict::BcfDict;
 use super::record::{
     BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE,
-    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, malformed, type_width,
-    value_type,
+    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, field_bytes, malformed,
+    type_width, value_type,
 };
 use super::render::int_element;
 
@@ -519,13 +519,7 @@ impl NativeEncoder {
             max_allele = max_allele.max(allele);
         }
         let max_ploidy = max_ploidy.max(1);
-        let (ty, width) = if max_allele <= 62 {
-            (value_type::INT8, 1_usize)
-        } else if max_allele <= 32766 {
-            (value_type::INT16, 2)
-        } else {
-            (value_type::INT32, 4)
-        };
+        let (ty, width) = gt_width(max_allele);
         encode_size(&mut self.indiv, max_ploidy, ty);
         let (_, vector_end) = super::record::int_sentinels(ty);
         let vector_end = vector_end as i32;
@@ -770,7 +764,7 @@ impl NativeEncoder {
                 .tag(u32::try_from(key).map_err(|_| malformed("BCF INFO key is negative"))?)
                 .ok_or_else(|| malformed("BCF INFO index is not in the dictionary"))?;
             let (ty, count) = c.typed()?;
-            let payload = c.take(type_width(ty) * count)?;
+            let payload = c.take(field_bytes(ty, count, 1)?)?;
             if edit.info_remove.contains(&name) {
                 continue;
             }
@@ -820,7 +814,7 @@ impl NativeEncoder {
             let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
             let (ty, count) = ci.typed()?;
             let start = indiv.len() - ci.remaining();
-            ci.take(type_width(ty) * count * n_sample_in)?;
+            ci.take(field_bytes(ty, count, n_sample_in)?)?;
             self.bcf_fields.push((key, ty, count, start));
         }
         for f in 0..self.bcf_fields.len() {
@@ -902,13 +896,7 @@ impl NativeEncoder {
             max_ploidy = max_ploidy.max(ploidy);
         }
         let count_out = max_ploidy.max(1);
-        let (ty_out, width_out) = if max_allele <= 62 {
-            (value_type::INT8, 1_usize)
-        } else if max_allele <= 32766 {
-            (value_type::INT16, 2)
-        } else {
-            (value_type::INT32, 4)
-        };
+        let (ty_out, width_out) = gt_width(max_allele);
         encode_size(&mut self.indiv, count_out, ty_out);
         let (_, vector_end_out) = super::record::int_sentinels(ty_out);
         let vector_end_out = vector_end_out as i32;
@@ -1072,6 +1060,24 @@ fn int_width(min: i64, max: i64) -> (u8, usize) {
     }
 }
 
+/// The GT integer width for the largest allele index, judged on the
+/// *encoded value* domain: allele `a` encodes to `(a+1)<<1 | phased`, whose
+/// maximum is `2a+3`. INT8 ends at allele 62 (`2*62+3 = 127`) and INT16 at
+/// 16382 (`2*16382+3 = 32767`); larger alleles need INT32 (htslib judges
+/// the encoded values in `bcf_enc_vint`, vcf.c:2955-2993).
+///
+/// Both GT encoders share this: the thresholds are load-bearing, and one
+/// stale copy silently truncates codes with `as i16` (doc_v10 D10-1).
+fn gt_width(max_allele: i64) -> (u8, usize) {
+    if max_allele <= 62 {
+        (value_type::INT8, 1)
+    } else if max_allele <= 16382 {
+        (value_type::INT16, 2)
+    } else {
+        (value_type::INT32, 4)
+    }
+}
+
 /// A typed int vector with htslib's width choice.
 fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     let (mut min, mut max) = (i64::MAX, i64::MIN);
@@ -1208,8 +1214,12 @@ fn push_gt_code(out: &mut Vec<i32>, allele: &[u8], phased: bool) {
     let bit = i32::from(phased);
     let code = match parse_i64(allele) {
         // An allele index beyond i32 cannot be represented in any BCF GT
-        // encoding; treat it as missing rather than truncating.
-        Some(a) if (0..=i64::from(i32::MAX >> 1)).contains(&a) => (((a + 1) << 1) as i32) | bit,
+        // encoding; treat it as missing rather than truncating. The bound is
+        // the last allele whose `(a+1)<<1 | bit` still fits i32
+        // (a = 1073741822; 1073741823 would wrap, doc_v10 D10-1).
+        Some(a) if (0..=(i64::from(i32::MAX >> 1) - 1)).contains(&a) => {
+            (((a + 1) << 1) as i32) | bit
+        }
         _ => bit,
     };
     out.push(code);
@@ -1421,5 +1431,55 @@ mod tests {
         assert_eq!(gt_shape(b"0/1"), (2, 1));
         assert_eq!(gt_shape(b"|1"), (1, 1));
         assert_eq!(gt_shape(b"."), (1, 0));
+    }
+
+    /// doc_v10 D10-1: the GT integer width follows the *encoded value* domain
+    /// `(allele+1)<<1 | phased` — whose maximum for allele `a` is `2a+3` —
+    /// not the allele domain. So INT8 ends at allele 62 (`2*62+3 = 127`) and
+    /// INT16 at 16382 (`2*16382+3 = 32767`); allele 16383 encodes to 32768
+    /// and must take INT32. The old allele-domain threshold (`<= 32766`
+    /// alleles → INT16) silently truncated those codes with `as i16`
+    /// (htslib judges the encoded values: `bcf_enc_vint`, vcf.c:2955-2993,
+    /// `BCF_MAX_BT_INT16 = 0x7fff`, vcf.h:1539).
+    #[test]
+    fn gt_width_follows_the_encoded_value_domain() {
+        const GT_HEADER: &[u8] = b"##fileformat=VCFv4.2\n\
+            ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n";
+        let header: vcf::Header = std::str::from_utf8(GT_HEADER)
+            .expect("invariant: utf-8")
+            .parse()
+            .expect("invariant: header");
+        let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+        // (allele, expected descriptor type, expected first code)
+        let cases: &[(u64, u8, i64)] = &[
+            (62, value_type::INT8, 126),
+            (63, value_type::INT16, 128),
+            (16382, value_type::INT16, 32766),
+            (16383, value_type::INT32, 32768),
+            (32766, value_type::INT32, 65534),
+            (32767, value_type::INT32, 65536),
+        ];
+        for &(allele, want_ty, want_code) in cases {
+            let line = format!("Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t{allele}/{allele}\n");
+            let lr = LineRef::parse(line.as_bytes()).expect("invariant: 10 columns");
+            let site = SiteView::parse(&lr).expect("invariant: site");
+            let mut out = Vec::new();
+            enc.encode_text(&lr, &site, 1, &EditPlan::default(), &mut out)
+                .expect("invariant: encode");
+            let rec = record_ref(&out).expect("invariant: framed record");
+            let mut c = Cursor::new(rec.indiv);
+            let _key = c.typed_int().expect("invariant: GT key");
+            let (ty, count) = c.typed().expect("invariant: GT descriptor");
+            assert_eq!(count, 2, "allele {allele}");
+            assert_eq!(ty, want_ty, "allele {allele}: descriptor type");
+            assert_eq!(
+                c.int_value(ty).expect("invariant: code"),
+                want_code,
+                "allele {allele}: encoded code"
+            );
+        }
     }
 }

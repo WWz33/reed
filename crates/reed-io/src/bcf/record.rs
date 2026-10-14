@@ -168,6 +168,23 @@ pub fn record_site(bytes: &[u8]) -> Result<(i32, i32, i32), IoError> {
     Ok((int(0), int(4), int(8)))
 }
 
+/// The byte length of a typed field with `count` elements per sample across
+/// `n_sample` samples, checked against overflow.
+///
+/// On 64-bit targets the product cannot overflow (count ≤ i32::MAX, n_sample
+/// ≤ 2^24−1, width ≤ 4), but the multiplication must not *depend* on that;
+/// an overflow is a malformed record, never a wrap (doc_v10 N8, D10-8).
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] when the product overflows.
+pub fn field_bytes(ty: u8, count: usize, n_sample: usize) -> Result<usize, IoError> {
+    type_width(ty)
+        .checked_mul(count)
+        .and_then(|v| v.checked_mul(n_sample))
+        .ok_or_else(|| malformed("BCF field size overflows"))
+}
+
 /// A cursor over one block.
 pub struct Cursor<'a> {
     data: &'a [u8],
@@ -245,6 +262,11 @@ impl<'a> Cursor<'a> {
     /// A typed descriptor: `(type, count)`; counts of 15 read the extended
     /// typed integer that follows (§6.3.3).
     ///
+    /// A NULL type with a nonzero count is malformed — NULL carries no
+    /// payload, so its count must be zero (an INFO flag). htslib rejects it
+    /// in `bcf_record_check` (vcf.c:2231-2236); without the check the empty
+    /// payload reaches the renderers, which index past it (doc_v10 D10-2).
+    ///
     /// # Errors
     ///
     /// [`IoError::MalformedRecord`] for an invalid descriptor.
@@ -259,6 +281,9 @@ impl<'a> Cursor<'a> {
         }
         if type_width(ty) == 0 && ty != value_type::NULL {
             return Err(malformed("BCF descriptor has an unknown type"));
+        }
+        if ty == value_type::NULL && count > 0 {
+            return Err(malformed("BCF null-typed descriptor has a nonzero count"));
         }
         Ok((ty, count))
     }

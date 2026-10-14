@@ -50,7 +50,10 @@ pub fn block_inflated_size(block: &[u8]) -> u32 {
 /// Parses the fixed header; returns the **total** block size (BSIZE + 1).
 ///
 /// Returns `None` when the bytes are not a BGZF header (callers treat this
-/// as end-of-stream or corrupt data, per context).
+/// as end-of-stream or corrupt data, per context), and when BSIZE declares
+/// fewer than [`BGZF_HEADER_LEN`] bytes — htslib rejects that block length
+/// before touching the payload (`bgzf.c:1219-1225`); without the check the
+/// callers slice or underflow on the short block (doc_v10 D10-4).
 #[must_use]
 pub fn parse_block_size(header: &[u8]) -> Option<usize> {
     if header.len() < BGZF_HEADER_LEN {
@@ -63,6 +66,9 @@ pub fn parse_block_size(header: &[u8]) -> Option<usize> {
         return None;
     }
     let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
+    if bsize + 1 < BGZF_HEADER_LEN {
+        return None;
+    }
     Some(bsize + 1)
 }
 

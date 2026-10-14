@@ -181,4 +181,54 @@ check "reducer errors go through bail (doc_v9 D9-1)" \
 check "NewlineStitcher is finalized at stream end (doc_v9 D9-3)" \
     bash -c '[ "$(grep -c "stitcher.finish()" crates/reed-engine/src/pipeline.rs)" -ge 2 ]'
 
+# doc_v10 D10-1: the GT width follows the encoded value domain — INT8 ends
+# at allele 62, INT16 at 16382 (2a+3 <= 127 / 32767). A regression to the
+# old allele-domain thresholds (32766) truncates codes with `as i16`.
+check "GT width follows the encoded value domain (doc_v10 D10-1)" \
+    bash -c 'grep -q "fn gt_width" crates/reed-io/src/bcf/native_encode.rs &&
+        grep -q "max_allele <= 16382" crates/reed-io/src/bcf/native_encode.rs &&
+        ! grep -q "max_allele <= 32766" crates/reed-io/src/bcf/native_encode.rs'
+
+# doc_v10 D10-2: a (NULL, count>0) descriptor is rejected at the one read
+# gate (`Cursor::typed`), so the empty payload never reaches the renderers.
+check "null descriptors with a nonzero count are rejected (doc_v10 D10-2)" \
+    grep -q "null-typed descriptor has a nonzero count" crates/reed-io/src/bcf/record.rs
+
+# doc_v10 D10-3: the dictionary is sparse (a BTreeMap), so an attacker
+# `IDX=` cannot drive an allocation; the htslib ceiling is enforced.
+check "the BCF dictionary is sparse and IDX-bounded (doc_v10 D10-3)" \
+    bash -c 'grep -q "strings: BTreeMap<u32, Vec<u8>>" crates/reed-io/src/bcf/dict.rs &&
+        grep -q "IDX_MAX" crates/reed-io/src/bcf/dict.rs'
+
+# doc_v10 D10-4: BSIZE below the 18-byte header length is rejected in
+# `parse_block_size`, before any caller slices or underflows.
+check "undersized BGZF blocks are rejected (doc_v10 D10-4)" \
+    bash -c 'grep -q "bsize + 1 < BGZF_HEADER_LEN" crates/reed-io/src/bgzf/block.rs'
+
+# doc_v10 D10-5: the text index carries possibly-incomplete lines to the
+# reducer and decodes each record once, whole (`feed`/`CarriedLine`); the
+# worker no longer parses head/tail fragments.
+check "the text index decodes carried fragments on the reducer (doc_v10 D10-5)" \
+    bash -c 'grep -q "fn feed" crates/reed/src/index.rs &&
+        grep -q "CarriedLine" crates/reed/src/index.rs &&
+        grep -q "HeadEntry::Carried" crates/reed/src/index.rs'
+
+# doc_v10 D10-6: plain gzip is read as a multi-member stream (htslib resets
+# into the next member), not a single-member decoder.
+check "plain gzip is decoded multi-member (doc_v10 D10-6)" \
+    bash -c 'grep -q "MultiGzDecoder" crates/reed-io/src/chunk/plain.rs &&
+        ! grep -qE "[^i]GzDecoder::new" crates/reed-io/src/chunk/plain.rs'
+
+# doc_v10 D10-7: the output header declares PASS even when the input does
+# not (htslib injects it on both sides).
+check "the output header declares PASS (doc_v10 D10-7)" \
+    bash -c 'grep -q "fn ensure_pass_filter" crates/reed/src/filter/mod.rs &&
+        grep -q "ensure_pass_filter(out_header)" crates/reed/src/filter/mod.rs'
+
+# doc_v10 D10-8: record field sizes go through the checked `field_bytes`
+# helper, never a raw `type_width(ty) * count` product.
+check "BCF field sizes are computed with checked multiplication (doc_v10 D10-8)" \
+    bash -c 'grep -q "pub fn field_bytes" crates/reed-io/src/bcf/record.rs &&
+        ! grep -rn "type_width(ty) \* count" crates/reed-io/src/bcf/render.rs crates/reed-io/src/bcf/native_encode.rs'
+
 exit "$fail"
