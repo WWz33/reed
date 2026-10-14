@@ -583,7 +583,7 @@ pub fn run_index(
     }
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
         opened
-            .facts
+            .facts()
             .contig_names
             .iter()
             .map(|n| n.as_bytes().to_vec())
@@ -621,7 +621,7 @@ pub fn run_index(
             .peek(report.n_chunks)
             .is_some_and(|carried| !carried.is_empty())
         {
-            return Err(crate::error::Error::Engine(EngineError::Job(
+            return Err(crate::error::Error::from(EngineError::Job(
                 "BCF input ends inside a record (truncated file)".into(),
             )));
         }

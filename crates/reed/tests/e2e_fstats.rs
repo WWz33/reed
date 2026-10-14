@@ -98,7 +98,7 @@ fn fstats_match_scikit_allel() {
             d: 2,
         },
     ];
-    let report = run_stats(Some(&vcf), request(tests, 1), &budget).expect("invariant: run");
+    let report = run_stats(Some(&vcf), &request(tests, 1), &budget).expect("invariant: run");
     let fstats = report.fstats.expect("invariant: f-stats requested");
     assert_eq!(fstats.rows.len(), 4);
 
@@ -146,7 +146,7 @@ fn fstats_are_identical_across_thread_counts() {
         };
         let report = run_stats(
             Some(&vcf),
-            request(
+            &request(
                 vec![
                     FStatTest::F2 { a: 0, b: 1 },
                     FStatTest::Dstat {
@@ -189,7 +189,7 @@ fn f4_ratio_divides_the_two_f4_estimates() {
     // F4 tests over the same data, so the ratio is checkable by construction.
     let ratio = run_stats(
         Some(&vcf),
-        request(
+        &request(
             vec![FStatTest::F4Ratio {
                 o: 1,
                 a: 0,
@@ -207,7 +207,7 @@ fn f4_ratio_divides_the_two_f4_estimates() {
 
     let parts = run_stats(
         Some(&vcf),
-        request(
+        &request(
             vec![
                 FStatTest::F4 {
                     a: 0,

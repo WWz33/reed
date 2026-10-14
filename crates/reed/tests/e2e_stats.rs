@@ -180,7 +180,7 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
         };
         let report = run_stats(
             Some(path.as_path()),
-            request(
+            &request(
                 KINDS_TEST.to_vec(),
                 Levels {
                     window: true,
@@ -210,7 +210,7 @@ fn skip_empty_drops_window_rows_only() {
     };
     let report = run_stats(
         Some(path.as_path()),
-        request(
+        &request(
             KINDS_TEST.to_vec(),
             Levels {
                 window: true,
@@ -241,7 +241,7 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     let levels = Levels::parse("window,contig,genome").expect("invariant: levels");
     let report = run_stats(
         Some(path.as_path()),
-        request(KINDS_TEST.to_vec(), levels, false),
+        &request(KINDS_TEST.to_vec(), levels, false),
         &budget,
     )
     .expect("invariant: fixture run succeeds");
@@ -312,7 +312,7 @@ chr1\t60\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t1/1
     };
     let err = run_stats(
         Some(path.as_path()),
-        request(KINDS_TEST.to_vec(), Levels::default(), false),
+        &request(KINDS_TEST.to_vec(), Levels::default(), false),
         &budget,
     )
     .expect_err("invariant: revisit is refused");
@@ -397,7 +397,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
 
     let err = run_stats(
         Some(path.as_path()),
-        request(
+        &request(
             vec![StatKind::Pi {
                 group: 0,
                 per_bp: true,
@@ -418,7 +418,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     lengths.insert(b"chr1".to_vec(), 1_000_u64);
     let with_file = run_stats(
         Some(path.as_path()),
-        request_with(
+        &request_with(
             vec![StatKind::Pi {
                 group: 0,
                 per_bp: true,
@@ -437,7 +437,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     let declared = write_fixture("d7-declared", &fixture_text());
     let reference = run_stats(
         Some(declared.as_path()),
-        request(
+        &request(
             vec![StatKind::Pi {
                 group: 0,
                 per_bp: true,
@@ -480,7 +480,7 @@ chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
     let path = write_fixture("d8-unsorted", unsorted);
     let err = run_stats(
         Some(path.as_path()),
-        request(
+        &request(
             vec![StatKind::Pi {
                 group: 0,
                 per_bp: false,
@@ -507,7 +507,7 @@ chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
     let path = write_fixture("d8-beyond", beyond);
     let err = run_stats(
         Some(path.as_path()),
-        request(
+        &request(
             vec![StatKind::Pi {
                 group: 0,
                 per_bp: false,
@@ -602,12 +602,12 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
         fstats: None,
         ld: None,
     };
-    let report = reed::run_stats(Some(&vcf), request, &budget).expect("invariant: run");
-    // Three windows in input order; rows are (pop, start1, end0).
+    let report = reed::run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
+    // Three windows in input order; rows are (pop, start1, end).
     let rows: Vec<(String, u64, u64)> = report
         .windows
         .iter()
-        .map(|w| (w.contig.clone(), w.start1, w.end0))
+        .map(|w| (w.contig.clone(), w.start1, w.end))
         .collect();
     assert_eq!(
         rows,
@@ -679,7 +679,7 @@ fn malformed_record_under_site_filter_is_fatal() {
         threads: 4,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let err = run_stats(Some(path.as_path()), request, &budget)
+    let err = run_stats(Some(path.as_path()), &request, &budget)
         .expect_err("malformed line must be fatal");
     assert!(
         err.to_string().contains("fewer than 9 columns"),

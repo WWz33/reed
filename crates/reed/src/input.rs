@@ -21,14 +21,41 @@ use reed_io::header::HeaderFacts;
 
 /// An opened input: the chunk source plus the header facts that were parsed
 /// while locating the first record.
+///
+/// The fields are crate-internal (doc_v11 N9): the transport types behind
+/// them belong to the lower crates, so exposing them would freeze those
+/// crates into the facade's stability promise. Callers read the header
+/// through [`OpenedInput::facts`] and hand the value to a `run_*_opened`
+/// entry point.
 pub struct OpenedInput {
     /// Chunks from the first record on.
-    pub source: Box<dyn ChunkSource>,
+    pub(crate) source: Box<dyn ChunkSource>,
     /// Header facts (noodles header, samples, contigs).
-    pub facts: HeaderFacts,
+    pub(crate) facts: HeaderFacts,
     /// Present when the input is BCF: the tag dictionaries the renderer
     /// needs (doc_v3 02-bcf.md B1).
-    pub bcf: Option<std::sync::Arc<reed_io::bcf::BcfDict>>,
+    pub(crate) bcf: Option<std::sync::Arc<reed_io::bcf::BcfDict>>,
+}
+
+impl OpenedInput {
+    /// Header facts (noodles header, samples, contigs) of the opened input.
+    #[must_use]
+    pub const fn facts(&self) -> &HeaderFacts {
+        &self.facts
+    }
+
+    /// The tag dictionaries when the input is BCF (doc_v3 02-bcf.md B1).
+    #[must_use]
+    pub fn bcf_dict(&self) -> Option<&std::sync::Arc<reed_io::bcf::BcfDict>> {
+        self.bcf.as_ref()
+    }
+
+    /// The underlying chunk source, for the crate's own integration tests
+    /// that read raw chunks. Not part of the stable surface (N9).
+    #[doc(hidden)]
+    pub fn source_mut(&mut self) -> &mut dyn ChunkSource {
+        self.source.as_mut()
+    }
 }
 
 /// Opens a one-shot input: file at `path`, or stdin when `None`. stdin is

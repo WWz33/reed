@@ -165,7 +165,7 @@ fn open_regions_consumes_its_own_index() {
     .expect("invariant: open with the built index");
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
     let mut text = String::new();
-    while let Some(chunk) = opened.source.next_chunk().expect("invariant: chunk read") {
+    while let Some(chunk) = opened.source_mut().next_chunk().expect("invariant: chunk read") {
         let bytes = chunk.compressed.as_slice();
         let mut rest = bytes;
         while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {

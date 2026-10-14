@@ -8,13 +8,9 @@
 //! `-i QUAL>=P`, and typed INFO predicates (`site.info`) become no flag at
 //! all — the CLI carries INFO rules as expressions in `site.include`.
 
-use super::{AfKind, FilterSpec, HweMode, OnMissing, SampleList};
+use reed_core::args::push_flag as flag;
 
-/// Appends a flag plus its value.
-fn flag(args: &mut Vec<String>, name: &str, value: impl std::fmt::Display) {
-    args.push(name.to_string());
-    args.push(value.to_string());
-}
+use super::{AfKind, FilterSpec, HweMode, OnMissing, SampleList};
 
 /// Renders `value` the way the CLI parses floats back (`{}` round-trips).
 fn f(value: f64) -> String {

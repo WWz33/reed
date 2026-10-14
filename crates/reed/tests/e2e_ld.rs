@@ -92,7 +92,7 @@ fn pairwise_r2_matches_plink2() {
 
     let report = run_stats(
         Some(&vcf),
-        request(LdRequest {
+        &request(LdRequest {
             decay_max_bp: Some(100_000),
             decay_bin_bp: 1000,
             pairs: true,
@@ -289,7 +289,7 @@ fn ld_is_identical_across_thread_counts() {
         };
         let report = run_stats(
             Some(&vcf),
-            request(LdRequest {
+            &request(LdRequest {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,
@@ -327,7 +327,7 @@ fn ld_decay_carries_per_population_curves() {
     });
     // Two populations of three samples each.
     req.populations = Populations::File(pops_two_file(dir.as_path()));
-    let report = run_stats(Some(&vcf), req, &budget).expect("invariant: run");
+    let report = run_stats(Some(&vcf), &req, &budget).expect("invariant: run");
     let ld = report.ld.expect("invariant: LD requested");
 
     assert_eq!(ld.group_decay.len(), 2, "one curve per population");
@@ -532,12 +532,12 @@ fn ld_cohort_excludes_removed_samples() {
 
     let mut kept = request(ld());
     kept.keep_samples = Some(vec![true, true, true, true, false, false]);
-    let a = run_stats(Some(&full), kept, &budget)
+    let a = run_stats(Some(&full), &kept, &budget)
         .expect("invariant: run")
         .ld
         .expect("invariant: LD requested");
 
-    let b = run_stats(Some(&four), request(ld()), &budget)
+    let b = run_stats(Some(&four), &request(ld()), &budget)
         .expect("invariant: run")
         .ld
         .expect("invariant: LD requested");
@@ -657,7 +657,7 @@ fn ld_sink_caps_in_flight_decay_jobs() {
         };
         let report = run_stats(
             Some(&vcf),
-            request(LdRequest {
+            &request(LdRequest {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,

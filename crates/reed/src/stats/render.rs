@@ -3,19 +3,20 @@
 //! accepts. The name-based spellings (`--pbs A,B,C`, `--f2 A,B`) need the
 //! population assignment order, so unlike `FilterSpec::to_args` this takes
 //! the group names.
+//!
+//! Not every request has a lossless flag spelling (the wide-table kind set,
+//! per-bp kinds, a `Regions` grid); those return a usage error instead of
+//! panicking (doc_v11 N3), so `to_args` composes with the crate's own
+//! `default_kinds`/`window_kinds` builders.
 
 use reed_stats::fst::FstKind;
 use reed_stats::pbs::PbsKind;
 use reed_stats::request::StatKind;
 
+use reed_core::args::push_flag as flag;
 use reed_core::grid::WindowGrid;
 
 use crate::stats::request::{FStatTest, InvariantMode, Levels, Populations, StatsRequest};
-
-fn flag(args: &mut Vec<String>, name: &str, value: impl std::fmt::Display) {
-    args.push(name.to_string());
-    args.push(value.to_string());
-}
 
 impl StatsRequest {
     /// Renders the windowed form of this request (`layout: Some`) to the
@@ -27,18 +28,13 @@ impl StatsRequest {
     /// `contig_lengths`, a `Regions` grid (the grid carries no source
     /// path), and the wide-table kind set (`layout: None`).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// A kind with no flag spelling (`per_bp` variants, `StatKind::Sfs`,
-    /// mixed Fst or Pbs flavours within one request), an `LdRequest` with
-    /// `decay_max_bp: None` or `decay_bin_bp != 1000`, or a `Regions` grid:
-    /// the CLI cannot produce these, so the render is a programmer error,
-    /// not input data.
-    // The panics are the contract: rendering a request the CLI could never
-    // produce is a bug at the call site, not a recoverable data error.
-    #[allow(clippy::panic)]
-    #[must_use]
-    pub fn to_args(&self, group_names: &[String]) -> Vec<String> {
+    /// A usage error for a request the CLI cannot produce: a kind with no
+    /// flag spelling (`per_bp` variants, `StatKind::Sfs`, mixed Fst or Pbs
+    /// flavours within one request), an `LdRequest` with `decay_max_bp:
+    /// None` or `decay_bin_bp != 1000`, or a `Regions` grid.
+    pub fn to_args(&self, group_names: &[String]) -> Result<Vec<String>, crate::error::Error> {
         let name = |i: usize| -> String {
             group_names
                 .get(i)
@@ -60,37 +56,55 @@ impl StatsRequest {
         for kind in &self.kinds {
             match kind {
                 StatKind::Pi { per_bp, .. } => {
-                    assert!(!per_bp, "no --flag spelling for per-bp Pi");
+                    if *per_bp {
+                        return Err(crate::error::Error::usage(
+                            "no --flag spelling for per-bp Pi",
+                        ));
+                    }
                     has_pi = true;
                 }
                 StatKind::Dxy { per_bp, .. } => {
-                    assert!(!per_bp, "no --flag spelling for per-bp Dxy");
+                    if *per_bp {
+                        return Err(crate::error::Error::usage(
+                            "no --flag spelling for per-bp Dxy",
+                        ));
+                    }
                     has_dxy = true;
                 }
                 StatKind::ThetaW { per_bp, .. } => {
-                    assert!(!per_bp, "no --flag spelling for per-bp ThetaW");
+                    if *per_bp {
+                        return Err(crate::error::Error::usage(
+                            "no --flag spelling for per-bp ThetaW",
+                        ));
+                    }
                     has_theta = true;
                 }
                 StatKind::TajimaD { .. } => {
                     has_tajima = true;
                 }
                 StatKind::Fst { kind, .. } => {
-                    assert!(
-                        fst_kind.is_none() || fst_kind == Some(*kind),
-                        "mixed Fst flavours have no flag spelling"
-                    );
+                    if fst_kind.is_some_and(|seen| seen != *kind) {
+                        return Err(crate::error::Error::usage(
+                            "mixed Fst flavours have no flag spelling",
+                        ));
+                    }
                     fst_kind = Some(*kind);
                 }
                 StatKind::FstGlobal => fst_global = true,
                 StatKind::Pbs { a, b, c, kind } => {
-                    assert!(
-                        !pbs_n1 || *kind == PbsKind::PbsN1,
-                        "mixed Pbs flavours have no flag spelling"
-                    );
+                    if pbs_n1 && *kind != PbsKind::PbsN1 {
+                        return Err(crate::error::Error::usage(
+                            "mixed Pbs flavours have no flag spelling",
+                        ));
+                    }
                     pbs_n1 |= *kind == PbsKind::PbsN1;
                     triples.push(format!("{},{},{}", name(*a), name(*b), name(*c)));
                 }
-                StatKind::Sfs { .. } => panic!("no --sfs-kind flag spelling (use SfsRequest)"),
+                StatKind::Sfs { .. } => {
+                    return Err(crate::error::Error::usage(
+                        "no --sfs-kind flag spelling (use SfsRequest)",
+                    ));
+                }
             }
         }
         if has_pi {
@@ -176,10 +190,16 @@ impl StatsRequest {
         }
         // ---- ld ----
         if let Some(ld) = &self.ld {
-            let max = ld
-                .decay_max_bp
-                .unwrap_or_else(|| panic!("--ld-decay-less LD has no flag spelling"));
-            assert_eq!(ld.decay_bin_bp, 1000, "decay_bin_bp has no flag spelling");
+            let Some(max) = ld.decay_max_bp else {
+                return Err(crate::error::Error::usage(
+                    "--ld-decay-less LD has no flag spelling",
+                ));
+            };
+            if ld.decay_bin_bp != 1000 {
+                return Err(crate::error::Error::usage(
+                    "decay_bin_bp has no flag spelling",
+                ));
+            }
             flag(&mut args, "--ld-decay", max);
             if ld.pairs {
                 args.push("--ld-pairs".to_string());
@@ -194,16 +214,18 @@ impl StatsRequest {
                 }
             }
             WindowGrid::Regions(_) => {
-                panic!("a Regions grid carries no --bed-file path to render")
+                return Err(crate::error::Error::usage(
+                    "a Regions grid carries no --bed-file path to render",
+                ));
             }
-            WindowGrid::Sites { .. } => panic!("site-count windows are not implemented"),
+            WindowGrid::Sites { .. } => {
+                return Err(crate::error::Error::usage(
+                    "site-count windows are not implemented",
+                ));
+            }
         }
         // ---- levels / misc ----
-        let default_levels = Levels {
-            window: true,
-            contig: false,
-            genome: false,
-        };
+        let default_levels = Levels::default();
         if self.levels != default_levels {
             let mut parts: Vec<&str> = Vec::new();
             if self.levels.window {
@@ -233,6 +255,6 @@ impl StatsRequest {
         if let Some(spec) = &self.site {
             args.extend(spec.to_args());
         }
-        args
+        Ok(args)
     }
 }

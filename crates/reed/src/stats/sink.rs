@@ -459,7 +459,7 @@ impl StatsSink {
         self.windows.push(WindowRow {
             contig: contig.to_string(),
             start1,
-            end0,
+            end: end0,
             bp,
             accs: accs.to_vec(),
         });

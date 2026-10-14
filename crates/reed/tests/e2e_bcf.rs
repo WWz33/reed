@@ -110,9 +110,9 @@ fn request() -> StatsRequest {
 /// `stats` over the BCF fixture equals the same run over the VCF.gz fixture.
 #[test]
 fn stats_output_is_identical_across_formats() {
-    let bcf = run_stats(Some(&fixture("fix.bcf")), request(), &budget()).expect("invariant: bcf");
+    let bcf = run_stats(Some(&fixture("fix.bcf")), &request(), &budget()).expect("invariant: bcf");
     let vcf =
-        run_stats(Some(&fixture("fix.vcf.gz")), request(), &budget()).expect("invariant: vcf.gz");
+        run_stats(Some(&fixture("fix.vcf.gz")), &request(), &budget()).expect("invariant: vcf.gz");
     // The request uses `InvariantMode::VariantOnly`, so the flat table is
     // rendered with the variant-only denominators (as the old sink did).
     let kinds = reed::window_kinds(2, true, true, true, false, None, None);

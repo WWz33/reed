@@ -63,7 +63,7 @@ impl ReportRequest {
     /// Whether any report is requested.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        !(self.freq || self.hardy || self.het || self.missing || self.depth)
+        !(self.freq || self.hardy || self.het || self.missing || self.depth || self.summary)
     }
 }
 

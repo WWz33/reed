@@ -46,7 +46,7 @@ pub(crate) fn removed_max_missing_count(_text: &str) -> Result<String, String> {
 pub(crate) fn parse_af_with_type(text: &str) -> Result<(f64, reed::spec::AfKind), String> {
     let (value, kind) = match text.split_once(':') {
         None => (text, reed::spec::AfKind::Nref),
-        Some((v, t)) => (v, reed::spec::AfKind::parse(t)?),
+        Some((v, t)) => (v, reed::spec::AfKind::parse(t).map_err(|e| e.to_string())?),
     };
     let value: f64 = value
         .trim()

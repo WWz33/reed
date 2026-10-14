@@ -87,7 +87,7 @@ fn budget() -> ThreadBudget {
 #[test]
 fn variant_only_pi_dxy_hand_computed() {
     let path = write_fixture("vonly", FIXTURE);
-    let report = run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
+    let report = run_stats(Some(&path), &request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: variant-only run");
 
     // Window [1,10]: present sites 1 and 5.
@@ -106,7 +106,7 @@ fn variant_only_pi_dxy_hand_computed() {
         w0.accs[g].value_variant_only(&kind, w0.bp)
     };
     assert_eq!(w0.start1, 1);
-    assert_eq!(w0.end0, 10);
+    assert_eq!(w0.end, 10);
     assert!((pi(0).expect("pi") - 0.05).abs() < 1e-15, "{:?}", pi(0));
     assert!((pi(1).expect("pi") - 0.05).abs() < 1e-15, "{:?}", pi(1));
     let dxy_kind = StatKind::Dxy {
@@ -132,7 +132,7 @@ fn variant_only_pi_dxy_hand_computed() {
 #[test]
 fn all_sites_default_matches_the_all_sites_definition() {
     let path = write_fixture("allsites", FIXTURE);
-    let report = run_stats(Some(&path), request(InvariantMode::Require), &budget())
+    let report = run_stats(Some(&path), &request(InvariantMode::Require), &budget())
         .expect("invariant: the fixture has an invariant site");
     // Window [1,10] with invariant site 5 counted: comps 12 (unchanged),
     // diffs 3 → π = 0.25 for pop1 (no completion: the file is all-sites).
@@ -153,11 +153,11 @@ fn variant_only_input_without_declaration_is_refused() {
     let mut text = String::from(FIXTURE);
     text = text.replace("chr1\t5\t.\tA\t.\t", "chr1\t5\t.\tA\tG\t"); // no invariant site left
     let path = write_fixture("nodecl", &text);
-    let err = run_stats(Some(&path), request(InvariantMode::Require), &budget())
+    let err = run_stats(Some(&path), &request(InvariantMode::Require), &budget())
         .expect_err("invariant: missing invariant sites must fail");
     assert!(err.to_string().contains("no invariant sites"), "{err}");
     // Declaring it works.
-    run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
+    run_stats(Some(&path), &request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: declared variant-only run");
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
@@ -165,7 +165,7 @@ fn variant_only_input_without_declaration_is_refused() {
 #[test]
 fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     let path = write_fixture("writer", FIXTURE);
-    let report = run_stats(Some(&path), request(InvariantMode::VariantOnly), &budget())
+    let report = run_stats(Some(&path), &request(InvariantMode::VariantOnly), &budget())
         .expect("invariant: run");
     let prefix = path.parent().expect("invariant: temp dir path").join("out");
     let kinds = window_kinds(2, true, true, false, false, None, None);
@@ -216,7 +216,7 @@ fn watterson_theta_and_tajima_d_hand_computed() {
     let path = write_fixture("theta", FIXTURE);
     let mut request = request(InvariantMode::Bypass);
     request.kinds = window_kinds(2, false, false, true, true, None, None);
-    let report = run_stats(Some(&path), request, &budget()).expect("invariant: theta run");
+    let report = run_stats(Some(&path), &request, &budget()).expect("invariant: theta run");
 
     let w0 = &report.windows[0];
     let theta_kind = StatKind::ThetaW {
@@ -265,7 +265,7 @@ fn fst_hudson_and_wc84_hand_computed() {
     ] {
         let mut request = request(InvariantMode::Bypass);
         request.kinds = window_kinds(2, false, false, false, false, Some(kind), None);
-        let report = run_stats(Some(&path), request, &budget()).expect("invariant: fst run");
+        let report = run_stats(Some(&path), &request, &budget()).expect("invariant: fst run");
         let w0 = &report.windows[0];
         let fst_kind = StatKind::Fst { a: 0, b: 1, kind };
         let value = w0.accs[0].value(&fst_kind, w0.bp).expect("fst value");
@@ -352,7 +352,7 @@ fn pbs_matches_scikit_allel_reference() {
             step: 100,
         };
         request.kinds = window_kinds(3, false, false, false, false, None, Some(kind));
-        let report = run_stats(Some(&path), request, &budget()).expect("invariant: pbs run");
+        let report = run_stats(Some(&path), &request, &budget()).expect("invariant: pbs run");
         assert_eq!(report.windows.len(), 2);
         let pbs_kind = StatKind::Pbs {
             a: 0,

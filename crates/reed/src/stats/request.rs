@@ -4,7 +4,6 @@
 
 use reed_core::count::SiteGroupCounts;
 use reed_core::grid::WindowGrid;
-use reed_engine::error::EngineError;
 pub use reed_stats::fst::FstKind;
 use reed_stats::jackknife::BpBlockJackknife;
 use reed_stats::patterson::{PattersonKind, f2_site, f3_site, f4_site};
@@ -162,7 +161,7 @@ pub fn window_kinds(
 /// columns; contig rows aggregate each contig's bins, the genome row
 /// aggregates everything — all three are plain accumulator merges, so PBS
 /// stays re-aggregable (its accumulator keeps per-pair num/den).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Levels {
     /// One row per window (the default).
     pub window: bool,
@@ -172,21 +171,38 @@ pub struct Levels {
     pub genome: bool,
 }
 
+impl Default for Levels {
+    /// The default is the window level (doc_v11 N1): `Levels`'s "zero value"
+    /// is not the all-`false` bool tuple — a request built from
+    /// `StatsRequest::default()` must still emit its window rows.
+    fn default() -> Self {
+        Self {
+            window: true,
+            contig: false,
+            genome: false,
+        }
+    }
+}
+
 impl Levels {
     /// Parses a comma-separated `window,contig,genome` list.
     ///
     /// # Errors
     ///
-    /// [`EngineError::Job`] on an unknown level token.
-    pub fn parse(text: &str) -> Result<Self, EngineError> {
-        let mut levels = Self::default();
+    /// A usage error on an unknown level token.
+    pub fn parse(text: &str) -> Result<Self, crate::error::Error> {
+        let mut levels = Self {
+            window: false,
+            contig: false,
+            genome: false,
+        };
         for token in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             match token {
                 "window" => levels.window = true,
                 "contig" => levels.contig = true,
                 "genome" => levels.genome = true,
                 other => {
-                    return Err(EngineError::job(format!(
+                    return Err(crate::error::Error::usage(format!(
                         "unknown level {other:?} (expected window, contig or genome)"
                     )));
                 }
@@ -228,8 +244,8 @@ pub struct WindowRow {
     pub contig: String,
     /// 1-based inclusive start.
     pub start1: u64,
-    /// 1-based inclusive end.
-    pub end0: u64,
+    /// 1-based inclusive end (equivalently, the 0-based exclusive end).
+    pub end: u64,
     /// Window span in bp (the per-bp denominator).
     pub bp: u64,
     /// Accumulators in `kinds` order.
@@ -247,6 +263,10 @@ pub enum Populations {
     All,
     /// A `sample<TAB>population` file (`--pop`).
     File(PathBuf),
+    /// An in-memory `(sample, population)` list (doc_v11 N11): the same rows
+    /// a populations file carries, for callers that already hold the
+    /// mapping. Group ids follow first-appearance order, as in the file.
+    Assignment(Vec<(String, String)>),
 }
 
 impl Populations {
@@ -265,8 +285,22 @@ impl Populations {
             Self::All => Ok(vec!["all".to_string()]),
             Self::File(path) => reed_core::group::GroupTable::names_from_tsv(path)
                 .map_err(crate::error::Error::from),
+            Self::Assignment(pairs) => Ok(first_appearance_names(
+                pairs.iter().map(|(_, group)| group.as_str()),
+            )),
         }
     }
+}
+
+/// The distinct names in first-appearance order (the assignment order).
+fn first_appearance_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in names {
+        if !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 /// One `run_stats` request: statistics, group assignment, window grid.
@@ -779,16 +813,14 @@ pub struct StatsReport {
 ///
 /// # Errors
 ///
-/// [`EngineError::Job`] for an unreadable file, a malformed row, or an
-/// unknown sample (without `force_samples`).
+/// A usage error for an unreadable file, a malformed row, or an unknown
+/// sample (without `force_samples`).
 pub fn assign_groups(
     groups_path: &Path,
     sample_names: &[String],
     force_samples: bool,
-) -> Result<(Vec<Option<u32>>, Vec<String>), EngineError> {
-    let samples =
-        reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
-            .map_err(EngineError::from)?;
+) -> Result<(Vec<Option<u32>>, Vec<String>), crate::error::Error> {
+    let samples = sample_table(sample_names)?;
     let table = reed_core::group::GroupTable::from_tsv(
         groups_path,
         &samples,
@@ -796,13 +828,57 @@ pub fn assign_groups(
             ignore_missing_samples: force_samples,
         },
     )
-    .map_err(EngineError::from)?;
-    let mut gt_groups: Vec<Option<u32>> = vec![None; sample_names.len()];
+    .map_err(crate::error::Error::from)?;
+    group_masks(&table, sample_names.len())
+}
+
+/// The in-memory twin of [`assign_groups`] (doc_v11 N11): the same
+/// first-appearance group order and the same unknown-sample rule, over
+/// `(sample, population)` pairs the caller already holds.
+///
+/// # Errors
+///
+/// A usage error for an unknown sample (without `force_samples`).
+pub fn assign_groups_in_memory(
+    pairs: &[(String, String)],
+    sample_names: &[String],
+    force_samples: bool,
+) -> Result<(Vec<Option<u32>>, Vec<String>), crate::error::Error> {
+    let samples = sample_table(sample_names)?;
+    let rows: Vec<(&str, &str)> = if force_samples {
+        pairs
+            .iter()
+            .filter(|(sample, _)| samples.get(sample.trim()).is_some())
+            .map(|(sample, group)| (sample.trim(), group.trim()))
+            .collect()
+    } else {
+        pairs
+            .iter()
+            .map(|(sample, group)| (sample.trim(), group.trim()))
+            .collect()
+    };
+    let table = reed_core::group::GroupTable::from_assignment(&samples, &rows)
+        .map_err(crate::error::Error::from)?;
+    group_masks(&table, sample_names.len())
+}
+
+fn sample_table(sample_names: &[String]) -> Result<reed_core::sample::SampleTable, crate::error::Error> {
+    reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
+        .map_err(crate::error::Error::from)
+}
+
+/// Flattens a [`GroupTable`] into the per-sample group slots the job reads,
+/// plus the group names in table order.
+fn group_masks(
+    table: &reed_core::group::GroupTable,
+    n_samples: usize,
+) -> Result<(Vec<Option<u32>>, Vec<String>), crate::error::Error> {
+    let mut gt_groups: Vec<Option<u32>> = vec![None; n_samples];
     let mut names: Vec<String> = Vec::with_capacity(table.n_groups());
     for (group_idx, group) in table.iter().enumerate() {
         names.push(group.name.clone());
-        let group_idx =
-            u32::try_from(group_idx).map_err(|_| EngineError::job("more than u32::MAX groups"))?;
+        let group_idx = u32::try_from(group_idx)
+            .map_err(|_| crate::error::Error::usage("more than u32::MAX groups"))?;
         for (word_idx, &word) in group.mask.words().iter().enumerate() {
             let mut word = word;
             while word != 0 {

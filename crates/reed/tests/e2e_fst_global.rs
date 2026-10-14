@@ -97,7 +97,7 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
     // Per-site windows (size 1): one value per site.
     let report = run_stats(
         Some(&vcf),
-        request(
+        &request(
             1,
             Levels {
                 window: true,
@@ -123,7 +123,7 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
     // Genome-wide: the Σa/Σ(a+b+c) over all sites (vcftools' weighted Fst).
     let report = run_stats(
         Some(&vcf),
-        request(
+        &request(
             100_000,
             Levels {
                 window: false,
@@ -170,14 +170,14 @@ fn hudson_has_no_global_form() {
         },
     );
     two.populations = Populations::File(pops_two_file());
-    let report = run_stats(Some(&vcf), two, &budget).expect("invariant: run");
+    let report = run_stats(Some(&vcf), &two, &budget).expect("invariant: run");
     // Two populations: the global value equals the pairwise WC84 value.
     let global = report.windows[0].accs[0]
         .value(&StatKind::FstGlobal, 1)
         .expect("invariant: window has sites");
     let pairwise = run_stats(
         Some(&vcf),
-        StatsRequest {
+        &StatsRequest {
             kinds: vec![StatKind::Fst {
                 a: 0,
                 b: 1,
@@ -242,7 +242,7 @@ fn global_fst_is_identical_across_thread_counts() {
         };
         let report = run_stats(
             Some(&vcf),
-            request(
+            &request(
                 1,
                 Levels {
                     window: true,

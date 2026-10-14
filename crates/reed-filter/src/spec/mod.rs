@@ -15,6 +15,8 @@ pub mod render;
 
 use serde::{Deserialize, Serialize};
 
+use crate::FilterError;
+
 pub use cohort::{SampleList, SampleSelect};
 pub use mask::GenotypeMaskRule;
 pub use missing_rate::MissingRate;
@@ -80,8 +82,8 @@ impl AfKind {
     ///
     /// # Errors
     ///
-    /// The supported list for an unknown token.
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// [`FilterError::Spec`] listing the supported tokens for an unknown one.
+    pub fn parse(text: &str) -> Result<Self, FilterError> {
         Ok(match text {
             "nref" => Self::Nref,
             "alt1" => Self::Alt1,
@@ -89,10 +91,10 @@ impl AfKind {
             "major" => Self::Major,
             "nonmajor" => Self::Nonmajor,
             other => {
-                return Err(format!(
+                return Err(FilterError::Spec(format!(
                     "unknown allele-frequency type {other:?} \
                      (expected nref, alt1, minor, major or nonmajor)"
-                ));
+                )));
             }
         })
     }
@@ -286,8 +288,8 @@ impl GtClassRule {
     ///
     /// # Errors
     ///
-    /// The supported list for an unknown token.
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// [`FilterError::Spec`] listing the supported tokens for an unknown one.
+    pub fn parse(text: &str) -> Result<Self, FilterError> {
         let (exclude, name) = match text.strip_prefix('^') {
             Some(rest) => (true, rest),
             None => (false, text),
@@ -303,10 +305,10 @@ impl GtClassRule {
             (true, "het") => Self::NoHet,
             (true, "miss") => Self::NoMiss,
             _ => {
-                return Err(format!(
+                return Err(FilterError::Spec(format!(
                     "unknown genotype class {text:?} \
                      (expected hom, het, miss, ^hom, ^het or ^miss)"
-                ));
+                )));
             }
         })
     }

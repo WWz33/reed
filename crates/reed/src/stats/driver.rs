@@ -3,7 +3,7 @@
 
 use crate::stats::request::{
     FStatAcc, FStatsPlan, FStatsReport, JointSfsReport, LdPlan, LdReport, Levels, Populations,
-    SfsPlan, SfsReport, StatsReport, StatsRequest, assign_groups,
+    SfsPlan, SfsReport, StatsReport, StatsRequest, assign_groups, assign_groups_in_memory,
 };
 use crate::stats::run::{BcfNative, GridMode, StatsJob, stats_policies};
 use crate::stats::sink::StatsSink;
@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// against the header, an invalid grid, or a group index without samples.
 pub fn run_stats(
     path: Option<&Path>,
-    request: StatsRequest,
+    request: &StatsRequest,
     budget: &ThreadBudget,
 ) -> Result<StatsReport, crate::error::Error> {
     let opened = crate::input::open(path).map_err(EngineError::from)?;
@@ -42,15 +42,17 @@ pub fn run_stats(
 /// As [`run_stats`].
 pub fn run_stats_opened(
     opened: crate::input::OpenedInput,
-    request: StatsRequest,
+    request: &StatsRequest,
     budget: &ThreadBudget,
 ) -> Result<StatsReport, crate::error::Error> {
     // ---- Request → executable plan (08 §6.2). Every failure up to the end
     // of the validation section below is request construction (Usage). ----
     let sample_names = opened.facts.sample_names.clone();
     let (gt_groups, group_names) = match &request.populations {
-        Populations::File(path) => assign_groups(path, &sample_names, request.force_samples)
-            .map_err(|e| crate::error::Error::usage(e.to_string()))?,
+        Populations::File(path) => assign_groups(path, &sample_names, request.force_samples)?,
+        Populations::Assignment(pairs) => {
+            assign_groups_in_memory(pairs, &sample_names, request.force_samples)?
+        }
         Populations::All => (vec![Some(0); sample_names.len()], vec!["all".to_string()]),
     };
     // No biallelic gate here: the stats reporters decide per statistic how
@@ -191,7 +193,7 @@ pub fn run_stats_opened(
     let abort = reed_engine::abort::abort_for(budget);
     let header = opened.facts.clone();
     let contig_len: Arc<HashMap<Vec<u8>, u64>> = Arc::new({
-        let mut map: HashMap<Vec<u8>, u64> = request.contig_lengths;
+        let mut map: HashMap<Vec<u8>, u64> = request.contig_lengths.clone();
         for (name, len) in header
             .contig_names
             .iter()
@@ -247,8 +249,7 @@ pub fn run_stats_opened(
         seed: accs.clone(),
         levels: request.levels,
         skip_empty: request.skip_empty,
-        layout: request.layout,
-        windows: Vec::new(),
+        layout: request.layout,        windows: Vec::new(),
         n_invariant_sites: 0,
         n_no_alt_records: 0,
         contig_len: (*contig_len).clone(),
