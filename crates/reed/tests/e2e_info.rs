@@ -602,8 +602,12 @@ Chr01\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
     let kept = kept_positions(&run_keep_lines(&path, &spec, None, "m2.vcf.gz"));
     assert_eq!(kept, vec![20], "-m 2 drops the invariant site");
 
-    // `-M 1` (max_alt_alleles == 0) is exercised in R2-b, where the field
-    // becomes Option<u32> and 0 stops meaning "off".
+    // `-M 1` is `max_alt_alleles = Some(0)`; the `Option` distinguishes it
+    // from "no -M flag" (None).
+    let mut spec = FilterSpec::default();
+    spec.site.max_alt_alleles = Some(0);
+    let kept = kept_positions(&run_keep_lines(&path, &spec, None, "M1.vcf.gz"));
+    assert_eq!(kept, vec![10], "-M 1 keeps only the invariant site");
 
     let mut spec = FilterSpec::default();
     spec.site.include = vec!["N_ALT=0".to_string()];

@@ -140,7 +140,7 @@ fn gold_spec() -> FilterSpec {
         mind: Some(MissingRate::parse("0.1").expect("valid")),
         site: SiteRules {
             variant_class: vec!["snv".into()],
-            max_alt_alleles: 1,
+            max_alt_alleles: Some(1),
             require_filter: vec!["PASS".into()],
             min_qual: Some(30.0),
             info: [

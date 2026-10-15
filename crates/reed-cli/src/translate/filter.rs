@@ -110,7 +110,7 @@ pub(crate) fn site_spec(
         spec.site.min_alt_alleles = m.saturating_sub(1);
     }
     if let Some(m) = cli.max_alleles {
-        spec.site.max_alt_alleles = m.saturating_sub(1);
+        spec.site.max_alt_alleles = Some(m.saturating_sub(1));
     }
     if let Some(list) = &cli.apply_filters {
         spec.site.require_filter = list

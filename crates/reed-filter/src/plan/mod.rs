@@ -407,8 +407,8 @@ pub fn compile(
     if spec.site.min_alt_alleles > 0 {
         head.push(HeadRule::MinAltAlleles(spec.site.min_alt_alleles));
     }
-    if spec.site.max_alt_alleles > 0 {
-        head.push(HeadRule::MaxAltAlleles(spec.site.max_alt_alleles));
+    if let Some(max) = spec.site.max_alt_alleles {
+        head.push(HeadRule::MaxAltAlleles(max));
     } else if biallelic_gate && !spec.multiallelics_allowed() {
         // The default gate (§11.6, plink2-style): without `multiallelic =
         // "allow"` or an explicit `max_alt_alleles > 1`, multiallelic

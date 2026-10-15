@@ -69,8 +69,8 @@ impl FilterSpec {
             // bcftools counts REF+ALT, so ALT count n renders as n+1.
             flag(&mut args, "-m", self.site.min_alt_alleles + 1);
         }
-        if self.site.max_alt_alleles > 0 {
-            flag(&mut args, "-M", self.site.max_alt_alleles + 1);
+        if let Some(max) = self.site.max_alt_alleles {
+            flag(&mut args, "-M", max + 1);
         }
         if !self.site.require_filter.is_empty() {
             flag(&mut args, "-f", self.site.require_filter.join(","));
@@ -219,7 +219,7 @@ mod tests {
             site: super::super::SiteRules {
                 variant_class: vec!["snv".into()],
                 exclude_variant_class: vec!["indel".into()],
-                max_alt_alleles: 1,
+                max_alt_alleles: Some(1),
                 require_filter: vec!["PASS".into()],
                 ..Default::default()
             },

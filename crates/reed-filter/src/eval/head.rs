@@ -80,16 +80,8 @@ pub fn eval_head(
                 let class = classify_variant(reference, primary);
                 !classes.iter().any(|c| class_matches(class, c))
             }
-            HeadRule::MinAltAlleles(min) => {
-                let n =
-                    u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX);
-                n >= *min
-            }
-            HeadRule::MaxAltAlleles(max) => {
-                let n =
-                    u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX);
-                n <= *max
-            }
+            HeadRule::MinAltAlleles(min) => reed_io::vcf::site::count_alts(alts) >= *min,
+            HeadRule::MaxAltAlleles(max) => reed_io::vcf::site::count_alts(alts) <= *max,
             HeadRule::BiallelicGate => !alts.contains(&b','),
             HeadRule::RequireFilter(set) => set.iter().any(|s| s == line.filter_text()),
             // The INFO preference holds only while AC/AN describe the

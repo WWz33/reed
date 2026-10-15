@@ -121,7 +121,7 @@ impl<'a> SiteValues<'a> {
             chrom: line.chrom(),
             pos: pos1,
             variant_type,
-            n_alt: u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX),
+            n_alt: reed_io::vcf::site::count_alts(alts),
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
             info_trusted: true,
