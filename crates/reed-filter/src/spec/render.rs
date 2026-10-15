@@ -235,6 +235,7 @@ mod tests {
             recompute: super::super::RecomputeSpec {
                 tags: vec!["AC".into(), "AN".into()],
                 drop_stale: vec!["DP".into()],
+                drop_stale_explicit: true,
                 no_update: true,
             },
             ..Default::default()

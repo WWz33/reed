@@ -844,7 +844,7 @@ pub fn compile(
                 .map_err(|e| FilterError::Spec(e.to_string()))
         })
         .collect::<Result<_, _>>()?;
-    let wants = |tag: &str| canonical_tags.iter().any(|t| *t == tag);
+    let wants = |tag: &str| canonical_tags.contains(&tag);
     let no_update = spec.recompute.no_update;
     let recompute = RecomputeFlags {
         ac: wants("AC"),
