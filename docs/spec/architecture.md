@@ -1248,7 +1248,7 @@ plan 是执行的唯一输入。
 | 策略 | 触发条件 | 解析次数 | 说明 |
 |---|---|---|---|
 | `SinglePass` | 无 cohort 规则，或 cohort 为显式 keep/remove 列表 | 1 次完整 | 头部 → 掩码 → 尾部 → 编辑 → 压缩，全部在 worker 内 |
-| `SketchThenEmit` | 有 `max_missing` 规则，且 sketch 估计大小 ≤ 内存预算 | 1 次完整 + 1 次"只 inflate、只解析存活者" | 见下 |
+| `SketchThenEmit` | 有 `max_missing` 规则，**且无尾部表达式/`-q` 的 INFO 依赖**（中段没有记录字节；doc_v12 N1），且 sketch 估计大小 ≤ 内存预算 | 1 次完整 + 1 次"只 inflate、只解析存活者" | 见下 |
 | `TwoPassReparse` | sketch 放不下 | 2 次 | pass0 只解 GT 做缺失归约；pass1 = SinglePass |
 
 **SketchThenEmit 细节**：

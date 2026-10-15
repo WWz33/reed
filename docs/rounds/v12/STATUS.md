@@ -1,37 +1,48 @@
 # doc_v12 实施状态
 
 > 本页记录 `01-review.md` §1 缺陷清单与 `06-roadmap.md` R0–R3 的实施状态。
-> 每条附证据（测试名 / 守卫 / 变更点）。复审基线（修复前的实测证据摘录）
-> 见文末。
+> 本轮为**落地轮**：复审（D12-1…D12-15）与修复规范（N1…N14）已在同一分支
+> 实施完毕，每条附证据（测试名 / 守卫 / 变更点）。复审基线（修复前的实测
+> 证据摘录）见文末。
 
 ## 实施状态（R0–R3）
 
 | 项 | 严重度 | 状态 | 证据 |
 |---|---|---|---|
-| D12-1 sketch 下尾部表达式丢行字段 | **P0** | 未修 | — |
-| D12-2 无 GT 记录 AC/AN 被子集更新清零 | **P0** | 未修 | — |
-| D12-3 Integer INFO 超 int32 回绕 | P1 | 未修 | — |
-| D12-4 Flag 带值丢值、`DB=0` 反转 | P1 | 未修 | — |
-| D12-5 String 值 `.` 变空串 | P1 | 未修 | — |
-| D12-6 `-q/-Q` cohort 变化后仍用陈旧 INFO | P1 | 未修 | — |
-| D12-7 表达式无类型（Flag/向量/裸标签） | P1 | 未修 | — |
-| D12-8 `quantifier = "any"` 恒真 | P1 | 未修 | — |
-| D12-9 打包计数溢出无检查 | P2 | 未修 | — |
-| D12-10 `ALT='.'` 计 1 个 ALT | P2 | 未修 | — |
-| D12-11 `--fill-tags` 不校验 | P2 | 未修 | — |
-| D12-12 默认 `drop_stale` 不可见 | P2 | 未修 | — |
-| D12-13 AC 长度不校验、三份实现 | P2 | 未修 | — |
-| D12-14 数值解析三份实现 | P2 | 未修 | — |
-| D12-15 `edit_vcf_line` 死代码 | P3（lean） | 未修 | — |
+| D12-1 sketch 下尾部表达式丢行字段 | **P0** | **已修** | `FilterPlan::tail_reads_record`（`Expr` 与 `MinAf/MaxAf`）单点谓词；驱动在 `--mind` 覆盖与强制 sketch 时查它，`--mind+--indep-pairwise`+尾部规则报 usage。红→绿 `mind_with_tail_expression_keeps_records`、`mind_with_min_af_matches_single_pass`；守卫 "the strategy override respects a tail record reader" |
+| D12-2 无 GT 记录 AC/AN 被子集更新清零 | **P0** | **已修** | `fill_info_set` 在 `!has_gt` 时直接返回；`FilterPlan::auto_stale_tags` 区分自动更新与用户 `-x`，`stale_for_record` 逐记录豁免自动项。红→绿 `gt_less_records_keep_their_ac_an_under_subset`、`explicit_remove_still_deletes_on_gt_less_records`；守卫 "the INFO recompute is gated on has_gt" |
+| D12-3 Integer INFO 超 int32 回绕 | P1 | **已修** | `parse_int_vector` 过滤 `[INT32_MIN, INT32_MAX]`（越界→missing + 一次性警告）；`encode_int_vector` 同界。红→绿 `out_of_range_integers_become_missing_in_bcf`（bcftools 读回 `XD=.`）；守卫 "out-of-range integers become missing" |
+| D12-4 Flag 带值丢值、`DB=0` 反转 | P1 | **已修** | Flag 带值按字符串存（htslib 语义）；仅无值走 `(NULL,0)`。红→绿 `flag_with_a_value_round_trips_through_bcf`；守卫 "Flag values and String dots keep their bytes" |
+| D12-5 String 值 `.` 变空串 | P1 | **已修** | 删 `if v == b"."` 空串特判（ID 列的特判保留）。红→绿 `string_dot_value_round_trips_through_bcf`；守卫同上 |
+| D12-6 `-q/-Q` cohort 变化后仍用陈旧 INFO | P1 | **已修** | `FilterPlan::info_trusted`（驱动在子集/`--mind` 时置 false）→ `SiteValues::info_trusted`；`af_of` 跳 INFO、编译期不推 `MinAfInfo/MaxAfInfo`；`-q/-Q` 陈旧警告。红→绿 `min_af_after_subset_uses_the_genotypes`、`mind_with_min_af_matches_single_pass`；守卫 "-q/-Q follow the cohort change" |
+| D12-7 表达式无类型（Flag/向量/裸标签） | P1 | **已修** | `check`/求值接 `TagTable`（`FilterPlan::tags`、`SiteValues::tags`）；`info_operand`（Flag→1/0、Number≠1→向量、Number=1 多值→missing）与 `Operand::any_pair`；裸标签编译期报错。红→绿 `expression_flag_presence_is_one_zero`、`expression_vector_info_compares_any_element`、`expression_bare_tag_is_rejected_at_compile_time`；守卫 "the expression layer sees the tag types" |
+| D12-8 `quantifier = "any"` 恒真 | P1 | **已修** | `any |= cmp.apply_f64(v)`。红→绿 `quantifier_any_requires_a_satisfying_element`；守卫 "quantifier any applies the comparison" |
+| D12-9 打包计数溢出无检查 | P2 | **已修** | `pack_allele_info`/`pack_fmt_sample` 四写回点接入。红→绿 `info_count_overflow_errors_instead_of_corrupting`；守卫 "record counts are checked before packing" |
+| D12-10 `ALT='.'` 计 1 个 ALT | P2 | **已修** | `count_alts` 单点（head/expr/`SiteView` 共用）；`max_alt_alleles: Option<u32>`（`-M 1` = `Some(0)`）。红→绿 `invariant_sites_count_zero_alts`（`-m 2`/`-M 1`/`N_ALT=0`）；守卫 "ALT counting is one rule" |
+| D12-11 `--fill-tags` 不校验 | P2 | **已修** | `canonical_fill_tag` 白名单 + 大小写归一，落在 `compile`；help 写明支持集。红→绿 `unsupported_fill_tags_are_rejected`（AF/BOGUS/F_MISSING 报错、`ac` 通过）；守卫 "--fill-tags validates its tags" |
+| D12-12 默认 `drop_stale` 不可见 | P2 | **已修** | `-x`/`--fill-tags` 的 help 写明默认清单与 `-x ''` 转义口；README/README.zh-CN/cli.md 同步。守卫 "the default -x list is in the help" |
+| D12-13 AC 长度不校验、三份实现 | P2 | **已修** | `allele_counts_info(info, n_alt)` 长度校验 + 一次性警告；`non_reference_af_info` 改为其求和视图。红→绿 `ac_length_mismatch_falls_back_to_genotypes`；守卫 "AC/AN INFO reading is one implementation" |
+| D12-14 数值解析三份实现 | P2 | **已修** | `reed_io::vcf::info::parse_info_number`/`parse_info_int` 单点文法（Integer 严格十进制含 `+`、Float 规范文法）；编码器委托；`parse_element` 按声明类型选文法且数值型解析失败→missing（不再字节序比较）。红→绿 `info_value_is_the_same_for_filtering_and_writing`；守卫 "INFO number parsing is one grammar" |
+| D12-15 `edit_vcf_line` 死代码 | P3（lean） | **已修** | 删重解析与不可达错误分支；签名改不可失败，三调用点与 bench 同步。守卫 "edit_vcf_line does not re-parse its LineRef" |
 
 ## R0–R3 进度
 
 | 步骤 | 状态 | commit |
 |---|---|---|
-| R0 红测试（a–j 十组夹具） | 未开始 | — |
-| R1 P0+P1 修复（D12-1…D12-8 + 守卫 1–7） | 未开始 | — |
-| R2 P2 收口（D12-9…D12-14 + 守卫 8–13） | 未开始 | — |
-| R3 P3 + 文档收口（D12-15 + 守卫 14 + STATUS） | 未开始 | — |
+| R0 红测试（15 个测试，验证全红） | 已完成 | `3b1d7bc` |
+| R1 P0+P1 修复（D12-1…D12-8 + 守卫 1–7） | 已完成 | `8cfcd53`…`033be10` |
+| R2 P2 收口（D12-9…D12-14 + 守卫 8–13） | 已完成 | `7f17f22`…`45bda40` |
+| R3 P3 + 文档收口（D12-15 + 守卫 14 + STATUS） | 已完成 | `d94abd2` + 本提交 |
+
+## 验收门结果（2026-10-16）
+
+| 命令 | 结果 |
+|---|---|
+| `cargo test --workspace`（debug） | 全绿（54 个测试组，含 e2e_info 的 17 项） |
+| `cargo test --release --workspace` | 全绿（54 个测试组） |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 0 警告 |
+| `bash ci/check-doc-drift.sh` | 70 条全绿（含 15 条 v12 新增） |
+| htslib 真值门（bcftools 1.24 读回 `-Ob` 写出物） | `out_of_range_integers_become_missing_in_bcf`、`flag_with_a_value_round_trips_through_bcf`、`string_dot_value_round_trips_through_bcf` 三组读回与 bcftools 自产一致 |
 
 ## 本轮未做（有意）
 

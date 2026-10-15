@@ -72,10 +72,10 @@
 |---|---|---|
 | `-v/--types LIST`、`-V/--exclude-types LIST` | `snps,mnps,indels,other,ref` | bcftools |
 | `--snps-only[=just-acgt]` | 只保留 SNP；`just-acgt` 限制 ALT ∈ {A,C,G,T} | plink2 |
-| `-m/--min-alleles INT`、`-M/--max-alleles INT` | REF+ALT 等位数上下限 | bcftools |
+| `-m/--min-alleles INT`、`-M/--max-alleles INT` | REF+ALT 等位数上下限；`ALT='.'` 计 0 个 ALT（`-M 1` = 只留不变位点，与 bcftools 一致；doc_v12 N9） | bcftools |
 | `-f/--apply-filters LIST` | FILTER 属于列表 | bcftools |
 | `-i/--include EXPR`、`-e/--exclude EXPR` | bcftools 表达式子集（§5），可重复，按命令行顺序 | bcftools |
-| `-q/--min-af FLOAT`、`-Q/--max-af FLOAT` | 非参考等位频率下限/上限；**INFO 有 AC 与 AN 时取 INFO 值**（bcftools 语义，本数据的 INFO/AC 是陈旧的，取到时打印"陈旧 INFO"警告），否则按基因型；阈值按 bcftools 量化为 f32 | bcftools |
+| `-q/--min-af FLOAT`、`-Q/--max-af FLOAT` | 非参考等位频率下限/上限；**INFO 有 AC 与 AN 且样本集未变时取 INFO 值**（bcftools 语义，取到时打印"陈旧 INFO"警告），一旦静态子集/掩码/`--mind`/`--set-gts .` 改变了 cohort，改按（子集/掩码后的）基因型重算——bcftools 同款门（`vcfview.c:341-350`、`filter.c:1471`；doc_v12 N5）；阈值按 bcftools 量化为 f32 | bcftools |
 
 `-q/-Q` 的 `:nref/:alt1/:minor/:major/:nonmajor` 后缀 **【待实现】**（现只有 nref 一种，07 路线 X6）。
 
@@ -113,8 +113,8 @@
 |---|---|
 | 默认 | 样本被静态子集或 `--mind` 剔除时按 bcftools view 规则更新 `INFO/AC`、`INFO/AN`；只做掩码时不更新（与 `bcftools filter -S .` 一致） |
 | `-I, --no-update` | 不更新 |
-| `-x, --remove-info LIST` | 删除 INFO 标签 |
-| `--fill-tags LIST` | 重算并写入 AC、AN、AF、MAF、NS、HWE、F_MISSING…，定义同 `bcftools +fill-tags`。**多等位不做**（裁决 2026-10-10）：默认门 `-M 2` 已剔除；显式放开多等位又要求重算时报错，不静默写错（05 §4 存档） |
+| `-x, --remove-info LIST` | 删除 INFO 标签；**默认清单**为 gold 管线的陈旧标签 `AC,AN,AF,MLEAC,MLEAF,ExcessHet,InbreedingCoeff,DP`（v2 02 §3.5），`-x ''` 保留全部 |
+| `--fill-tags LIST` | 重算并写入 **AC、AN、NS、MAF、HWE**（大小写不敏感，定义同 `bcftools +fill-tags`）；未知标签报 usage 错误并列出支持集（bcftools 同款，`plugins/fill-tags.c:530-535`；doc_v12 N10）。AF/F_MISSING **【待实现】**。**多等位不做**（裁决 2026-10-10）：默认门 `-M 2` 已剔除；显式放开多等位又要求重算时报错，不静默写错（05 §4 存档） |
 
 ---
 
@@ -148,6 +148,20 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 - `AC/AN/AF/MAC/MAF`：INFO 中存在时取 INFO 值，否则按基因型。检测到表达式使用了 INFO 中已存在的 AC/AN 时打印"陈旧 INFO"警告，提示改用 `--maf/--mac` 或先 `-x INFO/AC,INFO/AN`。
 - 与缺失值比较为假（bcftools 语义）。
 - 引用基因型量的表达式（`N_MISSING`、`F_MISSING`，以及 INFO 不存在时的 `AC/AN/…`）在掩码之后求值。
+- **Flag 按存在性读写**：`DB=1`/`DB=0` 测 flag 的存在/缺失（`doc/bcftools.txt:4067`），`DB!=0` 等价 `DB=1`；`DB` 单独出现不是合法表达式（bcftools 对单个裸 token 恒假，reed 在编译期报错而不是静默丢弃所有记录；doc_v12 N6）。
+- **多值 INFO 按任一元素比较**：`Number=A/R/G/.` 或 `Count(n>1)` 的标签逐对比较，任一对满足即真（bcftools `CMP_VECTORS`）；`Number=1` 却给了多个值时按 missing 处理（规范外输入，01-review §2.5-B5）。
+- **数值解析**：按 header 声明类型选择文法（Integer 严格十进制含可选 `+`/`-`，Float 为规范正则文法）；解析失败即 missing，不做字节序比较（doc_v12 N13）。
+
+**与 htslib 的有意分歧**（doc_v12 §2.5-B，永久保留，只登记不改）：
+
+| 形态 | htslib | reed | 理由 |
+|---|---|---|---|
+| `-Ov`/`-Oz` 的 INFO 文本 | 归一化（`+5`→`5`） | 逐字节保真 | §6.7 的编辑原语设计；保真严格强于归一化 |
+| `Σac > an`（AC/AN 自相矛盾） | `exit(1)` 退出 | 丢该位点继续 | 一条畸形记录不应毁掉整轮批处理 |
+| `5.0`/`1e3`/`0x10`/`5abc`（Integer 标签） | 前缀解析（5 / 1 / 0 / 5） | missing | htslib 的前缀解析自身不自洽（`0x10` 在 Float 得 16）；严格拒绝更可预测 |
+| ` 5`/`5 `（数值） | Integer 不容忍、Float 容忍 | 不 trim，missing | 数值文法（§1.3）无空白；htslib 两类型不一致 |
+| `Number=1` 却给多值 | 标量读作 0（`vcf.c:4286` 的实现细节） | missing | 不把 htslib 的偶然行为固化成契约（02 §6.2b） |
+| `-q/-Q` 阈值的 f32 量化 | C 的 `float` 存储（无意） | 刻意复现 `sscanf("%f")` | 已对齐，防止未来改成 f64 破坏边界案例 |
 
 ---
 

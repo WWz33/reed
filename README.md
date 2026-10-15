@@ -101,8 +101,11 @@ plink2 algorithm and emits the kept sites; the window `W` may carry a `kb`
 suffix, the step `S` defaults to 1, and `R2` is the r² ceiling.
 
 INFO handling: reed updates `INFO/AC` and `INFO/AN` when the sample set
-changes; `-I/--no-update` turns that off, `-x/--remove-info LIST` drops tags,
-and `--fill-tags LIST` recomputes them.
+changes (a record without a GT key keeps its input values); `-I/--no-update`
+turns that off. `-x/--remove-info LIST` drops tags — by default the gold
+pipeline's stale list (`AC,AN,AF,MLEAC,MLEAF,ExcessHet,InbreedingCoeff,DP`),
+so pass `-x ''` to keep everything. `--fill-tags LIST` recomputes AC, AN, NS,
+MAF or HWE (case-insensitive; an unsupported tag is an error, like bcftools).
 
 Output: `-O v|z|b|u[0-9]` selects plain VCF, BGZF VCF, BCF or uncompressed
 BCF, with an optional compression level. `-o` names the file (stdout by
