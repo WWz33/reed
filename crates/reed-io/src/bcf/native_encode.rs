@@ -1079,6 +1079,11 @@ fn gt_width(max_allele: i64) -> (u8, usize) {
 }
 
 /// A typed int vector with htslib's width choice.
+///
+/// Values outside `[BCF_MIN_BT_INT32, BCF_MAX_BT_INT32]` are written as the
+/// missing sentinel instead of being truncated by the final `as i32`
+/// (doc_v12 D12-3; [`parse_int_vector`] already filters the text path, this
+/// covers the recomputed-value path).
 fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     let (mut min, mut max) = (i64::MAX, i64::MIN);
     for &v in values {
@@ -1092,7 +1097,7 @@ fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     encode_size(out, values.len(), ty);
     let (missing, _) = super::record::int_sentinels(ty);
     for &v in values {
-        let v = if v == i64::MIN {
+        let v = if v == i64::MIN || v < INT32_MIN_VALUE || v > INT32_MAX_VALUE {
             missing as i32
         } else {
             v as i32
@@ -1112,13 +1117,42 @@ fn push_int(out: &mut Vec<u8>, value: i32, width: usize) {
 
 /// Parses a comma-separated integer vector; `.` and empty parts become the
 /// missing sentinel (`i64::MIN`).
+///
+/// A value outside the BCF-legal range also becomes missing rather than
+/// being truncated to 32 bits: htslib's parser checks
+/// `overflow || val < BCF_MIN_BT_INT32 || val > BCF_MAX_BT_INT32` and
+/// substitutes the missing sentinel (vcf.c:4004-4013), and VCFv4.5 §1.3
+/// forbids the reserved band `[-2^31, -2^31+7]` in both VCF and BCF
+/// (doc_v12 D12-3). Without the check `3000000000` wrapped to
+/// `-1294967296` through the `as i32` in [`encode_int_vector`].
 fn parse_int_vector(value: &[u8], out: &mut Vec<i64>) {
     for part in value.split(|&b| b == b',') {
         if part == b"." || part.is_empty() {
             out.push(i64::MIN);
-        } else {
-            out.push(parse_i64(part).unwrap_or(i64::MIN));
+            continue;
         }
+        let parsed = parse_i64(part).filter(|v| {
+            let ok = *v >= INT32_MIN_VALUE && *v <= INT32_MAX_VALUE;
+            if !ok {
+                warn_once_out_of_range(part);
+            }
+            ok
+        });
+        out.push(parsed.unwrap_or(i64::MIN));
+    }
+}
+
+/// htslib warns once per run about an out-of-range integer and then stays
+/// quiet (`extreme_int_warned`, vcf.c:4008-4012).
+fn warn_once_out_of_range(value: &[u8]) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "Integer INFO value {:?} is outside the BCF range and was set to missing \
+             (further occurrences are not reported)",
+            String::from_utf8_lossy(value)
+        );
     }
 }
 
