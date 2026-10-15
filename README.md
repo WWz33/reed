@@ -165,19 +165,38 @@ let request = StatsRequest {
     populations: Populations::File("pops.txt".into()),
     ..StatsRequest::default()
 };
-let report = reed::run_stats(Some("in.vcf.gz".as_ref()), request, &reed::budget::ThreadBudget::default())?;
+let report = reed::run_stats(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
 let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
 ```
 
+A caller that already holds a `sample -> population` mapping can pass it
+directly instead of writing a populations file:
+
+```rust
+let request = StatsRequest {
+    kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
+    populations: Populations::Assignment(vec![
+        ("sample1".into(), "popA".into()),
+        ("sample2".into(), "popB".into()),
+    ]),
+    ..StatsRequest::default()
+};
+```
+
 The facade re-exports everything needed: `run_filter`, `run_stats`,
-`run_index`, the request types (`StatsRequest`, `FilterSpec`), the reports,
-the writers (`reed::windows`, `reed::reports`, `reed::sfs`, `reed::fstats`,
-`reed::ld`, `reed::summary`), and a single `reed::Error` whose `kind()`
-separates usage errors from runtime failures. `StatsRequest::to_args()` and
+`run_reports`, `run_index`, the request types (`StatsRequest`, `FilterSpec`,
+`ReportRequest`), the reports (`StatsReport`, `FilterReport`,
+`ReportsOutcome`, `IndexOutcome`), the writers (`reed::windows`,
+`reed::reports`, `reed::sfs`, `reed::fstats`, `reed::ld`, `reed::summary`),
+and a single `reed::Error` whose `kind()` separates usage errors from
+runtime failures. `StatsRequest::to_args(&group_names)` and
 `FilterSpec::to_args()` render a request back to the CLI spelling, so a tool
 that builds requests programmatically can also log the equivalent command
-line. Only this facade carries a stability promise; the lower crates under
-`crates/` are internal.
+line; `StatsRequest::to_args` returns a usage error for the requests the CLI
+cannot spell (per-bp kinds, a `Regions` grid). Only this facade carries a
+stability promise; the lower crates under `crates/` are internal, and
+`reed::Error` keeps them out of its signature by sealing its variants —
+classify with `kind()`, read with `Display`/`source()`.
 
 ## Limitations
 

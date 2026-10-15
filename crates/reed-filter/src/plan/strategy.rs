@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 
 /// The three strategies. `SketchThenEmit` selection arrives with M5b; the
 /// variant already exists so M5b changes no public shape.
+///
+/// Test-only override (doc_v11 N10): production code never sets it — the
+/// driver picks the strategy from the plan. Hidden from the docs so the
+/// facade's published surface does not carry an internal hook.
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecStrategy {
     /// One full pass: head → mask → tail → edit → compress, all in the

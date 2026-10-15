@@ -151,17 +151,34 @@ let request = StatsRequest {
     populations: Populations::File("pops.txt".into()),
     ..StatsRequest::default()
 };
-let report = reed::run_stats(Some("in.vcf.gz".as_ref()), request, &reed::budget::ThreadBudget::default())?;
+let report = reed::run_stats(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
 let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
 ```
 
-门面 re-export 所有需要的东西：`run_filter`、`run_stats`、`run_index`，
-请求类型（`StatsRequest`、`FilterSpec`），报告，writer（`reed::windows`、
-`reed::reports`、`reed::sfs`、`reed::fstats`、`reed::ld`、`reed::summary`），
-以及单一 `reed::Error`（`kind()` 区分用法错误与运行期失败）。
-`StatsRequest::to_args()` 与 `FilterSpec::to_args()` 把请求渲染回 CLI 拼写，
-程序化构造请求的工具也能记录等价的命令行。只有这个门面是稳定性承诺；
-`crates/` 下的下层 crate 是内部实现。
+手上已经有 `样本 -> 群体` 映射的调用方可以直接传入，不必落一个群体文件：
+
+```rust
+let request = StatsRequest {
+    kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
+    populations: Populations::Assignment(vec![
+        ("sample1".into(), "popA".into()),
+        ("sample2".into(), "popB".into()),
+    ]),
+    ..StatsRequest::default()
+};
+```
+
+门面 re-export 所有需要的东西：`run_filter`、`run_stats`、`run_reports`、
+`run_index`，请求类型（`StatsRequest`、`FilterSpec`、`ReportRequest`），
+报告（`StatsReport`、`FilterReport`、`ReportsOutcome`、`IndexOutcome`），
+writer（`reed::windows`、`reed::reports`、`reed::sfs`、`reed::fstats`、
+`reed::ld`、`reed::summary`），以及单一 `reed::Error`（`kind()` 区分用法错误
+与运行期失败）。`StatsRequest::to_args(&group_names)` 与
+`FilterSpec::to_args()` 把请求渲染回 CLI 拼写，程序化构造请求的工具也能记录
+等价的命令行；CLI 拼写不出来的请求（per-bp kind、`Regions` grid）由
+`StatsRequest::to_args` 返回用法错误。只有这个门面是稳定性承诺；
+`crates/` 下的下层 crate 是内部实现，`reed::Error` 通过封口变体把它们挡在
+签名之外——用 `kind()` 分类，用 `Display`/`source()` 读消息。
 
 ## 已知限制
 

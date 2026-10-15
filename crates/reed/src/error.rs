@@ -2,6 +2,11 @@
 //! lower crates' errors and classifies them for the front end's exit-code
 //! mapping (docs/spec/cli.md §9: Usage = 2, Runtime = 1). Nothing here
 //! prints or decides process exits — that is the CLI's job.
+//!
+//! The variants are sealed (doc_v11 N5): the payload types belong to the
+//! lower crates, so exposing them would freeze those crates into the
+//! facade's stability promise. Callers classify with [`Error::kind`] and
+//! read with `Display`/`source`.
 
 use reed_core::error::CoreError;
 use reed_engine::error::EngineError;
@@ -10,7 +15,11 @@ use reed_io::error::IoError;
 
 /// One error type across every `run_*` entry point.
 #[derive(Debug)]
-pub enum Error {
+pub struct Error(Box<ErrorInner>);
+
+/// The sealed payload of an [`Error`].
+#[derive(Debug)]
+enum ErrorInner {
     /// A model-layer failure (group/interval/sample construction).
     Core(CoreError),
     /// A transport failure (open, read, decode).
@@ -38,7 +47,7 @@ impl Error {
     /// Wraps a message as a usage failure.
     #[must_use]
     pub fn usage(msg: impl Into<String>) -> Self {
-        Self::Usage(msg.into())
+        Self(Box::new(ErrorInner::Usage(msg.into())))
     }
 
     /// The exit-code class (cli.md §9). Request-construction failures are
@@ -49,62 +58,62 @@ impl Error {
     /// decode error rides the runtime class with them.
     #[must_use]
     pub fn kind(&self) -> ErrorKind {
-        match self {
-            Self::Usage(_)
-            | Self::Core(_)
-            | Self::Spec(FilterError::Spec(_) | FilterError::Format(_)) => ErrorKind::Usage,
-            Self::Io(_)
-            | Self::Spec(FilterError::Io(_) | FilterError::Decode { .. })
-            | Self::Engine(_) => ErrorKind::Runtime,
+        match &*self.0 {
+            ErrorInner::Usage(_)
+            | ErrorInner::Core(_)
+            | ErrorInner::Spec(FilterError::Spec(_) | FilterError::Format(_)) => ErrorKind::Usage,
+            ErrorInner::Io(_)
+            | ErrorInner::Spec(FilterError::Io(_) | FilterError::Decode { .. })
+            | ErrorInner::Engine(_) => ErrorKind::Runtime,
         }
     }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Core(e) => write!(f, "{e}"),
-            Self::Io(e) => write!(f, "{e}"),
-            Self::Engine(e) => write!(f, "{e}"),
-            Self::Spec(e) => write!(f, "{e}"),
-            Self::Usage(msg) => write!(f, "{msg}"),
+        match &*self.0 {
+            ErrorInner::Core(e) => write!(f, "{e}"),
+            ErrorInner::Io(e) => write!(f, "{e}"),
+            ErrorInner::Engine(e) => write!(f, "{e}"),
+            ErrorInner::Spec(e) => write!(f, "{e}"),
+            ErrorInner::Usage(msg) => write!(f, "{msg}"),
         }
     }
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Core(e) => Some(e),
-            Self::Io(e) => Some(e),
-            Self::Engine(e) => Some(e),
-            Self::Spec(e) => Some(e),
-            Self::Usage(_) => None,
+        match &*self.0 {
+            ErrorInner::Core(e) => Some(e),
+            ErrorInner::Io(e) => Some(e),
+            ErrorInner::Engine(e) => Some(e),
+            ErrorInner::Spec(e) => Some(e),
+            ErrorInner::Usage(_) => None,
         }
     }
 }
 
 impl From<CoreError> for Error {
     fn from(e: CoreError) -> Self {
-        Self::Core(e)
+        Self(Box::new(ErrorInner::Core(e)))
     }
 }
 
 impl From<IoError> for Error {
     fn from(e: IoError) -> Self {
-        Self::Io(e)
+        Self(Box::new(ErrorInner::Io(e)))
     }
 }
 
 impl From<EngineError> for Error {
     fn from(e: EngineError) -> Self {
-        Self::Engine(e)
+        Self(Box::new(ErrorInner::Engine(e)))
     }
 }
 
 impl From<FilterError> for Error {
     fn from(e: FilterError) -> Self {
-        Self::Spec(e)
+        Self(Box::new(ErrorInner::Spec(e)))
     }
 }
 
@@ -112,7 +121,7 @@ impl From<FilterError> for Error {
 /// the typed transport errors.
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Self::Io(IoError::from(e))
+        Self(Box::new(ErrorInner::Io(IoError::from(e))))
     }
 }
 
@@ -124,27 +133,27 @@ mod tests {
     fn usage_and_spec_are_usage_the_rest_runtime() {
         assert_eq!(Error::usage("x").kind(), ErrorKind::Usage);
         assert_eq!(
-            Error::Core(CoreError::UnknownSample {
+            Error::from(CoreError::UnknownSample {
                 sample_name: "s".into()
             })
             .kind(),
             ErrorKind::Usage
         );
         assert_eq!(
-            Error::Spec(FilterError::Spec("s".into())).kind(),
+            Error::from(FilterError::Spec("s".into())).kind(),
             ErrorKind::Usage
         );
         assert_eq!(
-            Error::Engine(EngineError::Aborted).kind(),
+            Error::from(EngineError::Aborted).kind(),
             ErrorKind::Runtime
         );
         assert_eq!(
-            Error::Spec(FilterError::Io(std::io::Error::other("x"))).kind(),
+            Error::from(FilterError::Io(std::io::Error::other("x"))).kind(),
             ErrorKind::Runtime,
             "a transport failure is runtime, not a usage error"
         );
         assert_eq!(
-            Error::Spec(FilterError::Decode {
+            Error::from(FilterError::Decode {
                 contig: "chr1".into(),
                 pos: 7,
                 msg: "x".into()
@@ -157,5 +166,15 @@ mod tests {
             Error::from(std::io::Error::other("x")).kind(),
             ErrorKind::Runtime
         );
+    }
+
+    /// The variants are sealed: the payload types stay nameable by the
+    /// facade's own code but are not part of the public surface (N5).
+    #[test]
+    fn source_chain_reaches_the_payload() {
+        let e = Error::from(EngineError::Aborted);
+        assert!(std::error::Error::source(&e).is_some());
+        assert!(std::error::Error::source(&Error::usage("x")).is_none());
+        assert_eq!(Error::usage("x").to_string(), "x");
     }
 }

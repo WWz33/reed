@@ -48,6 +48,28 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! A statistics run borrows the request, so the caller keeps it afterwards
+//! (the README's example, kept compiling here — doc_v11 A11-2):
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use reed::{Populations, StatKind, StatsRequest};
+//! let request = StatsRequest {
+//!     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
+//!     populations: Populations::All,
+//!     ..StatsRequest::default()
+//! };
+//! let report = reed::run_stats(
+//!     Some(std::path::Path::new("in.vcf.gz")),
+//!     &request,
+//!     &reed::budget::ThreadBudget::default(),
+//! )?;
+//! let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+//! let _ = tsv;
+//! # Ok(())
+//! # }
+//! ```
 
 #![allow(unreachable_pub)]
 
@@ -68,14 +90,21 @@ pub use crate::stats::{
     DecayBin, FStatRow, FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode,
     JointSfsReport, LdReport, LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest,
     StatKind, StatsReport, StatsRequest, WindowLayoutOptions, WindowRow, assign_groups,
-    default_kinds, run_stats, run_stats_opened, window_kinds,
+    assign_groups_in_memory, default_kinds, run_stats, run_stats_opened, window_kinds,
 };
+// The report and driver of the per-site/per-sample report family (doc_v11
+// N6): `run_filter`/`run_stats`/`run_index` are already at the root, so
+// `run_reports` and the types in its signature belong beside them rather
+// than only under the writers.
+pub use crate::stats::writers::reports::{
+    ReportRequest, ReportsOutcome, run_reports, run_reports_opened,
+};
+pub use reed_filter::funnel::FilterReport;
 // The accumulator and report types that appear in the facade's public
 // signatures (doc_v7 D7-22: they were `pub` in private modules but never
 // re-exported, so a library caller could not name them).
 pub use reed_stats::request::StatAcc;
 pub use reed_stats::summary::report::QcReportAcc;
-pub use reed_stats::ld::LdWindow;
 
 // The output writers (08 §6.2 `reed::writers`): window layout, per-site reports
 // and the bcftools-stats summary renderer.
@@ -90,9 +119,10 @@ pub use reed_filter::{expr, funnel, plan, spec};
 pub use crate::input::open_regions;
 
 // Front-end re-exports (08 §6.2): the parallel budgets, the region type and
-// the BGZF helpers the tests write fixtures with.
+// the BGZF chunk helpers the front end and its integration tests seek with
+// (`bgzf` writes the test fixtures; `chunk` is the seek/region API).
 pub use reed_core::coord::{Interval0, Pos0};
 pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_engine::budget;
 pub use reed_engine::metrics;
-pub use reed_io::{bgzf, chunk, header};
+pub use reed_io::{bgzf, chunk};

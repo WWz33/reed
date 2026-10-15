@@ -231,4 +231,51 @@ check "BCF field sizes are computed with checked multiplication (doc_v10 D10-8)"
     bash -c 'grep -q "pub fn field_bytes" crates/reed-io/src/bcf/record.rs &&
         ! grep -rn "type_width(ty) \* count" crates/reed-io/src/bcf/render.rs crates/reed-io/src/bcf/native_encode.rs'
 
+# ---- doc_v11 (facade API) --------------------------------------------------
+# N1: `Levels`'s default is the window level, not the all-false bool tuple.
+check "the default Levels is the window level (doc_v11 A11-1)" \
+    bash -c 'grep -q "impl Default for Levels" crates/reed/src/stats/request.rs &&
+        ! grep -q "derive(Clone, Copy, Debug, Default, PartialEq, Eq)" crates/reed/src/stats/request.rs'
+
+# N2: the stats driver borrows the request like its sibling drivers.
+check "run_stats borrows its request (doc_v11 A11-2)" \
+    bash -c 'grep -q "request: &StatsRequest" crates/reed/src/stats/driver.rs'
+
+# N3: `to_args` reports unspellable requests as usage errors, never panics.
+check "StatsRequest::to_args errors instead of panicking (doc_v11 A11-3)" \
+    bash -c 'grep -q "pub fn to_args(&self, group_names: &\[String\]) -> Result<Vec<String>, crate::error::Error>" crates/reed/src/stats/render.rs &&
+        ! grep -q "panic!" crates/reed/src/stats/render.rs &&
+        ! grep -q "assert!" crates/reed/src/stats/render.rs'
+
+# N5: `Error` is a sealed struct; the variant payload types stay out of the
+# public surface.
+check "the facade Error is sealed (doc_v11 A11-5)" \
+    bash -c 'grep -q "pub struct Error(Box<ErrorInner>)" crates/reed/src/error.rs &&
+        grep -q "^enum ErrorInner" crates/reed/src/error.rs'
+
+# N6: the four drivers and their reports are all at the root.
+check "run_reports and its types are at the facade root (doc_v11 A11-6)" \
+    bash -c 'grep -q "run_reports" crates/reed/src/lib.rs &&
+        grep -q "ReportsOutcome" crates/reed/src/lib.rs &&
+        grep -q "FilterReport" crates/reed/src/lib.rs'
+
+# N8: the dead re-exports stay gone (bgzf/chunk are live front-end helpers).
+check "no dead LdWindow/header re-exports (doc_v11 A11-8)" \
+    bash -c '! grep -q "LdWindow" crates/reed/src/lib.rs &&
+        ! grep -q "reed_io::{bgzf, chunk, header}" crates/reed/src/lib.rs'
+
+# N9: OpenedInput keeps its transport fields crate-internal.
+check "OpenedInput fields are crate-internal (doc_v11 A11-9)" \
+    bash -c '! grep -q "pub source: Box<dyn ChunkSource>" crates/reed/src/input.rs &&
+        ! grep -q "pub facts: HeaderFacts" crates/reed/src/input.rs'
+
+# N13: one `--flag value` renderer shared by both to_args contracts.
+check "the to_args flag renderer is defined once (doc_v11 A11-13)" \
+    bash -c 'grep -q "pub fn push_flag" crates/reed-core/src/args.rs &&
+        [ "$(grep -rn "fn flag(" crates --include=*.rs | wc -l)" -eq 0 ]'
+
+# The API-surface gate: a test that imports only the facade.
+check "the facade API-surface test exists (doc_v11)" \
+    bash -c 'grep -q "use reed::{" crates/reed/tests/api_surface.rs'
+
 exit "$fail"

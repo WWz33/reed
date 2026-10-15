@@ -262,7 +262,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         input = %args.input,
         "reed stats opened the input"
     );
-    let facts = &opened.as_ref().expect("invariant: just opened").facts;
+    let facts = opened.as_ref().expect("invariant: just opened").facts();
     let sample_names: Vec<String> = facts.sample_names.clone();
     // `-s/-S/--keep/--remove`: the same conflict rules as the filter.
     let keep_samples =
@@ -469,7 +469,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             .take()
             .expect("invariant: the windowed mode reads once");
         let run_start = std::time::Instant::now();
-        let report = run_stats_opened(source, request, &budget)?;
+        let report = run_stats_opened(source, &request, &budget)?;
         let run_secs = run_start.elapsed().as_secs_f64();
         let Some(prefix) = args.out.clone() else {
             return Err(reed::Error::usage(
@@ -551,7 +551,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         fstats: None,
         ld: None,
         grid,
-        levels: Levels::parse(&args.levels).map_err(|e| reed::Error::usage(e.to_string()))?,
+        levels: Levels::parse(&args.levels)?,
         skip_empty: args.skip_empty,
         contig_lengths,
         layout: None,
@@ -560,7 +560,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         .take()
         .expect("invariant: the windowed mode reads once");
     let run_start = std::time::Instant::now();
-    let report = run_stats_opened(source, request, &budget)?;
+    let report = run_stats_opened(source, &request, &budget)?;
     let run_secs = run_start.elapsed().as_secs_f64();
     if args.verbosity.shows_summary() {
         eprintln!(
@@ -771,7 +771,7 @@ pub(crate) fn build_windowed_request(
     } else {
         // Honor the user's --levels (the default stays window-only, so
         // the window-layout files keep their historical shape).
-        Levels::parse(&args.levels).map_err(|e| reed::Error::usage(e.to_string()))?
+        Levels::parse(&args.levels)?
     };
     let request = StatsRequest {
         kinds: kinds.clone(),
@@ -1088,7 +1088,7 @@ mod tests {
             }),
         };
         let mut argv: Vec<String> = vec!["reed".into(), "stats".into(), "in.vcf".into()];
-        argv.extend(request.to_args(&names()));
+        argv.extend(request.to_args(&names()).expect("to_args"));
         let cli = crate::cli::Cli::try_parse_from(argv).expect("to_args must parse");
         let crate::cli::Command::Stats(stats) = cli.command else {
             panic!("stats subcommand");

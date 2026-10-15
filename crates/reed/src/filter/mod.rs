@@ -64,7 +64,8 @@ pub struct FilterOptions {
     /// BGZF compression level (1–9; htslib default 6).
     pub compress_level: u8,
     /// Test-only strategy override (§11.4: the chosen strategy lands in
-    /// the report either way).
+    /// the report either way). Hidden from the docs (doc_v11 N10).
+    #[doc(hidden)]
     pub strategy: Option<ExecStrategy>,
     /// The `##reed_command` line (captured argv).
     pub command_line: String,
@@ -206,7 +207,7 @@ pub fn run_filter(
     let facts = first
         .as_ref()
         .expect("invariant: the input was just opened")
-        .facts
+        .facts()
         .clone();
     let is_bcf = first.as_ref().is_some_and(|opened| opened.bcf.is_some());
     let input_bcf = first.as_ref().and_then(|opened| opened.bcf.clone());

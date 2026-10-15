@@ -198,7 +198,7 @@ pub(crate) fn site_spec(
     for text in &cli.genotype {
         spec.site_after_mask
             .gt_class
-            .push(reed::spec::GtClassRule::parse(text)?);
+            .push(reed::spec::GtClassRule::parse(text).map_err(|e| e.to_string())?);
     }
 
     Ok(spec)

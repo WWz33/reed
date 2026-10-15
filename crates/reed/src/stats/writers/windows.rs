@@ -30,7 +30,7 @@ pub fn render_tsv(rows: &[WindowRow], kinds: &[StatKind], variant_only: bool) ->
         out.push('\t');
         out.push_str(&row.start1.to_string());
         out.push('\t');
-        out.push_str(&row.end0.to_string());
+        out.push_str(&row.end.to_string());
         for (kind, acc) in kinds.iter().zip(&row.accs) {
             out.push('\t');
             match acc.sfs_bins() {
@@ -154,7 +154,7 @@ pub fn write(
                             let _ = writeln!(
                                 pi_rows,
                                 "{name}\t{}\t{}\t{}\t{value}\t{n_sites}\t{diffs}\t{comparable}\t{missing}",
-                                row.contig, row.start1, row.end0
+                                row.contig, row.start1, row.end
                             );
                         }
                         StatKind::Dxy { a, b, .. } => {
@@ -163,7 +163,7 @@ pub fn write(
                             let _ = writeln!(
                                 dxy_rows,
                                 "{name_a}\t{name_b}\t{}\t{}\t{}\t{value}\t{n_sites}\t{diffs}\t{comparable}\t{missing}",
-                                row.contig, row.start1, row.end0
+                                row.contig, row.start1, row.end
                             );
                         }
                         _ => unreachable!("guarded above"),
@@ -181,7 +181,7 @@ pub fn write(
                     let _ = writeln!(
                         theta_rows,
                         "{name}\t{}\t{}\t{}\t{avg}\t{no_sites}\t{raw}\t{no_var}\t{weighted}",
-                        row.contig, row.start1, row.end0
+                        row.contig, row.start1, row.end
                     );
                 }
                 StatKind::TajimaD { group, .. } => {
@@ -202,7 +202,7 @@ pub fn write(
                         "{name}\t{}\t{}\t{}\t{d}\t{no_sites}\t{}\t{}\t{}",
                         row.contig,
                         row.start1,
-                        row.end0,
+                        row.end,
                         cell(raw_pi),
                         cell(raw_theta),
                         cell(stdev)
@@ -221,7 +221,7 @@ pub fn write(
                     let _ = writeln!(
                         fst_rows,
                         "{name_a}\t{name_b}\t{}\t{}\t{}\t{cell}\t{no_snps}",
-                        row.contig, row.start1, row.end0
+                        row.contig, row.start1, row.end
                     );
                 }
                 StatKind::FstGlobal => {
@@ -235,7 +235,7 @@ pub fn write(
                     let _ = writeln!(
                         fst_global_rows,
                         "{pops_cell}\t{}\t{}\t{}\t{cell}\t{no_snps}",
-                        row.contig, row.start1, row.end0
+                        row.contig, row.start1, row.end
                     );
                 }
                 StatKind::Pbs { a, b, c, .. } => {
@@ -255,7 +255,7 @@ pub fn write(
                         name(*c),
                         row.contig,
                         row.start1,
-                        row.end0,
+                        row.end,
                         cell(value),
                         cell(f_ab),
                         cell(f_ac),
