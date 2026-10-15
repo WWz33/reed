@@ -339,11 +339,25 @@ impl NativeEncoder {
 
     /// One INFO value parsed from the source text (the pre-Y4 behavior for
     /// values the edit does not touch).
+    ///
+    /// The value's shape follows htslib's `vcf_parse_info`:
+    ///
+    /// - a Flag **with** a value is stored as a string — its comment reads
+    ///   "if Flag has a value, treat it as a string" (vcf.c:3949-3951). The
+    ///   VCF spec forbids the combination (a Flag "does not contain a Value
+    ///   entry", v4.5 §1.4.2), so this is the recovery path for foreign
+    ///   input; dropping the value (or flipping `DB=0` to a set flag) is
+    ///   worse than keeping it (doc_v12 D12-4);
+    /// - a String value of `.` is a **literal** dot. Only the whole INFO
+    ///   column being `.` means "no INFO" (v4.5 §1.6.1); inside a value the
+    ///   dot has no special meaning, so it must round-trip as `TAG=.`
+    ///   (doc_v12 D12-5). The empty-string special case stays where htslib
+    ///   really has one: the ID column.
     fn encode_info_text(&mut self, declared: InfoType, value: Option<&[u8]>) {
         let s = &mut self.shared;
         match (declared, value) {
-            // A flag carries no value at all.
-            (InfoType::Flag, _) => encode_size(s, 0, value_type::NULL),
+            // A bare flag carries no value at all.
+            (InfoType::Flag, None) => encode_size(s, 0, value_type::NULL),
             (InfoType::Integer, Some(v)) => {
                 let mut ints = std::mem::take(&mut self.ints);
                 ints.clear();
@@ -359,9 +373,7 @@ impl NativeEncoder {
                     s.extend_from_slice(&f.to_le_bytes());
                 }
             }
-            (_, Some(v)) => {
-                encode_typed_string(s, if v == b"." { &[] } else { v });
-            }
+            (_, Some(v)) => encode_typed_string(s, v),
             (InfoType::Integer, None) => {
                 encode_size(s, 1, value_type::INT8);
                 s.push(i8::MIN as u8);
