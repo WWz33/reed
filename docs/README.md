@@ -26,9 +26,10 @@
 | 引擎错误路径与终止语义 | **`docs/rounds/v9/01-review.md`** + `docs/rounds/v9/02-architecture.md` + `docs/rounds/v9/06-roadmap.md` | 阻塞点—唤醒来源台账；reducer 侧错误/panic **永久挂死**的实测现场（`eu-stack` 5 线程全 `futex_wait`）与规约 W1/W2（唯一错误出口）；通道发送结果语义 C1；输入截断契约（文本丢弃 / index 收录 / BCF 报错）；seam 与 chunk 体的错误一致性 E1；指标口径（peak = 压缩 × `MEM_FACTOR`、reducer 上的 seam 时间漏计）；缺陷 D9-1…D9-8，路线 Q0–Q3。v9 是缺陷修复轮，不重开 v6/v7/v8 的结构项 |
 | BGZF/BCF/VCF 格式兼容性 | **`docs/rounds/v10/01-review.md`** + `docs/rounds/v10/02-architecture.md` + `docs/rounds/v10/06-roadmap.md` | 以工作区 htslib/bcftools 源码为基准的格式处理对照：GT 选宽按编码值（N1，修大等位编号被 `as i16` 静默截断）；NULL 描述符非法（N2）；IDX 限界（N3）；BGZF 最小块长（N4）；文本 index 残片承载（N5，对齐 `BcfIndexJob` 的 FrameChain 模式）；多成员 gzip（N6）；PASS 注入（N7）；计数乘法 checked_mul（N8）。缺陷 D10-1…D10-8，路线 R0–R3。v10 是缺陷修复轮，不重开 v6–v9 的结构项 |
 | 门面 API 公开面 | **`docs/rounds/v11/01-review.md`** + `docs/rounds/v11/02-architecture.md` + `docs/rounds/v11/06-roadmap.md` | `reed` 门面（`crates/reed/src/lib.rs` 公开面）的 API 复审，量尺是 v5/08 §6.2 与 README「Library use」：默认 `Levels` 产出 0 行（A11-1/N1）；`run_stats` 按值取请求使 README 示例不编译（A11-2/N2）；`to_args` 对本仓 `default_kinds` panic（A11-3/N3）；门面横跨六种错误类型、`Error` payload 不可命名（A11-4/5/N4/N5；**N5 已定方案②b：`Error` 变体封口**）；`run_reports`/报告类型不在根（A11-6/N6）；`is_empty` 漏 `summary`（A11-7/N7）；死再导出、`OpenedInput` 内部量、测试钩子、缺内存态 `Populations`、命名与重复 helper（A11-8…13/N8…N13）。证据通道：实跑 / 下游探针编译 / 源码阅读。缺陷 A11-1…A11-13，路线 R0–R3。v11 是 API 复审轮，不重开 v5/08 §6 的分工与 v6–v10 的结构项 |
+| INFO 字段兼容性 | **`docs/rounds/v12/01-review.md`** + `docs/rounds/v12/02-architecture.md` + `docs/rounds/v12/06-roadmap.md` | v10 结构层对照向 INFO **语义层**的延伸，真值门 bcftools 1.24 / 工作区 htslib：**读侧已逐字节一致**（差分夹具 + `-q :type` 五种 + 有 GT 的子集更新）；写侧值编码偏差——超 int32 整数 `-Ob` 回绕（D12-3/N3，htslib 置 missing）、Flag 带值丢值且 `DB=0` 语义反转（D12-4/N4）、String 值 `.` 变空串（D12-5/N4）、打包计数溢出写坏 BCF（D12-9/N8）；过滤语义偏差——sketch 策略把尾部表达式放在无记录字节的上下文里求值致**静默丢记录**（D12-1/N1）、无 GT 记录的 AC/AN 被子集更新清零（D12-2/N2）、`-q/-Q` 在 cohort 变化后仍用陈旧 INFO 且缺 cli.md:78 承诺的警告（D12-6/N5）、表达式层拿不到 header 类型致 Flag 比较恒假 / 向量只比首元素 / 裸标签真值相反（D12-7/N6）、`quantifier = "any"` 不看比较结果（D12-8/N7）、`ALT='.'` 计 1 个 ALT（D12-10/N9）；契约可见性——`--fill-tags` 不校验标签（D12-11/N10）、默认 `-x` 陈旧清单在 help/README/cli.md 均无提示（D12-12/N11）；共性代码收口——AC/AN 读取三份实现（D12-13/N12）、INFO 数值解析三份致 **reed 内部自相矛盾**（同记录过滤判定值≠`-Ob`写出值≠`-Ov`写出值，与 htslib 23 处差异；D12-14/N13）、`edit_vcf_line` 死代码（D12-15/N14）。**§0.5 记 10 个共性代码根因簇（12/15 条缺陷可归因；两个元模式：多份实现各自漂移、元数据存在但消费者没查）**。缺陷 D12-1…D12-15，路线 R0–R3。v12 是缺陷修复轮，与 v11 正交（无共享文件）可并行 |
 | Y5 引擎落地规格 | **`docs/spec/v6_y5/README.md`** + `docs/spec/v6_y5/TODO.md` | A6-1…A6-4 的落地形态（中止原子位 / 许可 drop guard / 接缝上限 / 顺序模式 / 计量）、与 roadmap 附录的差异表、门与执行清单 |
 | Y6 前后端落地规格 | **`docs/spec/v6_y6/README.md`** + `docs/spec/v6_y6/CODE.md` + `docs/spec/v6_y6/TODO.md`；批 D 细化 `docs/spec/v6_y6/batch_d/`（README/TODO/CODE） | F6-13/F6-19 的落地形态（reed::Error / 请求内化 / job.rs 拆分 / C-5 / 联合 SFS / `--bed-file`）、与 roadmap 与 08 §6.2 的差异表、门与执行清单；批 D 的真值表/集成点/退出码契约 |
-| 实施状态 | **`docs/rounds/v6/STATUS.md`**；缺陷修复轮各自的状态在 **`docs/rounds/v7/STATUS.md`**（Z0–Z4）、**`docs/rounds/v8/STATUS.md`**（P0–P2，含 D8-6）、**`docs/rounds/v9/STATUS.md`**（Q0–Q3，起始全部未修 + 复审基线与实测记录）、**`docs/rounds/v10/STATUS.md`**（R0–R3，起始全部未修 + 复审基线代码证据摘录）、**`docs/rounds/v11/STATUS.md`**（R0–R3，起始全部未修 + 复审基线实测/编译证据） | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
+| 实施状态 | **`docs/rounds/v6/STATUS.md`**；缺陷修复轮各自的状态在 **`docs/rounds/v7/STATUS.md`**（Z0–Z4）、**`docs/rounds/v8/STATUS.md`**（P0–P2，含 D8-6）、**`docs/rounds/v9/STATUS.md`**（Q0–Q3，起始全部未修 + 复审基线与实测记录）、**`docs/rounds/v10/STATUS.md`**（R0–R3，起始全部未修 + 复审基线代码证据摘录）、**`docs/rounds/v11/STATUS.md`**（R0–R3，起始全部未修 + 复审基线实测/编译证据）、**`docs/rounds/v12/STATUS.md`**（R0–R3，起始全部未修 + 复审基线实测输出摘录与三条"已一致"基线） | 历史：`docs/rounds/v5/STATUS.md`（X0–X7）、`v4/STATUS.md`（W0–W4）、`v3/STATUS.md`（V0–V6）、`v2/STATUS.md`（M0–M5b/R0–R8） |
 
 ## 历史文档（只作记录，不再修订）
 
@@ -62,6 +63,11 @@
 | `v8/STATUS.md:22-23`「`stitcher_reassembles_and_caps_fragments` 失败是预存在的，与本轮无关」 | **doc_v9 D9-8 更正**：预存在属实，但"无关"是误判——它是 D9-3（`NewlineStitcher` 缺 finish 语义）的症状，且暴露了 release-only 验收门对 `debug_assert` 的盲区 |
 | README「Library use」的 `StatsRequest::to_args()` 写法、漏列 `run_reports`、及各驱动请求参数的按值/按引用不一 | **doc_v11 N3/N2/N6 更正**：`to_args(&group_names)`、驱动清单补 `run_reports`、`run_stats` 请求改按引用（README 示例纳入编译门） |
 | `docs/rounds/v5/08-api-surface.md` §6.2 的后端公开面清单（未含 `run_reports`/报告根导出，未注 `_opened`/`OpenedInput` 例外） | **doc_v11 N6/N9 增补**：报告类型与 `run_reports` 置于根；`_opened` 与 `OpenedInput` 列为批准例外或 opaque 化 |
+| `docs/spec/cli.md` §3.5 的 `--fill-tags` 行（承诺 AF/F_MISSING，实现只有 AC/AN/NS/MAF/HWE 且不校验标签） | **doc_v12 N10 更正（待落地）**：支持集收敛为已实现五项，AF/F_MISSING 标【待实现】；未知标签报 usage 错（bcftools `+fill-tags` 同款） |
+| `docs/spec/cli.md` §3.5 的 `-x` 行与 §3.2 的 `-q/-Q` 行（未写默认陈旧清单；未写 cohort 门与警告） | **doc_v12 N11/N5 增补（待落地）**：`-x` 默认删 8 标签、`-x ''` 关闭；`-q/-Q` 在样本子集/掩码后按 GT 重算（bcftools `vcfview.c:341-350`、`filter.c:1471` 同款门），INFO 优先真正生效时打"陈旧 INFO"警告（兑现 cli.md:78 的承诺） |
+| `docs/spec/cli.md` §5 的表达式支持清单（Flag 比较、向量 any、裸标签真值、INFO 数值解析差异未记） | **doc_v12 N6/N13 增补（待落地）**：Flag 按存在性 1/0（`doc/bcftools.txt:4067`）；Number≠1 按 any-element（`CMP_VECTORS`）；裸标签恒假或编译期拒绝【决】；新增与 htslib 的解析差异表（`+5`/`5.0`/`1e3`/`0x10`/Σac>an） |
+| `docs/spec/cli.md` §3.2 的 `-m/-M` 行（`ALT='.'` 计 1 个 ALT、`-M 1` 因"0=关闭"而整条规则消失） | **doc_v12 N9 更正（待落地）**：`ALT='.'` → 0 个 ALT（bcftools `n_allele`）；`max_alt_alleles` 改 `Option<u32>`，`-M 1` 语义为"只留不变位点" |
+| `docs/spec/architecture.md` §11.4 的 `SketchThenEmit` 触发条件（"有 `max_missing` 规则，且 sketch 估计大小 ≤ 内存预算"，未排除尾部表达式/行字段依赖） | **doc_v12 N1 增补（待落地）**：sketch 前置"无尾部表达式且 `-q/-Q` 不依赖 INFO"；`--mind + --indep-pairwise + 尾部表达式`编译期报错。§11.4 的三策略等价契约本身正确，缺的是这条前置 |
 
 ## 一致性守卫
 
@@ -73,3 +79,10 @@
 doc_v11（门面 API）落地后追加其 01-review §3 的守卫：`Levels` 默认 `window=true`、
 `run_stats` 请求按引用、`to_args` 可失败、根含 `run_reports`/`FilterReport`/`ReportsOutcome`、
 无 `LdWindow`/`bgzf`/`header` 死再导出、README 库示例在编译门内。
+doc_v12（INFO 兼容性）落地后追加其 01-review §3 的守卫 1–14：策略覆盖尊重尾部
+表达式、`fill_info_set` 有 `has_gt` 门、`parse_int_vector` 引用 INT32 值域常量、
+Flag/String 编码收口（无 `if v == b"."` 空串特判）、`MinAfInfo` 推入含 cohort 门
+且 `-q` 有陈旧警告、`expr::check` 签名含类型信息、`any` 分支含 `cmp.apply`、
+打包计数有上限 helper、head 的 ALT 计数走共享 helper、`--fill-tags` 未知标签
+报 usage 错、`--help` 的 `-x` 条目含默认清单、AC/AN 读取单一实现、INFO 数值
+解析单一实现、`line_edit.rs` 无 `LineRef::parse(line.line)`。
