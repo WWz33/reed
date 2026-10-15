@@ -146,7 +146,11 @@ impl FilterSpec {
         }
 
         // ---- INFO ----
-        if !self.recompute.drop_stale.is_empty() {
+        // Render `-x` only when the list came from the user: the default
+        // stale list is what the CLI applies anyway, and rendering it would
+        // turn `to_args`'s output into an explicit request on the way back
+        // (`drop_stale_explicit`, doc_v12 D12-2/12).
+        if self.recompute.drop_stale_explicit && !self.recompute.drop_stale.is_empty() {
             let list: Vec<String> = self
                 .recompute
                 .drop_stale

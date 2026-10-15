@@ -601,8 +601,10 @@ mod tests {
         let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
         assert_eq!(first, second);
         assert_eq!(&rendered[..flags.len()], &flags[..]);
-        // The rest of the rendering is the default `-x` stale list.
-        assert!(rendered[flags.len()] == "-x", "{rendered:?}");
+        // The default stale list is not rendered (doc_v12 D12-12): the CLI
+        // applies it anyway, and rendering it would turn the round trip into
+        // an explicit `-x` (`drop_stale_explicit`).
+        assert_eq!(rendered, flags, "{rendered:?}");
     }
 
     /// doc_v4 02 回退版 §5.2: the withdrawn keep-direction flags error with
