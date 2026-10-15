@@ -575,7 +575,15 @@ fn info_operand<'a>(site: &'a SiteValues<'a>, tag: &[u8]) -> Operand<'a> {
         Some(TagNumber::A | TagNumber::R | TagNumber::G | TagNumber::Unknown)
             | Some(TagNumber::Count(2..))
     );
-    let elements: Vec<Val<'a>> = value.split(|&b| b == b',').map(parse_element).collect();
+    // The declared type picks the grammar: an Integer tag takes the integer
+    // rule only (`1e3`/`5.0` are not integers — doc_v12 D12-14), a Float tag
+    // the float rule, and an undeclared/String tag falls back to trying both
+    // and then a string (the historical lenient behaviour for unknown tags).
+    let grammar = declared.map(|(ty, _)| ty);
+    let elements: Vec<Val<'a>> = value
+        .split(|&b| b == b',')
+        .map(|part| parse_element(part, grammar))
+        .collect();
     if multi {
         return Operand::Vector(elements);
     }
@@ -588,15 +596,29 @@ fn info_operand<'a>(site: &'a SiteValues<'a>, tag: &[u8]) -> Operand<'a> {
 
 /// One INFO element as a value: `.` is missing, a number parses, everything
 /// else stays a string for the byte-wise comparisons.
-fn parse_element(part: &[u8]) -> Val<'_> {
+///
+/// A numeric-typed tag that fails to parse is **missing**, not a string:
+/// bcftools reads such a tag through its declared type (an Integer tag goes
+/// through `bcf_get_info_int32`, filter.c:845-861) and never falls back to a
+/// byte-wise comparison — `XI=abc` used to pass `XI>4` because `"abc" > "4"`
+/// byte-wise (doc_v12 D12-14 path C). The tag's declared type is what
+/// decides; an undeclared or String tag keeps the string behaviour.
+fn parse_element(part: &[u8], declared: Option<reed_core::tag_table::TagType>) -> Val<'_> {
+    use reed_core::tag_table::TagType;
     if part == b"." || part.is_empty() {
         return Val::Missing;
     }
-    match std::str::from_utf8(part)
-        .ok()
-        .and_then(|s| s.parse::<f64>().ok())
-    {
+    let parsed = match declared {
+        Some(TagType::Integer) => reed_io::vcf::info::parse_info_number(part, false),
+        Some(TagType::Float) => reed_io::vcf::info::parse_info_number(part, true),
+        // Undeclared or string-typed: try both grammars (a flag never
+        // reaches here), then keep the text.
+        _ => reed_io::vcf::info::parse_info_number(part, false)
+            .or_else(|| reed_io::vcf::info::parse_info_number(part, true)),
+    };
+    match parsed {
         Some(n) => Val::Num(n),
+        None if matches!(declared, Some(TagType::Integer | TagType::Float)) => Val::Missing,
         None => Val::Str(part),
     }
 }

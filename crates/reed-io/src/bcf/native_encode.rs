@@ -1323,25 +1323,10 @@ fn bad(reason: &'static str) -> IoError {
 }
 
 /// Strict integer parse (optional leading '-', digits only).
+/// The one INFO integer grammar (doc_v12 D12-14); see
+/// [`crate::vcf::info::parse_info_int`].
 fn parse_i64(text: &[u8]) -> Option<i64> {
-    if text.is_empty() {
-        return None;
-    }
-    let (neg, digits) = match text[0] {
-        b'-' => (true, &text[1..]),
-        _ => (false, text),
-    };
-    if digits.is_empty() {
-        return None;
-    }
-    let mut value: i64 = 0;
-    for &b in digits {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        value = value.checked_mul(10)?.checked_add(i64::from(b - b'0'))?;
-    }
-    Some(if neg { -value } else { value })
+    crate::vcf::info::parse_info_int(text)
 }
 
 #[cfg(test)]
