@@ -333,7 +333,8 @@ impl NativeEncoder {
         self.encode_info_appends(edit, &seen, &mut n_info)?;
         // Patch the packed counters (n_allele<<16|n_info; n_fmt|n_sample is
         // filled in by `encode_indiv`).
-        self.shared[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
+        let packed = pack_allele_info(n_allele, n_info)?;
+        self.shared[16..20].copy_from_slice(&packed.to_le_bytes());
         Ok(())
     }
 
@@ -488,7 +489,7 @@ impl NativeEncoder {
         }
         let s = &mut self.shared;
         s[20..24].copy_from_slice(
-            &(n_fmt << 24 | n_samples_out(edit, n_samples_in) as u32).to_le_bytes(),
+            &pack_fmt_sample(n_fmt, n_samples_out(edit, n_samples_in) as u32)?.to_le_bytes(),
         );
         Ok(())
     }
@@ -802,7 +803,8 @@ impl NativeEncoder {
         }
         self.encode_info_appends(edit, &seen, &mut n_info)?;
         let n_allele = u32::try_from(n_allele).unwrap_or(u32::MAX);
-        self.shared[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
+        let packed = pack_allele_info(n_allele, n_info)?;
+        self.shared[16..20].copy_from_slice(&packed.to_le_bytes());
         Ok(())
     }
 
@@ -861,7 +863,7 @@ impl NativeEncoder {
         }
         let n_fmt = u32::try_from(n_fmt).unwrap_or(u32::MAX);
         self.shared[20..24].copy_from_slice(
-            &(n_fmt << 24 | n_samples_out(edit, n_sample_in) as u32).to_le_bytes(),
+            &pack_fmt_sample(n_fmt, n_samples_out(edit, n_sample_in) as u32)?.to_le_bytes(),
         );
         Ok(())
     }
@@ -1029,6 +1031,45 @@ fn encode_info_typed(s: &mut Vec<u8>, declared: InfoType, value: &InfoValueOut) 
 
 // ---- typed value encoders (the mirror of render.rs) ----
 
+/// BCF record-header field widths (hts-specs §6.3; the packed words are
+/// `n_allele<<16|n_info` and `n_fmt<<24|n_sample`). htslib refuses an
+/// over-large count at parse time (`vcf.c:3912` for INFO, `:4174` for
+/// alleles, `vcf_parse_format_dict2` for FORMAT keys); reed writes records
+/// it did not parse from text (BCF in, BCF out), so it must check before
+/// packing instead of letting the high bits leak into the neighbouring
+/// field (doc_v12 D12-9).
+const MAX_N_INFO: u32 = 0xFFFF;
+/// See [`MAX_N_INFO`].
+const MAX_N_ALLELE: u32 = 0xFFFF;
+/// See [`MAX_N_INFO`].
+const MAX_N_FMT: u32 = 0xFF;
+/// See [`MAX_N_INFO`].
+const MAX_N_SAMPLE: u32 = 0xFF_FFFF;
+
+/// Packs `n_allele<<16 | n_info`, rejecting counts that do not fit the
+/// fields (doc_v12 D12-9).
+fn pack_allele_info(n_allele: u32, n_info: u32) -> Result<u32, IoError> {
+    if n_allele > MAX_N_ALLELE {
+        return Err(bad("BCF record has too many alleles (max 65535)"));
+    }
+    if n_info > MAX_N_INFO {
+        return Err(bad("BCF record has too many INFO fields (max 65535)"));
+    }
+    Ok(n_allele << 16 | n_info)
+}
+
+/// Packs `n_fmt<<24 | n_sample`, rejecting counts that do not fit the
+/// fields (doc_v12 D12-9).
+fn pack_fmt_sample(n_fmt: u32, n_sample: u32) -> Result<u32, IoError> {
+    if n_fmt > MAX_N_FMT {
+        return Err(bad("BCF record has too many FORMAT fields (max 255)"));
+    }
+    if n_sample > MAX_N_SAMPLE {
+        return Err(bad("BCF record has too many samples (max 16777215)"));
+    }
+    Ok(n_fmt << 24 | n_sample)
+}
+
 /// A typed string: descriptor + bytes (ID, alleles, INFO strings).
 fn encode_typed_string(out: &mut Vec<u8>, value: &[u8]) {
     encode_size(out, value.len(), value_type::CHAR);
@@ -1109,7 +1150,7 @@ fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     encode_size(out, values.len(), ty);
     let (missing, _) = super::record::int_sentinels(ty);
     for &v in values {
-        let v = if v == i64::MIN || v < INT32_MIN_VALUE || v > INT32_MAX_VALUE {
+        let v = if v == i64::MIN || !(INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(&v) {
             missing as i32
         } else {
             v as i32
@@ -1144,7 +1185,7 @@ fn parse_int_vector(value: &[u8], out: &mut Vec<i64>) {
             continue;
         }
         let parsed = parse_i64(part).filter(|v| {
-            let ok = *v >= INT32_MIN_VALUE && *v <= INT32_MAX_VALUE;
+            let ok = (INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(v);
             if !ok {
                 warn_once_out_of_range(part);
             }
