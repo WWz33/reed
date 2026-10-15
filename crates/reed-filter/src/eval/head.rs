@@ -40,6 +40,7 @@ pub fn eval_head(
     rules: &[HeadRule],
     hits: &mut [u64],
     scratch: &mut HeadScratch,
+    tags: &reed_core::tag_table::TagTable,
 ) -> bool {
     // The counters are aligned with the rule list; a short slice would make
     // the zip below silently skip rules (a caller invariant violation).
@@ -114,6 +115,7 @@ pub fn eval_head(
             HeadRule::Expr { include, expr, .. } => {
                 let mut values = crate::expr::SiteValues::from_line(line, pos1, None);
                 values.info_index = Some(&scratch.index);
+                values.tags = Some(tags);
                 let truth = crate::expr::eval(expr, &values);
                 if *include { truth } else { !truth }
             }
@@ -227,14 +229,18 @@ fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> 
         return rule.on_missing == crate::spec::OnMissing::Pass;
     };
     if rule.number_a {
-        // Comma-separated per-ALT values with a quantifier.
+        // Comma-separated per-ALT values with a quantifier: `any` is true
+        // when an element satisfies the comparison, `all` when every
+        // parsable element does (the definitions in `predicate.rs:168-176`
+        // and architecture.md §11.3; doc_v12 D12-8).
         let mut any = false;
         let mut all = true;
         for part in value.split(|&b| b == b',') {
             match parse_number(part) {
                 Some(v) => {
-                    any = true;
-                    all &= rule.cmp.apply_f64(v);
+                    let ok = rule.cmp.apply_f64(v);
+                    any |= ok;
+                    all &= ok;
                 }
                 None => all = false,
             }

@@ -127,10 +127,13 @@ fn mind_with_tail_expression_keeps_records() {
     let d = dir("mind-tail-expr");
     let mut text = String::from(MIND_HEADER);
     for (i, qd) in [200, 200, 5, 5].iter().enumerate() {
-        text.push_str(&format!(
-            "Chr01\t{}\t.\tA\tG\t50\tPASS\tQD={qd}\tGT\t0/1\t0/0\t0/0\t0/0\n",
+        use std::fmt::Write as _;
+        writeln!(
+            text,
+            "Chr01\t{}\t.\tA\tG\t50\tPASS\tQD={qd}\tGT\t0/1\t0/0\t0/0\t0/0",
             i + 1
-        ));
+        )
+        .expect("invariant: string write");
     }
     let path = fixture(&d, "in", &text);
 
@@ -510,7 +513,7 @@ fn quantifier_any_requires_a_satisfying_element() {
         let lr = reed_io::vcf::line::LineRef::parse(line.as_bytes()).expect("parses");
         let mut hits = vec![0_u64; plan.head.len()];
         let mut scratch = reed_filter::eval::head::HeadScratch::new();
-        reed_filter::eval::head::eval_head(&lr, 10, &plan.head, &mut hits, &mut scratch)
+        reed_filter::eval::head::eval_head(&lr, 10, &plan.head, &mut hits, &mut scratch, &tags)
     };
 
     assert!(
@@ -555,10 +558,11 @@ fn info_count_overflow_errors_instead_of_corrupting() {
          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n",
     );
     let info: Vec<String> = (0..65_536).map(|i| format!("K0={i}")).collect();
-    text.push_str(&format!(
-        "Chr01\t1\t.\tA\tG\t50\tPASS\t{}\tGT\t0/1\n",
-        info.join(";")
-    ));
+    {
+        use std::fmt::Write as _;
+        writeln!(text, "Chr01\t1\t.\tA\tG\t50\tPASS\t{}\tGT\t0/1", info.join(";"))
+            .expect("invariant: string write");
+    }
     let path = fixture(&d, "in", &text);
     let out = d.join("out.bcf");
     let mut opts = options(None, &out);

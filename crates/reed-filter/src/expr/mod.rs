@@ -78,6 +78,12 @@ pub struct SiteValues<'a> {
     /// numeric-typed tags only (multi-valued tags need subscripts and are
     /// rejected at compile time).
     pub fmt: Option<&'a [(Vec<u8>, Option<f64>)]>,
+    /// The header's declared tags. INFO lookups need the declaration to be
+    /// correct: a Flag reads as 1/0 (presence, bcftools
+    /// `filters_set_info_flag`, filter.c:964-971) and a multi-valued tag
+    /// compares any-element (bcftools `CMP_VECTORS`, filter.c:2738-2790) —
+    /// both impossible from the raw text alone (doc_v12 D12-7).
+    pub tags: Option<&'a reed_core::tag_table::TagTable>,
 }
 
 impl<'a> SiteValues<'a> {
@@ -122,6 +128,7 @@ impl<'a> SiteValues<'a> {
             info_index: None,
             gt,
             fmt: None,
+            tags: None,
         }
     }
 }
@@ -148,6 +155,7 @@ impl SiteValues<'static> {
             info_index: None,
             gt: Some(gt),
             fmt: None,
+            tags: None,
         }
     }
 }
@@ -196,9 +204,9 @@ pub fn parse(text: &str) -> Result<Expr, String> {
 ///
 /// A human-readable message (syntax error, unknown tag, or a construct the
 /// subset does not implement yet).
-pub fn parse_and_check(text: &str, info_tags: &[String]) -> Result<Expr, String> {
+pub fn parse_and_check(text: &str, tags: &reed_core::tag_table::TagTable) -> Result<Expr, String> {
     let expr = parser::parse(text)?;
-    check(&expr, info_tags, &[])?;
+    check(&expr, tags, &[])?;
     Ok(expr)
 }
 
@@ -210,11 +218,11 @@ pub fn parse_and_check(text: &str, info_tags: &[String]) -> Result<Expr, String>
 /// subset does not implement yet).
 pub fn parse_and_check_fmt(
     text: &str,
-    info_tags: &[String],
+    tags: &reed_core::tag_table::TagTable,
     format_tags: &[String],
 ) -> Result<Expr, String> {
     let expr = parser::parse(text)?;
-    check(&expr, info_tags, format_tags)?;
+    check(&expr, tags, format_tags)?;
     Ok(expr)
 }
 
@@ -223,7 +231,24 @@ pub fn parse_and_check_fmt(
 /// # Errors
 ///
 /// Unknown tags and unimplemented constructs.
-pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Result<(), String> {
+pub fn check(
+    expr: &Expr,
+    tags: &reed_core::tag_table::TagTable,
+    format_tags: &[String],
+) -> Result<(), String> {
+    check_inner(expr, tags, format_tags, false)
+}
+
+/// `in_cmp` is true once the walk is inside a comparison: a bare tag is only
+/// legal there is no comparison to give it a value (bcftools evaluates a
+/// lone token to false, `filter.c:4352-4380`; reed reports it at compile
+/// time instead of silently dropping every record — 01-review §2.5-C1).
+fn check_inner(
+    expr: &Expr,
+    tags: &reed_core::tag_table::TagTable,
+    format_tags: &[String],
+    in_cmp: bool,
+) -> Result<(), String> {
     match expr {
         Expr::Fmt(tag) => {
             if !format_tags.iter().any(|t| t == tag) {
@@ -234,7 +259,7 @@ pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Resul
         Expr::Subscript(inner, _) => {
             // A subscript selects an element of a multi-valued value; the
             // planned columns carry single values only.
-            check(inner, info_tags, format_tags)?;
+            check_inner(inner, tags, format_tags, in_cmp)?;
             Err(
                 "subscripts ([0], [*]) are not supported yet (multi-valued FORMAT tags)"
                     .to_string(),
@@ -248,19 +273,36 @@ pub fn check(expr: &Expr, info_tags: &[String], format_tags: &[String]) -> Resul
                 ));
             };
             check_pattern(pattern)?;
-            check(lhs, info_tags, format_tags)
+            check_inner(lhs, tags, format_tags, true)
         }
         Expr::Info(tag) | Expr::Bare(tag) => {
-            if Field::from_name(tag).is_none() && !info_tags.iter().any(|t| t == tag) {
+            if Field::from_name(tag).is_none() && tags.info(tag).is_none() {
                 return Err(format!("INFO tag {tag:?} is not declared in the header"));
             }
-            Ok(())
+            // A tag outside a comparison is always false in bcftools:
+            // `filter_test` never sets `pass_site` without a comparison node
+            // (filter.c:4352-4380). Report it instead of filtering every
+            // record away (01-review §2.5-C1). Literals stay legal — they
+            // are the right-hand sides reached through `Expr::Cmp`.
+            if in_cmp {
+                return Ok(());
+            }
+            Err(format!(
+                "tag {tag:?} without a comparison is always false in bcftools; \
+                 write e.g. `{tag}=1` (flag presence) or `{tag}>0`"
+            ))
         }
-        Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
-            check(a, info_tags, format_tags)?;
-            check(b, info_tags, format_tags)
+        // A comparison's operands are values: a tag there is legal.
+        Expr::Cmp(_, a, b) => {
+            check_inner(a, tags, format_tags, true)?;
+            check_inner(b, tags, format_tags, true)
         }
-        Expr::Not(e) => check(e, info_tags, format_tags),
+        // Logic operands are whole predicates: the flag passes through.
+        Expr::Logic(_, a, b) => {
+            check_inner(a, tags, format_tags, in_cmp)?;
+            check_inner(b, tags, format_tags, in_cmp)
+        }
+        Expr::Not(e) => check_inner(e, tags, format_tags, in_cmp),
         _ => Ok(()),
     }
 }
@@ -281,13 +323,15 @@ pub fn eval(expr: &Expr, site: &SiteValues<'_>) -> bool {
             if *op == CmpOp::Match { hit } else { !hit }
         }
         Expr::Cmp(op, a, b) => {
-            let (Some(left), Some(right)) = (value(a, site), value(b, site)) else {
+            // A multi-valued INFO tag compares any-element: bcftools walks
+            // every pair and passes the site when one satisfies the
+            // comparison (`CMP_VECTORS`, filter.c:2738-2790; doc_v12 D12-7).
+            let left = operand(a, site);
+            let right = operand(b, site);
+            let (Some(left), Some(right)) = (left, right) else {
                 return false;
             };
-            if matches!(left, Val::Missing) || matches!(right, Val::Missing) {
-                return false;
-            }
-            compare(*op, &left, &right)
+            left.any_pair(&right, *op)
         }
         Expr::Logic(op, a, b) => match *op {
             LogicOp::And => eval(a, site) && eval(b, site),
@@ -321,7 +365,7 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
             if let Some(field) = Field::from_name(tag) {
                 return field_value(field, site);
             }
-            info_value(site.info, tag.as_bytes(), site.info_index)
+            info_operand(site, tag.as_bytes()).scalar()
         }
         Expr::Subscript(_, _) | Expr::Cmp(..) | Expr::Logic(..) | Expr::Not(_) => None,
     }
@@ -417,6 +461,146 @@ fn info_value<'a>(
     )
 }
 
+/// One side of a comparison: a scalar value or the elements of a
+/// multi-valued INFO tag.
+#[derive(Clone, Debug)]
+enum Operand<'a> {
+    /// Zero or one value (the bcftools "scalar" view).
+    Scalar(Option<Val<'a>>),
+    /// Every element of a multi-valued tag (Number=A/R/G or a count > 1).
+    Vector(Vec<Val<'a>>),
+}
+
+impl<'a> Operand<'a> {
+    /// The single value of a scalar operand (a vector collapses to its
+    /// first element, which is what a scalar context means).
+    fn scalar(self) -> Option<Val<'a>> {
+        match self {
+            Self::Scalar(v) => v,
+            Self::Vector(mut v) => {
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v.swap_remove(0))
+                }
+            }
+        }
+    }
+
+    /// bcftools' comparison rule over two operands: any pair satisfies the
+    /// comparison, and a missing element on either side only passes for the
+    /// operators that treat missing as a value (`=`/`!=`, the
+    /// `missing_logic` table of `CMP_VECTORS`). Reed keeps the simpler
+    /// "missing makes comparisons false" rule for missing *elements* and
+    /// only implements the any-pair walk here.
+    fn any_pair(&self, other: &Self, op: CmpOp) -> bool {
+        let scalars_a: Vec<Option<Val<'a>>> = match self {
+            Self::Scalar(v) => vec![v.clone()],
+            Self::Vector(v) => v.iter().cloned().map(Some).collect(),
+        };
+        let scalars_b: Vec<Option<Val<'a>>> = match other {
+            Self::Scalar(v) => vec![v.clone()],
+            Self::Vector(v) => v.iter().cloned().map(Some).collect(),
+        };
+        for a in &scalars_a {
+            for b in &scalars_b {
+                let (Some(a), Some(b)) = (a, b) else { continue };
+                if matches!(a, Val::Missing) || matches!(b, Val::Missing) {
+                    continue;
+                }
+                if compare(op, a, b) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Resolves one comparison side: a multi-valued INFO tag becomes a vector,
+/// everything else a scalar.
+fn operand<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Operand<'a>> {
+    if let Expr::Info(tag) | Expr::Bare(tag) = expr
+        && Field::from_name(tag).is_none()
+    {
+        return Some(info_operand(site, tag.as_bytes()));
+    }
+    value(expr, site).map(|v| Operand::Scalar(Some(v)))
+}
+
+/// One INFO tag as a comparison operand, honouring the header's declaration:
+///
+/// - an undeclared tag has no shape to honour and reads as a scalar;
+/// - a Flag reads as 1/0 by presence (bcftools `filters_set_info_flag`,
+///   filter.c:964-971; "1 (or 0) to test the presence (or absence) of a
+///   flag", doc/bcftools.txt:4067) — a bare flag used to be `Val::Missing`
+///   and matched nothing (doc_v12 D12-7);
+/// - a multi-valued tag (`Number=A/R/G/.` or `Count(n)` with n > 1) becomes
+///   the element vector, compared any-element;
+/// - a `Number=1` tag with several values is malformed input: bcftools'
+///   scalar reader happens to return 0 there (htslib leaves `v1` at its zero
+///   initialiser when `len != 1`, vcf.c:4286), but that is an implementation
+///   detail, so reed reads it as missing (01-review §2.5-B5/C2).
+fn info_operand<'a>(site: &'a SiteValues<'a>, tag: &[u8]) -> Operand<'a> {
+    use reed_core::tag_table::TagNumber;
+    let declared = site.tags.and_then(|t| {
+        std::str::from_utf8(tag)
+            .ok()
+            .and_then(|name| t.info(name))
+            .map(|def| (def.ty, def.number))
+    });
+    let fragment = match site.info_index {
+        Some(index) => index.get(site.info, tag),
+        None => info_fragments(site.info)
+            .find(|(name, _)| *name == tag)
+            .map(|(_, value)| value),
+    };
+    let is_flag = matches!(declared, Some((reed_core::tag_table::TagType::Flag, _)));
+    let Some(fragment) = fragment else {
+        // The tag is absent: a declared Flag reads 0 ("0 to test the
+        // absence of a flag", doc/bcftools.txt:4067); anything else has no
+        // value to compare.
+        return Operand::Scalar(Some(if is_flag { Val::Num(0.0) } else { Val::Missing }));
+    };
+    let Some(value) = fragment else {
+        // A bare key: a declared Flag is present (1); anything else has no
+        // value to compare.
+        return Operand::Scalar(Some(if is_flag { Val::Num(1.0) } else { Val::Missing }));
+    };
+    if value == b"." || value.is_empty() {
+        return Operand::Scalar(Some(Val::Missing));
+    }
+    let multi = matches!(
+        declared.map(|(_, n)| n),
+        Some(TagNumber::A | TagNumber::R | TagNumber::G | TagNumber::Unknown)
+            | Some(TagNumber::Count(2..))
+    );
+    let elements: Vec<Val<'a>> = value.split(|&b| b == b',').map(parse_element).collect();
+    if multi {
+        return Operand::Vector(elements);
+    }
+    if elements.len() > 1 {
+        // A Number=1 tag carrying several values is malformed (01 §2.5-B5).
+        return Operand::Scalar(Some(Val::Missing));
+    }
+    Operand::Scalar(elements.into_iter().next())
+}
+
+/// One INFO element as a value: `.` is missing, a number parses, everything
+/// else stays a string for the byte-wise comparisons.
+fn parse_element(part: &[u8]) -> Val<'_> {
+    if part == b"." || part.is_empty() {
+        return Val::Missing;
+    }
+    match std::str::from_utf8(part)
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+    {
+        Some(n) => Val::Num(n),
+        None => Val::Str(part),
+    }
+}
+
 /// Characters that turn a pattern into a general regular expression, which
 /// this subset does not implement (02-cli.md §4: report, never reinterpret).
 const REGEX_META: &[char] = &['.', '*', '+', '?', '[', ']', '(', ')', '{', '}', '|', '\\'];
@@ -504,12 +688,27 @@ mod tests {
             info_index: None,
             gt,
             fmt: None,
+            tags: None,
         }
     }
 
+    /// A TagTable declaring each name as `Type`, `Number` (AC is Number=A).
+    fn table(names: &[&str]) -> reed_core::tag_table::TagTable {
+        use reed_core::tag_table::{TagNumber, TagTable, TagType};
+        let mut t = TagTable::new();
+        for name in names {
+            if *name == "AC" {
+                t.add_info(name, TagType::Integer, TagNumber::A);
+            } else {
+                t.add_info(name, TagType::Integer, TagNumber::Count(1));
+            }
+        }
+        t
+    }
+
     fn ev(text: &str, s: &SiteValues<'_>, tags: &[&str]) -> bool {
-        let tags: Vec<String> = tags.iter().map(|t| (*t).to_string()).collect();
-        let expr = parse_and_check(text, &tags).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let expr =
+            parse_and_check(text, &table(tags)).unwrap_or_else(|e| panic!("{text}: {e}"));
         eval(&expr, s)
     }
 
@@ -577,33 +776,41 @@ mod tests {
 
     #[test]
     fn unsupported_constructs_are_reported() {
-        assert!(parse_and_check_fmt("FMT/DP>10", &[], &["DP".into()]).is_ok());
+        let empty = table(&[]);
+        assert!(parse_and_check_fmt("FMT/DP>10", &empty, &["DP".into()]).is_ok());
         assert!(
-            parse_and_check_fmt("FMT/DP>10", &[], &[])
+            parse_and_check_fmt("FMT/DP>10", &empty, &[])
                 .unwrap_err()
                 .contains("not declared")
         );
         assert!(
-            parse_and_check("INFO/AC[0]>1", &["AC".into()])
+            parse_and_check("INFO/AC[0]>1", &table(&["AC"]))
                 .unwrap_err()
                 .contains("subscripts")
         );
         assert!(
-            parse_and_check("ID~\"rs[0-9]\"", &[])
+            parse_and_check("ID~\"rs[0-9]\"", &empty)
                 .unwrap_err()
                 .contains("metacharacter")
         );
         assert!(
-            parse_and_check("ID~QSOMETHING", &[])
+            parse_and_check("ID~QSOMETHING", &empty)
                 .unwrap_err()
                 .contains("string literal")
         );
         assert!(
-            parse_and_check("NOSUCH>1", &[])
+            parse_and_check("NOSUCH>1", &empty)
                 .unwrap_err()
                 .contains("not declared")
         );
-        assert!(parse_and_check("QUAL>", &[]).is_err());
+        assert!(parse_and_check("QUAL>", &empty).is_err());
+        // A tag with no comparison is always false in bcftools; reed
+        // reports it (doc_v12 D12-7 / 01-review §2.5-C1).
+        assert!(
+            parse_and_check("DP", &table(&["DP"]))
+                .unwrap_err()
+                .contains("always false")
+        );
     }
 
     #[test]

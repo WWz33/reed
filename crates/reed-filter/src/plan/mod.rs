@@ -329,6 +329,11 @@ pub struct FilterPlan {
     /// values and uses the genotype counts, like bcftools
     /// (`vcfview.c:341-350`, `filter.c:1471`; doc_v12 D12-6).
     pub info_trusted: bool,
+    /// The header's declared INFO/FORMAT tags: the runtime evaluator needs
+    /// the declaration to read a Flag as 1/0 by presence and a multi-valued
+    /// tag as a vector (doc_v12 D12-7). `Arc` so a worker's evaluation
+    /// context can borrow it without cloning the map.
+    pub tags: std::sync::Arc<TagTable>,
     /// Provenance: canonical spec JSON + sha256 + command line.
     pub provenance: provenance::Provenance,
 }
@@ -485,10 +490,9 @@ pub fn compile(
     }
     // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
     // genotype-dependent ones after the mask stage ----
-    let info_tags: Vec<String> = tags.info_names();
     let format_tags: Vec<String> = tags.format_names();
     for (index, text) in spec.site.include.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, &info_tags)
+        let expr = crate::expr::parse_and_check(text, tags)
             .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
         warn_stale_info(&expr, text, tags);
         if expr.references_genotypes() {
@@ -503,7 +507,7 @@ pub fn compile(
         });
     }
     for (index, text) in spec.site.exclude.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, &info_tags)
+        let expr = crate::expr::parse_and_check(text, tags)
             .map_err(|e| FilterError::Spec(format!("-e {text:?}: {e}")))?;
         warn_stale_info(&expr, text, tags);
         if expr.references_genotypes() {
@@ -727,7 +731,7 @@ pub fn compile(
         )
     {
         let flag = if include { "-i" } else { "-e" };
-        let expr = crate::expr::parse_and_check_fmt(text, &info_tags, &format_tags)
+        let expr = crate::expr::parse_and_check_fmt(text, tags, &format_tags)
             .map_err(|e| FilterError::Spec(format!("{flag} {text:?} (after mask): {e}")))?;
         warn_stale_info(&expr, text, tags);
         if !expr.references_genotypes() {
@@ -866,6 +870,7 @@ pub fn compile(
         recompute,
         no_update,
         info_trusted: true,
+        tags: std::sync::Arc::new(tags.clone()),
         provenance,
     })
 }
