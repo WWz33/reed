@@ -384,7 +384,7 @@ impl FilterJob {
         };
         let gt_index = gt_subfield_index(edit_line.format_text());
         emit.edit_buf.clear();
-        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf).map_err(job_err)?;
+        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf);
         match emit.bcf {
             None => emit.writer.push_record(emit.edit_buf, key).map_err(job_err),
             Some(encoders) => {

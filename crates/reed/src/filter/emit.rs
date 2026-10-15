@@ -173,8 +173,7 @@ impl EmitJob {
             &edit_plan,
             gt_subfield_index(lr.format_text()),
             &mut scratch.edit_buf,
-        )
-        .map_err(EngineError::from)?;
+        );
         // Byte-boundary cutting, records may span blocks (as in
         // FilterJob::push_line).
         let key = IndexKey {

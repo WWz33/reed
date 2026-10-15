@@ -1366,7 +1366,7 @@ mod tests {
     ) -> Vec<u8> {
         let lr = LineRef::parse(line).expect("invariant: line");
         let mut edited = Vec::new();
-        edit_vcf_line(&lr, plan, gt_idx, &mut edited).expect("invariant: edit");
+        edit_vcf_line(&lr, plan, gt_idx, &mut edited);
         let header_text = std::str::from_utf8(HEADER).unwrap();
         let out_text = match plan.keep_samples {
             None => header_text.to_string(),
