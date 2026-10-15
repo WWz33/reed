@@ -307,6 +307,7 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     // ---- INFO (filter-only: `-x`, `--fill-tags`, `-I`) ----
     spec.recompute.no_update = cli.no_update;
     if let Some(list) = &cli.remove_info {
+        spec.recompute.drop_stale_explicit = true;
         spec.recompute.drop_stale = list
             .split(',')
             .map(str::trim)

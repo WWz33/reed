@@ -711,3 +711,70 @@ Chr01\t4\tid4\tA\tG\t50\tPASS\tXI= 5\tGT\t0/1
     assert!(!kept.contains(&4), "XI= 5 has a leading space (no trim)");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ---------------------------------------------------------------------------
+// R2-c/d — D12-11/12: --fill-tags validation and the visible default -x
+// ---------------------------------------------------------------------------
+
+/// An unsupported `--fill-tags` tag is a spec error (bcftools `+fill-tags`
+/// refuses it, plugins/fill-tags.c:530-535); it used to be a silent no-op
+/// that the default `-x` then turned into a deletion of the input's tag.
+#[test]
+fn unsupported_fill_tags_are_rejected() {
+    let d = dir("fill-tags");
+    let path = fixture(&d, "in", EXPR_HEADER);
+    for tag in ["AF", "BOGUS", "F_MISSING"] {
+        let mut spec = FilterSpec::default();
+        spec.recompute.tags = vec![tag.to_string()];
+        let out = d.join("out.vcf.gz");
+        let err = run_filter(Some(&path), &spec, &options(None, &out))
+            .expect_err("an unsupported fill-tags entry must not be a silent no-op");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(tag) && msg.contains("supported"),
+            "the error names the tag and the supported set, got {msg:?}"
+        );
+    }
+    // Case-insensitive like bcftools' strcasecmp.
+    let mut spec = FilterSpec::default();
+    spec.recompute.tags = vec!["ac".to_string()];
+    let out = d.join("lower.vcf.gz");
+    let report = run_filter(Some(&path), &spec, &options(None, &out)).expect("lowercase AC works");
+    assert_eq!(report.n_output_records, 3, "the lowercase spelling runs");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A GT-less record under the automatic subset update must not lose its
+/// AC/AN even when the tag is also in the default `-x` list (the automatic
+/// entries are exempt; an explicit `-x` is not).
+#[test]
+fn explicit_remove_still_deletes_on_gt_less_records() {
+    let d = dir("gtless-remove");
+    let text = "\
+##fileformat=VCFv4.2
+##contig=<ID=Chr01,length=100000>
+##FILTER=<ID=PASS,Description=\"All filters passed\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+Chr01\t10\t.\tA\tG\t50\tPASS\tAC=4;AN=6\tDP\t9\t9\t9
+";
+    let path = fixture(&d, "in", text);
+    let mut spec = FilterSpec::default();
+    spec.sample_select = Some(reed_filter::spec::SampleSelect {
+        keep: Some(reed_filter::spec::SampleList::Names(vec![
+            "s0".into(),
+            "s1".into(),
+        ])),
+        remove: None,
+    });
+    // The user asked for the removal (the CLI sets `drop_stale_explicit`
+    // when `-x` is given): it applies regardless of GT.
+    spec.recompute.drop_stale = vec!["AC".into(), "AN".into()];
+    spec.recompute.drop_stale_explicit = true;
+    let lines = run_keep_lines(&path, &spec, None, "out.vcf.gz");
+    let info = lines[0].split('\t').nth(7).expect("INFO");
+    assert_eq!(info, ".", "an explicit -x removes the tags on GT-less records too");
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -97,10 +97,15 @@ pub(crate) struct FilterCli {
     /// (bcftools `view -I`; the update is the default)
     #[arg(short = 'I', long = "no-update")]
     pub no_update: bool,
-    /// Remove these INFO tags (bcftools `-x`)
+    /// Remove these INFO tags (bcftools `-x`). Defaults to the stale list
+    /// AC,AN,AF,MLEAC,MLEAF,ExcessHet,InbreedingCoeff,DP (the gold
+    /// pipeline's `annotate -x`); pass an empty value (`-x ''`) to keep
+    /// every tag
     #[arg(short = 'x', long = "remove-info", value_name = "LIST")]
     pub remove_info: Option<String>,
-    /// Recompute and write these INFO tags (bcftools `+fill-tags`)
+    /// Recompute and write these INFO tags (bcftools `+fill-tags`):
+    /// AC, AN, NS, MAF or HWE (case-insensitive). Unsupported tags are an
+    /// error, like bcftools
     #[arg(long, value_name = "LIST")]
     pub fill_tags: Option<String>,
     /// Output type: v (plain VCF), z (BGZF VCF), b (BCF) or u

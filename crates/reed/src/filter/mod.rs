@@ -403,14 +403,19 @@ pub fn run_filter(
         plan.recompute.ac = true;
         plan.recompute.an = true;
         for tag in ["AC", "AN"] {
+            // An explicit `-x` listing the tag is the user's request: the
+            // removal stays unconditional (doc_v12 D12-2). Under the default
+            // list the same entries are automatic — the update only lists
+            // them to replace the old value, and a GT-less record has no
+            // replacement, so it keeps them.
+            let explicit = spec.recompute.drop_stale_explicit
+                && plan.stale_tags.iter().any(|t| t == tag.as_bytes());
             if !plan.stale_tags.iter().any(|t| t == tag.as_bytes()) {
                 plan.stale_tags.push(tag.as_bytes().to_vec());
             }
-            // Track the entries this block added: a GT-less record must not
-            // lose its input AC/AN to the update (doc_v12 D12-2), and only
-            // the automatic entries are exempt — a user's `-x INFO/AC`
-            // still deletes unconditionally.
-            plan.auto_stale_tags.push(tag.as_bytes().to_vec());
+            if !explicit {
+                plan.auto_stale_tags.push(tag.as_bytes().to_vec());
+            }
         }
     }
     // The recomputed AC/MAF/HWE values come from the collapsed per-record

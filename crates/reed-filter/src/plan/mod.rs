@@ -830,13 +830,28 @@ pub fn compile(
     };
 
     // ---- recompute + stale ----
+    // `--fill-tags` entries are validated here (not only in the CLI): an
+    // unsupported tag is a spec error, like bcftools `+fill-tags`
+    // ("the tag X is not supported", plugins/fill-tags.c:530-535). Silently
+    // accepting one turned `--fill-tags AF` into a no-op that the default
+    // `-x` then used to delete the input's AF (doc_v12 D12-11).
+    let canonical_tags: Vec<&'static str> = spec
+        .recompute
+        .tags
+        .iter()
+        .map(|tag| {
+            crate::spec::recompute::canonical_fill_tag(tag)
+                .map_err(|e| FilterError::Spec(e.to_string()))
+        })
+        .collect::<Result<_, _>>()?;
+    let wants = |tag: &str| canonical_tags.iter().any(|t| *t == tag);
     let no_update = spec.recompute.no_update;
     let recompute = RecomputeFlags {
-        ac: spec.recompute.wants("AC"),
-        an: spec.recompute.wants("AN"),
-        ns: spec.recompute.wants("NS"),
-        maf: spec.recompute.wants("MAF"),
-        hwe: spec.recompute.wants("HWE"),
+        ac: wants("AC"),
+        an: wants("AN"),
+        ns: wants("NS"),
+        maf: wants("MAF"),
+        hwe: wants("HWE"),
     };
     let stale_tags = spec.recompute.stale_bytes();
 
