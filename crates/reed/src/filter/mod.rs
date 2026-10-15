@@ -391,6 +391,14 @@ pub fn run_filter(
     // bcftools `view` updates INFO/AC,INFO/AN when samples are dropped; only
     // masking leaves them stale, like `bcftools filter -S .`
     // (02-cli.md §3.5). `-I/--no-update` suppresses the update.
+    // The tail stage's INFO preference holds only while AC/AN describe the
+    // cohort being decided on (doc_v12 D12-6): once the sample set changed,
+    // bcftools recomputes from the subset GT (`vcfview.c:341-350`) and the
+    // `-q/-Q` decision must follow. `--mind` and masking change the cohort
+    // the same way, and the mask is known here from the spec.
+    if spec.sample_select.is_some() || spec.mind.is_some() || subset {
+        plan.info_trusted = false;
+    }
     if subset && !plan.no_update {
         plan.recompute.ac = true;
         plan.recompute.an = true;

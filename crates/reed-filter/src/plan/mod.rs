@@ -150,6 +150,18 @@ fn warn_stale_info(expr: &crate::expr::Expr, text: &str, tags: &TagTable) {
     }
 }
 
+/// `-q/-Q` reads `INFO/AC,AN` when the header declares both and no cohort
+/// change forces the genotype path (doc_v12 D12-6; cli.md:78 promises this
+/// warning). The dataset trap is the same as the expressions': the INFO
+/// counts may describe a different cohort than the genotypes do.
+fn warn_stale_af(tags: &TagTable) {
+    let _ = tags;
+    tracing::warn!(
+        "-q/-Q reads INFO/AC,INFO/AN, which may be stale; use --maf/--mac for \
+         genotype-recomputed values or remove the tags with -x INFO/AC,INFO/AN"
+    );
+}
+
 /// Whether an expression reads a genotype-derived site field (forbidden in
 /// `--set-gts .` expressions, whose mask decision must not depend on the
 /// post-mask counts).
@@ -311,6 +323,12 @@ pub struct FilterPlan {
     pub recompute: RecomputeFlags,
     /// `-I/--no-update`: never add the automatic `AC/AN` update.
     pub no_update: bool,
+    /// Whether the record's `INFO/AC,AN` still describe the cohort the tail
+    /// rules decide on. The driver clears this when the sample set changes
+    /// (a static subset, `--mind`); the tail stage then ignores the INFO
+    /// values and uses the genotype counts, like bcftools
+    /// (`vcfview.c:341-350`, `filter.c:1471`; doc_v12 D12-6).
+    pub info_trusted: bool,
     /// Provenance: canonical spec JSON + sha256 + command line.
     pub provenance: provenance::Provenance,
 }
@@ -414,7 +432,23 @@ pub fn compile(
     // `-q/-Q` (bcftools): the INFO AC/AN values decide at the site stage when
     // the header declares both AND the threshold is the `nref` form; the
     // other `:type`s are genotype-derived and live in the tail only.
+    //
+    // The INFO preference holds only while AC/AN still describe the cohort
+    // being decided on. Once the sample set changes (a static subset, a
+    // genotype mask, `--mind`, or `--set-gts .`), bcftools recomputes from
+    // the subset GT before applying `-q/-Q` (vcfview.c:341-350) and gates
+    // its own INFO preference on `!sample_mask_set` (filter.c:1471); reed
+    // mirrors that by not pushing the INFO short-circuit at all, so the
+    // decision runs through `af_of`, whose `info_trusted` flag is false in
+    // every execution path once the cohort changed (doc_v12 D12-6).
     let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
+    let cohort_changed = spec.sample_select.is_some()
+        || spec.mind.is_some()
+        || !spec.genotype.mask_if.is_empty()
+        || spec.genotype.set_gts.is_some();
+    if info_af && !cohort_changed {
+        warn_stale_af(tags);
+    }
     for bound in spec.site_after_mask.min_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
             return Err(FilterError::Spec(format!(
@@ -422,6 +456,7 @@ pub fn compile(
             )));
         }
         if info_af
+            && !cohort_changed
             && spec
                 .site_after_mask
                 .min_af_kind
@@ -438,6 +473,7 @@ pub fn compile(
             )));
         }
         if info_af
+            && !cohort_changed
             && spec
                 .site_after_mask
                 .max_af_kind
@@ -829,6 +865,7 @@ pub fn compile(
         auto_stale_tags: Vec::new(),
         recompute,
         no_update,
+        info_trusted: true,
         provenance,
     })
 }

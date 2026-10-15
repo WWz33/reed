@@ -58,6 +58,15 @@ pub struct SiteValues<'a> {
     pub n_samples: u64,
     /// Raw INFO text.
     pub info: &'a [u8],
+    /// Whether the record's `INFO/AC,AN` still describe the cohort the
+    /// rules decide on. False once the sample set was subset or genotypes
+    /// were masked: the INFO values then describe the *input* cohort while
+    /// the genotype-derived counts describe the kept one, and bcftools
+    /// switches to the genotypes in exactly that situation
+    /// (`vcfview.c:341-350` recomputes AC/AN from the subset GT before
+    /// applying `-q/-Q`; `filter.c:1471` gates its INFO preference on
+    /// `!sample_mask_set`). doc_v12 D12-6.
+    pub info_trusted: bool,
     /// This record's INFO fragment index (A6-18): set by callers that built
     /// one for the record — `None` falls back to a per-tag scan.
     pub info_index: Option<&'a reed_io::vcf::info::InfoIndex>,
@@ -109,6 +118,7 @@ impl<'a> SiteValues<'a> {
             n_alt: u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX),
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
+            info_trusted: true,
             info_index: None,
             gt,
             fmt: None,
@@ -134,6 +144,7 @@ impl SiteValues<'static> {
             n_alt: 0,
             n_samples: gt.n_samples,
             info: b".",
+            info_trusted: false,
             info_index: None,
             gt: Some(gt),
             fmt: None,
@@ -489,6 +500,7 @@ mod tests {
             n_alt: 1,
             n_samples: 4,
             info,
+            info_trusted: true,
             info_index: None,
             gt,
             fmt: None,

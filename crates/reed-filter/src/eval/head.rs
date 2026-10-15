@@ -91,11 +91,17 @@ pub fn eval_head(
             }
             HeadRule::BiallelicGate => !alts.contains(&b','),
             HeadRule::RequireFilter(set) => set.iter().any(|s| s == line.filter_text()),
+            // The INFO preference holds only while AC/AN describe the
+            // cohort being decided on (doc_v12 D12-6): the compile drops
+            // these rules when the sample set changes, so a rule that is
+            // present always reads trusted INFO here.
             HeadRule::MinAfInfo(bound) => {
-                non_reference_af_info(line.info_text()).is_none_or(|freq| freq >= *bound)
+                non_reference_af_info(line.info_text(), n_alt_of(alts))
+                    .is_none_or(|freq| freq >= *bound)
             }
             HeadRule::MaxAfInfo(bound) => {
-                non_reference_af_info(line.info_text()).is_none_or(|freq| freq <= *bound)
+                non_reference_af_info(line.info_text(), n_alt_of(alts))
+                    .is_none_or(|freq| freq <= *bound)
             }
             HeadRule::MinQual(q) => {
                 // A missing QUAL fails (bcftools semantics).
@@ -123,9 +129,15 @@ pub fn eval_head(
 /// Per-allele INFO/AC counts and INFO/AN (bcftools' `bcf_calc_ac` prefers
 /// them over the genotype tallies; docs/rounds/v5/02-cli.md §3.2). Returns
 /// `(counts, an)` with the counts in allele order (REF first), or `None`
-/// when either tag is absent or malformed.
+/// when either tag is absent, malformed, or when the AC vector does not
+/// have one value per ALT allele.
+///
+/// The length check is htslib's: `bcf_calc_ac` refuses a record whose
+/// `ac_len != n_allele - 1` and lets the caller fall back to the genotype
+/// counts (`vcfutils.c:56-64`, with a once-per-run warning; doc_v12 D12-13).
+/// `n_alt` is the record's ALT count.
 #[must_use]
-pub fn allele_counts_info(info: &[u8]) -> Option<(Vec<u64>, u64)> {
+pub fn allele_counts_info(info: &[u8], n_alt: u32) -> Option<(Vec<u64>, u64)> {
     let mut ac: Option<Vec<u64>> = None;
     let mut an: Option<u64> = None;
     for (tag, value) in info_fragments(info) {
@@ -149,8 +161,36 @@ pub fn allele_counts_info(info: &[u8]) -> Option<(Vec<u64>, u64)> {
         }
     }
     match (ac, an) {
-        (Some(ac), Some(an)) if an > 0 => Some((ac, an)),
+        (Some(ac), Some(an)) if an > 0 => {
+            if ac.len() != n_alt as usize {
+                warn_ac_length_once(ac.len(), n_alt);
+                return None;
+            }
+            Some((ac, an))
+        }
         _ => None,
+    }
+}
+
+/// The record's ALT count from its ALT column (`.` = zero, the same rule
+/// as `SiteView::n_alt`; doc_v12 D12-10).
+fn n_alt_of(alts: &[u8]) -> u32 {
+    if alts == b"." {
+        return 0;
+    }
+    u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX)
+}
+
+/// htslib warns once per run about a mismatched AC vector and then stays
+/// quiet (`bcf_calc_ac`'s `warned` static, vcfutils.c:58-63).
+fn warn_ac_length_once(got: usize, want: u32) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "Incorrect number of AC fields ({got} values for {want} ALT alleles); \
+             falling back to the genotype counts (further occurrences are not reported)"
+        );
     }
 }
 
@@ -158,33 +198,13 @@ pub fn allele_counts_info(info: &[u8]) -> Option<(Vec<u64>, u64)> {
 /// missing or malformed (the record then defers to the tail rule, matching
 /// bcftools' per-record fallback to genotype counts).
 #[must_use]
-pub fn non_reference_af_info(info: &[u8]) -> Option<f64> {
-    let mut ac = None;
-    let mut an = None;
-    for (tag, value) in info_fragments(info) {
-        let Some(value) = value else { continue };
-        match tag {
-            b"AC" => {
-                let text = std::str::from_utf8(value).ok()?;
-                let mut sum = 0.0_f64;
-                for part in text.split(',') {
-                    if part == "." {
-                        continue;
-                    }
-                    sum += part.parse::<f64>().ok()?;
-                }
-                ac = Some(sum);
-            }
-            b"AN" => {
-                an = std::str::from_utf8(value).ok()?.parse::<f64>().ok();
-            }
-            _ => {}
-        }
+pub fn non_reference_af_info(info: &[u8], n_alt: u32) -> Option<f64> {
+    let (counts, an) = allele_counts_info(info, n_alt)?;
+    let sum: u64 = counts.iter().sum();
+    if an == 0 {
+        return None;
     }
-    match (ac, an) {
-        (Some(ac), Some(an)) if an > 0.0 => Some(ac / an),
-        _ => None,
-    }
+    Some(sum as f64 / an as f64)
 }
 
 fn class_matches(class: VariantClass, wanted: &str) -> bool {

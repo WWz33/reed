@@ -113,7 +113,16 @@ fn af_of(
     use crate::spec::AfKind;
     // INFO/AC lists the ALT counts only; prepend the REF count as
     // `an − ΣALT` (bcftools' `bcf_calc_ac` fills `ac[0]` the same way).
-    let info = crate::eval::head::allele_counts_info(values.info);
+    //
+    // The INFO preference holds only while the record's AC/AN still describe
+    // the cohort being decided on: after a subset or a genotype mask they
+    // describe the input cohort, and bcftools switches to the genotypes
+    // (`vcfview.c:341-350`, `filter.c:1471`; doc_v12 D12-6).
+    let info = if values.info_trusted {
+        crate::eval::head::allele_counts_info(values.info, values.n_alt)
+    } else {
+        None
+    };
     let (counts_per_allele, an) = match info {
         Some((alts, an)) => {
             let alt_sum: u64 = alts.iter().sum();

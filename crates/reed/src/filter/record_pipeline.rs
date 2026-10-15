@@ -206,6 +206,7 @@ impl RecordPipeline {
             &mut self.fmt_storage,
             &mut self.hwe,
             self.head.index_current.then_some(&self.head.index),
+            plan.info_trusted,
             body,
         )
     }
@@ -291,6 +292,7 @@ impl RecordPipeline {
             &mut self.fmt_storage,
             &mut self.hwe,
             self.head.index_current.then_some(&self.head.index),
+            plan.info_trusted,
             body,
         )
     }
@@ -419,6 +421,7 @@ fn run_stages<'a, F>(
     fmt_storage: &mut [(Vec<u8>, Option<f64>)],
     hwe: &mut HweCache,
     info_index: Option<&InfoIndex>,
+    info_trusted: bool,
     mut body: F,
 ) -> Result<Processed, EngineError>
 where
@@ -437,6 +440,7 @@ where
     // fields: the plan rejects those, so the counts are not needed).
     let mut expr_site = expr::SiteValues::from_line(lr, pos1, None);
     expr_site.info_index = info_index;
+    expr_site.info_trusted = info_trusted;
 
     // Expression rules first (declaration order among themselves), one
     // sample at a time: the FORMAT slots update in place and the
@@ -600,6 +604,7 @@ where
             }),
         );
         values.info_index = info_index;
+        values.info_trusted = info_trusted;
         if !eval_tail(
             &values,
             counts,
