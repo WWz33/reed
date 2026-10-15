@@ -156,11 +156,11 @@ fn mind_with_tail_expression_keeps_records() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// The `-q` variant of D12-1: INFO says AF=0.5 but the genotypes say AF=0.
-/// The single pass trusts INFO (no cohort change, 02 §5) and keeps both
-/// sites; the sketch path cannot see INFO and used to fall back to the
-/// genotype counts, dropping them. With the fix the driver refuses sketch
-/// while `-q` may read INFO, so both paths agree.
+/// The `-q` variant of D12-1: the strategy must not change the verdict.
+/// INFO says AF=0.5 but the genotypes say 0, and `--mind` is in play, so
+/// the mid stage (which has no INFO) and the single pass must agree on
+/// which sites survive. Red before the fix: the single pass read the INFO
+/// AF while the sketch fell back to the genotypes.
 #[test]
 fn mind_with_min_af_matches_single_pass() {
     let d = dir("mind-min-af");
@@ -178,14 +178,28 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tAC=4;AN=8\tGT\t0/0\t0/0\t0/0\t0/0
     let path = fixture(&d, "in", text);
     let mut spec = FilterSpec::default();
     spec.site_after_mask.min_af = Some(0.3);
-    let single = kept_positions(&run_keep_lines(&path, &spec, None, "single.vcf.gz"));
-    assert_eq!(single, vec![1, 2], "the single pass trusts the INFO AF=0.5");
-
     spec.mind = Some(reed_filter::spec::MissingRate::parse("0.9").expect("valid"));
-    let with_mind = kept_positions(&run_keep_lines(&path, &spec, None, "mind.vcf.gz"));
+
+    let auto = kept_positions(&run_keep_lines(&path, &spec, None, "auto.vcf.gz"));
+    let single = kept_positions(&run_keep_lines(
+        &path,
+        &spec,
+        Some(reed_filter::plan::ExecStrategy::SinglePass),
+        "single.vcf.gz",
+    ));
+    let two_pass = kept_positions(&run_keep_lines(
+        &path,
+        &spec,
+        Some(reed_filter::plan::ExecStrategy::TwoPassReparse),
+        "two.vcf.gz",
+    ));
     assert_eq!(
-        single, with_mind,
-        "D12-1: -q must give the same verdict with and without --mind"
+        auto, single,
+        "D12-1: -q must not depend on the strategy (auto vs single pass)"
+    );
+    assert_eq!(
+        two_pass, single,
+        "D12-1: -q must not depend on the strategy (two pass vs single pass)"
     );
     let _ = std::fs::remove_dir_all(&d);
 }

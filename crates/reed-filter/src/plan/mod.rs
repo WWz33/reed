@@ -310,6 +310,36 @@ pub struct FilterPlan {
     pub provenance: provenance::Provenance,
 }
 
+impl FilterPlan {
+    /// Whether the tail stage reads the record's own bytes.
+    ///
+    /// The sketch path evaluates the tail rules in the mid stage, where the
+    /// record bytes are gone: `SiteValues::from_counts` carries `info = "."`,
+    /// `qual = None` and dummy line fields (`expr/mod.rs`). A tail rule that
+    /// reads any of those therefore cannot be evaluated there — the strategy
+    /// selector (the driver re-picks after `--mind` resolves, doc_v12 D12-1)
+    /// must not choose [`ExecStrategy::SketchThenEmit`] while this is true.
+    ///
+    /// Two kinds of rule qualify:
+    /// - `TailRule::Expr` — an expression may read any line field;
+    /// - `TailRule::MinAf`/`MaxAf` — `af_of` prefers the record's INFO/AC,AN
+    ///   when they are present, so the mid stage (no INFO) would silently
+    ///   fall back to the genotype counts and reach a different verdict.
+    ///
+    /// This is the single source of truth for the guard: [`compile`] uses it
+    /// to pick the default strategy, and the driver consults it before any
+    /// override.
+    #[must_use]
+    pub fn tail_reads_record(&self) -> bool {
+        self.tail.iter().any(|r| {
+            matches!(
+                r,
+                TailRule::Expr { .. } | TailRule::MinAf(..) | TailRule::MaxAf(..)
+            )
+        })
+    }
+}
+
 /// Compiles the spec against the input header.
 ///
 /// `biallelic_gate` is the filter driver's default (§11.6, plink2-style):
@@ -735,10 +765,18 @@ pub fn compile(
 
     // ---- strategy (§11.4; SketchThenEmit selection is M5b) ----
     // The sketch path evaluates tail rules in the mid stage, where the
-    // record bytes are gone; a genotype-derived expression therefore forces
+    // record bytes are gone; a tail rule that reads them therefore forces
     // the single-pass path (02-cli.md §4: expressions run on the record).
-    let has_tail_expr = tail.iter().any(|r| matches!(r, TailRule::Expr { .. }));
-    let strategy = if has_tail_expr {
+    // The predicate mirrors `FilterPlan::tail_reads_record` (the plan does
+    // not exist yet here), so the driver's later override asks the same
+    // question (doc_v12 D12-1).
+    let tail_reads_record = tail.iter().any(|r| {
+        matches!(
+            r,
+            TailRule::Expr { .. } | TailRule::MinAf(..) | TailRule::MaxAf(..)
+        )
+    });
+    let strategy = if tail_reads_record {
         ExecStrategy::SinglePass
     } else if spec.mind.is_some() {
         ExecStrategy::TwoPassReparse

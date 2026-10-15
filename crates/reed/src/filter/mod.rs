@@ -242,12 +242,20 @@ pub fn run_filter(
                 // chunk's records/byte density).
                 let estimated =
                     estimate_records(replay_path.as_deref().expect("invariant: guarded above"))?;
-                reed_filter::plan::strategy::choose_for_mind(
+                let chosen = reed_filter::plan::strategy::choose_for_mind(
                     estimated,
                     n_samples_in,
                     plan.mask.len(),
                     reed_engine::budget::MemBudget::default_half_memory().bytes,
-                )
+                );
+                // The mid stage has no record bytes, so a tail rule that
+                // reads them cannot run there (doc_v12 D12-1). Two-pass
+                // re-parses the survivors, so it evaluates them correctly.
+                if chosen == ExecStrategy::SketchThenEmit && plan.tail_reads_record() {
+                    ExecStrategy::TwoPassReparse
+                } else {
+                    chosen
+                }
             }
             _ => plan.strategy,
         },
@@ -255,9 +263,28 @@ pub fn run_filter(
     // The matrix shape (pass0 matrices → mid stage → emit pass1) also
     // covers `--mind` + `--indep-pairwise`: the pruner needs the planes and
     // the survivors need the post-`--mind` keep, so no two-pass variant of
-    // that combination exists.
-    let sketch_shape = strategy == ExecStrategy::SketchThenEmit
-        || (spec.mind.is_some() && spec.ld_prune.is_some());
+    // that combination exists. It cannot serve a tail rule that reads the
+    // record, though — the mid stage has no record bytes and there is no
+    // other shape for that combination, so it is refused rather than
+    // evaluated blind (doc_v12 D12-1).
+    let mind_ld_prune = spec.mind.is_some() && spec.ld_prune.is_some();
+    if mind_ld_prune && plan.tail_reads_record() {
+        return Err(crate::error::Error::usage(
+            "--mind with --indep-pairwise cannot be combined with a tail -i/-e \
+             expression that reads the record: the LD pass runs on the sketch, \
+             which has no record bytes. Drop the expression or the \
+             --indep-pairwise rule.",
+        ));
+    }
+    // An explicitly forced sketch (the test-only `--strategy` hook) has the
+    // same problem: error instead of computing wrong (doc_v12 D12-1).
+    if strategy == ExecStrategy::SketchThenEmit && plan.tail_reads_record() {
+        return Err(crate::error::Error::usage(
+            "--strategy sketch_then_emit cannot evaluate a tail -i/-e expression \
+             that reads the record: the sketch has no record bytes.",
+        ));
+    }
+    let sketch_shape = strategy == ExecStrategy::SketchThenEmit || mind_ld_prune;
     let strategy = if sketch_shape {
         ExecStrategy::SketchThenEmit
     } else {
