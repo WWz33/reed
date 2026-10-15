@@ -398,6 +398,11 @@ pub fn run_filter(
             if !plan.stale_tags.iter().any(|t| t == tag.as_bytes()) {
                 plan.stale_tags.push(tag.as_bytes().to_vec());
             }
+            // Track the entries this block added: a GT-less record must not
+            // lose its input AC/AN to the update (doc_v12 D12-2), and only
+            // the automatic entries are exempt — a user's `-x INFO/AC`
+            // still deletes unconditionally.
+            plan.auto_stale_tags.push(tag.as_bytes().to_vec());
         }
     }
     // The recomputed AC/MAF/HWE values come from the collapsed per-record

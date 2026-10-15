@@ -155,10 +155,16 @@ impl EmitJob {
             *word = *src;
         }
         scratch.mask_bitset.clear_padding();
+        // A GT-less record keeps the input's AC/AN: the automatic update has
+        // no value to put back, so only user-requested removals apply
+        // (doc_v12 D12-2).
+        let auto: Vec<&[u8]> = self.plan.auto_stale_tags.iter().map(Vec::as_slice).collect();
+        let stale_record =
+            reed_filter::eval::edit_plan::stale_for_record(stale, &auto, emit.has_gt);
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(&scratch.mask_bitset),
-            info_remove: stale,
+            info_remove: &stale_record,
             info_set: &emit.infos,
         };
         scratch.edit_buf.clear();

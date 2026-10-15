@@ -302,6 +302,11 @@ pub struct FilterPlan {
     pub policies: reed_core::genotype::GenotypePolicies,
     /// Stale INFO tags (bytes for the editor).
     pub stale_tags: Vec<Vec<u8>>,
+    /// The subset of [`Self::stale_tags`] the driver's automatic AC/AN
+    /// update added (not the user's `-x`). A record without a GT key keeps
+    /// these values instead of being zeroed (doc_v12 D12-2); user-requested
+    /// removals are unconditional.
+    pub auto_stale_tags: Vec<Vec<u8>>,
     /// Recompute flags.
     pub recompute: RecomputeFlags,
     /// `-I/--no-update`: never add the automatic `AC/AN` update.
@@ -821,6 +826,7 @@ pub fn compile(
         fmt_expr_fields,
         policies,
         stale_tags,
+        auto_stale_tags: Vec::new(),
         recompute,
         no_update,
         provenance,
