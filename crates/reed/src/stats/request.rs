@@ -662,17 +662,17 @@ impl FStatAcc {
                 if den == 0.0 {
                     return None;
                 }
-                let (_, se, nb) = self
-                    .jk
-                    .jackknife()
-                    .unwrap_or((self.num.value() / den, f64::NAN, 0));
+                let (_, se, nb) =
+                    self.jk
+                        .jackknife()
+                        .unwrap_or((self.num.value() / den, f64::NAN, 0));
                 (self.num.value() / den, se, nb)
             }
             _ => {
-                let (_, se, nb) = self
-                    .jk
-                    .jackknife_sum()
-                    .unwrap_or((self.num.value(), f64::NAN, 0));
+                let (_, se, nb) =
+                    self.jk
+                        .jackknife_sum()
+                        .unwrap_or((self.num.value(), f64::NAN, 0));
                 (self.num.value(), se, nb)
             }
         };
@@ -723,25 +723,26 @@ impl FStatsPartial {
     }
 }
 
-/// The validated SFS plan shared by the job and the sink.
+/// The validated SFS plan shared by the job and the sink (crate-visible:
+/// the convert driver rebuilds it through the same `build_sfs_plan`, D13-6).
 #[derive(Clone, Debug)]
-pub(super) struct SfsPlan {
-    pub(super) projections: Arc<[u32]>,
-    pub(super) folded: bool,
+pub(crate) struct SfsPlan {
+    pub(crate) projections: Arc<[u32]>,
+    pub(crate) folded: bool,
     /// Group pairs for the joint spectra, input order (`combinations`).
-    pub(super) joint_pairs: Arc<[(usize, usize)]>,
+    pub(crate) joint_pairs: Arc<[(usize, usize)]>,
 }
 
 /// Per-chunk SFS partials: one projected spectrum per group, plus one joint
 /// spectrum per pair when requested.
-#[derive(Clone, Debug)]
-pub(super) struct SfsPartial {
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SfsPartial {
     pub(super) per_group: Vec<ProjectedSfsAcc>,
     pub(super) joint: Option<Vec<JointProjectedAcc>>,
 }
 
 impl SfsPartial {
-    pub(super) fn new(plan: &SfsPlan) -> Option<Self> {
+    pub(crate) fn new(plan: &SfsPlan) -> Option<Self> {
         let mut per_group = Vec::with_capacity(plan.projections.len());
         for &n in plan.projections.iter() {
             per_group.push(ProjectedSfsAcc::new(n, plan.folded)?);
@@ -762,7 +763,7 @@ impl SfsPartial {
         Some(Self { per_group, joint })
     }
 
-    pub(super) fn merge(&mut self, other: &Self) {
+    pub(crate) fn merge(&mut self, other: &Self) {
         for (dst, src) in self.per_group.iter_mut().zip(&other.per_group) {
             dst.merge(src);
         }
@@ -862,7 +863,9 @@ pub fn assign_groups_in_memory(
     group_masks(&table, sample_names.len())
 }
 
-fn sample_table(sample_names: &[String]) -> Result<reed_core::sample::SampleTable, crate::error::Error> {
+fn sample_table(
+    sample_names: &[String],
+) -> Result<reed_core::sample::SampleTable, crate::error::Error> {
     reed_core::sample::SampleTable::from_names(sample_names.iter().map(String::as_str))
         .map_err(crate::error::Error::from)
 }

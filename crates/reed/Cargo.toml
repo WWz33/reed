@@ -8,6 +8,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+flate2.workspace = true
 memchr.workspace = true
 reed-core.workspace = true
 reed-io.workspace = true
@@ -22,7 +23,6 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-flate2.workspace = true
 
 [lints]
 workspace = true

@@ -76,4 +76,3 @@ pub fn stale_for_record<'a>(
         .filter(|t| !auto_update.iter().any(|a| a == t))
         .collect()
 }
-

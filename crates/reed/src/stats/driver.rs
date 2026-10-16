@@ -18,6 +18,105 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Resolves the population request against the header's samples and applies
+/// the static keep mask (stats/convert share this; doc_v13 D13-6). Returns
+/// the per-sample group slots and the group names (first-appearance order).
+///
+/// # Errors
+///
+/// Group-file failures and a keep mask whose length differs from the header.
+pub(crate) fn resolve_groups(
+    populations: &Populations,
+    force_samples: bool,
+    sample_names: &[String],
+    keep: Option<&[bool]>,
+) -> Result<(Vec<Option<u32>>, Vec<String>), crate::error::Error> {
+    let (gt_groups, group_names) = match populations {
+        Populations::File(path) => assign_groups(path, sample_names, force_samples)?,
+        Populations::Assignment(pairs) => {
+            assign_groups_in_memory(pairs, sample_names, force_samples)?
+        }
+        Populations::All => (vec![Some(0); sample_names.len()], vec!["all".to_string()]),
+    };
+    let mut gt_groups = gt_groups;
+    if let Some(keep) = keep {
+        if keep.len() != gt_groups.len() {
+            return Err(crate::error::Error::usage(format!(
+                "sample keep mask has {} entries but the header declares {}",
+                keep.len(),
+                gt_groups.len()
+            )));
+        }
+        for (slot, kept) in gt_groups.iter_mut().zip(keep) {
+            if !kept {
+                *slot = None;
+            }
+        }
+    }
+    Ok((gt_groups, group_names))
+}
+
+/// Validates an SFS request against the group count and builds the plan
+/// (the single implementation; stats and convert both call it, D13-6).
+///
+/// # Errors
+///
+/// A projection count that contradicts the groups, or a projection below
+/// two chromosomes.
+pub(crate) fn build_sfs_plan(
+    sfs: &crate::stats::request::SfsRequest,
+    n_groups: usize,
+) -> Result<SfsPlan, crate::error::Error> {
+    if sfs.projections.len() != n_groups {
+        return Err(crate::error::Error::usage(format!(
+            "the SFS requests {} group projection(s) but the sample assignment declares {n_groups} group(s)",
+            sfs.projections.len()
+        )));
+    }
+    for &n in &sfs.projections {
+        if n < 2 {
+            return Err(crate::error::Error::usage(format!(
+                "projection size must be at least 2 chromosomes, got {n}"
+            )));
+        }
+    }
+    let joint_pairs: Vec<(usize, usize)> = (0..n_groups)
+        .flat_map(|a| ((a + 1)..n_groups).map(move |b| (a, b)))
+        .collect();
+    Ok(SfsPlan {
+        projections: sfs.projections.clone().into(),
+        folded: sfs.folded,
+        joint_pairs: joint_pairs.into(),
+    })
+}
+
+/// Assembles an [`SfsReport`] from a merged SFS partial (stats and convert
+/// share it, D13-6).
+pub(crate) fn sfs_report(partial: &crate::stats::request::SfsPartial, plan: &SfsPlan) -> SfsReport {
+    SfsReport {
+        spectra: partial
+            .per_group
+            .iter()
+            .map(ProjectedSfsAcc::spectrum)
+            .collect(),
+        projections: partial.per_group.iter().map(ProjectedSfsAcc::n).collect(),
+        folded: partial
+            .per_group
+            .first()
+            .is_some_and(ProjectedSfsAcc::folded),
+        n_sites: partial.per_group.iter().map(|a| a.site_tally().0).collect(),
+        n_skipped_m_lt_n: partial.per_group.iter().map(|a| a.site_tally().1).collect(),
+        joint: partial.joint.as_ref().map(|accs| JointSfsReport {
+            pairs: plan.joint_pairs.to_vec(),
+            spectra: accs.iter().map(JointProjectedAcc::values).collect(),
+            projections: accs.iter().map(|a| a.shape()).collect(),
+            folded: accs.first().is_some_and(JointProjectedAcc::folded),
+            n_sites: accs.iter().map(|a| a.site_tally().0).collect(),
+            n_skipped_m_lt_n: accs.iter().map(|a| a.site_tally().1).collect(),
+        }),
+    }
+}
+
 /// Runs windowed statistics over a BGZF VCF (`docs/spec/architecture.md`
 /// milestone M4: the full 3-population statistic set).
 ///
@@ -48,13 +147,12 @@ pub fn run_stats_opened(
     // ---- Request → executable plan (08 §6.2). Every failure up to the end
     // of the validation section below is request construction (Usage). ----
     let sample_names = opened.facts.sample_names.clone();
-    let (gt_groups, group_names) = match &request.populations {
-        Populations::File(path) => assign_groups(path, &sample_names, request.force_samples)?,
-        Populations::Assignment(pairs) => {
-            assign_groups_in_memory(pairs, &sample_names, request.force_samples)?
-        }
-        Populations::All => (vec![Some(0); sample_names.len()], vec!["all".to_string()]),
-    };
+    let (gt_groups, group_names) = resolve_groups(
+        &request.populations,
+        request.force_samples,
+        &sample_names,
+        request.keep_samples.as_deref(),
+    )?;
     // No biallelic gate here: the stats reporters decide per statistic how
     // to treat multiallelic sites (doc_v3 05-roadmap R7); gating records
     // would silently change the summary counts.
@@ -131,49 +229,13 @@ pub fn run_stats_opened(
         decay_bin_bp: ld.decay_bin_bp.max(1),
         pairs: ld.pairs,
     });
-    let sfs_plan = match &request.sfs {
-        None => None,
-        Some(sfs) => {
-            if sfs.projections.len() != n_groups {
-                return Err(crate::error::Error::usage(format!(
-                    "the SFS requests {} group projection(s) but the sample assignment declares {n_groups} group(s)",
-                    sfs.projections.len()
-                )));
-            }
-            for &n in &sfs.projections {
-                if n < 2 {
-                    return Err(crate::error::Error::usage(format!(
-                        "projection size must be at least 2 chromosomes, got {n}"
-                    )));
-                }
-            }
-            let joint_pairs: Vec<(usize, usize)> = (0..n_groups)
-                .flat_map(|a| ((a + 1)..n_groups).map(move |b| (a, b)))
-                .collect();
-            Some(SfsPlan {
-                projections: sfs.projections.clone().into(),
-                folded: sfs.folded,
-                joint_pairs: joint_pairs.into(),
-            })
-        }
-    };
-    // `-s/-S/--keep/--remove`: excluded samples lose their group before the
-    // group sizes are derived, so the denominators shrink with them.
-    let mut gt_groups = gt_groups;
-    if let Some(keep) = &request.keep_samples {
-        if keep.len() != gt_groups.len() {
-            return Err(crate::error::Error::usage(format!(
-                "sample keep mask has {} entries but the header declares {}",
-                keep.len(),
-                gt_groups.len()
-            )));
-        }
-        for (slot, kept) in gt_groups.iter_mut().zip(keep) {
-            if !kept {
-                *slot = None;
-            }
-        }
-    }
+    let sfs_plan = request
+        .sfs
+        .as_ref()
+        .map(|sfs| build_sfs_plan(sfs, n_groups))
+        .transpose()?;
+    // `-s/-S/--keep/--remove`: the keep mask already emptied excluded
+    // samples' group slots inside `resolve_groups`.
     let mut group_sizes = vec![0_u32; n_groups];
     for group in gt_groups.iter().flatten() {
         group_sizes[*group as usize] += 1;
@@ -249,7 +311,8 @@ pub fn run_stats_opened(
         seed: accs.clone(),
         levels: request.levels,
         skip_empty: request.skip_empty,
-        layout: request.layout,        windows: Vec::new(),
+        layout: request.layout,
+        windows: Vec::new(),
         n_invariant_sites: 0,
         n_no_alt_records: 0,
         contig_len: (*contig_len).clone(),
@@ -330,32 +393,13 @@ pub fn run_stats_opened(
                     .collect(),
             }
         }),
-        sfs: output.sfs.as_ref().map(|partial| SfsReport {
-            spectra: partial
-                .per_group
-                .iter()
-                .map(ProjectedSfsAcc::spectrum)
-                .collect(),
-            projections: partial.per_group.iter().map(ProjectedSfsAcc::n).collect(),
-            folded: partial
-                .per_group
-                .first()
-                .is_some_and(ProjectedSfsAcc::folded),
-            n_sites: partial.per_group.iter().map(|a| a.site_tally().0).collect(),
-            n_skipped_m_lt_n: partial.per_group.iter().map(|a| a.site_tally().1).collect(),
-            joint: partial.joint.as_ref().map(|accs| {
-                let plan = sfs_plan
+        sfs: output.sfs.as_ref().map(|partial| {
+            sfs_report(
+                partial,
+                sfs_plan
                     .as_ref()
-                    .expect("invariant: joint accs imply an SFS plan");
-                JointSfsReport {
-                    pairs: plan.joint_pairs.to_vec(),
-                    spectra: accs.iter().map(JointProjectedAcc::values).collect(),
-                    projections: accs.iter().map(|a| a.shape()).collect(),
-                    folded: accs.first().is_some_and(JointProjectedAcc::folded),
-                    n_sites: accs.iter().map(|a| a.site_tally().0).collect(),
-                    n_skipped_m_lt_n: accs.iter().map(|a| a.site_tally().1).collect(),
-                }
-            }),
+                    .expect("invariant: an SFS partial implies a plan"),
+            )
         }),
         fstats: output.fstats.as_ref().map(|partial| FStatsReport {
             rows: partial.per_test.iter().filter_map(FStatAcc::row).collect(),

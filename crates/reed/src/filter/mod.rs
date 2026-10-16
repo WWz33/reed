@@ -519,16 +519,21 @@ pub fn run_filter(
     };
     let mut out_header = ensure_info_defs(out_header, &plan.recompute);
     out_header = ensure_pass_filter(out_header);
-    for (key, value) in plan.provenance.header_lines().into_iter().filter(|(k, value)| {
-        if opts.no_version && k.starts_with("reed_") {
-            return false;
-        }
-        // A VCF meta-information value may not be empty (noodles rejects
-        // it), so an empty rendering is omitted rather than written as
-        // `##key=`. `reed_filterCommand` is empty when the spec renders to
-        // no flags at all (a default spec, doc_v12 D12-12).
-        !value.is_empty() && (!opts.no_command || k != "reed_command")
-    }) {
+    for (key, value) in plan
+        .provenance
+        .header_lines()
+        .into_iter()
+        .filter(|(k, value)| {
+            if opts.no_version && k.starts_with("reed_") {
+                return false;
+            }
+            // A VCF meta-information value may not be empty (noodles rejects
+            // it), so an empty rendering is omitted rather than written as
+            // `##key=`. `reed_filterCommand` is empty when the spec renders to
+            // no flags at all (a default spec, doc_v12 D12-12).
+            !value.is_empty() && (!opts.no_command || k != "reed_command")
+        })
+    {
         out_header
             .insert(
                 key.as_str().parse().expect("invariant: valid key"),

@@ -143,10 +143,7 @@ mod tests {
             Error::from(FilterError::Spec("s".into())).kind(),
             ErrorKind::Usage
         );
-        assert_eq!(
-            Error::from(EngineError::Aborted).kind(),
-            ErrorKind::Runtime
-        );
+        assert_eq!(Error::from(EngineError::Aborted).kind(), ErrorKind::Runtime);
         assert_eq!(
             Error::from(FilterError::Io(std::io::Error::other("x"))).kind(),
             ErrorKind::Runtime,

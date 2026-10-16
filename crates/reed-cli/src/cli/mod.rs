@@ -66,6 +66,8 @@ pub(crate) enum Command {
     Stats(StatsCli),
     /// Build a CSI/TBI index
     Index(IndexCli),
+    /// Convert to phylogenetic matrices, genotype matrices, hapmap, MSA, SFS
+    Convert(ConvertCli),
 }
 
 /// Hard filtering (02-cli.md §3): the bcftools `view` + `filter` + `annotate -x`
@@ -367,9 +369,259 @@ pub(crate) struct StatsCli {
     pub verbosity: Verbosity,
 }
 
+/// Conversion targets (doc_v13 §1): phylogenetic matrices (vcf2phylip
+/// semantics), the vcftools 0/1/2 matrix, TASSEL hapmap, a reference-driven
+/// MSA (vcf2msa semantics) and the projected-SFS export.
+#[derive(Args)]
+pub(crate) struct ConvertCli {
+    #[arg(help = INPUT_HELP)]
+    pub input: String,
+    /// Projected SFS (mirrors `reed stats --sfs`): writes PREFIX_sfs/dadi
+    /// and PREFIX_sfs/fastsimcoal2; needs --proj; `--sfs folded` folds by
+    /// the minor allele
+    #[arg(long, value_name = "folded", num_args = 0..=1, default_missing_value = "unfolded",
+          value_parser = ["unfolded", "folded"])]
+    pub sfs: Option<String>,
+    /// Projection sizes in chromosomes (--sfs): one value broadcasts to
+    /// every population, or one per population in first-appearance order
+    #[arg(long, value_name = "N[,N...]")]
+    pub proj: Option<String>,
+    /// Round the projected spectrum to integers (easySFS `--dtype int`)
+    #[arg(long)]
+    pub sfs_int: bool,
+    /// Groups file for --sfs: `sample<TAB>population` rows, no header
+    #[arg(
+        long = "pop",
+        visible_alias = "populations",
+        alias = "groups",
+        value_name = "FILE"
+    )]
+    pub pop: Option<String>,
+    /// Skip group-file rows naming samples absent from the header
+    #[arg(long)]
+    pub force_samples: bool,
+    /// PHYLIP matrix (relaxed layout; Ortiz 2019, vcf2phylip semantics)
+    #[arg(long)]
+    pub phylip: bool,
+    /// FASTA matrix
+    #[arg(long)]
+    pub fasta: bool,
+    /// NEXUS (DNA) matrix
+    #[arg(long)]
+    pub nexus: bool,
+    /// Binary NEXUS for SNAPP (diploid biallelic sites only)
+    #[arg(long = "nexus-binary")]
+    pub nexus_binary: bool,
+    /// Name of the sample written first in the alignments
+    #[arg(long, value_name = "NAME")]
+    pub outgroup: Option<String>,
+    /// Minimum number of samples present at a locus (default 4 for the
+    /// phylogenetic formats; --012/--hapmap apply the gate only when given)
+    #[arg(long = "min-samples-locus", value_name = "N")]
+    pub min_samples_locus: Option<u32>,
+    /// Resolve ambiguous (heterozygous) genotypes to one allele; the draw is
+    /// deterministic (seed 0), unlike vcf2phylip's
+    #[arg(long = "resolve-iupac")]
+    pub resolve_iupac: bool,
+    /// Write the coordinates of the sites used in the alignments
+    /// (PREFIX.used_sites.tsv)
+    #[arg(long = "write-used-sites")]
+    pub write_used_sites: bool,
+    /// 0/1/2/-1 genotype matrix (vcftools `--012` layout):
+    /// PREFIX.012, PREFIX.012.pos, PREFIX.012.indv
+    #[arg(long = "012")]
+    pub count_012: bool,
+    /// TASSEL hapmap matrix (PREFIX.hmp.txt)
+    #[arg(long)]
+    pub hapmap: bool,
+    /// Reference-driven whole-site MSA (vcf2msa semantics):
+    /// PREFIX_<contig>.fasta per contig or region
+    #[arg(long)]
+    pub msa: bool,
+    /// Reference genome FASTA (required by --msa; must match the VCF)
+    #[arg(long, value_name = "FASTA")]
+    pub reference: Option<String>,
+    /// MSA region `CHR:B-E` (1-based inclusive; repeatable; default: whole
+    /// contigs)
+    #[arg(long, value_name = "CHR:B-E")]
+    pub region: Vec<String>,
+    /// Bases added on both sides of each --region
+    #[arg(long, default_value_t = 0, value_parser = crate::units::parse_size)]
+    pub flank: u64,
+    /// Collapse sample names at the first occurrence of STR (--msa)
+    #[arg(long = "collapse-suffix", value_name = "STR")]
+    pub collapse_suffix: Option<String>,
+    /// Convert a hapmap (`.hmp.txt`) input back to VCF (exclusive with every
+    /// VCF-input target; doc_v13 §3.12)
+    #[arg(long = "vcf")]
+    pub to_vcf: bool,
+    /// Output type for --vcf: v (plain VCF text) or z (BGZF), optional level
+    /// (`-Oz6`)
+    #[arg(short = 'O', long = "output-type", value_name = "v|z[0-9]")]
+    pub output_type: Option<String>,
+    /// Do not write the ##reed_* provenance header lines (--vcf)
+    #[arg(long)]
+    pub no_version: bool,
+    /// Do not write the ##reed_command header line (--vcf)
+    #[arg(long)]
+    pub no_command: bool,
+    #[command(flatten)]
+    pub sample_args: filter_flags::SampleArgs,
+    /// Output prefix: PREFIX.phy, PREFIX_sfs/, ... (default: the input's
+    /// stem)
+    #[arg(
+        short = 'o',
+        long = "output",
+        visible_alias = "out",
+        value_name = "PREFIX"
+    )]
+    pub out: Option<String>,
+    /// Worker threads (default: all cores)
+    #[arg(long)]
+    pub threads: Option<usize>,
+    /// In-flight memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A representative convert request renders to flags clap accepts, and
+    /// the parsed flags rebuild the same request field by field (doc_v13
+    /// §4.3: the `stats --sfs` / `convert --sfs` text contract).
+    #[test]
+    fn convert_args_round_trip() {
+        use reed::{ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions, SfsRequest};
+        let request = ConvertRequest {
+            targets: vec![
+                ConvertTarget::Sfs {
+                    request: SfsRequest {
+                        projections: vec![6],
+                        folded: true,
+                    },
+                    int_dtype: true,
+                },
+                ConvertTarget::Phylo {
+                    formats: PhyloFormats {
+                        phylip: true,
+                        fasta: false,
+                        nexus: true,
+                    },
+                    options: PhyloOptions {
+                        outgroup: Some("s3".into()),
+                        resolve_iupac: true,
+                        write_used_sites: true,
+                    },
+                },
+                ConvertTarget::NexusBin,
+                ConvertTarget::CountMatrix,
+                ConvertTarget::Hapmap,
+            ],
+            prefix: std::path::PathBuf::from("out"),
+            min_samples_locus: Some(7),
+            ..ConvertRequest::default()
+        };
+        let mut argv: Vec<String> = vec!["reed".into(), "convert".into(), "in.vcf".into()];
+        argv.extend(request.to_args().expect("to_args"));
+        let cli = Cli::try_parse_from(argv).expect("to_args must parse");
+        let Command::Convert(convert) = cli.command else {
+            panic!("convert subcommand");
+        };
+        assert_eq!(convert.sfs.as_deref(), Some("folded"));
+        assert_eq!(convert.proj.as_deref(), Some("6"));
+        assert!(convert.sfs_int);
+        assert!(convert.phylip && !convert.fasta && convert.nexus);
+        assert_eq!(convert.outgroup.as_deref(), Some("s3"));
+        assert!(convert.resolve_iupac);
+        assert!(convert.write_used_sites);
+        assert!(convert.nexus_binary);
+        assert!(convert.count_012);
+        assert!(convert.hapmap);
+        assert!(!convert.msa);
+        assert_eq!(convert.min_samples_locus, Some(7));
+    }
+
+    /// The `--vcf` reverse target renders to flags clap accepts, and the
+    /// parsed flags rebuild it (doc_v13 §3.12: the hapmap→VCF text contract).
+    #[test]
+    fn convert_vcf_args_round_trip() {
+        use reed::{ConvertRequest, ConvertTarget};
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Vcf {
+                compressed: true,
+                level: 4,
+                output: Some(std::path::PathBuf::from("back.vcf.gz")),
+                command_line: "reed convert in.hmp.txt --vcf".into(),
+                no_version: true,
+            }],
+            ..ConvertRequest::default()
+        };
+        let mut argv: Vec<String> = vec!["reed".into(), "convert".into(), "in.hmp.txt".into()];
+        argv.extend(request.to_args().expect("to_args"));
+        let cli = Cli::try_parse_from(argv).expect("to_args must parse");
+        let Command::Convert(convert) = cli.command else {
+            panic!("convert subcommand");
+        };
+        assert!(convert.to_vcf);
+        assert_eq!(convert.output_type.as_deref(), Some("z4"));
+        assert_eq!(convert.out.as_deref(), Some("back.vcf.gz"));
+        assert!(convert.no_version);
+        assert!(!convert.phylip && !convert.hapmap && !convert.msa);
+
+        // Plain text renders `-O v` and no provenance switch.
+        let plain = ConvertRequest {
+            targets: vec![ConvertTarget::Vcf {
+                compressed: false,
+                level: 6,
+                output: None,
+                command_line: String::new(),
+                no_version: false,
+            }],
+            ..ConvertRequest::default()
+        };
+        assert_eq!(plain.to_args().expect("to_args"), vec!["--vcf", "-O", "v"]);
+    }
+
+    /// `reed convert --sfs` and `reed stats --sfs` render the SFS portion
+    /// identically (D13-6: one request, two entries).
+    #[test]
+    fn convert_and_stats_sfs_spellings_agree() {
+        use reed::{ConvertRequest, ConvertTarget, SfsRequest};
+        let sfs = SfsRequest {
+            projections: vec![20, 20],
+            folded: false,
+        };
+        let convert = ConvertRequest {
+            targets: vec![ConvertTarget::Sfs {
+                request: sfs.clone(),
+                int_dtype: false,
+            }],
+            ..ConvertRequest::default()
+        };
+        let convert_args = convert.to_args().expect("to_args");
+        assert_eq!(convert_args, vec!["--sfs", "unfolded", "--proj", "20,20"]);
+
+        let mut argv: Vec<String> = vec![
+            "reed".into(),
+            "stats".into(),
+            "in.vcf".into(),
+            "--pop".into(),
+            "pops.tsv".into(),
+        ];
+        argv.extend(convert_args);
+        let cli = Cli::try_parse_from(argv).expect("the convert spelling must parse for stats");
+        let Command::Stats(stats) = cli.command else {
+            panic!("stats subcommand");
+        };
+        assert_eq!(stats.sfs.as_deref(), Some("unfolded"));
+        assert_eq!(stats.proj.as_deref(), Some("20,20"));
+    }
 
     /// `WriteIndex::to_args` renders flags `reed index` accepts, and the
     /// parsed `IndexCli` maps back to the same flavor (doc_v5 08 §6.2 text

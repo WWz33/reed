@@ -242,10 +242,7 @@ impl QcJob {
                     _ => {}
                 }
             }
-            if record_is_indel
-                && !(a == Some(0) && b == Some(0))
-                && !(a.is_none() && b.is_none())
-            {
+            if record_is_indel && !(a == Some(0) && b == Some(0)) && !(a.is_none() && b.is_none()) {
                 psc.n_indels += 1;
             }
             // Per-sample ts/tv: only SNP rows with a non-ref genotype, one

@@ -74,6 +74,7 @@
 #![allow(unreachable_pub)]
 
 mod bcf_input;
+mod convert;
 mod error;
 mod filter;
 mod filtered;
@@ -91,6 +92,12 @@ pub use crate::stats::{
     JointSfsReport, LdReport, LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest,
     StatKind, StatsReport, StatsRequest, WindowLayoutOptions, WindowRow, assign_groups,
     assign_groups_in_memory, default_kinds, run_stats, run_stats_opened, window_kinds,
+};
+// The convert command's request surface (doc_v13 §8): the typed targets, the
+// driver entry points and their reports.
+pub use crate::convert::{
+    ConvertCounters, ConvertReport, ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats,
+    PhyloOptions, run_convert, run_convert_opened,
 };
 // The report and driver of the per-site/per-sample report family (doc_v11
 // N6): `run_filter`/`run_stats`/`run_index` are already at the root, so

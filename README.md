@@ -38,6 +38,16 @@ reed filter in.vcf.gz --indep-pairwise 50kb 5 0.2 -Oz6 -o pruned.vcf.gz
 
 # CSI index
 reed index in.vcf.gz
+
+# Phylogenetic matrices, the 0/1/2 matrix, hapmap and a reference-driven MSA
+reed convert in.vcf.gz --phylip --fasta --nexus --nexus-binary --012 --hapmap -o matrices
+reed convert in.vcf.gz --msa --reference ref.fa --region chr1:1-100000 -o aln
+
+# ...and back: a hapmap into VCF (BGZF with -Oz; no -o streams to stdout)
+reed convert panels.hmp.txt --vcf -Oz -o panels.vcf.gz
+
+# The projected SFS, byte-identical to `reed stats --sfs`
+reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
 
 `reed <command> --help` lists every option.
@@ -113,6 +123,43 @@ default), `-W[=csi|tbi]` writes an index, `--report` writes a JSON run
 report, `--timing` records per-phase timings, `--no-version` and
 `--no-command` suppress the `##reed_*` provenance header lines.
 
+## reed convert
+
+Converts the input into phylogenetic and population-genetics matrices in one
+parallel pass: the requested targets share one worker pool, and the output is
+independent of `--threads`. The semantics follow the reference tools exactly
+(vcf2phylip 2.9 by Ortiz 2019, vcftools `--012`, TASSEL hapmap, vcf2msa);
+`gold/popgen/run_convert_parity.sh` checks them byte for byte.
+
+| Flag | Output |
+|---|---|
+| `--phylip` / `--fasta` / `--nexus` | `PREFIX.phy` / `.fasta` / `.nexus` nucleotide matrices (relaxed PHYLIP layout, IUPAC ambiguity codes; `--phylip` is opt-in, unlike vcf2phylip) |
+| `--nexus-binary` | `PREFIX.bin.nexus` for SNAPP (diploid biallelic sites; other genotypes are `?`) |
+| `--012` | `PREFIX.012` (0/1/2/-1 per sample), `.012.pos`, `.012.indv` |
+| `--hapmap` | `PREFIX.hmp.txt` (TASSEL layout) |
+| `--vcf [-O v\|z[level]]` | **Reverse direction**: a hapmap (`.hmp.txt`) input back to VCF — `ID` from `rs#`, REF/ALT in declared order, IUPAC cells expanded to `GT` (`R` → `0/1`); `-O z` writes BGZF and omitting `-o` streams to stdout |
+| `--msa --reference ref.fa [--region CHR:B-E]` | `PREFIX_<contig>.fasta`: whole-site alignment against the reference |
+| `--sfs --proj N[,N…] [--pop FILE]` | `PREFIX_sfs/dadi` and `PREFIX_sfs/fastsimcoal2`, identical to `reed stats --sfs` |
+| `--outgroup NAME`, `--min-samples-locus N`, `--resolve-iupac`, `--write-used-sites` | Alignment controls (see `--help`) |
+
+`--hapmap` and `--vcf` are the two directions of one pair: on its lossless
+domain (biallelic diploid SNPs without missing calls) a VCF → hapmap → VCF
+round trip reproduces every record, and TASSEL 5 reads reed's VCF back.
+
+Deliberate differences from the reference tools (registered in
+`docs/spec/cli.md` §8b): malformed records are skipped and counted instead of
+crashing or flooding stdout; `--resolve-iupac` is deterministic; `--012`
+writes `-1` for half calls and haploids (vcftools writes `1`); the hapmap
+`alleles` column lists the declared REF/ALT alleles; the MSA pads indels
+deterministically instead of calling an external aligner; the hapmap→VCF
+header carries no `##contig` (TASSEL writes none either) and its `##reed_*`
+provenance lines can be turned off.
+
+On an 8 GB VCF (348 samples, 3.3M records) the five phylogenetic outputs
+come out byte-identical to vcf2phylip 2.9 while taking **10 s** against its
+27 min (28 cores), because the per-sample temporary-file transpose is
+replaced by in-memory column blocks.
+
 ## reed index
 
 `-c/--csi` (default) or `-t/--tbi`, `-o` to write elsewhere, `-f` to
@@ -186,11 +233,32 @@ let request = StatsRequest {
 };
 ```
 
+A conversion run takes the same shape; the targets are typed and the report
+lists every file written:
+
+```rust
+use reed::{ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions};
+
+let request = ConvertRequest {
+    targets: vec![ConvertTarget::Phylo {
+        formats: PhyloFormats { phylip: true, fasta: true, nexus: false },
+        options: PhyloOptions::default(),
+    }],
+    prefix: "matrices".into(),
+    ..ConvertRequest::default()
+};
+let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
+for file in &report.files {
+    println!("{}", file.display());
+}
+```
+
 The facade re-exports everything needed: `run_filter`, `run_stats`,
-`run_reports`, `run_index`, the request types (`StatsRequest`, `FilterSpec`,
-`ReportRequest`), the reports (`StatsReport`, `FilterReport`,
-`ReportsOutcome`, `IndexOutcome`), the writers (`reed::windows`,
-`reed::reports`, `reed::sfs`, `reed::fstats`, `reed::ld`, `reed::summary`),
+`run_reports`, `run_index`, `run_convert`, the request types
+(`StatsRequest`, `FilterSpec`, `ReportRequest`, `ConvertRequest`), the
+reports (`StatsReport`, `FilterReport`, `ReportsOutcome`, `IndexOutcome`,
+`ConvertReport`), the writers (`reed::windows`, `reed::reports`,
+`reed::sfs`, `reed::fstats`, `reed::ld`, `reed::summary`),
 and a single `reed::Error` whose `kind()` separates usage errors from
 runtime failures. `StatsRequest::to_args(&group_names)` and
 `FilterSpec::to_args()` render a request back to the CLI spelling, so a tool

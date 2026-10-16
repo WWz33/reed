@@ -10,8 +10,8 @@ use rayon::prelude::*;
 
 use reed_stats::ld::{LdPruner, LdWindow};
 
-use reed_engine::budget::ThreadBudget;
 use super::matrix::SiteMatrix;
+use reed_engine::budget::ThreadBudget;
 
 /// The prune configuration.
 #[derive(Clone, Copy, Debug)]
@@ -186,29 +186,28 @@ pub(crate) fn prune_matrices(
     budget: &ThreadBudget,
 ) -> PruneOutcome {
     let started = std::time::Instant::now();
-    let per_contig: Vec<PruneOutcome> =
-        reed_engine::budget::run_auxiliary(budget, |parallel| {
-            if parallel {
-                matrices
-                    .into_par_iter()
-                    .enumerate()
-                    .map(|(index, matrix)| {
-                        let base = bases.get(index).copied().unwrap_or(0);
-                        prune_one(matrix, config, survivor, base, n_samples, keep_words)
-                    })
-                    .collect()
-            } else {
-                matrices
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, matrix)| {
-                        let base = bases.get(index).copied().unwrap_or(0);
-                        prune_one(matrix, config, survivor, base, n_samples, keep_words)
-                    })
-                    .collect()
-            }
-        })
-        .expect("invariant: the auxiliary pool builds");
+    let per_contig: Vec<PruneOutcome> = reed_engine::budget::run_auxiliary(budget, |parallel| {
+        if parallel {
+            matrices
+                .into_par_iter()
+                .enumerate()
+                .map(|(index, matrix)| {
+                    let base = bases.get(index).copied().unwrap_or(0);
+                    prune_one(matrix, config, survivor, base, n_samples, keep_words)
+                })
+                .collect()
+        } else {
+            matrices
+                .into_iter()
+                .enumerate()
+                .map(|(index, matrix)| {
+                    let base = bases.get(index).copied().unwrap_or(0);
+                    prune_one(matrix, config, survivor, base, n_samples, keep_words)
+                })
+                .collect()
+        }
+    })
+    .expect("invariant: the auxiliary pool builds");
     let mut outcome = PruneOutcome::default();
     for part in per_contig {
         let PruneOutcome {

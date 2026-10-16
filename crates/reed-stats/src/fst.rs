@@ -307,8 +307,7 @@ impl WcMultiAcc {
             if n_typed == 0.0 {
                 self.n_skipped += 1;
             } else {
-                let h_bar =
-                    counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_typed;
+                let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_typed;
                 self.c.add(h_bar / 2.0);
                 self.n_sites += 1;
             }

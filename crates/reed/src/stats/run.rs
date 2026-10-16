@@ -35,6 +35,9 @@ pub(super) struct SegmentPartial {
 pub(super) enum ContigAcc {
     Bins(ContigBins),
     Regions(RegionAccs),
+    /// No window bookkeeping at all: the SFS-only composition the convert
+    /// driver builds (`StatsJob::for_sfs`, doc_v13 §7.5 plan A).
+    None,
 }
 
 impl ContigAcc {
@@ -42,6 +45,7 @@ impl ContigAcc {
         match self {
             Self::Bins(bins) => bins.push_site(pos0, row, all_variant),
             Self::Regions(regions) => regions.push_site(pos0, row, all_variant),
+            Self::None => {}
         }
     }
 
@@ -52,6 +56,7 @@ impl ContigAcc {
         match self {
             Self::Bins(bins) => bins.push_skipped(pos0),
             Self::Regions(regions) => regions.push_skipped(pos0),
+            Self::None => {}
         }
     }
 
@@ -59,6 +64,7 @@ impl ContigAcc {
         match self {
             Self::Bins(bins) => bins.fold(totals),
             Self::Regions(regions) => regions.fold(totals),
+            Self::None => {}
         }
     }
 
@@ -67,6 +73,7 @@ impl ContigAcc {
         match (self, other) {
             (Self::Bins(dst), Self::Bins(src)) => dst.merge_bins(src),
             (Self::Regions(dst), Self::Regions(src)) => dst.merge_regions(src),
+            (Self::None, Self::None) => {}
             _ => unreachable!("invariant: one grid kind per run"),
         }
     }
@@ -76,8 +83,15 @@ impl ContigAcc {
 /// per-contig regions (`--bed-file`).
 #[derive(Clone, Debug)]
 pub(super) enum GridMode {
-    Bp { size: u64, step: u64, width: u64 },
+    Bp {
+        size: u64,
+        step: u64,
+        width: u64,
+    },
     Regions(Arc<ContigRegions>),
+    /// No grid at all (the SFS-only composition; its output is genome-wide
+    /// spectra, nothing renders a window row).
+    None,
 }
 
 /// Worker → sink partial: per-contig bin accumulators in record order.
@@ -237,6 +251,35 @@ pub(super) fn stats_policies() -> GenotypePolicies {
     }
 }
 
+impl StatsJob {
+    /// Builds the SFS-only job the convert driver composes (doc_v13 §7.5
+    /// plan A): the statistics chunk path restricted to the genome-wide SFS
+    /// fold. The same line/site/scan stages run — so `reed convert --sfs`
+    /// and `reed stats --sfs` cannot drift — but no window accumulator is
+    /// ever allocated (`GridMode::None`).
+    pub(crate) fn for_sfs(
+        n_samples: usize,
+        gt_groups: Vec<Option<u32>>,
+        plan: SfsPlan,
+        contig_len: Arc<HashMap<Vec<u8>, u64>>,
+    ) -> Self {
+        Self {
+            grid: GridMode::None,
+            n_groups: plan.projections.len(),
+            gt_groups: gt_groups.into(),
+            n_samples,
+            seed: Vec::<StatAcc>::new().into(),
+            targets: Vec::new().into(),
+            targets_exclude: Vec::new().into(),
+            contig_len,
+            bcf: None,
+            sfs: Some(plan),
+            fstats: None,
+            ld_layout: None,
+        }
+    }
+}
+
 impl ChunkJob for StatsJob {
     type Partial = StatsPartial;
     type Scratch = StatsScratch;
@@ -278,6 +321,32 @@ impl ChunkJob for StatsJob {
         }
         scratch.ld.flush(&mut partial);
         Ok(partial)
+    }
+}
+
+impl StatsPartial {
+    /// Absorbs another partial's SFS state in chunk order (the convert
+    /// sink's merge; doc_v13 §7.5). Every other field is dropped: the
+    /// convert driver only consumes the spectra.
+    pub(crate) fn merge_sfs(&mut self, other: &Self) {
+        if let Some(src) = &other.sfs {
+            match &mut self.sfs {
+                Some(dst) => dst.merge(src),
+                None => self.sfs = Some(src.clone()),
+            }
+        }
+    }
+
+    /// The merged SFS partial (convert's drain).
+    #[must_use]
+    pub(crate) fn sfs_partial(&self) -> Option<&SfsPartial> {
+        self.sfs.as_ref()
+    }
+
+    /// Records the partial absorbed (convert's report counter).
+    #[must_use]
+    pub(crate) fn records(&self) -> u64 {
+        self.n_records
     }
 }
 
@@ -330,6 +399,7 @@ impl StatsJob {
                             .unwrap_or_else(|| Arc::new(RegionSet::default()));
                         ContigAcc::Regions(RegionAccs::new(set, &self.seed))
                     }
+                    GridMode::None => ContigAcc::None,
                 };
                 *current = Some(SegmentPartial {
                     contig: contig.to_vec(),

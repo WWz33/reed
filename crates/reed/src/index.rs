@@ -706,8 +706,7 @@ mod tests {
                 .expect("invariant: header present");
             let mut source = SmallChunkSource { reader };
 
-            let contig_names: Arc<[Vec<u8>]> =
-                Arc::from(vec![b"chr1".to_vec()].into_boxed_slice());
+            let contig_names: Arc<[Vec<u8>]> = Arc::from(vec![b"chr1".to_vec()].into_boxed_slice());
             let indexer = Indexer::new(WriteIndex::Csi, &contig_names).expect("invariant: csi");
             let out: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
             let sink = IndexSink {

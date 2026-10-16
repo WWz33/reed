@@ -950,8 +950,7 @@ mod gt_class_tests {
             .collect();
         assert_eq!(gt.len(), 1);
         assert_eq!(gt[0].id(), "after_mask.gt_class.het");
-        let plan = compile_gt(vec![R::Het, R::Miss, R::Het, R::Miss])
-            .expect("invariant: compiles");
+        let plan = compile_gt(vec![R::Het, R::Miss, R::Het, R::Miss]).expect("invariant: compiles");
         let ids: Vec<_> = plan.tail.iter().map(TailRule::id).collect();
         assert_eq!(ids, ["after_mask.gt_class.het", "after_mask.gt_class.miss"]);
     }

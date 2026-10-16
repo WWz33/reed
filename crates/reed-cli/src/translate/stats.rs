@@ -100,7 +100,7 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
 /// # Errors
 ///
 /// Conflicting or unknown sample sources.
-fn parse_sample_keep(
+pub(crate) fn parse_sample_keep(
     args: &crate::cli::filter_flags::SampleArgs,
     header_samples: &[String],
 ) -> Result<Option<Vec<bool>>, String> {
@@ -154,8 +154,8 @@ fn parse_sample_keep(
     // silent "no filter" (doc_v7 D7-12; the old `.ok()` chain swallowed it).
     let file_names = match file_keep {
         Some(p) => {
-            let text =
-                std::fs::read_to_string(p).map_err(|e| format!("cannot read sample file {p}: {e}"))?;
+            let text = std::fs::read_to_string(p)
+                .map_err(|e| format!("cannot read sample file {p}: {e}"))?;
             Some(names_of(&text)?)
         }
         None => None,
@@ -173,8 +173,8 @@ fn parse_sample_keep(
     let mut drop = vec![false; header_samples.len()];
     let remove_names = match &args.remove {
         Some(p) => {
-            let text =
-                std::fs::read_to_string(p).map_err(|e| format!("cannot read sample file {p}: {e}"))?;
+            let text = std::fs::read_to_string(p)
+                .map_err(|e| format!("cannot read sample file {p}: {e}"))?;
             Some(names_of(&text)?)
         }
         None => None,
@@ -713,38 +713,10 @@ pub(crate) fn build_windowed_request(
         });
     }
     // `--sfs [folded] --proj N[,N…]`: a genome-wide spectrum per
-    // population (docs/rounds/v5/05-algorithms.md §3.1).
-    let sfs_request = match args.sfs.as_deref() {
-        None => None,
-        Some(mode) => {
-            let Some(raw) = args.proj.as_deref() else {
-                return Err(reed::Error::usage(
-                    "--sfs needs --proj N (the projection size in chromosomes)",
-                ));
-            };
-            let mut values = Vec::new();
-            for token in raw.split(',') {
-                let token = token.trim();
-                values.push(token.parse::<u32>().map_err(|_| {
-                    reed::Error::usage(format!("invalid --proj value {token:?} (want an integer)"))
-                })?);
-            }
-            if values.len() == 1 {
-                values = vec![values[0]; group_names.len()];
-            }
-            if values.len() != group_names.len() {
-                return Err(reed::Error::usage(format!(
-                    "--proj gives {} value(s) but the population file declares {}",
-                    values.len(),
-                    group_names.len()
-                )));
-            }
-            Some(reed::SfsRequest {
-                projections: values,
-                folded: mode == "folded",
-            })
-        }
-    };
+    // population (docs/rounds/v5/05-algorithms.md §3.1). The request
+    // construction is shared with `reed convert` (doc_v13 D13-6).
+    let sfs_request =
+        super::build_sfs_request(args.sfs.as_deref(), args.proj.as_deref(), &group_names)?;
     // Patterson f-statistics (docs/rounds/v5/05-algorithms.md §3.3):
     // genome-wide, one row per test, block-jackknife SE.
     let fstats_request = build_fstats_request(
