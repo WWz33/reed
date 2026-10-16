@@ -55,6 +55,40 @@ are the stability promise (`docs/spec/cli.md` §0).
 
 ### Added
 
+- `reed convert` (docs/rounds/v13): one parallel pass over the input, any
+  combination of targets. Phylogenetic matrices with vcf2phylip 2.9
+  semantics (Ortiz 2019, DOI 10.5281/zenodo.2540861) — `--phylip`,
+  `--fasta`, `--nexus`, `--nexus-binary` (SNAPP), plus `--outgroup`,
+  `--min-samples-locus`, `--resolve-iupac` (deterministic, seed 0),
+  `--write-used-sites`; the vcftools `--012` triple; the TASSEL hapmap
+  (`.hmp.txt`); a reference-driven whole-site MSA with vcf2msa semantics
+  (`--msa --reference`, `--region`, `--flank`, `--collapse-suffix`); and
+  `--sfs`, byte-identical to `reed stats --sfs` (one shared request builder,
+  one SFS fold). Outputs are independent of `--threads`; parity is gated by
+  `gold/popgen/run_convert_parity.sh` (vcf2phylip five files, vcftools
+  `--012`, TASSEL read-back, vcf2msa sequences). Deliberate divergences from
+  the reference tools are registered in `docs/spec/cli.md` §8b: malformed
+  records are skipped and counted, `--012` writes `-1` for half calls and
+  haploids (vcftools writes 1), the hapmap `alleles` column lists the
+  declared REF/ALT alleles, the MSA pads indels deterministically instead of
+  calling an external aligner, and an allele set outside the IUPAC table
+  skips the record where vcf2phylip crashes.
+- `reed-core`'s `iupac` module: the IUPAC ambiguity table (62 entries), the
+  binary-NEXUS genotype table, and the inverse lookup (`ambig_expand`: `R` →
+  `AG`), the single implementation shared by every convert target.
+- `reed convert --vcf`: the hapmap → VCF reverse direction (v13 C4), so the
+  two formats convert both ways. The input is a hapmap (`.hmp.txt`, one- or
+  two-letter cells auto-detected); `chrom`/`pos`/`rs#`/`alleles` are copied
+  verbatim (`ID` = `rs#`, REF/ALT in declared order), each IUPAC cell expands
+  to a `GT` (`R` → `0/1`), only `N`/`?` read as missing, and `alleles=NA`
+  becomes an all-missing record. `-O v` (default) or `-Oz[level]` writes
+  plain text or BGZF, `-o` omitted streams to stdout; the header carries no
+  `##contig` (TASSEL writes none) and its `##reed_*` provenance lines are
+  controlled by `--no-version`/`--no-command`. Exclusive with every
+  VCF-input target and with sample subsetting; malformed rows are skipped and
+  counted. On the lossless domain (biallelic diploid SNPs, no missing) a VCF
+  → hapmap → VCF round trip reproduces every record, and TASSEL 5 reads
+  reed's VCF back (`gold/popgen/run_convert_parity.sh` gate 6).
 - `-g/--genotype [^](hom|het|miss)` (bcftools `-g`) for `reed filter` and
   `reed stats`: a post-mask site rule over the genotype classes
   (`TailRules::gt_class` → `TailRule::GtClass`). A half-call (`0/.`) reads

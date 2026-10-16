@@ -31,5 +31,6 @@ fn run() -> Result<(), reed::Error> {
         Command::Filter(args) => translate::filter::run_filter_cli(args),
         Command::Stats(args) => translate::stats::run_stats_cli(args),
         Command::Index(args) => translate::index::run_index_cli(args),
+        Command::Convert(args) => translate::convert::run_convert_cli(args),
     }
 }

@@ -729,8 +729,7 @@ mod tests {
     }
 
     fn ev(text: &str, s: &SiteValues<'_>, tags: &[&str]) -> bool {
-        let expr =
-            parse_and_check(text, &table(tags)).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let expr = parse_and_check(text, &table(tags)).unwrap_or_else(|e| panic!("{text}: {e}"));
         eval(&expr, s)
     }
 

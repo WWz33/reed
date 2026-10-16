@@ -109,8 +109,16 @@ fn synthetic_null_count_record(null_info: bool) -> Vec<u8> {
         indiv.push(0x10); // (NULL, count 1)
     }
     let mut out = Vec::new();
-    out.extend_from_slice(&u32::try_from(shared.len()).expect("invariant: small").to_le_bytes());
-    out.extend_from_slice(&u32::try_from(indiv.len()).expect("invariant: small").to_le_bytes());
+    out.extend_from_slice(
+        &u32::try_from(shared.len())
+            .expect("invariant: small")
+            .to_le_bytes(),
+    );
+    out.extend_from_slice(
+        &u32::try_from(indiv.len())
+            .expect("invariant: small")
+            .to_le_bytes(),
+    );
     out.extend_from_slice(&shared);
     out.extend_from_slice(&indiv);
     out

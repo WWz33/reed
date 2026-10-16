@@ -37,6 +37,16 @@ reed filter in.vcf.gz --indep-pairwise 50kb 5 0.2 -Oz6 -o pruned.vcf.gz
 
 # CSI 索引
 reed index in.vcf.gz
+
+# 系统发育矩阵、0/1/2 矩阵、hapmap 与参考 MSA
+reed convert in.vcf.gz --phylip --fasta --nexus --nexus-binary --012 --hapmap -o matrices
+reed convert in.vcf.gz --msa --reference ref.fa --region chr1:1-100000 -o aln
+
+# 反向：hapmap 转回 VCF（-Oz 写 BGZF；不给 -o 时流到 stdout）
+reed convert panels.hmp.txt --vcf -Oz -o panels.vcf.gz
+
+# 投影 SFS，与 `reed stats --sfs` 逐字节相同
+reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
 
 `reed <command> --help` 列出全部选项。
@@ -112,6 +122,38 @@ INFO 处理：样本集变化时 reed 更新 `INFO/AC` 与 `INFO/AN`（无 GT �
 `-c/--csi`（默认）或 `-t/--tbi`，`-o` 改写到别处，`-f` 覆盖已有索引。输入
 必须是文件：索引需要可寻址的源。
 
+## reed convert
+
+一次并行读入、多目标输出（各目标共享同一 worker 池，输出与 `--threads`
+无关）。语义严格对齐参照工具（vcf2phylip 2.9（Ortiz 2019）、vcftools
+`--012`、TASSEL hapmap、vcf2msa），`gold/popgen/run_convert_parity.sh`
+逐字节校验。
+
+| 参数 | 输出 |
+|---|---|
+| `--phylip` / `--fasta` / `--nexus` | `PREFIX.phy` / `.fasta` / `.nexus` 核苷酸矩阵（relaxed PHYLIP 布局、IUPAC 简并码；`--phylip` 是 opt-in，与 vcf2phylip 相反） |
+| `--nexus-binary` | `PREFIX.bin.nexus`（SNAPP；双等位二倍体位点，其余 `?`） |
+| `--012` | `PREFIX.012`（每样本 0/1/2/-1）、`.012.pos`、`.012.indv` |
+| `--hapmap` | `PREFIX.hmp.txt`（TASSEL 布局） |
+| `--vcf [-O v\|z[level]]` | **反向转换**：hapmap（`.hmp.txt`）输入转回 VCF——`ID` 取 `rs#`、REF/ALT 按声明顺序、IUPAC 格展开为 `GT`（`R` → `0/1`）；`-O z` 写 BGZF，不给 `-o` 时流到 stdout |
+| `--msa --reference ref.fa [--region CHR:B-E]` | `PREFIX_<contig>.fasta`：逐参考碱基的全位点比对 |
+| `--sfs --proj N[,N…] [--pop FILE]` | `PREFIX_sfs/dadi`、`PREFIX_sfs/fastsimcoal2`，与 `reed stats --sfs` 相同 |
+| `--outgroup NAME`、`--min-samples-locus N`、`--resolve-iupac`、`--write-used-sites` | 矩阵调节（见 `--help`） |
+
+`--hapmap` 与 `--vcf` 是同一对格式的两个方向：在无损域（双等位、二倍体、
+无缺失的 SNP）上 VCF → hapmap → VCF 往返逐记录还原，且 TASSEL 5 能读回
+reed 写的 VCF。
+
+与参照工具的有意分歧（登记在 `docs/spec/cli.md` §8b）：畸形记录跳过并计数
+（不崩溃、不刷屏）；`--resolve-iupac` 确定性（固定 seed）；`--012` 的半调用
+与 haploid 写 `-1`（vcftools 写 1）；hapmap 的 `alleles` 列写声明集；
+MSA 的 indel 用确定性填充（不调外部对齐器）；hapmap→VCF 的头不写
+`##contig`（TASSEL 也不写），`##reed_*` 溯源行可关。
+
+8 GB VCF（348 样本、331 万记录）上五个系统发育输出与 vcf2phylip 2.9
+**逐字节相同**，耗时 **10 秒** vs 其 27 分钟（28 核）——逐样本临时文件转置
+换成内存列块。
+
 ## 输入要求
 
 - VCF、VCF.gz 或 BCF，按文件头识别。`-` 从 stdin 读 VCF 文本；`reed index`
@@ -156,6 +198,22 @@ let request = StatsRequest {
 };
 let report = reed::run_stats(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
 let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+```
+
+转换请求同形；目标类型化，报告列出写出的全部文件：
+
+```rust
+use reed::{ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions};
+
+let request = ConvertRequest {
+    targets: vec![ConvertTarget::Phylo {
+        formats: PhyloFormats { phylip: true, fasta: true, nexus: false },
+        options: PhyloOptions::default(),
+    }],
+    prefix: "matrices".into(),
+    ..ConvertRequest::default()
+};
+let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
 ```
 
 手上已经有 `样本 -> 群体` 映射的调用方可以直接传入，不必落一个群体文件：

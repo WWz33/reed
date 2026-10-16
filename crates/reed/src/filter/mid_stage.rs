@@ -14,8 +14,8 @@ use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::line_edit::InfoValueOut;
 
-use reed_engine::budget::ThreadBudget;
 use super::pass0::matrix::{ChunkSites, SiteMatrix};
+use reed_engine::budget::ThreadBudget;
 
 /// One survivor's pass1 emit data (§11.4).
 #[derive(Clone, Debug)]
@@ -209,7 +209,12 @@ pub(super) fn mid_stage(
                     .par_iter()
                     .map(|chunk| {
                         decide_chunk(
-                            chunk, matrices, contig_base, &keep_words, plan, n_samples_out,
+                            chunk,
+                            matrices,
+                            contig_base,
+                            &keep_words,
+                            plan,
+                            n_samples_out,
                         )
                     })
                     .collect()
@@ -218,7 +223,12 @@ pub(super) fn mid_stage(
                     .iter()
                     .map(|chunk| {
                         decide_chunk(
-                            chunk, matrices, contig_base, &keep_words, plan, n_samples_out,
+                            chunk,
+                            matrices,
+                            contig_base,
+                            &keep_words,
+                            plan,
+                            n_samples_out,
                         )
                     })
                     .collect()

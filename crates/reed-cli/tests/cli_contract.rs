@@ -417,3 +417,166 @@ fn index_and_stats_run_on_the_minimal_fixture() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The hapmap fixture for the `convert --vcf` gates: one-letter IUPAC cells
+/// over two samples (doc_v13 §3.12).
+const HAPMAP: &str = "\
+##fileformat=hapmap
+rs#	alleles	chrom	pos	strand	assembly#	center	protLSID	assayLSID	panelLSID	QCcode	s0	s1
+chr1:10	A/G	chr1	10	+	NA	NA	NA	NA	NA	NA	A	R
+chr1:20	C/T	chr1	20	+	NA	NA	NA	NA	NA	NA	T	N
+";
+
+/// v13 §3.12: `convert --vcf` translates a hapmap back to VCF — the records
+/// carry the declared REF/ALT and the IUPAC-expanded GT, the header has the
+/// provenance lines and no `##contig`, and `-Oz` writes BGZF.
+#[test]
+fn convert_hapmap_to_vcf_outputs_records_and_provenance() {
+    let dir = temp_dir("convert-vcf");
+    let input = dir.join("in.hmp.txt");
+    std::fs::write(&input, HAPMAP).expect("invariant: fixture");
+    let out = dir.join("out.vcf");
+    let o = run(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--vcf",
+        "-o",
+        out.to_str().unwrap(),
+        "--verbosity",
+        "0",
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = std::fs::read_to_string(&out).expect("invariant: read");
+    assert!(text.starts_with("##fileformat=VCFv4.3\n"), "{text}");
+    assert!(text.contains("##reed_version="), "{text}");
+    assert!(text.contains("##reed_command="), "{text}");
+    assert!(!text.contains("##contig"), "{text}");
+    assert!(
+        text.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("chr1\t10\tchr1:10\tA\tG\t.\tPASS\t.\tGT\t0/0\t0/1\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("chr1\t20\tchr1:20\tC\tT\t.\tPASS\t.\tGT\t1/1\t./.\n"),
+        "{text}"
+    );
+
+    // --no-version drops the provenance block; the records stay.
+    let bare = dir.join("bare.vcf");
+    let o = run(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--vcf",
+        "--no-version",
+        "-o",
+        bare.to_str().unwrap(),
+        "--verbosity",
+        "0",
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let bare_text = std::fs::read_to_string(&bare).expect("invariant: read");
+    assert!(!bare_text.contains("##reed_"), "{bare_text}");
+    assert!(bare_text.contains("\tGT\t0/0\t0/1\n"), "{bare_text}");
+
+    // -Oz writes BGZF (gzip magic).
+    let gz = dir.join("out.vcf.gz");
+    let o = run(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--vcf",
+        "-Oz",
+        "-o",
+        gz.to_str().unwrap(),
+        "--verbosity",
+        "0",
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let bytes = std::fs::read(&gz).expect("invariant: read");
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b], "-Oz must be BGZF");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v13 §1.1 rule 6: `--vcf` reads a hapmap, so it is exclusive with every
+/// VCF-input target, takes no VCF-input knobs, and rejects the BCF output
+/// spellings.
+#[test]
+fn convert_vcf_rejects_the_vcf_input_surface() {
+    let dir = temp_dir("convert-vcf-gates");
+    let input = dir.join("in.hmp.txt");
+    std::fs::write(&input, HAPMAP).expect("invariant: fixture");
+    let path = input.to_str().unwrap();
+
+    let cases: &[&[&str]] = &[
+        &["convert", path, "--vcf", "--phylip"],
+        &["convert", path, "--vcf", "--012"],
+        &["convert", path, "--vcf", "--sfs", "unfolded"],
+        &["convert", path, "--vcf", "--outgroup", "s0"],
+        &["convert", path, "--vcf", "-s", "s0"],
+        &["convert", path, "--vcf", "-Ob"],
+        &["convert", path, "--vcf", "-Ou"],
+        &["convert", path, "--phylip", "-Ov"],
+        &["convert", path, "--phylip", "--no-version"],
+    ];
+    for args in cases {
+        let o = run(args);
+        assert_eq!(
+            o.status.code(),
+            Some(2),
+            "{args:?} must be a usage error: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+
+    // The two mixed-target messages name the reason.
+    let o = run(&["convert", path, "--vcf", "--phylip"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("cannot mix --vcf"), "{stderr}");
+    let o = run(&["convert", path, "--vcf", "-Ob"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("-O v or -O z"), "{stderr}");
+
+    // A non-hapmap input is a data error (exit 1), not a usage error — the
+    // same split `filter`/`stats` make when handed a non-VCF file.
+    let vcf = dir.join("in.vcf");
+    std::fs::write(&vcf, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n").expect("fixture");
+    let o = run(&[
+        "convert",
+        vcf.to_str().unwrap(),
+        "--vcf",
+        "--verbosity",
+        "0",
+    ]);
+    assert_eq!(o.status.code(), Some(1), "wrong-format input is runtime");
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("not a hapmap file"), "{stderr}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v13 §3.12: `reed convert --vcf` streams the VCF to stdout when no `-o`
+/// is given (bcftools' `-Ov` shape), so a hapmap pipes into a VCF pipeline.
+#[test]
+fn convert_vcf_streams_to_stdout_without_o() {
+    let dir = temp_dir("convert-vcf-stdout");
+    let input = dir.join("in.hmp.txt");
+    std::fs::write(&input, HAPMAP).expect("invariant: fixture");
+    let o = run(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--vcf",
+        "--verbosity",
+        "0",
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = String::from_utf8_lossy(&o.stdout);
+    assert!(text.starts_with("##fileformat=VCFv4.3\n"), "{text}");
+    assert!(
+        text.contains("chr1\t10\tchr1:10\tA\tG\t.\tPASS\t.\tGT\t0/0\t0/1\n"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

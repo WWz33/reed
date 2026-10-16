@@ -1318,12 +1318,8 @@ fn genotype_class_rules_filter_every_call_shape() {
                 ..FilterSpec::default()
             };
             let out = dir.join("out.vcf.gz");
-            let report = run_filter(
-                Some(&path),
-                &spec,
-                &options(Some(strategy), &out),
-            )
-            .unwrap_or_else(|e| panic!("{strategy:?} {rules:?}: {e}"));
+            let report = run_filter(Some(&path), &spec, &options(Some(strategy), &out))
+                .unwrap_or_else(|e| panic!("{strategy:?} {rules:?}: {e}"));
             let kept_pos: Vec<String> = inflate_to_string(&out)
                 .lines()
                 .filter(|l| !l.starts_with('#'))
@@ -1338,7 +1334,10 @@ fn genotype_class_rules_filter_every_call_shape() {
             let ids: Vec<&str> = report.funnel.iter().map(|s| s.rule.as_str()).collect();
             for rule in *rules {
                 let want = format!("after_mask.gt_class.{}", rule.id());
-                assert!(ids.contains(&want.as_str()), "{strategy:?}: {ids:?} lacks {want}");
+                assert!(
+                    ids.contains(&want.as_str()),
+                    "{strategy:?}: {ids:?} lacks {want}"
+                );
             }
         }
     }

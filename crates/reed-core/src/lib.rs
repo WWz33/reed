@@ -14,6 +14,7 @@ pub mod genotype;
 pub mod grid;
 pub mod group;
 pub mod id;
+pub mod iupac;
 pub mod math;
 pub mod sample;
 pub mod site;

@@ -9,16 +9,33 @@
 use std::io::Write;
 
 use reed::{
-    FilterReport, Populations, ReportRequest, ReportsOutcome, StatsRequest, assign_groups_in_memory,
-    default_kinds, run_reports, run_stats,
+    FilterReport, Populations, ReportRequest, ReportsOutcome, StatsRequest,
+    assign_groups_in_memory, default_kinds, run_reports, run_stats,
 };
 
 // ---- A11-6: the four drivers and their reports live at the root ----
 fn _drivers_and_reports_are_at_the_root(
-    _: fn(Option<&std::path::Path>, &reed::spec::FilterSpec, &reed::FilterOptions) -> Result<FilterReport, reed::Error>,
-    _: fn(Option<&std::path::Path>, &StatsRequest, &reed::budget::ThreadBudget) -> Result<reed::StatsReport, reed::Error>,
-    _: fn(Option<&std::path::Path>, &ReportRequest, &reed::budget::ThreadBudget) -> Result<ReportsOutcome, reed::Error>,
-    _: fn(&std::path::Path, reed::WriteIndex, Option<&std::path::Path>, usize) -> Result<reed::IndexOutcome, reed::Error>,
+    _: fn(
+        Option<&std::path::Path>,
+        &reed::spec::FilterSpec,
+        &reed::FilterOptions,
+    ) -> Result<FilterReport, reed::Error>,
+    _: fn(
+        Option<&std::path::Path>,
+        &StatsRequest,
+        &reed::budget::ThreadBudget,
+    ) -> Result<reed::StatsReport, reed::Error>,
+    _: fn(
+        Option<&std::path::Path>,
+        &ReportRequest,
+        &reed::budget::ThreadBudget,
+    ) -> Result<ReportsOutcome, reed::Error>,
+    _: fn(
+        &std::path::Path,
+        reed::WriteIndex,
+        Option<&std::path::Path>,
+        usize,
+    ) -> Result<reed::IndexOutcome, reed::Error>,
 ) {
 }
 
@@ -120,8 +137,7 @@ fn readme_library_example_compiles_and_runs() {
         },
         ..StatsRequest::default()
     };
-    let report =
-        run_stats(Some(vcf.as_path()), &request, &budget()).expect("invariant: run");
+    let report = run_stats(Some(vcf.as_path()), &request, &budget()).expect("invariant: run");
     // The borrow survives the call: this line is the A11-2 regression.
     let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
     assert!(tsv.starts_with("contig\tstart\tend"));

@@ -289,15 +289,23 @@ fn pass_is_declared_even_when_the_input_lacks_it() {
         "output header must declare PASS: {header_text}"
     );
     let dict = reed_io::bcf::BcfDict::from_header(&data[9..9 + l_text]).expect("invariant: header");
-    assert_eq!(dict.tag(0), Some(b"PASS".as_slice()), "PASS sits at index 0");
+    assert_eq!(
+        dict.tag(0),
+        Some(b"PASS".as_slice()),
+        "PASS sits at index 0"
+    );
     // Both records render (the PASS one resolves its FILTER index).
     let rendered = render_via_reed(&out);
-    assert!(rendered.contains("chr1\t100\t.\tA\tG\t50\tPASS\t"), "{rendered}");
+    assert!(
+        rendered.contains("chr1\t100\t.\tA\tG\t50\tPASS\t"),
+        "{rendered}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Reads a BCF file back with reed's own decoder, rendering every record.
-fn render_via_reed(path: &Path) -> String {    let bytes = std::fs::read(path).expect("invariant: BCF output");
+fn render_via_reed(path: &Path) -> String {
+    let bytes = std::fs::read(path).expect("invariant: BCF output");
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
     let mut data = Vec::new();
     let mut rest = &bytes[..];
@@ -670,4 +678,3 @@ fn sketch_path_rejects_bcf_output() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
-

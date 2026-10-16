@@ -26,6 +26,7 @@
 | `reed filter` | bcftools `view` + `filter -S .` + `+fill-tags` + `annotate -x`；plink2 的 QC 阈值 | 过滤、基因型掩码、INFO 重算，输出保真的 VCF/BCF |
 | `reed stats` | vcftools 统计、pixy、plink2 `--freq/--hardy/--het/--missing`、easySFS、`bcftools stats` | 所有统计一个命令，一个统计量一个参数 |
 | `reed index` | `bcftools index` | CSI（默认）/ TBI |
+| `reed convert` | vcf2phylip 2.9（Ortiz 2019）、vcftools `--012`、TASSEL hapmap（双向）、vcf2msa、easySFS | 转换：系统发育矩阵 / 0-1-2 矩阵 / hapmap / 参考 MSA / 投影 SFS；hapmap → VCF 反向 |
 
 `reed qc` 是 doc_v3 C4 留下的**隐藏且已弃用**的子命令（`cli.rs:49`），`--help` 不列出；v5 路线 X1 删除（03 §4 C-2）。
 
@@ -261,6 +262,31 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ## 8. `reed index`
 
 `reed index [-c|-t] [-o FILE] [-f] [--threads N] <FILE>`；默认 CSI，`-t` TBI；stdin 明确拒绝（"needs a seekable file"）。输出与 bcftools 的索引在 `bcftools view -r` 下逐字节等价（测试锁定）。
+
+---
+
+## 8b. `reed convert`（doc_v13）
+
+转换命令：一次读入，多目标输出（同一 worker 池，输出与线程数无关）。至少给一个转换目标，否则 usage 错。
+
+| 参数 | 语义 | 来源 |
+|---|---|---|
+| `--sfs [folded] --proj N[,N…] --sfs-int --pop FILE` | 投影 SFS：与 `reed stats --sfs` **逐字节等价**（同前缀同输入下 `diff -r` 为空）；`--pop` 缺省全体一组 | easySFS |
+| `--phylip` / `--fasta` / `--nexus` | 核苷酸矩阵（relaxed PHYLIP 布局 / FASTA / NEXUS）；三格式共享一份列模型，**`--phylip` 是 opt-in**（与 vcf2phylip 默认写相反，B13-1） | vcf2phylip |
+| `--nexus-binary` | 二元 NEXUS（SNAPP；仅双等位、二倍体 GT 参与，其余 `?`） | vcf2phylip |
+| `--outgroup NAME` | 该样本写在每个矩阵第一行；不在（子集后的）样本集 → usage 错（B13-4） | vcf2phylip |
+| `--min-samples-locus N` | 位点门：有 GT 的**样本**数下限（phylo 默认 4，超样本数自动截断；`--012`/`--hapmap` 只在显式给出时应用） | vcf2phylip |
+| `--resolve-iupac` | 杂合随机拆解为单字母；**确定性**（seed 0，threads {1,4} 输出相同），与 vcf2phylip 的每次不同有意分歧（B13-3） | vcf2phylip |
+| `--write-used-sites` | 写 `PREFIX.used_sites.tsv`（仅核苷酸流接受的位点） | vcf2phylip |
+| `--012` | `PREFIX.012`（每样本一行 `<原header下标>\t0/1/2/-1`）、`PREFIX.012.pos`、`PREFIX.012.indv`；双等位门（`>2` 等位跳过），**半调用与 haploid 写 `-1`**（vcftools 写 1，B13-8） | vcftools |
+| `--hapmap` | `PREFIX.hmp.txt`：11 固定列 + 样本列；`alleles` 是 REF/ALT **声明集**（TASSEL 写观察集，B13-5）；格取 TASSEL 读侧字母表（A/C/G/T/R/Y/S/W/K/M/N/-，其余 → `N`） | TASSEL |
+| `--msa --reference FASTA [--region CHR:B-E] [--flank N] [--collapse-suffix STR]` | 参考驱动的全位点 MSA：每 contig/区域一个 `PREFIX_<contig>[_<s>-<e>].fasta`，无记录处写 REF；indel 位点确定性填充（不调外部对齐器，B13-6）；样本名默认不折叠（B13-7） | vcf2msa |
+| `--vcf [-O v\|z[level]] [--no-version] [--no-command] [-o FILE]` | **反向转换**：输入是 hapmap（`.hmp.txt`），输出 VCF。与每个 VCF 输入目标互斥（门规则 6），不接受 `-s/-S/--keep/--remove`。`chrom`/`pos`/`rs#`/`alleles` 直抄（`ID` = `rs#`，REF/ALT 按声明顺序，B13-11）；格按 IUPAC 反查展开为 GT（`R`→`0/1` 等），仅 `N`/`?` 是缺失（`./.`）；`-`/`+`/`0` 按 `alleles` 列查下标；`alleles=NA` → 全 `./.` 行。`-O` 缺省 `v`（纯文本），`-o` 以 `.gz`/`.bgz` 结尾时缺省 `z6`；`b`/`u`（BCF）报 usage 错。头无 `##contig`（TASSEL 同款），`##reed_version`/`##reed_command` 由 `--no-version`/`--no-command` 分别关闭（B13-12） | TASSEL |
+| `-o PREFIX` | 输出前缀（缺省：输入文件名去扩展）；`PREFIX.log` 写五计数与参数。`--vcf` 下 `-o` 是**输出文件路径**（缺省 stdout） | reed |
+
+**与参照工具的有意分歧（B13 登记，不写对拍断言）**：B13-1 `--phylip` opt-in；B13-2 畸形行跳过 + 计数 + 一次性警告（vcf2phylip 打印整行）；B13-3 resolve 固定 seed；B13-4 outgroup 报错；B13-5 hapmap 声明集；B13-6 msa 不调外部对齐器；B13-7 msa 样本名不折叠；B13-8 `--012` 半调用/haploid = `-1`；**B13-9** AMBIG 表未命中（REF/ALT 含表外字母）vcf2phylip **直接崩溃**，reed 跳过 + 计数；**B13-11** hmp→VCF 的 `ID`/REF/ALT 直抄声明值（TASSEL 的 `ExportUtils` 会重排/重命名）；**B13-12** hmp→VCF 头不写 `##contig`（TASSEL 也不写）且 `##reed_*` 可关。
+
+**对拍门**：`gold/popgen/run_convert_parity.sh`（vcf2phylip 五文件逐字节 / vcftools `--012` 干净夹具逐字节 + B13-8 断言 / TASSEL 读回 / vcf2msa 序列相等 / convert ≡ stats 的 SFS 树 / hapmap↔VCF 往返 + TASSEL 读 reed 的 VCF）；可选 `DATA.vcf.gz` 参数追加全量档（同一负载跑参照与 reed 各一遍并 diff）。**实测**（clean.vcf.gz，8 GB / 348 样本 / 331 万记录，28 核）：五格式一次跑 vcf2phylip 2.9 = 27 min 27 s，`reed convert` = 10.4 s（≈158×，五文件逐字节相同；v13 STATUS §基线）。
 
 ---
 

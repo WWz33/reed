@@ -54,7 +54,10 @@ fn dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
-fn options(strategy: Option<reed_filter::plan::ExecStrategy>, out: &std::path::Path) -> FilterOptions {
+fn options(
+    strategy: Option<reed_filter::plan::ExecStrategy>,
+    out: &std::path::Path,
+) -> FilterOptions {
     FilterOptions {
         threads: 4,
         output: Some(out.to_path_buf()),
@@ -560,8 +563,12 @@ fn info_count_overflow_errors_instead_of_corrupting() {
     let info: Vec<String> = (0..65_536).map(|i| format!("K0={i}")).collect();
     {
         use std::fmt::Write as _;
-        writeln!(text, "Chr01\t1\t.\tA\tG\t50\tPASS\t{}\tGT\t0/1", info.join(";"))
-            .expect("invariant: string write");
+        writeln!(
+            text,
+            "Chr01\t1\t.\tA\tG\t50\tPASS\t{}\tGT\t0/1",
+            info.join(";")
+        )
+        .expect("invariant: string write");
     }
     let path = fixture(&d, "in", &text);
     let out = d.join("out.bcf");
@@ -775,6 +782,9 @@ Chr01\t10\t.\tA\tG\t50\tPASS\tAC=4;AN=6\tDP\t9\t9\t9
     spec.recompute.drop_stale_explicit = true;
     let lines = run_keep_lines(&path, &spec, None, "out.vcf.gz");
     let info = lines[0].split('\t').nth(7).expect("INFO");
-    assert_eq!(info, ".", "an explicit -x removes the tags on GT-less records too");
+    assert_eq!(
+        info, ".",
+        "an explicit -x removes the tags on GT-less records too"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -13,8 +13,8 @@
 
 use super::dict::BcfDict;
 use super::record::{
-    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, int_sentinels,
-    malformed, type_width, value_type,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, int_sentinels, malformed,
+    type_width, value_type,
 };
 use crate::error::IoError;
 use crate::vcf::genotype_scan::LocusSource;

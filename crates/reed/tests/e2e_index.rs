@@ -165,7 +165,11 @@ fn open_regions_consumes_its_own_index() {
     .expect("invariant: open with the built index");
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
     let mut text = String::new();
-    while let Some(chunk) = opened.source_mut().next_chunk().expect("invariant: chunk read") {
+    while let Some(chunk) = opened
+        .source_mut()
+        .next_chunk()
+        .expect("invariant: chunk read")
+    {
         let bytes = chunk.compressed.as_slice();
         let mut rest = bytes;
         while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
@@ -213,7 +217,8 @@ fn gzip(text: &str) -> Vec<u8> {
     use flate2::Compression;
     use flate2::write::GzEncoder;
     let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-    enc.write_all(text.as_bytes()).expect("invariant: gzip write");
+    enc.write_all(text.as_bytes())
+        .expect("invariant: gzip write");
     enc.finish().expect("invariant: gzip finish")
 }
 
@@ -248,8 +253,7 @@ fn plain_and_gzip_inputs_are_refused() {
 /// must be refused (it used to write a VCF-format .tbi for a BCF).
 #[test]
 fn bcf_input_refuses_tbi() {
-    let bcf =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
+    let bcf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
     let err = run_index(&bcf, WriteIndex::Tbi, None, 4).expect_err("BCF + TBI must be refused");
     assert!(err.to_string().contains("CSI"), "{err}");
     // CSI still works on the same BCF.
@@ -262,8 +266,7 @@ fn bcf_input_refuses_tbi() {
 /// out-of-bounds panic in `declared_total`.
 #[test]
 fn truncated_bcf_errors_without_panicking() {
-    let src =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
     let bytes = std::fs::read(&src).expect("invariant: fixture");
     let dir = std::env::temp_dir().join(format!("reed-bcf-trunc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

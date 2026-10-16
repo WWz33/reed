@@ -1,0 +1,30 @@
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100000>
+##FILTER=<ID=PASS,Description="All filters passed">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">
+##contig=<ID=chr2,length=100000>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	s0	s1	s2	s3	s4	s5	s6	s7
+chr1	1	.	A	G	50	PASS	.	GT	0/0	0/0	0/0	0/1	0/1	1/1	1/1	./.
+chr1	2	.	A	G	50	PASS	.	GT	0/1	0/0	0/0	0/1	0/1	1/1	1/1	./.
+chr1	3	.	A	G	50	PASS	.	GT	0/0	0/1	1/1	0/0	0/1	1/1	1/1	./.
+chr1	4	.	C	T	50	PASS	.	GT	0/0	0/0	0/0	0/0	0/1	1/1	1/1	./.
+chr1	5	.	A	G,T	50	PASS	.	GT	0/0	0/1	2/2	1/2	0/2	1/1	2/2	./.
+chr1	6	.	AT	GC	50	PASS	.	GT	0/0	0/1	1/1	0/1	1/1	0/0	0/1	./.
+chr1	7	.	A	GT	50	PASS	.	GT	0/0	0/1	1/1	0/1	1/1	0/0	0/1	./.
+chr1	8	.	A	G,*	50	PASS	.	GT	0/0	0/1	1/1	2/2	0/2	1/1	2/2	./.
+chr1	9	.	A	<NON_REF>	50	PASS	.	GT	0/0	0/0	0/0	0/1	0/1	1/1	1/1	./.
+chr1	10	.	A	G	50	PASS	.	GT	0/0	0/0	0/0	0/0	0/0	0/0	0/0	./.
+chr1	11	.	A	G	50	PASS	.	GT	0|1	1|0	0|0	1|1	0/0	0/1	1/1	./.
+chr1	12	.	A	G	50	PASS	.	GT	0	0	1	1	0	1	0	1
+chr1	14	.	A	G	50	PASS	.	GT	0/.	0/0	0/0	0/0	0/1	1/1	1/1	./.
+chr1	15	.	A	.	50	PASS	.	GT	0/0	0/0	0/0	0/0	0/0	0/0	0/0	./.
+chr2	1	.	A	G	50	PASS	.	GT	0/0	0/1	1/1	0/0	0/1	1/1	0/0	./.
+chr2	2	.	C	A	50	PASS	.	GT	0/0	0/0	0/1	1/1	0/0	0/1	1/1	./.
+chr2	3	.	T	G	50	PASS	.	GT	0/1	1/1	0/0	0/1	1/1	0/0	0/1	./.
+chr2	4	.	A	C	50	PASS	.	GT	0/0	0/1	1/1	0/0	0/1	1/1	0/0	./.
+chr2	5	.	G	T	50	PASS	.	GT	0/1	0/1	0/1	0/1	0/1	0/1	0/1	./.
+chr1	16	.	A	G	50	PASS	.	GT	0/0	0/1

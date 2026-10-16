@@ -314,6 +314,9 @@ impl StatsSink {
                         .unwrap_or_else(|| Arc::new(RegionSet::default())),
                     seed,
                 )),
+                GridMode::None => {
+                    unreachable!("invariant: the stats sink never sees the SFS-only grid")
+                }
             },
             totals: seed.to_vec(),
             first_pos0: segment.first_pos0,
@@ -409,6 +412,9 @@ impl StatsSink {
                     }
                     s = s.saturating_add(step);
                 }
+            }
+            GridMode::None => {
+                unreachable!("invariant: the stats sink never sees the SFS-only grid")
             }
             GridMode::Regions(_) => {
                 // The windows are the BED intervals in input order; every

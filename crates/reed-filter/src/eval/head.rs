@@ -88,14 +88,10 @@ pub fn eval_head(
             // cohort being decided on (doc_v12 D12-6): the compile drops
             // these rules when the sample set changes, so a rule that is
             // present always reads trusted INFO here.
-            HeadRule::MinAfInfo(bound) => {
-                non_reference_af_info(line.info_text(), n_alt_of(alts))
-                    .is_none_or(|freq| freq >= *bound)
-            }
-            HeadRule::MaxAfInfo(bound) => {
-                non_reference_af_info(line.info_text(), n_alt_of(alts))
-                    .is_none_or(|freq| freq <= *bound)
-            }
+            HeadRule::MinAfInfo(bound) => non_reference_af_info(line.info_text(), n_alt_of(alts))
+                .is_none_or(|freq| freq >= *bound),
+            HeadRule::MaxAfInfo(bound) => non_reference_af_info(line.info_text(), n_alt_of(alts))
+                .is_none_or(|freq| freq <= *bound),
             HeadRule::MinQual(q) => {
                 // A missing QUAL fails (bcftools semantics).
                 parse_qual(line.qual_text(), locus(line, pos1))

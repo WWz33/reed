@@ -114,10 +114,18 @@ impl FilterSpec {
 
         // ---- after-mask thresholds (02-cli.md §6 step 6 order) ----
         if let Some(af) = self.site_after_mask.min_af {
-            flag(&mut args, "-q", af_arg(af, self.site_after_mask.min_af_kind));
+            flag(
+                &mut args,
+                "-q",
+                af_arg(af, self.site_after_mask.min_af_kind),
+            );
         }
         if let Some(af) = self.site_after_mask.max_af {
-            flag(&mut args, "-Q", af_arg(af, self.site_after_mask.max_af_kind));
+            flag(
+                &mut args,
+                "-Q",
+                af_arg(af, self.site_after_mask.max_af_kind),
+            );
         }
         if let Some(rate) = self.site_after_mask.max_missing {
             flag(&mut args, "--geno", rate.render());

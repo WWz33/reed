@@ -233,7 +233,10 @@ fn indep_pairwise_respects_the_static_sample_subset() {
     // variance, so nothing prunes.
     let mut spec = prune_spec();
     spec.sample_select = Some(reed::spec::SampleSelect {
-        keep: Some(reed::spec::SampleList::Names(vec!["s0".into(), "s1".into()])),
+        keep: Some(reed::spec::SampleList::Names(vec![
+            "s0".into(),
+            "s1".into(),
+        ])),
         remove: None,
     });
     let kept_subset = prune_positions(&full, &spec, &dir.join("subset.out.vcf"));

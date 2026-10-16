@@ -11,7 +11,9 @@
 # projects to the same size.
 #
 # Gate: every bin within rtol 1e-6 of easySFS's, before rounding (the int
-# form can differ by 1 at a half-integer; see compare_sfs.py).
+# form can differ by 1 at a half-integer; see compare_sfs.py). Both SFS
+# entries run — `reed stats --sfs` and `reed convert --sfs` — and their
+# trees must be byte-identical (doc_v13 §4.1, D13-6).
 set -euo pipefail
 
 GOLD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,14 +40,26 @@ fail=0
 for fold in unfolded folded; do
     mode=(); [[ "$fold" == "folded" ]] && mode=(folded)
     easy="$OUT/easysfs_$fold"
-    reed="$OUT/reed_$fold"
-    mkdir -p "$easy" "$reed"
+    # The two entries write sibling directories whose prefixes share the
+    # basename `out`: the joint fastsimcoal2 file names embed the prefix, so
+    # only equal basenames make the byte-level `diff -r` meaningful.
+    stat_dir="$OUT/reed_stat_$fold"
+    conv_dir="$OUT/reed_conv_$fold"
+    reed="$stat_dir/out"
+    mkdir -p "$easy" "$stat_dir" "$conv_dir"
     echo "== easySFS ($fold) =="
     easy_args=(-i "$VCF" -p "$POPS" --proj "$EASY_PROJ" -a -f -o "$easy")
     [[ "$fold" == "unfolded" ]] && easy_args+=(--unfolded)
     python3 "$EASYSFS" "${easy_args[@]}" >/dev/null
     echo "== reed ($fold) =="
     "$REED" stats "$VCF" --pop "$POPS" --sfs "${mode[@]}" --proj "$PROJ" -o "$reed" --verbosity 0
+    "$REED" convert "$VCF" --pop "$POPS" --sfs "${mode[@]}" --proj "$PROJ" -o "$conv_dir/out" --verbosity 0
+    if diff -r "$stat_dir/out_sfs" "$conv_dir/out_sfs" >/dev/null 2>&1; then
+        echo "  convert == stats ($fold)"
+    else
+        echo "  convert != stats ($fold)" >&2
+        fail=1
+    fi
 
     # easySFS also writes each population's unprojected `<pop>.sfs`; the
     # projected one is the comparison target.

@@ -25,10 +25,7 @@ fn parse_indep_pairwise(args: &[String]) -> Result<Option<reed::spec::LdPruneSpe
     // position — an integer r² (`50 5 1`, `50 5 0`) must be accepted (doc_v7
     // D7-18; the old "does the token contain a dot" heuristic mistook the
     // integer for the step).
-    let window_token = args
-        .first()
-        .expect("invariant: args is non-empty")
-        .clone();
+    let window_token = args.first().expect("invariant: args is non-empty").clone();
     let (step, r2_token) = match args.len() {
         2 => (1_usize, &args[1]),
         3 => (
@@ -577,7 +574,7 @@ mod tests {
             vec![R::Het, R::NoMiss, R::Hom]
         );
         let rendered = first.to_args();
-        assert_eq!(&rendered[..4], &["-g", "het", "-g", "^miss", ]);
+        assert_eq!(&rendered[..4], &["-g", "het", "-g", "^miss",]);
         let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
         assert_eq!(first, second);
         // Bad tokens are usage errors at parse time.

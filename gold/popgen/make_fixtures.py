@@ -148,6 +148,80 @@ def ld(out: str) -> None:
     write_pops(os.path.join(out, "ld.pops"), [(n, "pop1") for n in names])
 
 
+
+def phylo(out: str) -> None:
+    """The `reed convert` phylogenetic fixture (doc_v13 01 §7): 8 samples x
+    20 records covering biallelic/multiallelic SNPs, MNPs, indels,
+    `*`/`<NON_REF>`/`.` ALT values, phased and haploid genotypes, half
+    calls, a fully missing sample and one malformed column-count line.
+    Reference tools: vcf2phylip 2.9, vcftools 0.1.18, TASSEL 5, vcf2msa."""
+    names = [f"s{i}" for i in range(8)]
+    header = HEADER + "##contig=<ID=chr2,length=100000>\n"
+    rows = [
+        ("chr1", 1, ".", "A", "G", ["0/0", "0/0", "0/0", "0/1", "0/1", "1/1", "1/1", "./."]),
+        ("chr1", 2, ".", "A", "G", ["0/1", "0/0", "0/0", "0/1", "0/1", "1/1", "1/1", "./."]),
+        ("chr1", 3, ".", "A", "G", ["0/0", "0/1", "1/1", "0/0", "0/1", "1/1", "1/1", "./."]),
+        ("chr1", 4, ".", "C", "T", ["0/0", "0/0", "0/0", "0/0", "0/1", "1/1", "1/1", "./."]),
+        ("chr1", 5, ".", "A", "G,T", ["0/0", "0/1", "2/2", "1/2", "0/2", "1/1", "2/2", "./."]),
+        ("chr1", 6, ".", "AT", "GC", ["0/0", "0/1", "1/1", "0/1", "1/1", "0/0", "0/1", "./."]),
+        ("chr1", 7, ".", "A", "GT", ["0/0", "0/1", "1/1", "0/1", "1/1", "0/0", "0/1", "./."]),
+        ("chr1", 8, ".", "A", "G,*", ["0/0", "0/1", "1/1", "2/2", "0/2", "1/1", "2/2", "./."]),
+        ("chr1", 9, ".", "A", "<NON_REF>", ["0/0", "0/0", "0/0", "0/1", "0/1", "1/1", "1/1", "./."]),
+        ("chr1", 10, ".", "A", "G", ["0/0"] * 7 + ["./."]),
+        ("chr1", 11, ".", "A", "G", ["0|1", "1|0", "0|0", "1|1", "0/0", "0/1", "1/1", "./."]),
+        ("chr1", 12, ".", "A", "G", ["0", "0", "1", "1", "0", "1", "0", "1"]),
+        ("chr1", 14, ".", "A", "G", ["0/.", "0/0", "0/0", "0/0", "0/1", "1/1", "1/1", "./."]),
+        ("chr1", 15, ".", "A", ".", ["0/0"] * 7 + ["./."]),
+        ("chr2", 1, ".", "A", "G", ["0/0", "0/1", "1/1", "0/0", "0/1", "1/1", "0/0", "./."]),
+        ("chr2", 2, ".", "C", "A", ["0/0", "0/0", "0/1", "1/1", "0/0", "0/1", "1/1", "./."]),
+        ("chr2", 3, ".", "T", "G", ["0/1", "1/1", "0/0", "0/1", "1/1", "0/0", "0/1", "./."]),
+        ("chr2", 4, ".", "A", "C", ["0/0", "0/1", "1/1", "0/0", "0/1", "1/1", "0/0", "./."]),
+        ("chr2", 5, ".", "G", "T", ["0/1", "0/1", "0/1", "0/1", "0/1", "0/1", "0/1", "./."]),
+    ]
+    with open(os.path.join(out, "phylo.vcf"), "w") as fh:
+        fh.write(header)
+        fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(names) + "\n")
+        for chrom, pos, ident, ref, alt, gts in rows:
+            fh.write(f"{chrom}\t{pos}\t{ident}\t{ref}\t{alt}\t50\tPASS\t.\tGT\t" + "\t".join(gts) + "\n")
+        # One malformed line: two samples instead of eight (vcf2phylip skips
+        # it; reed counts it in the convert counters, B13-2).
+        fh.write("chr1\t16\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\n")
+
+
+def convert012(out: str) -> None:
+    """The `--012` fixture: full diploid calls plus the B13-8 rows (haploid
+    and half calls), a multiallelic site (skipped) and an `ALT='.'` site."""
+    names = [f"s{i}" for i in range(4)]
+    with open(os.path.join(out, "convert012.vcf"), "w") as fh:
+        fh.write(HEADER)
+        fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(names) + "\n")
+        rows = [
+            (1, "A", "G", ["0/0", "0/1", "1/1", "./."]),
+            (2, "A", "G", ["1/1", "1/0", "0/1", "0/0"]),
+            (3, "A", "G,T", ["0/0", "0/1", "2/2", "./."]),
+            (4, "A", ".", ["0/0", "0/0", "0/0", "0/0"]),
+            (5, "A", "G", ["0", "1", "0/.", "./1"]),
+        ]
+        for pos, ref, alt, gts in rows:
+            fh.write(f"chr1\t{pos}\t.\t{ref}\t{alt}\t50\tPASS\t.\tGT\t" + "\t".join(gts) + "\n")
+
+
+def convert_msa(out: str) -> None:
+    """The `--msa` fixture: a 10 bp reference and three unphased SNP sites
+    (vcf2msa's supported domain)."""
+    with open(os.path.join(out, "convert_msa.fa"), "w") as fh:
+        fh.write(">chr1\nAACCGGTTAA\n")
+    names = [f"s{i}" for i in range(3)]
+    with open(os.path.join(out, "convert_msa.vcf"), "w") as fh:
+        fh.write(HEADER)
+        fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(names) + "\n")
+        for pos, ref, alt, gts in [
+            (2, "A", "G", ["0/1", "0/0", "1/1"]),
+            (5, "G", "T", ["0/0", "0/1", "0/0"]),
+            (8, "T", "C", ["1/1", "0/1", "0/0"]),
+        ]:
+            fh.write(f"chr1\t{pos}\t.\t{ref}\t{alt}\t50\tPASS\t.\tGT\t" + "\t".join(gts) + "\n")
+
 def main() -> None:
     here = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(description=__doc__)
@@ -159,6 +233,9 @@ def main() -> None:
     multiallelic(args.out)
     fstats(args.out)
     ld(args.out)
+    phylo(args.out)
+    convert012(args.out)
+    convert_msa(args.out)
     print(f"fixtures written to {args.out}")
     for name in sorted(os.listdir(args.out)):
         print(f"  {name}")

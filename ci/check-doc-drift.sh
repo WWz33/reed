@@ -346,4 +346,86 @@ check "edit_vcf_line does not re-parse its LineRef (doc_v12 D12-15)" \
 check "the deliberate htslib divergences are registered (doc_v12 2.5-B)" \
     bash -c 'grep -q "与 htslib 的有意分歧" docs/spec/cli.md'
 
+# --- doc_v13 (`reed convert`) ------------------------------------------------
+# Guard 1: the subcommand exists and is listed.
+check "Command has exactly four variants including Convert (doc_v13 guard 1)" \
+    bash -c 'grep -q "Convert(ConvertCli)" crates/reed-cli/src/cli/mod.rs &&
+        [ "$(grep -c "^    [A-Z][a-z]*(.*Cli)" crates/reed-cli/src/cli/mod.rs)" -eq 4 ]'
+
+# Guard 2/6: the SFS request construction is one shared function (D13-6) and
+# --phylip is opt-in.
+check "SFS request building is shared (doc_v13 D13-6)" \
+    bash -c '[ "$(grep -rn "fn build_sfs_request" crates --include=*.rs | wc -l)" -eq 1 ] &&
+        grep -q "build_sfs_request" crates/reed-cli/src/translate/stats.rs &&
+        grep -q "build_sfs_request" crates/reed-cli/src/translate/convert.rs'
+
+# Guard 3: the SFS fold has one implementation (D13-5).
+check "push_sfs is the single SFS fold (doc_v13 D13-5)" \
+    bash -c '[ "$(grep -rn "fn push_sfs" crates --include=*.rs | wc -l)" -eq 1 ]'
+
+# Guard 4: the IUPAC tables live in reed-core with the reference sizes.
+check "the IUPAC tables are in reed-core (doc_v13 guard 4)" \
+    bash -c 'grep -q "pub mod iupac" crates/reed-core/src/lib.rs &&
+        grep -q "AMBIG: &\[AmbigEntry\] = &\[" crates/reed-core/src/iupac.rs &&
+        grep -q "GEN_BIN: &\[(&\[u8\], u8)\] = &\[" crates/reed-core/src/iupac.rs'
+
+# Guard 5: convert does not grow a --mind (the stats-side rule: it needs
+# multiple passes, so the flag would have to be a usage error anyway).
+check "convert has no --mind (doc_v13 guard 5)" \
+    bash -c '! sed -n "/pub(crate) struct ConvertCli/,/^}/p" crates/reed-cli/src/cli/mod.rs | grep -q "mind"'
+
+# Guard 7: the resolve draw is deterministic and tested.
+check "resolve-iupac determinism is tested (doc_v13 guard 7)" \
+    bash -c 'grep -q "fn resolve_iupac_is_deterministic" crates/reed/tests/e2e_convert.rs &&
+        grep -q "fn resolve_pick" crates/reed/src/convert/job.rs'
+
+# Guard 8: the facade exports the convert surface at the root.
+check "run_convert is at the facade root (doc_v13 guard 8)" \
+    bash -c 'grep -q "pub use crate::convert::{" crates/reed/src/lib.rs &&
+        grep -q "run_convert_opened" crates/reed/src/lib.rs'
+
+# Guard 9/10: the parity gate exists; the renderers use no temp files.
+check "the convert parity gate exists (doc_v13 guard 9)" \
+    bash -c '[ -f gold/popgen/run_convert_parity.sh ]'
+check "the convert renderers use no temp files (doc_v13 D13-2)" \
+    bash -c '! grep -qE "tempfile|NamedTempFile|mkstemp" crates/reed/src/convert/*.rs'
+
+# Guard 11: the row-level GT view is one implementation (D13-3/D13-7).
+check "the row-level GT parse is one implementation (doc_v13 D13-7)" \
+    bash -c '[ "$(grep -rn "fn parse_gts" crates --include=*.rs | wc -l)" -eq 1 ]'
+
+# Guard 12/13: the B13-8/B13-5 contracts have their tests.
+check "--012 half-call contract is tested (doc_v13 B13-8)" \
+    bash -c 'grep -q "fn count_matrix_matches_vcftools_and_flags_half_calls" \
+        crates/reed/tests/e2e_convert.rs'
+check "the hapmap declared-alleles contract is tested (doc_v13 B13-5)" \
+    bash -c 'grep -q "fn hapmap_layout_and_alphabet" crates/reed/tests/e2e_convert.rs'
+
+# Guard 14/15: the B13-9/B13-10 contracts have their tests.
+check "the AMBIG-miss/index-overflow skip is tested (doc_v13 B13-9)" \
+    bash -c 'grep -q "fn ambig_miss_and_index_overflow_are_skipped_and_counted" \
+        crates/reed/tests/e2e_convert.rs'
+check "the hapmap alphabet convergence is tested (doc_v13 B13-10)" \
+    bash -c 'grep -q "TASSEL alphabet" crates/reed/tests/e2e_convert.rs'
+
+# Guard 16: --vcf exists, is exclusive with VCF-input targets, and the target
+# is exported at the facade root (D13-8).
+check "the --vcf target is gated and exported (doc_v13 guard 16)" \
+    bash -c 'grep -q "cannot mix --vcf" crates/reed/src/convert/job.rs &&
+        grep -q "ConvertTarget::Vcf" crates/reed/src/convert/mod.rs &&
+        grep -q "to_vcf: bool" crates/reed-cli/src/cli/mod.rs &&
+        grep -q "fn run_vcf_cli" crates/reed-cli/src/translate/convert.rs'
+
+# Guard 17: the IUPAC inverse is tested and the round trip is asserted.
+check "the IUPAC inverse and hapmap round trip are tested (doc_v13 guard 17)" \
+    bash -c 'grep -q "fn expand_inverts_iupac" crates/reed-core/src/iupac.rs &&
+        grep -q "fn hapmap_vcf_round_trip_is_faithful_and_deterministic" \
+        crates/reed/tests/e2e_convert.rs'
+
+# Guard 18: the hapmap→VCF header declares no ##contig (TASSEL writes none)
+# and the provenance lines are the only ##reed_* additions (§3.12).
+check "the hapmap VCF header shape is locked (doc_v13 guard 18)" \
+    bash -c '! grep -qE "\"##contig" crates/reed/src/convert/hapmap.rs &&
+        grep -q "##reed_version=" crates/reed/src/convert/hapmap.rs'
+
 exit "$fail"
