@@ -17,7 +17,6 @@
 use reed_core::Bitset;
 use reed_core::sample::SampleMask;
 
-use crate::error::IoError;
 use crate::vcf::line::LineRef;
 
 /// One recomputed INFO value (§6.7: rendered here with the htslib-compatible
@@ -74,24 +73,16 @@ pub fn render_info_value(value: &InfoValueOut, out: &mut Vec<u8>) {
 /// `gt_subfield_index` is the GT position among the FORMAT keys of this
 /// record (resolved by the caller; `None` = the record has no GT column).
 ///
-/// # Errors
-///
-/// [`IoError::MalformedRecord`] when the line has fewer than 9 columns.
+/// Infallible by construction: the `LineRef` argument can only be built by
+/// `LineRef::parse`, which already rejected a line with fewer than nine
+/// columns, so the old re-parse and its `MalformedRecord` branch were dead
+/// code (doc_v12 D12-15).
 pub fn edit_vcf_line(
     line: &LineRef<'_>,
     plan: &EditPlan<'_>,
     gt_subfield_index: Option<u8>,
     out: &mut Vec<u8>,
-) -> Result<(), IoError> {
-    if LineRef::parse(line.line).is_none() {
-        return Err(IoError::MalformedRecord {
-            locus: crate::Locus {
-                contig_name: String::from_utf8_lossy(line.chrom()).into_owned(),
-                pos1: 0,
-            },
-            reason: "line has fewer than 9 columns",
-        });
-    }
+) {
     // Columns 1–7 (CHROM .. FILTER) with their tabs: the bytes before INFO.
     out.extend_from_slice(&line.line[..line.info_start()]);
 
@@ -116,7 +107,6 @@ pub fn edit_vcf_line(
         out.extend_from_slice(samples);
     }
     out.push(b'\n');
-    Ok(())
 }
 
 /// INFO edit: drop `info_remove`, replace any tag present in `info_set` in
@@ -376,7 +366,7 @@ mod tests {
     fn edit(line: &[u8], plan: &EditPlan<'_>, gt_idx: Option<u8>) -> String {
         let lr = LineRef::parse(line).expect("invariant: full line");
         let mut out = Vec::new();
-        edit_vcf_line(&lr, plan, gt_idx, &mut out).expect("invariant: edit");
+        edit_vcf_line(&lr, plan, gt_idx, &mut out);
         String::from_utf8(out)
             .expect("invariant: utf-8")
             .trim_end()

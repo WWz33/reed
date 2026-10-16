@@ -278,4 +278,72 @@ check "the to_args flag renderer is defined once (doc_v11 A11-13)" \
 check "the facade API-surface test exists (doc_v11)" \
     bash -c 'grep -q "use reed::{" crates/reed/tests/api_surface.rs'
 
+# ---- doc_v12 (INFO-field compatibility) ----
+
+# N1: the driver's strategy override respects a tail rule that reads the record.
+check "the strategy override respects a tail record reader (doc_v12 D12-1)" \
+    bash -c 'grep -q "tail_reads_record" crates/reed-filter/src/plan/mod.rs &&
+        grep -q "tail_reads_record" crates/reed/src/filter/mod.rs'
+
+# N2: the recompute consults has_gt (a GT-less record keeps its AC/AN).
+check "the INFO recompute is gated on has_gt (doc_v12 D12-2)" \
+    bash -c 'grep -q "if !counts.has_gt" crates/reed-filter/src/eval/edit_plan.rs'
+
+# N3: the integer writer checks the BCF value range.
+check "out-of-range integers become missing (doc_v12 D12-3)" \
+    bash -c 'grep -q "INT32_MIN_VALUE..=INT32_MAX_VALUE" crates/reed-io/src/bcf/native_encode.rs'
+
+# N4: the Flag-with-value and String-dot rules are htslib's.
+check "Flag values and String dots keep their bytes (doc_v12 D12-4/5)" \
+    bash -c '! grep -q "if v == b\".\" { &\[\] }" crates/reed-io/src/bcf/native_encode.rs &&
+        grep -q "InfoType::Flag, None" crates/reed-io/src/bcf/native_encode.rs'
+
+# N5: -q/-Q honour the cohort gate.
+check "-q/-Q follow the cohort change (doc_v12 D12-6)" \
+    bash -c 'grep -q "info_trusted" crates/reed-filter/src/expr/mod.rs &&
+        grep -q "cohort_changed" crates/reed-filter/src/plan/mod.rs'
+
+# N6: the expression layer receives the header's types.
+check "the expression layer sees the tag types (doc_v12 D12-7)" \
+    bash -c 'grep -q "fn check_inner" crates/reed-filter/src/expr/mod.rs &&
+        grep -q "fn info_operand" crates/reed-filter/src/expr/mod.rs'
+
+# N7: any requires a satisfying element.
+check "quantifier any applies the comparison (doc_v12 D12-8)" \
+    bash -c 'grep -q "any |= ok" crates/reed-filter/src/eval/head.rs'
+
+# N8: the packed counters are checked before the write.
+check "record counts are checked before packing (doc_v12 D12-9)" \
+    bash -c 'grep -q "fn pack_allele_info" crates/reed-io/src/bcf/native_encode.rs &&
+        grep -q "fn pack_fmt_sample" crates/reed-io/src/bcf/native_encode.rs'
+
+# N9: ALT counting is one rule; -M 1 is representable.
+check "ALT counting is one rule (doc_v12 D12-10)" \
+    bash -c 'grep -q "pub fn count_alts" crates/reed-io/src/vcf/site.rs &&
+        grep -q "max_alt_alleles: Option<u32>" crates/reed-filter/src/spec/mod.rs'
+
+# N10: --fill-tags validates its list.
+check "--fill-tags validates its tags (doc_v12 D12-11)" \
+    bash -c 'grep -q "fn canonical_fill_tag" crates/reed-filter/src/spec/recompute.rs'
+
+# N11: the default -x list is documented in the help.
+check "the default -x list is in the help (doc_v12 D12-12)" \
+    bash -c 'grep -q "InbreedingCoeff,DP" crates/reed-cli/src/cli/mod.rs'
+
+# N12: AC/AN reading is one implementation.
+check "AC/AN INFO reading is one implementation (doc_v12 D12-13)" \
+    bash -c '[ "$(grep -rn "fn allele_counts_info" crates --include=*.rs | wc -l)" -eq 1 ]'
+
+# N13: one INFO number grammar.
+check "INFO number parsing is one grammar (doc_v12 D12-14)" \
+    bash -c 'grep -q "pub fn parse_info_number" crates/reed-io/src/vcf/info.rs'
+
+# N14: the dead re-parse is gone.
+check "edit_vcf_line does not re-parse its LineRef (doc_v12 D12-15)" \
+    bash -c '! grep -q "LineRef::parse(line.line)" crates/reed-io/src/vcf/line_edit.rs'
+
+# Guard 15: the deliberate divergences are registered in the CLI spec.
+check "the deliberate htslib divergences are registered (doc_v12 2.5-B)" \
+    bash -c 'grep -q "与 htslib 的有意分歧" docs/spec/cli.md'
+
 exit "$fail"

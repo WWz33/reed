@@ -24,6 +24,10 @@ pub(super) struct SiteEmit {
     pub mask_words: Vec<u64>,
     /// Recomputed INFO values in fill-tags order.
     pub infos: Vec<(&'static [u8], InfoValueOut)>,
+    /// Whether the record's FORMAT carried a GT key (doc_v12 D12-2: a
+    /// GT-less survivor keeps the input's AC/AN instead of the zeros the
+    /// recompute would produce).
+    pub has_gt: bool,
 }
 
 /// A chunk's pass1 decisions, produced by the mid stage.
@@ -341,7 +345,11 @@ fn decide_chunk_inner(
             let mut infos = Vec::new();
             fill_info_set(&counts, &plan.recompute, &mut hwe, &mut infos);
             let mask_words = mask_of(matrix, local, keep_words);
-            survivors.push(Some(SiteEmit { mask_words, infos }));
+            survivors.push(Some(SiteEmit {
+                mask_words,
+                infos,
+                has_gt: counts.has_gt,
+            }));
             funnel.n_output += 1;
         } else {
             survivors.push(None);

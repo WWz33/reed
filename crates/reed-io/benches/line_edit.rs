@@ -50,7 +50,7 @@ fn bench(c: &mut Criterion) {
     c.bench_function("edit_vcf_line_348_samples", |b| {
         b.iter(|| {
             out.clear();
-            edit_vcf_line(&lr, &plan, Some(0), &mut out).expect("invariant: edit");
+            edit_vcf_line(&lr, &plan, Some(0), &mut out);
         });
     });
 }

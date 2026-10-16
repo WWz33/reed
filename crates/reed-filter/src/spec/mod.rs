@@ -133,7 +133,8 @@ impl FilterSpec {
     /// and the recomputed `AC`/`MAF`/`HWE` values stay per-record valid.
     #[must_use]
     pub fn multiallelics_allowed(&self) -> bool {
-        self.policy.multiallelic == MultiallelicPolicy::Allow || self.site.max_alt_alleles > 1
+        self.policy.multiallelic == MultiallelicPolicy::Allow
+            || self.site.max_alt_alleles.is_some_and(|m| m > 1)
     }
 }
 
@@ -158,9 +159,11 @@ pub struct SiteRules {
     /// alleles, so `-m 2` becomes `min_alt_alleles = 1`.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub min_alt_alleles: u32,
-    /// Maximum ALT allele count (`0`/absent = unlimited).
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
-    pub max_alt_alleles: u32,
+    /// Maximum ALT allele count (`None`/absent = unlimited; `Some(0)` keeps
+    /// only invariant sites — the `-M 1` spelling, bcftools
+    /// `filters_set_nalt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_alt_alleles: Option<u32>,
     /// FILTER membership (`.` never passes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub require_filter: Vec<String>,

@@ -242,12 +242,20 @@ pub fn run_filter(
                 // chunk's records/byte density).
                 let estimated =
                     estimate_records(replay_path.as_deref().expect("invariant: guarded above"))?;
-                reed_filter::plan::strategy::choose_for_mind(
+                let chosen = reed_filter::plan::strategy::choose_for_mind(
                     estimated,
                     n_samples_in,
                     plan.mask.len(),
                     reed_engine::budget::MemBudget::default_half_memory().bytes,
-                )
+                );
+                // The mid stage has no record bytes, so a tail rule that
+                // reads them cannot run there (doc_v12 D12-1). Two-pass
+                // re-parses the survivors, so it evaluates them correctly.
+                if chosen == ExecStrategy::SketchThenEmit && plan.tail_reads_record() {
+                    ExecStrategy::TwoPassReparse
+                } else {
+                    chosen
+                }
             }
             _ => plan.strategy,
         },
@@ -255,9 +263,28 @@ pub fn run_filter(
     // The matrix shape (pass0 matrices → mid stage → emit pass1) also
     // covers `--mind` + `--indep-pairwise`: the pruner needs the planes and
     // the survivors need the post-`--mind` keep, so no two-pass variant of
-    // that combination exists.
-    let sketch_shape = strategy == ExecStrategy::SketchThenEmit
-        || (spec.mind.is_some() && spec.ld_prune.is_some());
+    // that combination exists. It cannot serve a tail rule that reads the
+    // record, though — the mid stage has no record bytes and there is no
+    // other shape for that combination, so it is refused rather than
+    // evaluated blind (doc_v12 D12-1).
+    let mind_ld_prune = spec.mind.is_some() && spec.ld_prune.is_some();
+    if mind_ld_prune && plan.tail_reads_record() {
+        return Err(crate::error::Error::usage(
+            "--mind with --indep-pairwise cannot be combined with a tail -i/-e \
+             expression that reads the record: the LD pass runs on the sketch, \
+             which has no record bytes. Drop the expression or the \
+             --indep-pairwise rule.",
+        ));
+    }
+    // An explicitly forced sketch (the test-only `--strategy` hook) has the
+    // same problem: error instead of computing wrong (doc_v12 D12-1).
+    if strategy == ExecStrategy::SketchThenEmit && plan.tail_reads_record() {
+        return Err(crate::error::Error::usage(
+            "--strategy sketch_then_emit cannot evaluate a tail -i/-e expression \
+             that reads the record: the sketch has no record bytes.",
+        ));
+    }
+    let sketch_shape = strategy == ExecStrategy::SketchThenEmit || mind_ld_prune;
     let strategy = if sketch_shape {
         ExecStrategy::SketchThenEmit
     } else {
@@ -364,12 +391,30 @@ pub fn run_filter(
     // bcftools `view` updates INFO/AC,INFO/AN when samples are dropped; only
     // masking leaves them stale, like `bcftools filter -S .`
     // (02-cli.md §3.5). `-I/--no-update` suppresses the update.
+    // The tail stage's INFO preference holds only while AC/AN describe the
+    // cohort being decided on (doc_v12 D12-6): once the sample set changed,
+    // bcftools recomputes from the subset GT (`vcfview.c:341-350`) and the
+    // `-q/-Q` decision must follow. `--mind` and masking change the cohort
+    // the same way, and the mask is known here from the spec.
+    if spec.sample_select.is_some() || spec.mind.is_some() || subset {
+        plan.info_trusted = false;
+    }
     if subset && !plan.no_update {
         plan.recompute.ac = true;
         plan.recompute.an = true;
         for tag in ["AC", "AN"] {
+            // An explicit `-x` listing the tag is the user's request: the
+            // removal stays unconditional (doc_v12 D12-2). Under the default
+            // list the same entries are automatic — the update only lists
+            // them to replace the old value, and a GT-less record has no
+            // replacement, so it keeps them.
+            let explicit = spec.recompute.drop_stale_explicit
+                && plan.stale_tags.iter().any(|t| t == tag.as_bytes());
             if !plan.stale_tags.iter().any(|t| t == tag.as_bytes()) {
                 plan.stale_tags.push(tag.as_bytes().to_vec());
+            }
+            if !explicit {
+                plan.auto_stale_tags.push(tag.as_bytes().to_vec());
             }
         }
     }
@@ -474,11 +519,15 @@ pub fn run_filter(
     };
     let mut out_header = ensure_info_defs(out_header, &plan.recompute);
     out_header = ensure_pass_filter(out_header);
-    for (key, value) in plan.provenance.header_lines().into_iter().filter(|(k, _)| {
+    for (key, value) in plan.provenance.header_lines().into_iter().filter(|(k, value)| {
         if opts.no_version && k.starts_with("reed_") {
             return false;
         }
-        !(opts.no_command && k == "reed_command")
+        // A VCF meta-information value may not be empty (noodles rejects
+        // it), so an empty rendering is omitted rather than written as
+        // `##key=`. `reed_filterCommand` is empty when the spec renders to
+        // no flags at all (a default spec, doc_v12 D12-12).
+        !value.is_empty() && (!opts.no_command || k != "reed_command")
     }) {
         out_header
             .insert(

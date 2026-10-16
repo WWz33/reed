@@ -333,17 +333,32 @@ impl NativeEncoder {
         self.encode_info_appends(edit, &seen, &mut n_info)?;
         // Patch the packed counters (n_allele<<16|n_info; n_fmt|n_sample is
         // filled in by `encode_indiv`).
-        self.shared[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
+        let packed = pack_allele_info(n_allele, n_info)?;
+        self.shared[16..20].copy_from_slice(&packed.to_le_bytes());
         Ok(())
     }
 
     /// One INFO value parsed from the source text (the pre-Y4 behavior for
     /// values the edit does not touch).
+    ///
+    /// The value's shape follows htslib's `vcf_parse_info`:
+    ///
+    /// - a Flag **with** a value is stored as a string — its comment reads
+    ///   "if Flag has a value, treat it as a string" (vcf.c:3949-3951). The
+    ///   VCF spec forbids the combination (a Flag "does not contain a Value
+    ///   entry", v4.5 §1.4.2), so this is the recovery path for foreign
+    ///   input; dropping the value (or flipping `DB=0` to a set flag) is
+    ///   worse than keeping it (doc_v12 D12-4);
+    /// - a String value of `.` is a **literal** dot. Only the whole INFO
+    ///   column being `.` means "no INFO" (v4.5 §1.6.1); inside a value the
+    ///   dot has no special meaning, so it must round-trip as `TAG=.`
+    ///   (doc_v12 D12-5). The empty-string special case stays where htslib
+    ///   really has one: the ID column.
     fn encode_info_text(&mut self, declared: InfoType, value: Option<&[u8]>) {
         let s = &mut self.shared;
         match (declared, value) {
-            // A flag carries no value at all.
-            (InfoType::Flag, _) => encode_size(s, 0, value_type::NULL),
+            // A bare flag carries no value at all.
+            (InfoType::Flag, None) => encode_size(s, 0, value_type::NULL),
             (InfoType::Integer, Some(v)) => {
                 let mut ints = std::mem::take(&mut self.ints);
                 ints.clear();
@@ -359,9 +374,7 @@ impl NativeEncoder {
                     s.extend_from_slice(&f.to_le_bytes());
                 }
             }
-            (_, Some(v)) => {
-                encode_typed_string(s, if v == b"." { &[] } else { v });
-            }
+            (_, Some(v)) => encode_typed_string(s, v),
             (InfoType::Integer, None) => {
                 encode_size(s, 1, value_type::INT8);
                 s.push(i8::MIN as u8);
@@ -476,7 +489,7 @@ impl NativeEncoder {
         }
         let s = &mut self.shared;
         s[20..24].copy_from_slice(
-            &(n_fmt << 24 | n_samples_out(edit, n_samples_in) as u32).to_le_bytes(),
+            &pack_fmt_sample(n_fmt, n_samples_out(edit, n_samples_in) as u32)?.to_le_bytes(),
         );
         Ok(())
     }
@@ -790,7 +803,8 @@ impl NativeEncoder {
         }
         self.encode_info_appends(edit, &seen, &mut n_info)?;
         let n_allele = u32::try_from(n_allele).unwrap_or(u32::MAX);
-        self.shared[16..20].copy_from_slice(&(n_allele << 16 | n_info).to_le_bytes());
+        let packed = pack_allele_info(n_allele, n_info)?;
+        self.shared[16..20].copy_from_slice(&packed.to_le_bytes());
         Ok(())
     }
 
@@ -849,7 +863,7 @@ impl NativeEncoder {
         }
         let n_fmt = u32::try_from(n_fmt).unwrap_or(u32::MAX);
         self.shared[20..24].copy_from_slice(
-            &(n_fmt << 24 | n_samples_out(edit, n_sample_in) as u32).to_le_bytes(),
+            &pack_fmt_sample(n_fmt, n_samples_out(edit, n_sample_in) as u32)?.to_le_bytes(),
         );
         Ok(())
     }
@@ -1017,6 +1031,45 @@ fn encode_info_typed(s: &mut Vec<u8>, declared: InfoType, value: &InfoValueOut) 
 
 // ---- typed value encoders (the mirror of render.rs) ----
 
+/// BCF record-header field widths (hts-specs §6.3; the packed words are
+/// `n_allele<<16|n_info` and `n_fmt<<24|n_sample`). htslib refuses an
+/// over-large count at parse time (`vcf.c:3912` for INFO, `:4174` for
+/// alleles, `vcf_parse_format_dict2` for FORMAT keys); reed writes records
+/// it did not parse from text (BCF in, BCF out), so it must check before
+/// packing instead of letting the high bits leak into the neighbouring
+/// field (doc_v12 D12-9).
+const MAX_N_INFO: u32 = 0xFFFF;
+/// See [`MAX_N_INFO`].
+const MAX_N_ALLELE: u32 = 0xFFFF;
+/// See [`MAX_N_INFO`].
+const MAX_N_FMT: u32 = 0xFF;
+/// See [`MAX_N_INFO`].
+const MAX_N_SAMPLE: u32 = 0xFF_FFFF;
+
+/// Packs `n_allele<<16 | n_info`, rejecting counts that do not fit the
+/// fields (doc_v12 D12-9).
+fn pack_allele_info(n_allele: u32, n_info: u32) -> Result<u32, IoError> {
+    if n_allele > MAX_N_ALLELE {
+        return Err(bad("BCF record has too many alleles (max 65535)"));
+    }
+    if n_info > MAX_N_INFO {
+        return Err(bad("BCF record has too many INFO fields (max 65535)"));
+    }
+    Ok(n_allele << 16 | n_info)
+}
+
+/// Packs `n_fmt<<24 | n_sample`, rejecting counts that do not fit the
+/// fields (doc_v12 D12-9).
+fn pack_fmt_sample(n_fmt: u32, n_sample: u32) -> Result<u32, IoError> {
+    if n_fmt > MAX_N_FMT {
+        return Err(bad("BCF record has too many FORMAT fields (max 255)"));
+    }
+    if n_sample > MAX_N_SAMPLE {
+        return Err(bad("BCF record has too many samples (max 16777215)"));
+    }
+    Ok(n_fmt << 24 | n_sample)
+}
+
 /// A typed string: descriptor + bytes (ID, alleles, INFO strings).
 fn encode_typed_string(out: &mut Vec<u8>, value: &[u8]) {
     encode_size(out, value.len(), value_type::CHAR);
@@ -1079,6 +1132,11 @@ fn gt_width(max_allele: i64) -> (u8, usize) {
 }
 
 /// A typed int vector with htslib's width choice.
+///
+/// Values outside `[BCF_MIN_BT_INT32, BCF_MAX_BT_INT32]` are written as the
+/// missing sentinel instead of being truncated by the final `as i32`
+/// (doc_v12 D12-3; [`parse_int_vector`] already filters the text path, this
+/// covers the recomputed-value path).
 fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     let (mut min, mut max) = (i64::MAX, i64::MIN);
     for &v in values {
@@ -1092,7 +1150,7 @@ fn encode_int_vector(out: &mut Vec<u8>, values: &[i64]) {
     encode_size(out, values.len(), ty);
     let (missing, _) = super::record::int_sentinels(ty);
     for &v in values {
-        let v = if v == i64::MIN {
+        let v = if v == i64::MIN || !(INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(&v) {
             missing as i32
         } else {
             v as i32
@@ -1112,13 +1170,42 @@ fn push_int(out: &mut Vec<u8>, value: i32, width: usize) {
 
 /// Parses a comma-separated integer vector; `.` and empty parts become the
 /// missing sentinel (`i64::MIN`).
+///
+/// A value outside the BCF-legal range also becomes missing rather than
+/// being truncated to 32 bits: htslib's parser checks
+/// `overflow || val < BCF_MIN_BT_INT32 || val > BCF_MAX_BT_INT32` and
+/// substitutes the missing sentinel (vcf.c:4004-4013), and VCFv4.5 §1.3
+/// forbids the reserved band `[-2^31, -2^31+7]` in both VCF and BCF
+/// (doc_v12 D12-3). Without the check `3000000000` wrapped to
+/// `-1294967296` through the `as i32` in [`encode_int_vector`].
 fn parse_int_vector(value: &[u8], out: &mut Vec<i64>) {
     for part in value.split(|&b| b == b',') {
         if part == b"." || part.is_empty() {
             out.push(i64::MIN);
-        } else {
-            out.push(parse_i64(part).unwrap_or(i64::MIN));
+            continue;
         }
+        let parsed = parse_i64(part).filter(|v| {
+            let ok = (INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(v);
+            if !ok {
+                warn_once_out_of_range(part);
+            }
+            ok
+        });
+        out.push(parsed.unwrap_or(i64::MIN));
+    }
+}
+
+/// htslib warns once per run about an out-of-range integer and then stays
+/// quiet (`extreme_int_warned`, vcf.c:4008-4012).
+fn warn_once_out_of_range(value: &[u8]) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "Integer INFO value {:?} is outside the BCF range and was set to missing \
+             (further occurrences are not reported)",
+            String::from_utf8_lossy(value)
+        );
     }
 }
 
@@ -1236,25 +1323,10 @@ fn bad(reason: &'static str) -> IoError {
 }
 
 /// Strict integer parse (optional leading '-', digits only).
+/// The one INFO integer grammar (doc_v12 D12-14); see
+/// [`crate::vcf::info::parse_info_int`].
 fn parse_i64(text: &[u8]) -> Option<i64> {
-    if text.is_empty() {
-        return None;
-    }
-    let (neg, digits) = match text[0] {
-        b'-' => (true, &text[1..]),
-        _ => (false, text),
-    };
-    if digits.is_empty() {
-        return None;
-    }
-    let mut value: i64 = 0;
-    for &b in digits {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        value = value.checked_mul(10)?.checked_add(i64::from(b - b'0'))?;
-    }
-    Some(if neg { -value } else { value })
+    crate::vcf::info::parse_info_int(text)
 }
 
 #[cfg(test)]
@@ -1294,7 +1366,7 @@ mod tests {
     ) -> Vec<u8> {
         let lr = LineRef::parse(line).expect("invariant: line");
         let mut edited = Vec::new();
-        edit_vcf_line(&lr, plan, gt_idx, &mut edited).expect("invariant: edit");
+        edit_vcf_line(&lr, plan, gt_idx, &mut edited);
         let header_text = std::str::from_utf8(HEADER).unwrap();
         let out_text = match plan.keep_samples {
             None => header_text.to_string(),

@@ -110,7 +110,7 @@ pub(crate) fn site_spec(
         spec.site.min_alt_alleles = m.saturating_sub(1);
     }
     if let Some(m) = cli.max_alleles {
-        spec.site.max_alt_alleles = m.saturating_sub(1);
+        spec.site.max_alt_alleles = Some(m.saturating_sub(1));
     }
     if let Some(list) = &cli.apply_filters {
         spec.site.require_filter = list
@@ -307,6 +307,7 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     // ---- INFO (filter-only: `-x`, `--fill-tags`, `-I`) ----
     spec.recompute.no_update = cli.no_update;
     if let Some(list) = &cli.remove_info {
+        spec.recompute.drop_stale_explicit = true;
         spec.recompute.drop_stale = list
             .split(',')
             .map(str::trim)
@@ -600,8 +601,10 @@ mod tests {
         let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
         assert_eq!(first, second);
         assert_eq!(&rendered[..flags.len()], &flags[..]);
-        // The rest of the rendering is the default `-x` stale list.
-        assert!(rendered[flags.len()] == "-x", "{rendered:?}");
+        // The default stale list is not rendered (doc_v12 D12-12): the CLI
+        // applies it anyway, and rendering it would turn the round trip into
+        // an explicit `-x` (`drop_stale_explicit`).
+        assert_eq!(rendered, flags, "{rendered:?}");
     }
 
     /// doc_v4 02 回退版 §5.2: the withdrawn keep-direction flags error with

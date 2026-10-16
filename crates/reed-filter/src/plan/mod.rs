@@ -150,6 +150,18 @@ fn warn_stale_info(expr: &crate::expr::Expr, text: &str, tags: &TagTable) {
     }
 }
 
+/// `-q/-Q` reads `INFO/AC,AN` when the header declares both and no cohort
+/// change forces the genotype path (doc_v12 D12-6; cli.md:78 promises this
+/// warning). The dataset trap is the same as the expressions': the INFO
+/// counts may describe a different cohort than the genotypes do.
+fn warn_stale_af(tags: &TagTable) {
+    let _ = tags;
+    tracing::warn!(
+        "-q/-Q reads INFO/AC,INFO/AN, which may be stale; use --maf/--mac for \
+         genotype-recomputed values or remove the tags with -x INFO/AC,INFO/AN"
+    );
+}
+
 /// Whether an expression reads a genotype-derived site field (forbidden in
 /// `--set-gts .` expressions, whose mask decision must not depend on the
 /// post-mask counts).
@@ -302,12 +314,58 @@ pub struct FilterPlan {
     pub policies: reed_core::genotype::GenotypePolicies,
     /// Stale INFO tags (bytes for the editor).
     pub stale_tags: Vec<Vec<u8>>,
+    /// The subset of [`Self::stale_tags`] the driver's automatic AC/AN
+    /// update added (not the user's `-x`). A record without a GT key keeps
+    /// these values instead of being zeroed (doc_v12 D12-2); user-requested
+    /// removals are unconditional.
+    pub auto_stale_tags: Vec<Vec<u8>>,
     /// Recompute flags.
     pub recompute: RecomputeFlags,
     /// `-I/--no-update`: never add the automatic `AC/AN` update.
     pub no_update: bool,
+    /// Whether the record's `INFO/AC,AN` still describe the cohort the tail
+    /// rules decide on. The driver clears this when the sample set changes
+    /// (a static subset, `--mind`); the tail stage then ignores the INFO
+    /// values and uses the genotype counts, like bcftools
+    /// (`vcfview.c:341-350`, `filter.c:1471`; doc_v12 D12-6).
+    pub info_trusted: bool,
+    /// The header's declared INFO/FORMAT tags: the runtime evaluator needs
+    /// the declaration to read a Flag as 1/0 by presence and a multi-valued
+    /// tag as a vector (doc_v12 D12-7). `Arc` so a worker's evaluation
+    /// context can borrow it without cloning the map.
+    pub tags: std::sync::Arc<TagTable>,
     /// Provenance: canonical spec JSON + sha256 + command line.
     pub provenance: provenance::Provenance,
+}
+
+impl FilterPlan {
+    /// Whether the tail stage reads the record's own bytes.
+    ///
+    /// The sketch path evaluates the tail rules in the mid stage, where the
+    /// record bytes are gone: `SiteValues::from_counts` carries `info = "."`,
+    /// `qual = None` and dummy line fields (`expr/mod.rs`). A tail rule that
+    /// reads any of those therefore cannot be evaluated there — the strategy
+    /// selector (the driver re-picks after `--mind` resolves, doc_v12 D12-1)
+    /// must not choose [`ExecStrategy::SketchThenEmit`] while this is true.
+    ///
+    /// Two kinds of rule qualify:
+    /// - `TailRule::Expr` — an expression may read any line field;
+    /// - `TailRule::MinAf`/`MaxAf` — `af_of` prefers the record's INFO/AC,AN
+    ///   when they are present, so the mid stage (no INFO) would silently
+    ///   fall back to the genotype counts and reach a different verdict.
+    ///
+    /// This is the single source of truth for the guard: [`compile`] uses it
+    /// to pick the default strategy, and the driver consults it before any
+    /// override.
+    #[must_use]
+    pub fn tail_reads_record(&self) -> bool {
+        self.tail.iter().any(|r| {
+            matches!(
+                r,
+                TailRule::Expr { .. } | TailRule::MinAf(..) | TailRule::MaxAf(..)
+            )
+        })
+    }
 }
 
 /// Compiles the spec against the input header.
@@ -349,8 +407,8 @@ pub fn compile(
     if spec.site.min_alt_alleles > 0 {
         head.push(HeadRule::MinAltAlleles(spec.site.min_alt_alleles));
     }
-    if spec.site.max_alt_alleles > 0 {
-        head.push(HeadRule::MaxAltAlleles(spec.site.max_alt_alleles));
+    if let Some(max) = spec.site.max_alt_alleles {
+        head.push(HeadRule::MaxAltAlleles(max));
     } else if biallelic_gate && !spec.multiallelics_allowed() {
         // The default gate (§11.6, plink2-style): without `multiallelic =
         // "allow"` or an explicit `max_alt_alleles > 1`, multiallelic
@@ -379,7 +437,23 @@ pub fn compile(
     // `-q/-Q` (bcftools): the INFO AC/AN values decide at the site stage when
     // the header declares both AND the threshold is the `nref` form; the
     // other `:type`s are genotype-derived and live in the tail only.
+    //
+    // The INFO preference holds only while AC/AN still describe the cohort
+    // being decided on. Once the sample set changes (a static subset, a
+    // genotype mask, `--mind`, or `--set-gts .`), bcftools recomputes from
+    // the subset GT before applying `-q/-Q` (vcfview.c:341-350) and gates
+    // its own INFO preference on `!sample_mask_set` (filter.c:1471); reed
+    // mirrors that by not pushing the INFO short-circuit at all, so the
+    // decision runs through `af_of`, whose `info_trusted` flag is false in
+    // every execution path once the cohort changed (doc_v12 D12-6).
     let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
+    let cohort_changed = spec.sample_select.is_some()
+        || spec.mind.is_some()
+        || !spec.genotype.mask_if.is_empty()
+        || spec.genotype.set_gts.is_some();
+    if info_af && !cohort_changed {
+        warn_stale_af(tags);
+    }
     for bound in spec.site_after_mask.min_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
             return Err(FilterError::Spec(format!(
@@ -387,6 +461,7 @@ pub fn compile(
             )));
         }
         if info_af
+            && !cohort_changed
             && spec
                 .site_after_mask
                 .min_af_kind
@@ -403,6 +478,7 @@ pub fn compile(
             )));
         }
         if info_af
+            && !cohort_changed
             && spec
                 .site_after_mask
                 .max_af_kind
@@ -414,10 +490,9 @@ pub fn compile(
     }
     // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
     // genotype-dependent ones after the mask stage ----
-    let info_tags: Vec<String> = tags.info_names();
     let format_tags: Vec<String> = tags.format_names();
     for (index, text) in spec.site.include.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, &info_tags)
+        let expr = crate::expr::parse_and_check(text, tags)
             .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
         warn_stale_info(&expr, text, tags);
         if expr.references_genotypes() {
@@ -432,7 +507,7 @@ pub fn compile(
         });
     }
     for (index, text) in spec.site.exclude.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, &info_tags)
+        let expr = crate::expr::parse_and_check(text, tags)
             .map_err(|e| FilterError::Spec(format!("-e {text:?}: {e}")))?;
         warn_stale_info(&expr, text, tags);
         if expr.references_genotypes() {
@@ -656,7 +731,7 @@ pub fn compile(
         )
     {
         let flag = if include { "-i" } else { "-e" };
-        let expr = crate::expr::parse_and_check_fmt(text, &info_tags, &format_tags)
+        let expr = crate::expr::parse_and_check_fmt(text, tags, &format_tags)
             .map_err(|e| FilterError::Spec(format!("{flag} {text:?} (after mask): {e}")))?;
         warn_stale_info(&expr, text, tags);
         if !expr.references_genotypes() {
@@ -735,10 +810,18 @@ pub fn compile(
 
     // ---- strategy (§11.4; SketchThenEmit selection is M5b) ----
     // The sketch path evaluates tail rules in the mid stage, where the
-    // record bytes are gone; a genotype-derived expression therefore forces
+    // record bytes are gone; a tail rule that reads them therefore forces
     // the single-pass path (02-cli.md §4: expressions run on the record).
-    let has_tail_expr = tail.iter().any(|r| matches!(r, TailRule::Expr { .. }));
-    let strategy = if has_tail_expr {
+    // The predicate mirrors `FilterPlan::tail_reads_record` (the plan does
+    // not exist yet here), so the driver's later override asks the same
+    // question (doc_v12 D12-1).
+    let tail_reads_record = tail.iter().any(|r| {
+        matches!(
+            r,
+            TailRule::Expr { .. } | TailRule::MinAf(..) | TailRule::MaxAf(..)
+        )
+    });
+    let strategy = if tail_reads_record {
         ExecStrategy::SinglePass
     } else if spec.mind.is_some() {
         ExecStrategy::TwoPassReparse
@@ -747,13 +830,28 @@ pub fn compile(
     };
 
     // ---- recompute + stale ----
+    // `--fill-tags` entries are validated here (not only in the CLI): an
+    // unsupported tag is a spec error, like bcftools `+fill-tags`
+    // ("the tag X is not supported", plugins/fill-tags.c:530-535). Silently
+    // accepting one turned `--fill-tags AF` into a no-op that the default
+    // `-x` then used to delete the input's AF (doc_v12 D12-11).
+    let canonical_tags: Vec<&'static str> = spec
+        .recompute
+        .tags
+        .iter()
+        .map(|tag| {
+            crate::spec::recompute::canonical_fill_tag(tag)
+                .map_err(|e| FilterError::Spec(e.to_string()))
+        })
+        .collect::<Result<_, _>>()?;
+    let wants = |tag: &str| canonical_tags.contains(&tag);
     let no_update = spec.recompute.no_update;
     let recompute = RecomputeFlags {
-        ac: spec.recompute.wants("AC"),
-        an: spec.recompute.wants("AN"),
-        ns: spec.recompute.wants("NS"),
-        maf: spec.recompute.wants("MAF"),
-        hwe: spec.recompute.wants("HWE"),
+        ac: wants("AC"),
+        an: wants("AN"),
+        ns: wants("NS"),
+        maf: wants("MAF"),
+        hwe: wants("HWE"),
     };
     let stale_tags = spec.recompute.stale_bytes();
 
@@ -783,8 +881,11 @@ pub fn compile(
         fmt_expr_fields,
         policies,
         stale_tags,
+        auto_stale_tags: Vec::new(),
         recompute,
         no_update,
+        info_trusted: true,
+        tags: std::sync::Arc::new(tags.clone()),
         provenance,
     })
 }

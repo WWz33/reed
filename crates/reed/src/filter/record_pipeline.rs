@@ -174,7 +174,14 @@ impl RecordPipeline {
         let pos1 = site.pos1;
 
         // ---- head stage (§11.2: order is semantics) ----
-        let head_passed = eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
+        let head_passed = eval_head(
+            &lr,
+            pos1,
+            &plan.head,
+            &mut funnel.head_hits,
+            &mut self.head,
+            &plan.tags,
+        );
         if !head_passed {
             return Ok(Processed::default());
         }
@@ -206,6 +213,7 @@ impl RecordPipeline {
             &mut self.fmt_storage,
             &mut self.hwe,
             self.head.index_current.then_some(&self.head.index),
+            plan.info_trusted,
             body,
         )
     }
@@ -261,7 +269,14 @@ impl RecordPipeline {
         }
         .map_err(job_err)?;
         let pos1 = site.pos1;
-        let head_passed = eval_head(&lr, pos1, &plan.head, &mut funnel.head_hits, &mut self.head);
+        let head_passed = eval_head(
+            &lr,
+            pos1,
+            &plan.head,
+            &mut funnel.head_hits,
+            &mut self.head,
+            &plan.tags,
+        );
         if !head_passed {
             return Ok(Processed::default());
         }
@@ -291,6 +306,7 @@ impl RecordPipeline {
             &mut self.fmt_storage,
             &mut self.hwe,
             self.head.index_current.then_some(&self.head.index),
+            plan.info_trusted,
             body,
         )
     }
@@ -419,6 +435,7 @@ fn run_stages<'a, F>(
     fmt_storage: &mut [(Vec<u8>, Option<f64>)],
     hwe: &mut HweCache,
     info_index: Option<&InfoIndex>,
+    info_trusted: bool,
     mut body: F,
 ) -> Result<Processed, EngineError>
 where
@@ -437,6 +454,8 @@ where
     // fields: the plan rejects those, so the counts are not needed).
     let mut expr_site = expr::SiteValues::from_line(lr, pos1, None);
     expr_site.info_index = info_index;
+    expr_site.info_trusted = info_trusted;
+    expr_site.tags = Some(plan.tags.as_ref());
 
     // Expression rules first (declaration order among themselves), one
     // sample at a time: the FORMAT slots update in place and the
@@ -600,6 +619,8 @@ where
             }),
         );
         values.info_index = info_index;
+        values.info_trusted = info_trusted;
+        values.tags = Some(plan.tags.as_ref());
         if !eval_tail(
             &values,
             counts,

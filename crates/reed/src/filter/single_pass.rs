@@ -328,13 +328,22 @@ impl FilterJob {
         }
         let counts = view.counts.expect("invariant: counts requested");
         fill_info_set(counts, &self.plan.recompute, emit.hwe, emit.info_set);
+        // A GT-less record keeps the input's AC/AN: the automatic update has
+        // no value to put back, so only user-requested removals apply
+        // (doc_v12 D12-2).
+        let auto: Vec<&[u8]> = self.plan.auto_stale_tags.iter().map(Vec::as_slice).collect();
+        let stale_record = reed_filter::eval::edit_plan::stale_for_record(
+            stale,
+            &auto,
+            counts.has_gt,
+        );
         let masked = view.masked;
         let site = view.site;
         let pos1 = view.pos1;
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(masked),
-            info_remove: stale,
+            info_remove: &stale_record,
             info_set: emit.info_set,
         };
         view.funnel.n_output += 1;
@@ -375,7 +384,7 @@ impl FilterJob {
         };
         let gt_index = gt_subfield_index(edit_line.format_text());
         emit.edit_buf.clear();
-        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf).map_err(job_err)?;
+        edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf);
         match emit.bcf {
             None => emit.writer.push_record(emit.edit_buf, key).map_err(job_err),
             Some(encoders) => {

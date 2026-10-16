@@ -96,8 +96,11 @@ reed index in.vcf.gz
 `--indep-pairwise <W[kb] [S] R2>` 用 plink2 算法按 LD 剪枝并输出保留位点；
 窗口 `W` 可带 `kb` 后缀，步长 `S` 默认 1，`R2` 是 r² 上限。
 
-INFO 处理：样本集变化时 reed 更新 `INFO/AC` 与 `INFO/AN`；`-I/--no-update`
-关闭，`-x/--remove-info LIST` 删除 tag，`--fill-tags LIST` 重算。
+INFO 处理：样本集变化时 reed 更新 `INFO/AC` 与 `INFO/AN`（无 GT 列的记录
+保留输入值）；`-I/--no-update` 关闭。`-x/--remove-info LIST` 删除 tag——默认
+删 gold 管线的陈旧清单（`AC,AN,AF,MLEAC,MLEAF,ExcessHet,InbreedingCoeff,DP`），
+`-x ''` 保留全部。`--fill-tags LIST` 重算 AC、AN、NS、MAF 或 HWE（大小写不
+敏感；不支持的标签报错，与 bcftools 一致）。
 
 输出：`-O v|z|b|u[0-9]` 选择普通 VCF、BGZF VCF、BCF 或未压缩 BCF，可带压缩
 级别。`-o` 指定文件（默认 stdout），`-W[=csi|tbi]` 写索引，`--report` 写 JSON

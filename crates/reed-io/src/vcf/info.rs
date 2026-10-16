@@ -14,6 +14,63 @@ pub fn info_fragments(info: &[u8]) -> impl Iterator<Item = (&[u8], Option<&[u8]>
         })
 }
 
+/// One INFO value element parsed by the header's declared type.
+///
+/// The single implementation of "INFO text -> number" (doc_v12 D12-14):
+/// the BCF encoder, the expression evaluator and the head rules used three
+/// different rules (strict decimal, `str::parse::<f64>`, and a saturated
+/// u32), so the same record yielded three different values — `XI=1e3`
+/// filtered as 1000, wrote `.` to BCF and kept `1e3` in text.
+///
+/// The grammar is the strict one, deliberately **not** htslib's prefix
+/// parser (`hts_str2int` reads `5abc` as 5, `1e3` as 1, and `0x10` as 0 in
+/// Integer but 16 in Float — see 01-review §2.5-B3/B4, a permanent
+/// divergence). No trimming: VCFv4.5's numeric grammar has no whitespace
+/// (§1.3; values may contain spaces, but that applies to strings, §1.6.1).
+///
+/// - Integer: optional `-` or `+` (the spec's Float regex allows `[-+]?`,
+///   tex:97) then digits; out of `i32` range is the caller's concern (the
+///   encoder maps it to missing, doc_v12 N3);
+/// - Float: Rust's `f64` grammar, which matches the spec regex (accepts
+///   `+5`, `5.0`, `1e3`, `inf`, `nan`; rejects `0x10` and whitespace).
+///
+/// `None` for `.`, empty or unparsable text.
+#[must_use]
+pub fn parse_info_number(text: &[u8], float: bool) -> Option<f64> {
+    if text.is_empty() || text == b"." {
+        return None;
+    }
+    if float {
+        return std::str::from_utf8(text).ok()?.parse::<f64>().ok();
+    }
+    parse_info_int(text).map(|v| v as f64)
+}
+
+/// The integer half of [`parse_info_number`]: strict decimal with an
+/// optional sign, `None` on anything else.
+#[must_use]
+pub fn parse_info_int(text: &[u8]) -> Option<i64> {
+    if text.is_empty() || text == b"." {
+        return None;
+    }
+    let (neg, digits) = match text[0] {
+        b'-' => (true, &text[1..]),
+        b'+' => (false, &text[1..]),
+        _ => (false, text),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: i64 = 0;
+    for &b in digits {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add(i64::from(b - b'0'))?;
+    }
+    Some(if neg { -value } else { value })
+}
+
 /// One record's INFO fragments as byte ranges — built once per record and
 /// shared by every INFO reader (typed head rules and expressions, A6-18).
 #[derive(Default, Debug)]

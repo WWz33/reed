@@ -174,7 +174,8 @@ impl<J: ChunkJob> FilteredJob<J> {
                 .split(|&b| b == b':')
                 .position(|k| k == b"GT")
                 .and_then(|i| u8::try_from(i).ok());
-            edit_vcf_line(view.line, &edit, gt_index, buffer).map_err(EngineError::from)
+            edit_vcf_line(view.line, &edit, gt_index, buffer);
+            Ok(())
         })?;
         Ok(())
     }
