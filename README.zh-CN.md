@@ -18,15 +18,22 @@ reed --version
 
 ```bash
 # 全基因组与窗口 π、dxy、Fst、θ、Tajima's D
-reed stats allsites.vcf.gz --pop pops.txt --pi --dxy --fst --theta --tajima-d \
+reed popg allsites.vcf.gz --pop pops.txt --pi --dxy --fst --theta --tajima-d \
     --window 10k -o out
 
 # 只含变异位点的输入
-reed stats clean.vcf.gz --pop pops.txt --variant-only \
+reed popg clean.vcf.gz --pop pops.txt --variant-only \
     --fst --window 100k --step 50k -o out
 
 # 位点级与样本级 QC 报告 + bcftools-stats 汇总，一次扫描
 reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc
+
+# 同一遍出直方图：内建指标与任意数值 INFO/FORMAT 标签
+reed stats clean.vcf.gz --hist qual,dp-site,gq,INFO/DP -o qc
+
+# 标识符编辑：样本名、染色体名、变异 ID、header 行
+reed rename in.vcf.gz -s "s0 sampleA" --rename-chrs chrs.txt \
+    --set-missing-var-ids '%CHROM:%POS' -Oz -o renamed.vcf.gz
 
 # 位点与基因型过滤，输出带索引
 reed filter in.vcf.gz -o out.vcf.gz -Oz6 --geno 0.1 --maf 0.05 \
@@ -45,15 +52,15 @@ reed convert in.vcf.gz --msa --reference ref.fa --region chr1:1-100000 -o aln
 # 反向：hapmap 转回 VCF（-Oz 写 BGZF；不给 -o 时流到 stdout）
 reed convert panels.hmp.txt --vcf -Oz -o panels.vcf.gz
 
-# 投影 SFS，与 `reed stats --sfs` 逐字节相同
+# 投影 SFS，与 `reed popg --sfs` 逐字节相同
 reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
 
 `reed <command> --help` 列出全部选项。
 
-## reed stats
+## reed popg
 
-统计开关任意组合，每个开关产出自己的文件。
+窗口群体遗传统计学。统计开关任意组合，每个开关产出自己的文件。
 
 | 开关 | 输出 |
 |---|---|
@@ -67,8 +74,6 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 | `--sfs` | 投影 SFS，落在 `PREFIX_sfs/dadi/` 与 `PREFIX_sfs/fastsimcoal2/`；需要 `--proj N` |
 | `--f2 A,B`、`--f3 C;A,B`、`--f4 A,B;C,D`、`--dstat A,B;C,D`、`--f4-ratio A,B;C,D;X` | Patterson f 统计量 + 区块刀切，`PREFIX.fstats` |
 | `--ld-decay [MAX_BP]` | 1 kb 分箱的配对 r²，`PREFIX.ld.decay`；`--ld-pairs` 加逐对表 `PREFIX.ld` |
-| `--freq`、`--hardy`、`--het`、`--missing`、`--depth` | `PREFIX.afreq`、`PREFIX.hardy`、`PREFIX.het`、`PREFIX.smiss` + `PREFIX.vmiss`、`PREFIX.idepth` + `PREFIX.ldepth.mean` |
-| `--summary` | bcftools-stats 布局的 QC 汇总，`PREFIX.stats` |
 
 窗口选项：
 
@@ -83,10 +88,49 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 | `--bypass-invariant-check` | 只在文件含有的位点上计算（π/dxy 分母有偏） |
 | `--contig-lengths <FILE>` | `.fai` 式 `名称<TAB>长度`，用于缺 `##contig` 行的头 |
 
-样本与区域选择在 `stats` 和 `filter` 中一致：`-r/-R` 区域（需要索引）、
-`-t/-T` targets（流式）、`-s/-S`、`--keep`、`--remove`。位点过滤（`-v/-V`、
-`--snps-only`、`-m/-M`、`-f`、`-i/-e`、`-q/-Q`、`--geno`、`--maf/--max-maf`、
-`--mac/--max-mac`、`--hwe`）决定统计能看到什么。
+`popgen` 是可见别名。这些窗口开关在 0.3.x 属于 `reed stats`；现在在
+`reed stats` 上使用会得到指出改写命令的解析期报错（不是静默别名）。
+
+## reed stats
+
+位点级与样本级 QC 报告。每个开关产出自己的文件。
+
+| 开关 | 输出 |
+|---|---|
+| `--freq`、`--hardy`、`--het`、`--missing`、`--depth` | `PREFIX.afreq`、`PREFIX.hardy`、`PREFIX.het`、`PREFIX.smiss` + `PREFIX.vmiss`、`PREFIX.idepth` + `PREFIX.ldepth.mean` |
+| `--summary` | bcftools-stats 布局的 QC 汇总，`PREFIX.stats` |
+| `--hist <LIST>` | 每个指标一份 `PREFIX.<m>.hist` TSV |
+
+`--hist` 用逗号分隔内建指标（`qual`、`dp`、`dp-site`、`gq`、`idl`、`af`）
+与任意数值标签（`INFO/<TAG>` 或 `FMT/<TAG>`）。每份文件含 `bin_lower`、
+`bin_upper`、`count`、`percent` 列；整数指标另附精确 `#mean`、`#median`、
+`#p95` 行。标签未在 header 声明、或不是 Integer/Float 类型，都是用法错误。
+
+`--pop FILE` 在这里可选（分层 QC）；`popg` 的窗口模式必需。与
+`--freq/--missing/--singletons` 之一同给时分层：`PREFIX.afreq.pop` 与
+`PREFIX.vmiss.pop` 每群体一行（按首现序；数值等于把该群体样本单独取出后
+的 plink2 跑法），`PREFIX.singletons` 加 POP 列（携带者不在群体文件时写
+`.`）。群体文件之外的输出不变；`--pop` 不与这三个 flag 之一同给则是用法
+错误。多等位 ALT 频率保持折叠（与 `.afreq` 一致）。
+
+## reed rename
+
+标识符编辑：样本名、染色体名、变异 ID 与 header 行。全程不解码基因型，
+记录逐字节直通。
+
+| 开关 | 含义 |
+|---|---|
+| `-s "old new,…"`、`-N FILE` | 样本改名（文件里是 `old<TAB>new`） |
+| `--replace-sample-name PATTERN` | 正则式改名（`pre*` 去前缀、`*suf` 去后缀，否则删除该文本） |
+| `--rename-chrs FILE` | `old<TAB>new` 染色体名；`##contig` 行与 CHROM 列同改 |
+| `--chr-style plain\|ucsc\|mt-is-m` | 染色体命名规范化（无 `chr`、带 `chr`、`chrM`） |
+| `--set-id PATTERN` | 用 `%CHROM %POS %REF %ALT` 模板重写全部 ID |
+| `--set-missing-var-ids PATTERN` | 只补 `.` 的 ID |
+| `--update-name FILE`、`--idspace-to SEP`、`--rm-dup-ids`、`--clear-ids` | ID 映射、换分隔符、重复加后缀、全部置 `.` |
+| `-h FILE`、`-f FILE`、`--add-meta LINE`、`--remove-meta KEY` | 换 header、按 `.fai` 补 `##contig` 长度、增删 header 行 |
+
+输出：`-o FILE`（默认 stdout）、`-O v|z[level]`。`reheader` 是可见别名。
+改成已存在的名字、名字不存在、或没有任何编辑请求，都是用法错误。
 
 ## reed filter
 
@@ -137,7 +181,7 @@ INFO 处理：样本集变化时 reed 更新 `INFO/AC` 与 `INFO/AN`（无 GT �
 | `--hapmap` | `PREFIX.hmp.txt`（TASSEL 布局） |
 | `--vcf [-O v\|z[level]]` | **反向转换**：hapmap（`.hmp.txt`）输入转回 VCF——`ID` 取 `rs#`、REF/ALT 按声明顺序、IUPAC 格展开为 `GT`（`R` → `0/1`）；`-O z` 写 BGZF，不给 `-o` 时流到 stdout |
 | `--msa --reference ref.fa [--region CHR:B-E]` | `PREFIX_<contig>.fasta`：逐参考碱基的全位点比对 |
-| `--sfs --proj N[,N…] [--pop FILE]` | `PREFIX_sfs/dadi`、`PREFIX_sfs/fastsimcoal2`，与 `reed stats --sfs` 相同 |
+| `--sfs --proj N[,N…] [--pop FILE]` | `PREFIX_sfs/dadi`、`PREFIX_sfs/fastsimcoal2`，与 `reed popg --sfs` 相同 |
 | `--outgroup NAME`、`--min-samples-locus N`、`--resolve-iupac`、`--write-used-sites` | 矩阵调节（见 `--help`） |
 
 `--hapmap` 与 `--vcf` 是同一对格式的两个方向：在无损域（双等位、二倍体、
@@ -189,14 +233,14 @@ reed = { path = "crates/reed" }
 ```
 
 ```rust
-use reed::{Populations, StatKind, StatsRequest};
+use reed::{PopgenRequest, Populations, StatKind};
 
-let request = StatsRequest {
+let request = PopgenRequest {
     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
     populations: Populations::File("pops.txt".into()),
-    ..StatsRequest::default()
+    ..PopgenRequest::default()
 };
-let report = reed::run_stats(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
+let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
 let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
 ```
 
@@ -219,33 +263,35 @@ let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request, &reed::budg
 手上已经有 `样本 -> 群体` 映射的调用方可以直接传入，不必落一个群体文件：
 
 ```rust
-let request = StatsRequest {
+let request = PopgenRequest {
     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
     populations: Populations::Assignment(vec![
         ("sample1".into(), "popA".into()),
         ("sample2".into(), "popB".into()),
     ]),
-    ..StatsRequest::default()
+    ..PopgenRequest::default()
 };
 ```
 
-门面 re-export 所有需要的东西：`run_filter`、`run_stats`、`run_reports`、
-`run_index`，请求类型（`StatsRequest`、`FilterSpec`、`ReportRequest`），
-报告（`StatsReport`、`FilterReport`、`ReportsOutcome`、`IndexOutcome`），
-writer（`reed::windows`、`reed::reports`、`reed::sfs`、`reed::fstats`、
-`reed::ld`、`reed::summary`），以及单一 `reed::Error`（`kind()` 区分用法错误
-与运行期失败）。`StatsRequest::to_args(&group_names)` 与
-`FilterSpec::to_args()` 把请求渲染回 CLI 拼写，程序化构造请求的工具也能记录
-等价的命令行；CLI 拼写不出来的请求（per-bp kind、`Regions` grid）由
-`StatsRequest::to_args` 返回用法错误。只有这个门面是稳定性承诺；
+门面 re-export 所有需要的东西：`run_filter`、`run_popgen`、`run_stats`、
+`run_rename`、`run_index`、`run_convert`，请求类型（`PopgenRequest`、
+`FilterSpec`、`StatsReportRequest`、`RenameSpec`、`ConvertRequest`），
+报告（`PopgenReport`、`FilterReport`、`StatsOutcome`、`RenameReport`、
+`IndexOutcome`、`ConvertReport`），
+writer（`reed::windows`、`reed::reports`、`reed::histogram`、`reed::sfs`、
+`reed::fstats`、`reed::ld`、`reed::summary`），以及单一 `reed::Error`
+（`kind()` 区分用法错误与运行期失败）。`PopgenRequest::to_args(&group_names)`
+与 `FilterSpec::to_args()` 把请求渲染回 CLI 拼写，程序化构造请求的工具也能
+记录等价的命令行；CLI 拼写不出来的请求（per-bp kind、`Regions` grid）由
+`PopgenRequest::to_args` 返回用法错误。只有这个门面是稳定性承诺；
 `crates/` 下的下层 crate 是内部实现，`reed::Error` 通过封口变体把它们挡在
 签名之外——用 `kind()` 分类，用 `Display`/`source()` 读消息。
 
 ## 已知限制
 
 - 多等位记录被拒绝。`-M` 提到 2 以上时 reed 不会重算逐等位统计，默认保持拒绝。
-- LD 剪枝在 `filter` 里，需要第二遍扫描。`reed stats` 拒绝 `--indep-pairwise`
-  并指向 `reed filter`。
+- LD 剪枝在 `filter` 里，需要第二遍扫描。`reed stats` 与 `reed popg` 都拒绝
+  `--indep-pairwise` 并指向 `reed filter`。
 - f 统计量的标准误用按碱基对的区块刀切，scikit-allel 按变异数；估计值一致，
   标准误不可比。
 - Tajima's D 按窗口平均等位数处的方差做分母（pixy 约定），与 vcftools 的固定

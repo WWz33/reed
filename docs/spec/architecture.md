@@ -1568,7 +1568,9 @@ criterion 的 id 采用 `<crate>/<subject>/<parameter>`，例如 `core/group_cou
   `-t/--targets`（流式）、`-T/--targets-file`、`-s/--samples`、`-S/--samples-file`、`-W/--write-index`。
 - ⚠ `--threads` 没有短参数（bcftools 的 `-t` 是 targets）。
 - 数值带单位：`--window 100kb`、`--mem 16G`（解析器统一支持 `bp/kb/Mb/Gb` 与 `K/M/G`）。
-- 子命令为单个动词或名词：`filter`、`stats`、`qc`、`index`。
+- 子命令为单个动词或名词：`filter`、`stats`、`popg`、`index`、`convert`、
+  `rename`（v14：`stats` 是 QC 报告，`popg` 是窗口群体统计，`rename` 是
+  标识符编辑；`reed --help` 按组列出，见 `docs/rounds/v14/02-architecture.md` §1）。
 
 ### 13.15 配置键（TOML）【规】
 

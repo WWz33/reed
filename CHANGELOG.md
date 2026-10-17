@@ -5,7 +5,59 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-17
+
+The doc_v14 command-surface round: `reed stats` is split into the QC command
+(`stats`) and the windowed statistics command (`popg`); `--hist` and
+`reed rename` are new; `reed --help` groups its commands seqkit-style. The
+split is byte-identical for every existing output
+(`gold/popgen/run_split_parity.sh`, 22 cases).
+
+### Changed
+
+- **`reed stats` is now the QC-report command** (`--freq/--hardy/--het/
+  --missing/--depth/--summary`); the windowed population-genetics statistics
+  moved to **`reed popg`** (alias `popgen`; doc_v14 §2). The moved flags
+  (`--pi --dxy --theta --tajima-d --fst --fst-global --pbs --pbs-normed
+  --f2 --f3 --f4 --dstat --f4-ratio --block-size --ld-decay --ld-pairs
+  --sfs --proj --sfs-int --variant-only --bypass-invariant-check
+  --contig-lengths --window --step --levels --skip-empty --bed-file`) on
+  `reed stats` are parse-time errors naming the exact rewrite (doc_v14
+  D14-2) — never silent aliases.
+- A bare `reed stats` (no report flag) is a usage error naming the flags.
+- The library facade renamed its drivers to follow the commands:
+  `run_stats` → `run_popgen` (`StatsRequest` → `PopgenRequest`,
+  `StatsReport` → `PopgenReport`), `run_reports` → `run_stats`
+  (`ReportRequest` → `StatsReportRequest`, `ReportsOutcome` →
+  `StatsOutcome`). The library has no stability promise (cli.md §0.9).
+- `reed --help` lists the commands in groups (Filtering, Statistics,
+  Transform, File Operations, Miscellaneous); command paths are unchanged
+  (doc_v14 §1).
+
+### Added
+
+- `reed popg`: the windowed statistics (π, dxy, Fst, θ, Tajima's D, PBS,
+  SFS, Patterson f-statistics, LD decay), with the 0.3.x flags and
+  byte-identical outputs.
+- `reed stats --hist LIST`: histograms from the same pass (doc_v14 §3) —
+  built-ins `qual`, `dp`, `dp-site`, `gq`, `idl`, `af`, plus generic
+  `INFO/<TAG>` and `FMT/<TAG>` requests; one `PREFIX.<m>.hist` TSV per
+  metric with exact mean/median/p95 for integer metrics.
+- `reed stats --pop FILE` (with `--force-samples`): stratified QC
+  (doc_v14 §2.2) — `--freq`/`--missing` write `PREFIX.afreq.pop` and
+  `PREFIX.vmiss.pop` (one row per population, first-appearance order),
+  `--singletons` gains a POP column (`.` for a carrier outside every
+  group; counting still runs over the whole cohort). The stratified values
+  equal a per-population plink2 `--freq/--missing` run
+  (`gold/popgen/run_popqc.sh`); the cohort files are unchanged. `--pop`
+  without one of `--freq/--missing/--singletons` is a usage error.
+  Multiallelic ALT frequencies stay collapsed (the `.afreq` convention).
+- `reed rename` (alias `reheader`): identifier edits without decoding
+  genotypes (doc_v14 §4) — samples (`-s/-N/--replace-sample-name`), contigs
+  (`--rename-chrs`, `--chr-style plain|ucsc|mt-is-m`), variant IDs
+  (`--set-id`, `--set-missing-var-ids`, `--update-name`, `--idspace-to`,
+  `--rm-dup-ids`, `--clear-ids`), header lines (`-h -f --add-meta
+  --remove-meta`); VCF byte editing with `-Ov/-Oz`.
 
 ### Fixed
 

@@ -1,4 +1,12 @@
-# 02 CLI 规范（v5 合并版：当前有效的全部参数）
+# 02 CLI 规范（v14：当前有效的全部参数）
+
+> **v14（2026-10-17）**：命令面重组——`reed stats` 拆为 QC 命令（本文件的
+> §7，`--freq/--hardy/--het/--missing/--depth/--summary/--hist`）与窗口统计
+> 命令 **`reed popg`**（别名 `popgen`）；新增 **`reed rename`**（§12）；
+> `reed --help` 按组列出命令。窗口族 flag 从 `reed stats` 移走后在旧命令上
+> 是**解析期报错 + 改写提示**（§12.3，`--max-missing` 家族同款）。0.3.x 的
+> 输出逐字节不变（`gold/popgen/run_split_parity.sh` 22 case）。完整规范见
+> `docs/rounds/v14/`。
 
 > 本文把 `docs/rounds/v2/02-cli.md`（命令结构与原则）、`docs/rounds/v4/02-cli-semantics.md` 回退版（缺失阈值的精确语义与整数判定）和 2026-10-09 的三条裁决（`--geno/--mind` 保留原样；`--fst-global` 布尔开关；`--fst-pops` 作废）合成**一份当前有效的规范**，并逐条与 2026-10-09 实测的 `reed --help` 核对。
 > 标 **【待实现】** 的条目是规范已定、代码未到；其余全部已实现且有测试。目录搬迁后本文即 `docs/spec/cli.md`（06-layout.md）。
@@ -24,9 +32,16 @@
 | 命令 | 对标 | 作用 |
 |---|---|---|
 | `reed filter` | bcftools `view` + `filter -S .` + `+fill-tags` + `annotate -x`；plink2 的 QC 阈值 | 过滤、基因型掩码、INFO 重算，输出保真的 VCF/BCF |
-| `reed stats` | vcftools 统计、pixy、plink2 `--freq/--hardy/--het/--missing`、easySFS、`bcftools stats` | 所有统计一个命令，一个统计量一个参数 |
+| `reed stats` | plink2 `--freq/--hardy/--het/--missing`、`bcftools stats`、vcftools 报告 | **QC 报告**：逐位点/逐样本行 + 汇总 + 直方图（§7） |
+| `reed popg`（别名 `popgen`） | vcftools 窗口统计、pixy、easySFS、scikit-allel | **窗口群体统计**：π/dxy/Fst/θ/Tajima/PBS/SFS/f 统计/LD 衰减（原 `reed stats` 的统计族） |
+| `reed rename`（别名 `reheader`） | bcftools `reheader`、`annotate --rename-chrs/--set-id`；plink2 `--set-*-var-ids/--update-name` | **标识符编辑**：样本名/染色体名/变异 ID/header 行（§12） |
 | `reed index` | `bcftools index` | CSI（默认）/ TBI |
 | `reed convert` | vcf2phylip 2.9（Ortiz 2019）、vcftools `--012`、TASSEL hapmap（双向）、vcf2msa、easySFS | 转换：系统发育矩阵 / 0-1-2 矩阵 / hapmap / 参考 MSA / 投影 SFS；hapmap → VCF 反向 |
+
+**分组 help（v14 §1）**：`reed --help` 按 Filtering / Statistics / Transform /
+File Operations / Miscellaneous 五组列出命令；命令路径本身不变（扁平）。
+分组清单是 `cli/mod.rs` 的 `GROUPS` 常量，唯一事实源，守卫测试断言每个
+`Command` 变体恰好入一组。
 
 `reed qc` 是 doc_v3 C4 留下的**隐藏且已弃用**的子命令（`cli.rs:49`），`--help` 不列出；v5 路线 X1 删除（03 §4 C-2）。
 
@@ -188,10 +203,13 @@ header：`##reed_version`、`##reed_filterCommand=<to_args() 规范化命令>; D
 
 ---
 
-## 7. `reed stats`
+## 7. `reed stats`（QC 报告）
+
+> v14：本节的窗口参数、群体族与统计族已搬到 `reed popg`（下一节）；`stats`
+> 只保留 QC 报告族、共享选择参数与 `--hist`。
 
 ```
-reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…> -o PREFIX <INPUT|->
+reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summary/--hist -o PREFIX <INPUT|->
 ```
 
 ### 7.1 原则
@@ -241,7 +259,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 | Tajima's D | `PREFIX_tajima_d.txt` | `pop chromosome window_pos_1 window_pos_2 tajima_d no_sites raw_pi raw_watterson_theta tajima_d_stdev` |
 | PBS | `PREFIX_pbs.txt` | `pop1 pop2 pop3 chromosome window_pos_1 window_pos_2 pbs no_snps fst_12 fst_13 fst_23` |
 | SFS | `PREFIX_sfs/dadi/<pop>-<n>.sfs`、`PREFIX_sfs/fastsimcoal2/<pop>_MAFpop0.obs`；联合（二维，每对一份）：`PREFIX_sfs/dadi/<A>-<B>.sfs`、`PREFIX_sfs/fastsimcoal2/<prefix>_jointMAFpop<idxB>_<idxA>.obs` | dadi / fastsimcoal2 标准格式，含 mask 行（easySFS 实测布局） |
-| freq / hardy / het / missing | `PREFIX.afreq .hardy .het .smiss .vmiss` | plink2 列布局 |
+| freq / hardy / het / missing | `PREFIX.afreq .hardy .het .smiss .vmiss`；`--pop` 时另写 `.afreq.pop`/`.vmiss.pop`（每群体一行，§12.2） | plink2 列布局 |
 | depth | `PREFIX.idepth`、`PREFIX.ldepth.mean` | vcftools 列布局 |
 | summary | `PREFIX.stats` | bcftools stats 文本 |
 | f 统计 / LD | `PREFIX.fstats`、`PREFIX.ld.decay`、`PREFIX.ld`（`--ld-pairs`） | 05 §3.3–3.4。剪枝清单 `.prune.in/.prune.out` 不是 stats 的输出，只由 `--prune-list PREFIX` 产生（filter 与 stats 都可给） |
@@ -253,6 +271,7 @@ reed stats [通用] [过滤参数] [--pop FILE] [窗口参数] <统计参数…>
 reed stats allsites.vcf.gz --pop pops.txt --pi --dxy --fst --tajima-d --window 10k -o out --threads 56
 reed stats clean.vcf.gz --pop pops.txt --variant-only --pi --fst --fst-global --window 100k --step 50k -o out
 reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc
+reed stats clean.vcf.gz --pop pops.txt --freq --missing --singletons -o qc   # 另写 .afreq.pop/.vmiss.pop，singletons 加 POP 列
 reed stats clean.vcf.gz --pop pops.txt --variant-only --min-dp 5 --min-gq 20 --geno 0.1 --maf 0.05 --pi --window 100k -o out
 reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
@@ -301,6 +320,75 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 `FilterSpec`（`spec/{cohort,mask,missing_rate,predicate,recompute,region,render}.rs`）与 `StatsRequest` 是类型化结构；`to_args()` 渲染为 §3/§7 的参数且 `parse(render(x)) == x`（`translate::filter::tests::spec_to_args_round_trips_through_the_flags` 等）。clap 结构体、单位解析、错误渲染只在 `reed-cli`。
 
 ---
+
+## 12. v14 新增面（doc_v14）
+
+### 12.1 `reed popg`（窗口群体统计）
+
+原 `reed stats` 的窗口统计族，flag 拼写、默认值、输出文件与列布局全部不变
+（§7.2–§7.4 的统计族与 §7.3 的窗口/清单参数即为 `popg` 的参数面）。
+`--pop FILE` 在窗口模式必需（现状不变）。`--sfs` 的等价契约更新为
+`reed popg --sfs` ≡ `reed convert --sfs` 逐字节（原 `stats --sfs`）。
+
+### 12.2 `reed stats` 的 QC 面
+
+`--freq/--hardy/--het/--missing/--depth/--summary` 的拼写、输出文件与列布局
+零变化。新增 `--hist LIST`：逗号分隔的内建指标（`qual`、`dp`、`dp-site`、
+`gq`、`idl`、`af`）与通用 `INFO/<TAG>`/`FMT/<TAG>`；每个 metric 写
+`PREFIX.<m>.hist` TSV（列 `bin_lower bin_upper count percent`；整数指标附
+精确 `#mean`/`#median`/`#p95` 行，缺失观测附 `#missing` 行）。`idl` 用有
+符号长度（缺失为负、插入为正，bcftools IDD 约定）。标签必须在 header 声明
+且为 Integer/Float，否则用法错（§0.7）。`--hist` 可单独使用（裸
+`reed stats` 仍是用法错，但给了 `--hist` 即为合法请求）。
+
+另有 `--singletons`：逐等位（含 REF）输出 singleton（计数 1）与 private
+doubleton（计数 2 且有纯合携带者），列 `CHROM POS SINGLETON/DOUBLETON
+ALLELE INDV`（vcftools 布局，`PREFIX.singletons`）。
+
+`--pop FILE`（`--force-samples` 同义沿用）分层 QC：`--freq`/`--missing` 各
+另写一份按群体的行——`PREFIX.afreq.pop`（列
+`#CHROM ID POP REF ALT ALT_FREQS OBS_CT`）与 `PREFIX.vmiss.pop`（列
+`#CHROM ID POP MISSING_CT OBS_CT F_MISS`），每群体一行、按文件首现序；
+`--singletons` 加第六列 `POP`（携带者的群体，不在群体文件中的样本写
+`.`，计数仍按全体样本）。分层值 == 把该群体样本单独取出后的 plink2
+`--freq/--missing` 值（`gold/popgen/run_popqc.sh`，逐群体对拍；多等位
+ALT 频率为折叠单值，与 `.afreq` 的 `CollapseAlt` 约定一致）。不给
+`--pop` 时全部输出与 0.3.x 逐字节相同；给了 `--pop` 但没有
+`--freq/--missing/--singletons` 之一时为用法错（不静默忽略）。多等位位点
+不拆分（`CollapseAlt` 语义：ALT_FREQS 是全部 ALT 等位的合并频率）——
+`stats` 全家族一致，非分层独有。
+
+### 12.3 搬迁 flag 的重定向
+
+§7 窗口族与统计族 flag 出现在 `reed stats` 上时，是**解析期用法错（exit 2）
++ 完整改写提示**，例如：
+
+```
+reed: --pi moved to `reed popg`: the windowed population-genetics statistics
+      live there now; run `reed popg <input> --pop FILE --pi ...`
+```
+
+无静默别名、无转发执行（同 `--max-missing` 家族，§4.4）。
+
+### 12.4 `reed rename`
+
+四个平面，求值序 header 替换 → 染色体 → ID → 样本 → header meta 编辑；
+只编辑 header 行、CHROM 列、ID 列与样本名，**从不解码基因型**（结构性守卫：
+`crates/reed/src/rename/` 不引用 GenotypeScanner/GtCode），记录其余字节直通。
+
+| 平面 | flag |
+|---|---|
+| header | `-h/--header FILE`、`-f/--fai FILE`、`--add-meta LINE`、`--remove-meta KEY` |
+| 染色体 | `--rename-chrs FILE`（`##contig` 行与 CHROM 列同改）、`--chr-style plain\|ucsc\|mt-is-m` |
+| ID | `--set-id PATTERN`（`%CHROM %POS %REF %ALT`；ID 用改名后的 CHROM）、`--set-missing-var-ids PATTERN`、`--update-name FILE`、`--idspace-to SEP`、`--rm-dup-ids`、`--clear-ids` |
+| 样本 | `-s "old new,…"`、`-N/--samples-file FILE`、`--replace-sample-name PATTERN` |
+
+输出 `-o FILE`（默认 stdout）、`-O v\|z[level]`（BCF 输入/输出暂不支持）、
+`-W[=csi\|tbi]`（filter 语义：默认不写索引；索引按改名后的 contig 名建）。
+输出旁若存在陈旧索引会打印 warning 提示 `reed index -f`。
+校验（§4.3）：改后样本名重复、名字不存在、`--set-id` 与
+`--set-missing-var-ids` 同给、`--clear-ids` 与其他 ID flag 同给、
+`--idspace-to` 与 `--set-id` 同给、无任何编辑 flag —— 全部用法错。
 
 ## 11. 本轮核对出的差异（登记到 01-review.md）
 

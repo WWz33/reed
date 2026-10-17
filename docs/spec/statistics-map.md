@@ -156,4 +156,11 @@
 3. **v0.3-b(HWE mid-p)**:按 Graffelman & Moreno 2013 重写(参考 plink2 行为)。
 4. **v0.3-c(LD 变体)**:缺失语义选项(对拍 allel 需含 -1 模式);整数精确 r² 思路(PLINK 式)。
 5. **v0.3-d**:Fst·Hudson 有限样本校正变体(snputils 的 π·n/(n−1));WC84 多群体(r>2)泛化。
+- **v0.4.0（v14，已落地）**：`reed stats --hist LIST` 把 QUAL/DP/DP-site/GQ/
+  IDD/AF 直方图与任意数值 `INFO/`/`FMT/` 标签输出为 `PREFIX.<m>.hist` TSV
+  （整数指标附精确分位数；对拍 `gold/popgen/run_hist.sh`）；逐等位
+  singleton/doubleton 表 `--singletons`（vcftools 布局，对拍
+  `gold/popgen/run_singletons.sh`）；`--pop` 分层 QC——`.afreq.pop`/
+  `.vmiss.pop` 每群体一行 + `.singletons` POP 列（分层值对拍按群体切样本
+  的 plink2 跑法，`gold/popgen/run_popqc.sh`）。
 6. **v1.0 方向**:GRM/PCA(Halko 随机 + Patterson scaler)、KING、ROH(双家族)、EHH/iHS(相位层)、πN/πS(注释层)。

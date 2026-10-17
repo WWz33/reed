@@ -19,15 +19,22 @@ reed --version
 
 ```bash
 # Genome-wide and windowed pi, dxy, Fst, theta and Tajima's D
-reed stats allsites.vcf.gz --pop pops.txt --pi --dxy --fst --theta --tajima-d \
+reed popg allsites.vcf.gz --pop pops.txt --pi --dxy --fst --theta --tajima-d \
     --window 10k -o out
 
 # Variant-only input
-reed stats clean.vcf.gz --pop pops.txt --variant-only \
+reed popg clean.vcf.gz --pop pops.txt --variant-only \
     --fst --window 100k --step 50k -o out
 
 # Per-site and per-sample QC reports plus the bcftools-stats summary, one pass
 reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc
+
+# Histograms in the same pass: built-ins and any numeric INFO/FORMAT tag
+reed stats clean.vcf.gz --hist qual,dp-site,gq,INFO/DP -o qc
+
+# Identifier edits: sample names, contig names, variant IDs, header lines
+reed rename in.vcf.gz -s "s0 sampleA" --rename-chrs chrs.txt \
+    --set-missing-var-ids '%CHROM:%POS' -Oz -o renamed.vcf.gz
 
 # Site and genotype filters, with an index on the output
 reed filter in.vcf.gz -o out.vcf.gz -Oz6 --geno 0.1 --maf 0.05 \
@@ -46,15 +53,16 @@ reed convert in.vcf.gz --msa --reference ref.fa --region chr1:1-100000 -o aln
 # ...and back: a hapmap into VCF (BGZF with -Oz; no -o streams to stdout)
 reed convert panels.hmp.txt --vcf -Oz -o panels.vcf.gz
 
-# The projected SFS, byte-identical to `reed stats --sfs`
+# The projected SFS, byte-identical to `reed popg --sfs`
 reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
 
 `reed <command> --help` lists every option.
 
-## reed stats
+## reed popg
 
-Pass any combination of statistics flags; each one adds its output file.
+The windowed population-genetics statistics. Pass any combination of
+statistics flags; each one adds its output file.
 
 | Flag | Output |
 |---|---|
@@ -68,8 +76,6 @@ Pass any combination of statistics flags; each one adds its output file.
 | `--sfs` | Projected SFS under `PREFIX_sfs/dadi/` and `PREFIX_sfs/fastsimcoal2/`; needs `--proj N` |
 | `--f2 A,B`, `--f3 C;A,B`, `--f4 A,B;C,D`, `--dstat A,B;C,D`, `--f4-ratio A,B;C,D;X` | Patterson f-statistics with block jackknife, `PREFIX.fstats` |
 | `--ld-decay [MAX_BP]` | Pairwise r² in 1 kb bins, `PREFIX.ld.decay`; `--ld-pairs` for the per-pair table `PREFIX.ld` |
-| `--freq`, `--hardy`, `--het`, `--missing`, `--depth` | `PREFIX.afreq`, `PREFIX.hardy`, `PREFIX.het`, `PREFIX.smiss` + `PREFIX.vmiss`, `PREFIX.idepth` + `PREFIX.ldepth.mean` |
-| `--summary` | QC summary in bcftools-stats layout, `PREFIX.stats` |
 
 Window options:
 
@@ -84,11 +90,53 @@ Window options:
 | `--bypass-invariant-check` | Compute over the sites present (biases pi/dxy denominators) |
 | `--contig-lengths <FILE>` | `.fai`-style `name<TAB>length`, for headers without `##contig` lines |
 
-Sample and region selection works the same in `stats` and `filter`: `-r/-R`
-regions (need an index), `-t/-T` targets (streamed), `-s/-S`, `--keep`,
-`--remove`. Site filters (`-v/-V`, `--snps-only`, `-m/-M`, `-f`, `-i/-e`,
-`-q/-Q`, `--geno`, `--maf/--max-maf`, `--mac/--max-mac`, `--hwe`) select what
-the statistics see.
+`popgen` is a visible alias. The windowed flags were on `reed stats` in 0.3.x;
+there they are now parse-time errors naming the rewrite.
+
+## reed stats
+
+The per-site and per-sample QC reports. Each flag adds its output file.
+
+| Flag | Output |
+|---|---|
+| `--freq`, `--hardy`, `--het`, `--missing`, `--depth` | `PREFIX.afreq`, `PREFIX.hardy`, `PREFIX.het`, `PREFIX.smiss` + `PREFIX.vmiss`, `PREFIX.idepth` + `PREFIX.ldepth.mean` |
+| `--summary` | QC summary in bcftools-stats layout, `PREFIX.stats` |
+| `--hist <LIST>` | One `PREFIX.<m>.hist` TSV per metric |
+
+`--hist` takes comma-separated built-ins (`qual`, `dp`, `dp-site`, `gq`,
+`idl`, `af`) and any numeric tag as `INFO/<TAG>` or `FMT/<TAG>`. Every file
+has `bin_lower`, `bin_upper`, `count`, `percent` columns; integer metrics also
+carry exact `#mean`, `#median` and `#p95` lines. A tag that the header does not
+declare, or one that is not Integer/Float, is a usage error.
+
+`--pop FILE` is optional here (stratified QC); it is required by `popg`'s
+windowed modes. With one of `--freq/--missing/--singletons` it stratifies:
+`PREFIX.afreq.pop` and `PREFIX.vmiss.pop` carry one row per population
+(first-appearance order; the values equal a per-population plink2 run), and
+`PREFIX.singletons` gains a POP column (`.` for a carrier outside every
+group). The cohort files are unchanged, and `--pop` without one of those
+three flags is a usage error. Multiallelic ALT frequencies stay collapsed,
+as in `.afreq`.
+
+## reed rename
+
+Identifier edits: sample names, contig names, variant IDs and header lines.
+Genotypes are never decoded, so the records pass through byte-for-byte.
+
+| Flag | Meaning |
+|---|---|
+| `-s "old new,…"`, `-N FILE` | Rename samples (`old<TAB>new` in the file) |
+| `--replace-sample-name PATTERN` | Rewrite matching names (`pre*` strips a prefix, `*suf` a suffix, else removes the text) |
+| `--rename-chrs FILE` | `old<TAB>new` contig names; the `##contig` lines and the CHROM column change together |
+| `--chr-style plain\|ucsc\|mt-is-m` | Normalize contig names (no `chr`, `chr`, `chrM`) |
+| `--set-id PATTERN` | Rewrite every ID from `%CHROM %POS %REF %ALT` |
+| `--set-missing-var-ids PATTERN` | Fill in IDs that are `.` only |
+| `--update-name FILE`, `--idspace-to SEP`, `--rm-dup-ids`, `--clear-ids` | ID mapping, separator swap, unique suffixes, all-dot |
+| `-h FILE`, `-f FILE`, `--add-meta LINE`, `--remove-meta KEY` | Replace the header, set `##contig` lengths from a `.fai`, add or drop header lines |
+
+Output: `-o FILE` (stdout by default), `-O v|z[level]`. `reheader` is a
+visible alias. A rename onto an existing name, an unknown name and an empty
+request are usage errors.
 
 ## reed filter
 
@@ -139,7 +187,7 @@ independent of `--threads`. The semantics follow the reference tools exactly
 | `--hapmap` | `PREFIX.hmp.txt` (TASSEL layout) |
 | `--vcf [-O v\|z[level]]` | **Reverse direction**: a hapmap (`.hmp.txt`) input back to VCF — `ID` from `rs#`, REF/ALT in declared order, IUPAC cells expanded to `GT` (`R` → `0/1`); `-O z` writes BGZF and omitting `-o` streams to stdout |
 | `--msa --reference ref.fa [--region CHR:B-E]` | `PREFIX_<contig>.fasta`: whole-site alignment against the reference |
-| `--sfs --proj N[,N…] [--pop FILE]` | `PREFIX_sfs/dadi` and `PREFIX_sfs/fastsimcoal2`, identical to `reed stats --sfs` |
+| `--sfs --proj N[,N…] [--pop FILE]` | `PREFIX_sfs/dadi` and `PREFIX_sfs/fastsimcoal2`, identical to `reed popg --sfs` |
 | `--outgroup NAME`, `--min-samples-locus N`, `--resolve-iupac`, `--write-used-sites` | Alignment controls (see `--help`) |
 
 `--hapmap` and `--vcf` are the two directions of one pair: on its lossless
@@ -208,14 +256,14 @@ reed = { path = "crates/reed" }
 ```
 
 ```rust
-use reed::{Populations, StatKind, StatsRequest};
+use reed::{PopgenRequest, Populations, StatKind};
 
-let request = StatsRequest {
+let request = PopgenRequest {
     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
     populations: Populations::File("pops.txt".into()),
-    ..StatsRequest::default()
+    ..PopgenRequest::default()
 };
-let report = reed::run_stats(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
+let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request, &reed::budget::ThreadBudget::default())?;
 let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
 ```
 
@@ -223,13 +271,13 @@ A caller that already holds a `sample -> population` mapping can pass it
 directly instead of writing a populations file:
 
 ```rust
-let request = StatsRequest {
+let request = PopgenRequest {
     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
     populations: Populations::Assignment(vec![
         ("sample1".into(), "popA".into()),
         ("sample2".into(), "popB".into()),
     ]),
-    ..StatsRequest::default()
+    ..PopgenRequest::default()
 };
 ```
 
@@ -253,17 +301,18 @@ for file in &report.files {
 }
 ```
 
-The facade re-exports everything needed: `run_filter`, `run_stats`,
-`run_reports`, `run_index`, `run_convert`, the request types
-(`StatsRequest`, `FilterSpec`, `ReportRequest`, `ConvertRequest`), the
-reports (`StatsReport`, `FilterReport`, `ReportsOutcome`, `IndexOutcome`,
-`ConvertReport`), the writers (`reed::windows`, `reed::reports`,
-`reed::sfs`, `reed::fstats`, `reed::ld`, `reed::summary`),
+The facade re-exports everything needed: `run_filter`, `run_popgen`,
+`run_stats`, `run_rename`, `run_index`, `run_convert`, the request types
+(`PopgenRequest`, `FilterSpec`, `StatsReportRequest`, `RenameSpec`,
+`ConvertRequest`), the reports (`PopgenReport`, `FilterReport`,
+`StatsOutcome`, `RenameReport`, `IndexOutcome`, `ConvertReport`), the writers
+(`reed::windows`, `reed::reports`, `reed::histogram`, `reed::sfs`,
+`reed::fstats`, `reed::ld`, `reed::summary`),
 and a single `reed::Error` whose `kind()` separates usage errors from
-runtime failures. `StatsRequest::to_args(&group_names)` and
+runtime failures. `PopgenRequest::to_args(&group_names)` and
 `FilterSpec::to_args()` render a request back to the CLI spelling, so a tool
 that builds requests programmatically can also log the equivalent command
-line; `StatsRequest::to_args` returns a usage error for the requests the CLI
+line; `PopgenRequest::to_args` returns a usage error for the requests the CLI
 cannot spell (per-bp kinds, a `Regions` grid). Only this facade carries a
 stability promise; the lower crates under `crates/` are internal, and
 `reed::Error` keeps them out of its signature by sealing its variants —
