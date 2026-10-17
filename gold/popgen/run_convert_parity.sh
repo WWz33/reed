@@ -24,7 +24,7 @@
 #   4. vcf2msa on gold/fixtures/convert_msa.vcf: sequences equal with the
 #      region convention mapped (vcf2msa `B-(E+1)` == reed `B-E`; vcf2msa's
 #      end bound is exclusive, reed's is the natural inclusive one).
-#   5. `reed convert --sfs` == `reed stats --sfs` byte-for-byte on the same
+#   5. `reed convert --sfs` == `reed popg --sfs` byte-for-byte on the same
 #      prefix, input and grouping (v13 §4.1).
 #   6. hapmap ↔ VCF round trip (v13 §3.12): VCF → hapmap → VCF reproduces
 #      the records on the lossless domain (biallelic diploid SNPs, no
@@ -159,13 +159,13 @@ else
 fi
 
 # ------------------------------------------------------------------- 5. sfs --
-note "convert --sfs vs stats --sfs (byte-for-byte)"
+note "convert --sfs vs popg --sfs (byte-for-byte)"
 SFS_VCF="$GOLD_DIR/fixtures/sfs.vcf"
 SFS_POPS="$GOLD_DIR/fixtures/sfs.pops"
 rm -rf "$SCRATCH/sfs_a" "$SCRATCH/sfs_bPosition" "$SCRATCH/sfs_b"
 mkdir -p "$SCRATCH/sfs_a" "$SCRATCH/sfs_b"
 "$REED" convert "$SFS_VCF" --pop "$SFS_POPS" --sfs --proj 6 -o "$SCRATCH/sfs_a/out" --verbosity 0
-"$REED" stats "$SFS_VCF" --pop "$SFS_POPS" --sfs --proj 6 -o "$SCRATCH/sfs_b/out" --verbosity 0
+"$REED" popg "$SFS_VCF" --pop "$SFS_POPS" --sfs --proj 6 -o "$SCRATCH/sfs_b/out" --verbosity 0
 if diff -r "$SCRATCH/sfs_a/out_sfs" "$SCRATCH/sfs_b/out_sfs" >/dev/null 2>&1; then
     echo "  SAME  _sfs trees"
 else

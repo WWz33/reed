@@ -7,6 +7,7 @@
 | π/dxy，pixy 默认（all-sites 输入） | `run_pixy.sh` 的 `pixy_default/` | 逐列一致 |
 | π/dxy，`--bypass-invariant-check` | `run_pixy.sh` 的 `pixy_bypass/` | 相对误差 ≤ 1e-9 |
 | π，`--variant-only` | `run_vcftools.sh` + `compare.py --vcftools --vcftools-only` | 容差 1e-4：vcftools 逐位点用 n/(n−1) 有限样本校正，pixy/reed 用比值之和，含缺失数据的窗口实测最大相对差 1.05e-5；量级远小于任何真实算法错误 |
+| `stats --pop` 分层 QC（v14） | `run_popqc.sh` | 分层 afreq/vmiss 逐值 == 按群体切样本后的 plink2 `--freq/--missing`；cohort 文件不变；多等位 ALT 频率为折叠单值（`.afreq` 约定），比较前把 plink2 的逐 ALT 值求和 |
 
 ```bash
 # 1) 参照物（pixy 2.2.4 / vcftools；本机源码装在 ../../.. 的 pixy、scikit-allel）

@@ -47,7 +47,7 @@ echo "== plink2 =="
     --bad-ld --out "$OUT/plink2_prune" >/dev/null 2>&1
 
 echo "== reed (decay) =="
-"$REED" stats "$VCF" --pop "$POPS" --variant-only --ld-decay 100k --ld-pairs \
+"$REED" popg "$VCF" --pop "$POPS" --variant-only --ld-decay 100k --ld-pairs \
     -o "$OUT/reed" --verbosity 0
 echo "== reed (prune) =="
 "$REED" filter "$VCF" --indep-pairwise "$W" "$S" "$R2" -Ov \

@@ -43,9 +43,9 @@ grep -i "weighted Fst" "$OUT/vcftools.log" || true
 
 echo "== reed =="
 # Per-site windows (size 1) plus the genome level.
-"$REED" stats "$VCF" --pop "$POPS" --variant-only --fst --fst-global \
+"$REED" popg "$VCF" --pop "$POPS" --variant-only --fst --fst-global \
     --window 1 --levels window -o "$OUT/reed_site" --verbosity 0
-"$REED" stats "$VCF" --pop "$POPS" --variant-only --fst --fst-global \
+"$REED" popg "$VCF" --pop "$POPS" --variant-only --fst --fst-global \
     --window 100k --levels genome -o "$OUT/reed_genome" --verbosity 0
 
 python3 - "$OUT" <<'PY'

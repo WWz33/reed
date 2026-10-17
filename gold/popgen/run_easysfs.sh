@@ -12,7 +12,7 @@
 #
 # Gate: every bin within rtol 1e-6 of easySFS's, before rounding (the int
 # form can differ by 1 at a half-integer; see compare_sfs.py). Both SFS
-# entries run — `reed stats --sfs` and `reed convert --sfs` — and their
+# entries run — `reed popg --sfs` and `reed convert --sfs` — and their
 # trees must be byte-identical (doc_v13 §4.1, D13-6).
 set -euo pipefail
 
@@ -52,12 +52,12 @@ for fold in unfolded folded; do
     [[ "$fold" == "unfolded" ]] && easy_args+=(--unfolded)
     python3 "$EASYSFS" "${easy_args[@]}" >/dev/null
     echo "== reed ($fold) =="
-    "$REED" stats "$VCF" --pop "$POPS" --sfs "${mode[@]}" --proj "$PROJ" -o "$reed" --verbosity 0
+    "$REED" popg "$VCF" --pop "$POPS" --sfs "${mode[@]}" --proj "$PROJ" -o "$reed" --verbosity 0
     "$REED" convert "$VCF" --pop "$POPS" --sfs "${mode[@]}" --proj "$PROJ" -o "$conv_dir/out" --verbosity 0
     if diff -r "$stat_dir/out_sfs" "$conv_dir/out_sfs" >/dev/null 2>&1; then
-        echo "  convert == stats ($fold)"
+        echo "  convert == popg ($fold)"
     else
-        echo "  convert != stats ($fold)" >&2
+        echo "  convert != popg ($fold)" >&2
         fail=1
     fi
 
