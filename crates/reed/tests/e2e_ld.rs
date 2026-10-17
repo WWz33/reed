@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    InvariantMode, LdRequest, Levels, Populations, StatsRequest, WindowLayoutOptions, run_stats,
+    InvariantMode, LdRequest, Levels, Populations, PopgenRequest, WindowLayoutOptions, run_popgen,
 };
 
 const VCF: &str = "\
@@ -49,8 +49,8 @@ fn pops_two_file(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-fn request(ld: LdRequest) -> StatsRequest {
-    StatsRequest {
+fn request(ld: LdRequest) -> PopgenRequest {
+    PopgenRequest {
         kinds: Vec::new(),
         populations: Populations::All,
         grid: reed::WindowGrid::Bp {
@@ -90,7 +90,7 @@ fn pairwise_r2_matches_plink2() {
         mem: MemBudget::from_bytes(u64::MAX),
     };
 
-    let report = run_stats(
+    let report = run_popgen(
         Some(&vcf),
         &request(LdRequest {
             decay_max_bp: Some(100_000),
@@ -290,7 +290,7 @@ fn ld_is_identical_across_thread_counts() {
             threads,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_stats(
+        let report = run_popgen(
             Some(&vcf),
             &request(LdRequest {
                 decay_max_bp: Some(100_000),
@@ -330,7 +330,7 @@ fn ld_decay_carries_per_population_curves() {
     });
     // Two populations of three samples each.
     req.populations = Populations::File(pops_two_file(dir.as_path()));
-    let report = run_stats(Some(&vcf), &req, &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &req, &budget).expect("invariant: run");
     let ld = report.ld.expect("invariant: LD requested");
 
     assert_eq!(ld.group_decay.len(), 2, "one curve per population");
@@ -535,12 +535,12 @@ fn ld_cohort_excludes_removed_samples() {
 
     let mut kept = request(ld());
     kept.keep_samples = Some(vec![true, true, true, true, false, false]);
-    let a = run_stats(Some(&full), &kept, &budget)
+    let a = run_popgen(Some(&full), &kept, &budget)
         .expect("invariant: run")
         .ld
         .expect("invariant: LD requested");
 
-    let b = run_stats(Some(&four), &request(ld()), &budget)
+    let b = run_popgen(Some(&four), &request(ld()), &budget)
         .expect("invariant: run")
         .ld
         .expect("invariant: LD requested");
@@ -658,7 +658,7 @@ fn ld_sink_caps_in_flight_decay_jobs() {
             threads,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_stats(
+        let report = run_popgen(
             Some(&vcf),
             &request(LdRequest {
                 decay_max_bp: Some(100_000),

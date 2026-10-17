@@ -412,7 +412,7 @@ fn stats_accepts_filter_region_and_sample_flags() {
     let prefix = |name: &str| dir.join(name).display().to_string();
     let run_stats = |extra: &[&str], out: &str| {
         let mut argv = vec![
-            "stats",
+            "popg",
             input.to_str().unwrap(),
             "--pop",
             pops.to_str().unwrap(),
@@ -458,7 +458,7 @@ fn stats_accepts_filter_region_and_sample_flags() {
     // An unknown sample is an error, not a silent skip.
     let bad = run(
         &[
-            "stats",
+            "popg",
             input.to_str().unwrap(),
             "--pop",
             pops.to_str().unwrap(),
@@ -505,7 +505,7 @@ fn stats_site_filters_match_the_filter_then_stats_composition() {
 
         let stats = |source: &str, extra: &[&str], out: &str| -> String {
             let mut argv = vec![
-                "stats",
+                "popg",
                 source,
                 "--pop",
                 pops.to_str().unwrap(),
@@ -635,7 +635,7 @@ fn f4_ratio_accepts_five_populations() {
     let prefix = dir.join("out");
     let out = run(
         &[
-            "stats",
+            "popg",
             vcf.to_str().unwrap(),
             "--pop",
             pops.to_str().unwrap(),
@@ -671,7 +671,7 @@ fn missing_sample_file_errors() {
     let missing = dir.join("nope.txt");
     let out = run(
         &[
-            "stats",
+            "popg",
             input.to_str().unwrap(),
             "--pi",
             "-S",
@@ -699,7 +699,7 @@ fn missing_sample_file_errors() {
 #[test]
 fn missing_input_names_the_file() {
     let missing = "/definitely/not/here.vcf";
-    let out = run(&["stats", missing, "--pi", "-o", "/tmp/reed-nope"], None);
+    let out = run(&["popg", missing, "--pi", "-o", "/tmp/reed-nope"], None);
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -767,7 +767,7 @@ fn skip_empty_and_levels_apply_to_windowed_stats() {
     let run_pi = |name: &str, extra: &[&str]| -> String {
         let prefix = dir.join(name);
         let mut argv = vec![
-            "stats",
+            "popg",
             vcf.to_str().unwrap(),
             "--pop",
             pops.to_str().unwrap(),

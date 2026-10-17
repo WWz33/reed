@@ -1,5 +1,5 @@
 //! The statistics run driver: chunk job (`StatsJob`), per-chunk partials, the
-//! grid/contig accumulation state, and `run_stats` / `run_stats_opened`.
+//! grid/contig accumulation state, and `run_popgen` / `run_popgen_opened`.
 
 use crate::stats::request::{FStatsPartial, FStatsPlan, LdPartial, LdRun, SfsPartial, SfsPlan};
 use reed_core::count::SiteGroupCounts;

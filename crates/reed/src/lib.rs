@@ -27,10 +27,10 @@
 //! A statistics request is a plain struct; unnamed fields take their default:
 //!
 //! ```
-//! use reed::{StatKind, StatsRequest};
-//! let request = StatsRequest {
+//! use reed::{StatKind, PopgenRequest};
+//! let request = PopgenRequest {
 //!     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
-//!     ..StatsRequest::default()
+//!     ..PopgenRequest::default()
 //! };
 //! assert_eq!(request.kinds.len(), 1);
 //! ```
@@ -54,13 +54,13 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use reed::{Populations, StatKind, StatsRequest};
-//! let request = StatsRequest {
+//! use reed::{Populations, StatKind, PopgenRequest};
+//! let request = PopgenRequest {
 //!     kinds: vec![StatKind::Pi { group: 0, per_bp: false }],
 //!     populations: Populations::All,
-//!     ..StatsRequest::default()
+//!     ..PopgenRequest::default()
 //! };
-//! let report = reed::run_stats(
+//! let report = reed::run_popgen(
 //!     Some(std::path::Path::new("in.vcf.gz")),
 //!     &request,
 //!     &reed::budget::ThreadBudget::default(),
@@ -80,6 +80,7 @@ mod filter;
 mod filtered;
 mod index;
 mod input;
+mod rename;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).
@@ -90,8 +91,8 @@ pub use crate::input::OpenedInput;
 pub use crate::stats::{
     DecayBin, FStatRow, FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode,
     JointSfsReport, LdReport, LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest,
-    StatKind, StatsReport, StatsRequest, WindowLayoutOptions, WindowRow, assign_groups,
-    assign_groups_in_memory, default_kinds, run_stats, run_stats_opened, window_kinds,
+    StatKind, PopgenReport, PopgenRequest, WindowLayoutOptions, WindowRow, assign_groups,
+    assign_groups_in_memory, default_kinds, run_popgen, run_popgen_opened, window_kinds,
 };
 // The convert command's request surface (doc_v13 §8): the typed targets, the
 // driver entry points and their reports.
@@ -99,12 +100,17 @@ pub use crate::convert::{
     ConvertCounters, ConvertReport, ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats,
     PhyloOptions, run_convert, run_convert_opened,
 };
+// The rename command's request surface (doc_v14 §4): the typed spec, the
+// output target and the driver.
+pub use crate::rename::{
+    ChrStyle, RenameOutput, RenameReport, RenameSpec, run_rename, run_rename_opened,
+};
 // The report and driver of the per-site/per-sample report family (doc_v11
-// N6): `run_filter`/`run_stats`/`run_index` are already at the root, so
-// `run_reports` and the types in its signature belong beside them rather
+// N6): `run_filter`/`run_popgen`/`run_index` are already at the root, so
+// `run_stats` and the types in its signature belong beside them rather
 // than only under the writers.
 pub use crate::stats::writers::reports::{
-    ReportRequest, ReportsOutcome, run_reports, run_reports_opened,
+    StatsReportRequest, StatsOutcome, run_stats, run_stats_opened,
 };
 pub use reed_filter::funnel::FilterReport;
 // The accumulator and report types that appear in the facade's public
@@ -115,7 +121,7 @@ pub use reed_stats::summary::report::QcReportAcc;
 
 // The output writers (08 §6.2 `reed::writers`): window layout, per-site reports
 // and the bcftools-stats summary renderer.
-pub use crate::stats::writers::{fstats, ld, reports, sfs, summary, windows};
+pub use crate::stats::writers::{fstats, histogram, ld, reports, sfs, summary, windows};
 
 // The request sub-modules the CLI builds against (08 §6.2): `spec`, `expr`,
 // `plan`, `funnel`.
@@ -128,6 +134,11 @@ pub use crate::input::open_regions;
 // Front-end re-exports (08 §6.2): the parallel budgets, the region type and
 // the BGZF chunk helpers the front end and its integration tests seek with
 // (`bgzf` writes the test fixtures; `chunk` is the seek/region API).
+/// The header's declared tag table (doc_v14 §3.3: `--hist` resolves its
+/// `INFO/`/`FMT/` requests against it before the first record).
+pub use reed_core::tag_table::{TagNumber, TagTable, TagType};
+/// Builds the tag table from an opened input's header.
+pub use reed_io::header::tag_table;
 pub use reed_core::coord::{Interval0, Pos0};
 pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_engine::budget;

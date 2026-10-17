@@ -90,13 +90,13 @@ fn help_lists_the_renamed_flags_only() {
 /// `--fst` (clap enforces it) and `--sfs` needs `--proj`.
 #[test]
 fn help_lists_the_new_statistics_flags() {
-    let stats = help(&["stats", "--help"]);
+    let popg = help(&["popg", "--help"]);
     for flag in ["--sfs", "--proj", "--sfs-int", "--fst-global"] {
-        assert!(stats.contains(flag), "stats help lacks {flag}");
+        assert!(popg.contains(flag), "popg help lacks {flag}");
     }
 
     // `--fst-global` without `--fst`: clap's `requires` fails at parse time.
-    let out = run(&["stats", "x.vcf", "--fst-global"]);
+    let out = run(&["popg", "x.vcf", "--fst-global"]);
     assert!(!out.status.success(), "--fst-global alone must fail");
 
     // `--sfs` without `--proj`: the translator names the missing flag; a
@@ -105,7 +105,7 @@ fn help_lists_the_new_statistics_flags() {
     let input = dir.join("in.vcf");
     std::fs::write(&input, fixture()).expect("invariant: fixture");
     let out = run(&[
-        "stats",
+        "popg",
         input.to_str().unwrap(),
         "--sfs",
         "-o",
@@ -145,7 +145,7 @@ fn exit_codes_split_usage_from_runtime() {
     let pop_arg = pops.to_str().unwrap();
 
     // Usage 2: a windowed statistic needs --pop (population missing, §9).
-    let out = run(&["stats", inp, "--pi"]);
+    let out = run(&["popg", inp, "--pi"]);
     assert_eq!(
         out.status.code(),
         Some(2),
@@ -155,7 +155,7 @@ fn exit_codes_split_usage_from_runtime() {
 
     // Usage 2: hudson has no global form.
     let out = run(&[
-        "stats",
+        "popg",
         inp,
         "--fst-global",
         "--fst",
@@ -171,7 +171,7 @@ fn exit_codes_split_usage_from_runtime() {
     );
 
     // Usage 2: --sfs needs --proj.
-    let out = run(&["stats", inp, "--sfs", "--pop", pop_arg]);
+    let out = run(&["popg", inp, "--sfs", "--pop", pop_arg]);
     assert_eq!(
         out.status.code(),
         Some(2),
@@ -179,13 +179,14 @@ fn exit_codes_split_usage_from_runtime() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Runtime 1: the input itself is missing.
+    // Runtime 1: the input itself is missing (a QC flag keeps the request
+    // valid so the failure is the missing file, not the request).
     let out = run(&[
         "stats",
         dir.join("nope.vcf.gz").to_str().unwrap(),
-        "--pi",
-        "--pop",
-        pop_arg,
+        "--freq",
+        "-o",
+        dir.join("p").to_str().unwrap(),
     ]);
     assert_eq!(
         out.status.code(),
@@ -251,13 +252,13 @@ fn verbosity_levels_are_uniform() {
         String::from_utf8_lossy(&bad.stderr)
     );
 
-    // `stats` follows the same contract: silent at 0, timing at 2.
+    // `popg` follows the same contract: silent at 0, timing at 2.
     let pops = dir.join("pops.txt");
     std::fs::write(&pops, "s0\tpopA\ns1\tpopB\n").expect("invariant: groups");
     let stats = |level: &str, prefix: &str| -> String {
         let out = Command::new(env!("CARGO_BIN_EXE_reed"))
             .args([
-                "stats",
+                "popg",
                 input.to_str().unwrap(),
                 "--pop",
                 pops.to_str().unwrap(),
@@ -280,7 +281,7 @@ fn verbosity_levels_are_uniform() {
         String::from_utf8_lossy(&out.stderr).into_owned()
     };
     let quiet = stats("0", &dir.join("s0").display().to_string());
-    assert!(quiet.is_empty(), "stats level 0 must be silent: {quiet}");
+    assert!(quiet.is_empty(), "popg level 0 must be silent: {quiet}");
     let timed = stats("2", &dir.join("s2").display().to_string());
     assert!(timed.contains("phase.run_ms"), "{timed}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -366,7 +367,7 @@ fn report_mode_accepts_targets() {
 }
 
 /// Y6 batch G: `reed index` really builds an index next to the input, and
-/// `reed stats` really writes the window-layout product — the minimal
+/// `reed popg` really writes the window-layout product — the minimal
 /// end-to-end fixture runs for the two commands the round-trip tests cannot
 /// reach (binary-level only here).
 #[test]
@@ -390,7 +391,7 @@ fn index_and_stats_run_on_the_minimal_fixture() {
     std::fs::write(&pops, "s0\tA\ns1\tA\n").expect("invariant: pops");
     let prefix = dir.join("out");
     let out = run(&[
-        "stats",
+        "popg",
         inp,
         "--pop",
         pops.to_str().unwrap(),

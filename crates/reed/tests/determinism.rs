@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use reed::reports::{ReportRequest, run_reports};
+use reed::reports::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use sha2::Digest;
 use std::fmt::Write as _;
@@ -89,19 +89,23 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
     let mut digests = Vec::new();
     for threads in [1_usize, 2, 3, 7, 56] {
         let prefix = dir.join(format!("out-{threads}"));
-        let request = ReportRequest {
+        let request = StatsReportRequest {
             freq: true,
             hardy: true,
             het: true,
             missing: true,
             depth: true,
             summary: true,
+        hist: Vec::new(),
+        singletons: false,
+        populations: None,
+        force_samples: false,
             targets: Vec::new(),
             targets_exclude: Vec::new(),
             prefix: prefix.clone(),
         };
         let outcome =
-            run_reports(Some(&input), &request, &budget(threads)).expect("invariant: reports run");
+            run_stats(Some(&input), &request, &budget(threads)).expect("invariant: reports run");
         assert_eq!(outcome.n_records, 3_000, "threads={threads}");
         let qc = outcome.qc.expect("invariant: summary requested");
         assert_eq!(qc.summary.n_records, 3_000, "threads={threads}");

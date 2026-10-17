@@ -3,7 +3,7 @@
 
 use crate::stats::request::{
     FStatAcc, FStatsPlan, FStatsReport, JointSfsReport, LdPlan, LdReport, Levels, Populations,
-    SfsPlan, SfsReport, StatsReport, StatsRequest, assign_groups, assign_groups_in_memory,
+    SfsPlan, SfsReport, PopgenReport, PopgenRequest, assign_groups, assign_groups_in_memory,
 };
 use crate::stats::run::{BcfNative, GridMode, StatsJob, stats_policies};
 use crate::stats::sink::StatsSink;
@@ -124,13 +124,13 @@ pub(crate) fn sfs_report(partial: &crate::stats::request::SfsPartial, plan: &Sfs
 ///
 /// Transport, job, and request failures — including a sample-count mismatch
 /// against the header, an invalid grid, or a group index without samples.
-pub fn run_stats(
+pub fn run_popgen(
     path: Option<&Path>,
-    request: &StatsRequest,
+    request: &PopgenRequest,
     budget: &ThreadBudget,
-) -> Result<StatsReport, crate::error::Error> {
+) -> Result<PopgenReport, crate::error::Error> {
     let opened = crate::input::open(path).map_err(EngineError::from)?;
-    run_stats_opened(opened, request, budget)
+    run_popgen_opened(opened, request, budget)
 }
 
 /// Runs windowed statistics over an already-opened input (the CLI opens
@@ -138,12 +138,12 @@ pub fn run_stats(
 ///
 /// # Errors
 ///
-/// As [`run_stats`].
-pub fn run_stats_opened(
+/// As [`run_popgen`].
+pub fn run_popgen_opened(
     opened: crate::input::OpenedInput,
-    request: &StatsRequest,
+    request: &PopgenRequest,
     budget: &ThreadBudget,
-) -> Result<StatsReport, crate::error::Error> {
+) -> Result<PopgenReport, crate::error::Error> {
     // ---- Request → executable plan (08 §6.2). Every failure up to the end
     // of the validation section below is request construction (Usage). ----
     let sample_names = opened.facts.sample_names.clone();
@@ -366,7 +366,7 @@ pub fn run_stats_opened(
         .take()
         .expect("invariant: sink finish stored the output");
 
-    Ok(StatsReport {
+    Ok(PopgenReport {
         windows: output.windows,
         ld: output.ld.map(|ld| {
             let bin = request.ld.as_ref().map_or(1000, |l| l.decay_bin_bp.max(1));

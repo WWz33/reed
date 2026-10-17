@@ -3,7 +3,7 @@
 
 use std::io::Write;
 
-use reed::reports::{ReportRequest, run_reports};
+use reed::reports::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
 fn bgzf(text: &str) -> Vec<u8> {
@@ -56,13 +56,17 @@ fn lines(path: &std::path::Path) -> Vec<Vec<String>> {
 fn reports_match_hand_computed_values() {
     let (dir, vcf) = fixture();
     let prefix = dir.join("out");
-    let request = ReportRequest {
+    let request = StatsReportRequest {
         freq: true,
         hardy: true,
         het: true,
         missing: true,
         depth: true,
         summary: false,
+        hist: Vec::new(),
+        singletons: false,
+        populations: None,
+        force_samples: false,
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         prefix: prefix.clone(),
@@ -71,7 +75,7 @@ fn reports_match_hand_computed_values() {
         threads: 2,
         mem: MemBudget::default_half_memory(),
     };
-    let outcome = run_reports(Some(&vcf), &request, &budget).expect("invariant: reports run");
+    let outcome = run_stats(Some(&vcf), &request, &budget).expect("invariant: reports run");
     assert_eq!(outcome.n_records, 3);
     assert_eq!(
         outcome.files.len(),
@@ -186,16 +190,16 @@ fn summary_idd_qual_psc_match_bcftools() {
     file.write_all(&bgzf(D77)).expect("invariant: write");
     drop(file);
     let prefix = dir.join("out");
-    let request = ReportRequest {
+    let request = StatsReportRequest {
         summary: true,
         prefix: prefix.clone(),
-        ..ReportRequest::default()
+        ..StatsReportRequest::default()
     };
     let budget = ThreadBudget {
         threads: 2,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let outcome = run_reports(Some(&vcf), &request, &budget).expect("invariant: run");
+    let outcome = run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
     let qc = outcome.qc.expect("invariant: summary requested");
     let names = vec!["S1".to_string(), "S2".to_string()];
     let text = reed::summary::render_bcftools_stats(&qc, &names);

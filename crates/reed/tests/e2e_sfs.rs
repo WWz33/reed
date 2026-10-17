@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{Levels, Populations, SfsRequest, StatsRequest, run_stats};
+use reed::{Levels, Populations, SfsRequest, PopgenRequest, run_popgen};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -45,8 +45,8 @@ fn fixture(dir: &Path) -> std::path::PathBuf {
     vcf
 }
 
-fn request(folded: bool) -> StatsRequest {
-    StatsRequest {
+fn request(folded: bool) -> PopgenRequest {
+    PopgenRequest {
         kinds: Vec::new(),
         populations: Populations::All,
         force_samples: false,
@@ -86,7 +86,7 @@ fn projected_sfs_matches_the_hand_computed_spectrum() {
         mem: MemBudget::from_bytes(u64::MAX),
     };
 
-    let report = run_stats(Some(&vcf), &request(false), &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request(false), &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
     assert_eq!(sfs.projections, vec![6]);
     assert!(!sfs.folded);
@@ -131,7 +131,7 @@ fn folded_spectrum_pads_the_upper_half_and_masks_it() {
         mem: MemBudget::from_bytes(u64::MAX),
     };
 
-    let report = run_stats(Some(&vcf), &request(true), &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request(true), &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
     assert!(sfs.folded);
     // Folded: ξ'_k = ξ_k + ξ_{n−k} for 0 < k < n/2; the middle bin (n even)
@@ -178,7 +178,7 @@ fn spectra_are_identical_across_thread_counts() {
             threads,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_stats(Some(&vcf), &request(false), &budget).expect("invariant: run");
+        let report = run_popgen(Some(&vcf), &request(false), &budget).expect("invariant: run");
         let sfs = report.sfs.expect("invariant: SFS requested");
         digests.push(sfs.spectra[0].clone());
     }
@@ -204,7 +204,7 @@ fn missing_chromosomes_are_skipped_and_counted() {
         threads: 2,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let report = run_stats(Some(&vcf), &request(false), &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request(false), &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
     assert_eq!(sfs.n_skipped_m_lt_n, vec![1]);
     // The other ten sites (m = 8) still project.
@@ -237,7 +237,7 @@ fn joint_spectrum_matches_easysfs() {
         projections: vec![4, 4],
         folded: true,
     });
-    let report = run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
     let sfs = report.sfs.expect("invariant: SFS requested");
     let joint = sfs.joint.clone().expect("invariant: joint spectra");
     assert_eq!(joint.pairs, vec![(0, 1)]);

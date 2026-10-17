@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use reed::{FilterOptions, run_filter};
-use reed::{Levels, Populations, StatsRequest, WindowLayoutOptions, run_stats};
+use reed::{Levels, Populations, PopgenRequest, WindowLayoutOptions, run_popgen};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_filter::spec::FilterSpec;
 
@@ -85,8 +85,8 @@ fn pops_file() -> PathBuf {
     .clone()
 }
 
-fn request() -> StatsRequest {
-    StatsRequest {
+fn request() -> PopgenRequest {
+    PopgenRequest {
         kinds: reed::window_kinds(2, true, true, true, false, None, None),
         populations: Populations::File(pops_file()),
         grid: reed::WindowGrid::Bp {
@@ -103,16 +103,16 @@ fn request() -> StatsRequest {
         layout: Some(WindowLayoutOptions {
             invariant: reed::InvariantMode::VariantOnly,
         }),
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     }
 }
 
 /// `stats` over the BCF fixture equals the same run over the VCF.gz fixture.
 #[test]
 fn stats_output_is_identical_across_formats() {
-    let bcf = run_stats(Some(&fixture("fix.bcf")), &request(), &budget()).expect("invariant: bcf");
+    let bcf = run_popgen(Some(&fixture("fix.bcf")), &request(), &budget()).expect("invariant: bcf");
     let vcf =
-        run_stats(Some(&fixture("fix.vcf.gz")), &request(), &budget()).expect("invariant: vcf.gz");
+        run_popgen(Some(&fixture("fix.vcf.gz")), &request(), &budget()).expect("invariant: vcf.gz");
     // The request uses `InvariantMode::VariantOnly`, so the flat table is
     // rendered with the variant-only denominators (as the old sink did).
     let kinds = reed::window_kinds(2, true, true, true, false, None, None);
@@ -129,20 +129,24 @@ fn reports_are_identical_across_formats() {
     let dir = dir("reports");
     let bcf_prefix = dir.join("b");
     let vcf_prefix = dir.join("v");
-    let request = |prefix: &Path| reed::reports::ReportRequest {
+    let request = |prefix: &Path| reed::reports::StatsReportRequest {
         freq: true,
         hardy: true,
         het: true,
         missing: true,
         depth: true,
         summary: false,
+        hist: Vec::new(),
+        singletons: false,
+        populations: None,
+        force_samples: false,
         targets: Vec::new(),
         targets_exclude: Vec::new(),
         prefix: prefix.to_path_buf(),
     };
-    reed::reports::run_reports(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
+    reed::reports::run_stats(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
         .expect("invariant: bcf reports");
-    reed::reports::run_reports(
+    reed::reports::run_stats(
         Some(&fixture("fix.vcf.gz")),
         &request(&vcf_prefix),
         &budget(),

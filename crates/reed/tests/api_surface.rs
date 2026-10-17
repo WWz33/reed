@@ -9,8 +9,8 @@
 use std::io::Write;
 
 use reed::{
-    FilterReport, Populations, ReportRequest, ReportsOutcome, StatsRequest,
-    assign_groups_in_memory, default_kinds, run_reports, run_stats,
+    FilterReport, PopgenReport, PopgenRequest, Populations, StatsOutcome, StatsReportRequest,
+    assign_groups_in_memory, default_kinds, run_popgen, run_stats,
 };
 
 // ---- A11-6: the four drivers and their reports live at the root ----
@@ -22,14 +22,14 @@ fn _drivers_and_reports_are_at_the_root(
     ) -> Result<FilterReport, reed::Error>,
     _: fn(
         Option<&std::path::Path>,
-        &StatsRequest,
+        &PopgenRequest,
         &reed::budget::ThreadBudget,
-    ) -> Result<reed::StatsReport, reed::Error>,
+    ) -> Result<PopgenReport, reed::Error>,
     _: fn(
         Option<&std::path::Path>,
-        &ReportRequest,
+        &StatsReportRequest,
         &reed::budget::ThreadBudget,
-    ) -> Result<ReportsOutcome, reed::Error>,
+    ) -> Result<StatsOutcome, reed::Error>,
     _: fn(
         &std::path::Path,
         reed::WriteIndex,
@@ -86,12 +86,12 @@ fn budget() -> reed::budget::ThreadBudget {
     }
 }
 
-/// A11-1: a request built from `StatsRequest::default()` still emits its
+/// A11-1: a request built from `PopgenRequest::default()` still emits its
 /// window rows — the default `Levels` is the window level, not all-false.
 #[test]
 fn default_request_emits_window_rows() {
     let vcf = fixture("default.vcf.gz");
-    let request = StatsRequest {
+    let request = PopgenRequest {
         kinds: vec![reed::StatKind::Pi {
             group: 0,
             per_bp: false,
@@ -101,7 +101,7 @@ fn default_request_emits_window_rows() {
             size: 100,
             step: 100,
         },
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     };
     assert_eq!(
         request.levels,
@@ -112,7 +112,7 @@ fn default_request_emits_window_rows() {
         },
         "the derived Default must be the window level"
     );
-    let report = run_stats(Some(&vcf), &request, &budget()).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request, &budget()).expect("invariant: run");
     assert!(
         !report.windows.is_empty(),
         "a default request must emit window rows, got {}",
@@ -121,11 +121,11 @@ fn default_request_emits_window_rows() {
 }
 
 /// A11-2: the README "Library use" example, verbatim in spirit — the request
-/// is borrowed by `run_stats` and still usable afterwards.
+/// is borrowed by `run_popgen` and still usable afterwards.
 #[test]
 fn readme_library_example_compiles_and_runs() {
     let vcf = fixture("readme.vcf.gz");
-    let request = StatsRequest {
+    let request = PopgenRequest {
         kinds: vec![reed::StatKind::Pi {
             group: 0,
             per_bp: false,
@@ -135,9 +135,9 @@ fn readme_library_example_compiles_and_runs() {
             size: 100,
             step: 100,
         },
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     };
-    let report = run_stats(Some(vcf.as_path()), &request, &budget()).expect("invariant: run");
+    let report = run_popgen(Some(vcf.as_path()), &request, &budget()).expect("invariant: run");
     // The borrow survives the call: this line is the A11-2 regression.
     let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
     assert!(tsv.starts_with("contig\tstart\tend"));
@@ -149,14 +149,14 @@ fn readme_library_example_compiles_and_runs() {
 #[test]
 fn to_args_errors_instead_of_panicking_on_unrenderable_kinds() {
     let names = vec!["A".to_string(), "B".to_string()];
-    let request = StatsRequest {
+    let request = PopgenRequest {
         kinds: default_kinds(2),
         populations: Populations::All,
         grid: reed::WindowGrid::Bp {
             size: 100,
             step: 100,
         },
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     };
     let err = request
         .to_args(&names)
@@ -164,14 +164,14 @@ fn to_args_errors_instead_of_panicking_on_unrenderable_kinds() {
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
 
     // The windowed form still renders.
-    let windowed = StatsRequest {
+    let windowed = PopgenRequest {
         kinds: reed::window_kinds(2, true, false, false, false, None, None),
         populations: Populations::All,
         grid: reed::WindowGrid::Bp {
             size: 100,
             step: 100,
         },
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     };
     let args = windowed.to_args(&names).expect("invariant: windowed form");
     assert!(args.contains(&"--pi".to_string()), "{args:?}");
@@ -193,12 +193,12 @@ fn facade_errors_converge_on_reed_error() {
 /// A11-7: a summary-only request is not "empty".
 #[test]
 fn summary_only_report_request_is_not_empty() {
-    let request = ReportRequest {
+    let request = StatsReportRequest {
         summary: true,
-        ..ReportRequest::default()
+        ..StatsReportRequest::default()
     };
     assert!(!request.is_empty());
-    assert!(ReportRequest::default().is_empty());
+    assert!(StatsReportRequest::default().is_empty());
 }
 
 /// A11-11: the in-memory assignment agrees with the file form byte for byte.
@@ -214,7 +214,7 @@ fn in_memory_assignment_matches_the_file_form() {
     assert_eq!(names, ["pop1", "pop2"]);
     assert_eq!(masks, [Some(0), Some(1)]);
 
-    let from_memory = StatsRequest {
+    let from_memory = PopgenRequest {
         kinds: vec![reed::StatKind::Pi {
             group: 0,
             per_bp: false,
@@ -224,17 +224,17 @@ fn in_memory_assignment_matches_the_file_form() {
             size: 100,
             step: 100,
         },
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     };
     let dir = vcf.parent().expect("invariant: dir");
     let pops = dir.join("pops.tsv");
     std::fs::write(&pops, "s0\tpop1\ns1\tpop2\n").expect("invariant: pops");
-    let from_file = StatsRequest {
+    let from_file = PopgenRequest {
         populations: Populations::File(pops),
         ..from_memory.clone()
     };
-    let a = run_stats(Some(&vcf), &from_memory, &budget()).expect("invariant: memory run");
-    let b = run_stats(Some(&vcf), &from_file, &budget()).expect("invariant: file run");
+    let a = run_popgen(Some(&vcf), &from_memory, &budget()).expect("invariant: memory run");
+    let b = run_popgen(Some(&vcf), &from_file, &budget()).expect("invariant: file run");
     let kinds = from_memory.kinds.clone();
     assert_eq!(
         reed::windows::render_tsv(&a.windows, &kinds, false),
@@ -243,17 +243,17 @@ fn in_memory_assignment_matches_the_file_form() {
     );
 }
 
-/// A11-6: `run_reports` is reachable from the root and returns its report.
+/// A11-6: `run_stats` is reachable from the root and returns its report.
 #[test]
 fn run_reports_is_reachable_from_the_root() {
     let vcf = fixture("reports.vcf.gz");
     let prefix = vcf.parent().expect("invariant: dir").join("out");
-    let request = ReportRequest {
+    let request = StatsReportRequest {
         freq: true,
         prefix,
-        ..ReportRequest::default()
+        ..StatsReportRequest::default()
     };
-    let outcome = run_reports(Some(&vcf), &request, &budget()).expect("invariant: reports");
+    let outcome = run_stats(Some(&vcf), &request, &budget()).expect("invariant: reports");
     assert_eq!(outcome.n_records, 2);
     assert_eq!(outcome.files.len(), 1);
 }

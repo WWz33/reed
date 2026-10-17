@@ -9,7 +9,7 @@ use std::path::Path;
 
 use reed_stats::request::{StatKey, StatKind};
 
-use crate::stats::{InvariantMode, StatsReport, WindowLayoutOptions, WindowRow};
+use crate::stats::{InvariantMode, PopgenReport, WindowLayoutOptions, WindowRow};
 
 /// Renders the flat wide table (the `layout: None` debug output): a header
 /// (`contig`, `start`, `end`, then one column per statistic key) and one row
@@ -69,7 +69,7 @@ pub fn render_tsv(rows: &[WindowRow], kinds: &[StatKind], variant_only: bool) ->
 /// Any output-file write failure.
 pub fn write(
     prefix: &Path,
-    report: &StatsReport,
+    report: &PopgenReport,
     group_names: &[String],
     kinds: &[StatKind],
     layout: WindowLayoutOptions,

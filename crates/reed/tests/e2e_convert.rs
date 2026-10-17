@@ -9,7 +9,7 @@ use std::path::Path;
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
     ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions, Populations, SfsRequest,
-    StatsRequest, run_convert, run_stats,
+    PopgenRequest, run_convert, run_popgen,
 };
 
 /// The phylogenetic fixture: 20 records over 8 samples, covering biallelic
@@ -595,7 +595,7 @@ fn convert_sfs_equals_stats_sfs() {
         ..ConvertRequest::default()
     };
     run_convert(Some(&vcf), &convert_request, &budget()).expect("convert");
-    let stats_request = StatsRequest {
+    let stats_request = PopgenRequest {
         kinds: Vec::new(),
         populations: Populations::File(pops),
         force_samples: false,
@@ -627,7 +627,7 @@ fn convert_sfs_equals_stats_sfs() {
     std::fs::create_dir_all(&stats_dir).expect("invariant: dir");
     // The stats driver writes nothing itself; the writers do. Render both
     // and compare the bytes.
-    let stats_report = run_stats(Some(&vcf), &stats_request, &budget()).expect("stats");
+    let stats_report = run_popgen(Some(&vcf), &stats_request, &budget()).expect("stats");
     let mut stats_files = reed::sfs::write_projected_sfs(
         &stats_dir.join("out"),
         &["pop1".to_string()],

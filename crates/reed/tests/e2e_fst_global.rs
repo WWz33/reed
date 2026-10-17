@@ -6,7 +6,7 @@
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    InvariantMode, Levels, Populations, StatKind, StatsRequest, WindowLayoutOptions, run_stats,
+    InvariantMode, Levels, Populations, StatKind, PopgenRequest, WindowLayoutOptions, run_popgen,
 };
 
 const VCF: &str = "\
@@ -56,8 +56,8 @@ fn pops_two_file() -> std::path::PathBuf {
     .clone()
 }
 
-fn request(window: u64, levels: Levels) -> StatsRequest {
-    StatsRequest {
+fn request(window: u64, levels: Levels) -> PopgenRequest {
+    PopgenRequest {
         kinds: vec![StatKind::FstGlobal],
         populations: Populations::File(pops_file()),
         grid: reed::WindowGrid::Bp {
@@ -95,7 +95,7 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
     };
 
     // Per-site windows (size 1): one value per site.
-    let report = run_stats(
+    let report = run_popgen(
         Some(&vcf),
         &request(
             1,
@@ -121,7 +121,7 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
     }
 
     // Genome-wide: the Σa/Σ(a+b+c) over all sites (vcftools' weighted Fst).
-    let report = run_stats(
+    let report = run_popgen(
         Some(&vcf),
         &request(
             100_000,
@@ -170,14 +170,14 @@ fn hudson_has_no_global_form() {
         },
     );
     two.populations = Populations::File(pops_two_file());
-    let report = run_stats(Some(&vcf), &two, &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &two, &budget).expect("invariant: run");
     // Two populations: the global value equals the pairwise WC84 value.
     let global = report.windows[0].accs[0]
         .value(&StatKind::FstGlobal, 1)
         .expect("invariant: window has sites");
-    let pairwise = run_stats(
+    let pairwise = run_popgen(
         Some(&vcf),
-        &StatsRequest {
+        &PopgenRequest {
             kinds: vec![StatKind::Fst {
                 a: 0,
                 b: 1,
@@ -240,7 +240,7 @@ fn global_fst_is_identical_across_thread_counts() {
             threads,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_stats(
+        let report = run_popgen(
             Some(&vcf),
             &request(
                 1,

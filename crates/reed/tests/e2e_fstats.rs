@@ -5,8 +5,8 @@
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    FStatTest, FStatsRequest, InvariantMode, Levels, Populations, StatsRequest,
-    WindowLayoutOptions, run_stats,
+    FStatTest, FStatsRequest, InvariantMode, Levels, Populations, PopgenRequest,
+    WindowLayoutOptions, run_popgen,
 };
 
 const VCF: &str = "\
@@ -41,8 +41,8 @@ fn pops_file() -> std::path::PathBuf {
     .clone()
 }
 
-fn request(tests: Vec<FStatTest>, block_bp: u64) -> StatsRequest {
-    StatsRequest {
+fn request(tests: Vec<FStatTest>, block_bp: u64) -> PopgenRequest {
+    PopgenRequest {
         kinds: Vec::new(),
         populations: Populations::File(pops_file()),
         grid: reed::WindowGrid::Bp {
@@ -98,7 +98,7 @@ fn fstats_match_scikit_allel() {
             d: 2,
         },
     ];
-    let report = run_stats(Some(&vcf), &request(tests, 1), &budget).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request(tests, 1), &budget).expect("invariant: run");
     let fstats = report.fstats.expect("invariant: f-stats requested");
     assert_eq!(fstats.rows.len(), 4);
 
@@ -144,7 +144,7 @@ fn fstats_are_identical_across_thread_counts() {
             threads,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_stats(
+        let report = run_popgen(
             Some(&vcf),
             &request(
                 vec![
@@ -187,7 +187,7 @@ fn f4_ratio_divides_the_two_f4_estimates() {
     // f4-ratio = Σf4(A, O; X, C) / Σf4(A, O; B, C) with A = popA, O = popB,
     // X = popC, B = popA, C = popC. The two f4 sums come from independent
     // F4 tests over the same data, so the ratio is checkable by construction.
-    let ratio = run_stats(
+    let ratio = run_popgen(
         Some(&vcf),
         &request(
             vec![FStatTest::F4Ratio {
@@ -205,7 +205,7 @@ fn f4_ratio_divides_the_two_f4_estimates() {
     let rows = ratio.fstats.expect("invariant: f-stats").rows;
     assert_eq!(rows.len(), 1);
 
-    let parts = run_stats(
+    let parts = run_popgen(
         Some(&vcf),
         &request(
             vec![

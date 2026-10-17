@@ -1,11 +1,11 @@
-//! `run_stats` end-to-end: hand-computed window values, thread-count
+//! `run_popgen` end-to-end: hand-computed window values, thread-count
 //! determinism (§7.6), the contig-revisit refusal, `--skip-empty`
 //! (§8.5) and the window/contig/genome levels (§8.7).
 
 use std::collections::HashMap;
 use std::io::Write;
 
-use reed::{Levels, Populations, StatsRequest, assign_groups, default_kinds, run_stats};
+use reed::{Levels, Populations, PopgenRequest, assign_groups, default_kinds, run_popgen};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::fst::FstKind;
 use reed_stats::request::StatKind;
@@ -53,7 +53,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     .to_string()
 }
 
-fn request(kinds: Vec<StatKind>, levels: Levels, skip_empty: bool) -> StatsRequest {
+fn request(kinds: Vec<StatKind>, levels: Levels, skip_empty: bool) -> PopgenRequest {
     request_with(kinds, levels, skip_empty, HashMap::new())
 }
 
@@ -77,8 +77,8 @@ fn request_with(
     levels: Levels,
     skip_empty: bool,
     contig_lengths: HashMap<Vec<u8>, u64>,
-) -> StatsRequest {
-    StatsRequest {
+) -> PopgenRequest {
+    PopgenRequest {
         kinds,
         populations: Populations::File(pops_fixture()),
         grid: reed::WindowGrid::Bp {
@@ -89,7 +89,7 @@ fn request_with(
         skip_empty,
         contig_lengths,
         layout: None,
-        ..StatsRequest::default()
+        ..PopgenRequest::default()
     }
 }
 
@@ -178,7 +178,7 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
             threads,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_stats(
+        let report = run_popgen(
             Some(path.as_path()),
             &request(
                 KINDS_TEST.to_vec(),
@@ -208,7 +208,7 @@ fn skip_empty_drops_window_rows_only() {
         threads: 2,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let report = run_stats(
+    let report = run_popgen(
         Some(path.as_path()),
         &request(
             KINDS_TEST.to_vec(),
@@ -239,7 +239,7 @@ fn contig_and_genome_levels_aggregate_the_bins() {
         mem: MemBudget::from_bytes(u64::MAX),
     };
     let levels = Levels::parse("window,contig,genome").expect("invariant: levels");
-    let report = run_stats(
+    let report = run_popgen(
         Some(path.as_path()),
         &request(KINDS_TEST.to_vec(), levels, false),
         &budget,
@@ -310,7 +310,7 @@ chr1\t60\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t1/1
         threads: 2,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let err = run_stats(
+    let err = run_popgen(
         Some(path.as_path()),
         &request(KINDS_TEST.to_vec(), Levels::default(), false),
         &budget,
@@ -395,7 +395,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
 ";
     let path = write_fixture("d7-no-length", text);
 
-    let err = run_stats(
+    let err = run_popgen(
         Some(path.as_path()),
         &request(
             vec![StatKind::Pi {
@@ -416,7 +416,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     // The .fai-style supplement repairs it: same values as a declared run.
     let mut lengths = HashMap::new();
     lengths.insert(b"chr1".to_vec(), 1_000_u64);
-    let with_file = run_stats(
+    let with_file = run_popgen(
         Some(path.as_path()),
         &request_with(
             vec![StatKind::Pi {
@@ -435,7 +435,7 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
     .expect("invariant: lengths supplement works");
 
     let declared = write_fixture("d7-declared", &fixture_text());
-    let reference = run_stats(
+    let reference = run_popgen(
         Some(declared.as_path()),
         &request(
             vec![StatKind::Pi {
@@ -478,7 +478,7 @@ chr1\t80\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
 chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
 ";
     let path = write_fixture("d8-unsorted", unsorted);
-    let err = run_stats(
+    let err = run_popgen(
         Some(path.as_path()),
         &request(
             vec![StatKind::Pi {
@@ -505,7 +505,7 @@ chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
 chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
 ";
     let path = write_fixture("d8-beyond", beyond);
-    let err = run_stats(
+    let err = run_popgen(
         Some(path.as_path()),
         &request(
             vec![StatKind::Pi {
@@ -561,7 +561,7 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
         threads: 2,
         mem: reed::budget::MemBudget::from_bytes(u64::MAX),
     };
-    let request = reed::StatsRequest {
+    let request = reed::PopgenRequest {
         kinds: vec![reed::StatKind::Pi {
             group: 0,
             per_bp: false,
@@ -602,7 +602,7 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
         fstats: None,
         ld: None,
     };
-    let report = reed::run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
+    let report = reed::run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
     // Three windows in input order; rows are (pop, start1, end).
     let rows: Vec<(String, u64, u64)> = report
         .windows
@@ -679,7 +679,7 @@ fn malformed_record_under_site_filter_is_fatal() {
         threads: 4,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let err = run_stats(Some(path.as_path()), &request, &budget)
+    let err = run_popgen(Some(path.as_path()), &request, &budget)
         .expect_err("malformed line must be fatal");
     assert!(
         err.to_string().contains("fewer than 9 columns"),

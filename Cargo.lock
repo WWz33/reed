@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "reed"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bstr",
  "flate2",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "reed-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "reed",
@@ -975,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "reed-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bitflags",
  "proptest",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "reed-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "rayon",
@@ -999,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "reed-filter"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "memchr",
  "reed-core",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "reed-io"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bitflags",
  "bstr",
@@ -1035,7 +1035,7 @@ version = "0.2.0"
 
 [[package]]
 name = "reed-stats"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "proptest",
  "reed-core",
