@@ -325,8 +325,9 @@ Library use 一节示例改写并进编译门（v13 惯例）。
   - 重定向：`--pi moved to reed popg: run '…'`（D14-2）；
   - `--hist`：未知 metric、非数值标签、标签未声明；
   - `rename`：§4.3 校验表。
-- `popg` 的 `PREFIX.log`（方法与文献、漏斗、计数器）与 stats 的
-  `PREFIX.log` 各自独立，格式沿用。
+- `popg` 的窗口模式写 `PREFIX.log`（方法与文献、漏斗、计数器）；QC 报告
+  （`stats`）不写日志——0.3.x 的 QC 路径即如此，拆分未改（实测参照
+  二进制只写窗口模式的日志）。
 
 ## §8 验收门（实施期逐条）
 

@@ -156,7 +156,8 @@ for the site filters that follow.
 Sample filters: `--mind <FLOAT>` drops samples whose missing rate exceeds the
 threshold. `--indep-pairwise <W[kb] [S] R2>` prunes sites by LD using the
 plink2 algorithm and emits the kept sites; the window `W` may carry a `kb`
-suffix, the step `S` defaults to 1, and `R2` is the r² ceiling.
+suffix (a bp window then fixes the step at 1 — `50kb 0.2`), the step `S`
+defaults to 1 and is a variant count, and `R2` is the r² ceiling.
 
 INFO handling: reed updates `INFO/AC` and `INFO/AN` when the sample set
 changes (a record without a GT key keeps its input values); `-I/--no-update`

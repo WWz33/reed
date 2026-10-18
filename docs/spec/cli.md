@@ -111,7 +111,7 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `--maf X` / `--max-maf X` | `min(ac, an−ac)/an ≥ X` / `≤ X` | 次等位 / 已调用等位 |
 | `--mac C` / `--max-mac C` | `min(ac, an−ac) ≥ C` / `≤ C` | 次等位计数 |
 | `--hwe P [midp]` | 精确检验 `p ≥ P`；`midp` 用 mid-p | 双等位位点 |
-| **`--indep-pairwise W[kb] [S] R2`**（裁决 2026-10-10） | LD 剪枝：按 plink2 的算法选出保留位点，**本命令直接输出剪枝后的 VCF/BCF**（位点清单形式的产物不在本轮范围内） | 掩码后的基因型；r² 只取两位点都已调用的样本（05 §3.4） |
+| **`--indep-pairwise W[kb] [S] R2`**（裁决 2026-10-10） | LD 剪枝：按 plink2 的算法选出保留位点，**本命令直接输出剪枝后的 VCF/BCF**（位点清单形式的产物不在本轮范围内）。`W` 裸数字=位点个数、`S` 也是位点个数；`W` 带长度后缀=区间（此时 `S` 必须为 1，`50kb 5 0.2` 报用法错） | 掩码后的基因型；r² 只取两位点都已调用的样本（05 §3.4） |
 
 `-q/-Q` 与 `--maf` 的区别写在 `--help`：前者"非参考等位频率、优先用 INFO"，后者"次等位频率、总是按基因型重算"。
 
@@ -263,7 +263,7 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | depth | `PREFIX.idepth`、`PREFIX.ldepth.mean` | vcftools 列布局 |
 | summary | `PREFIX.stats` | bcftools stats 文本 |
 | f 统计 / LD | `PREFIX.fstats`、`PREFIX.ld.decay`、`PREFIX.ld`（`--ld-pairs`，需与 `--ld-decay` 同给） | 05 §3.3–3.4。剪枝只输出剪枝后的 VCF/BCF（`filter --indep-pairwise`），单独的位点清单（plink 的 `.prune.in/.out`）不在本轮范围内 |
-| 日志 | `popg` 的窗口模式写 `PREFIX.log`；`stats` 的 QC 报告不写日志 | 命令、版本、每个统计量的方法与文献、过滤漏斗、计数器 |
+| 日志 | `popg` 的窗口模式写 `PREFIX.log`；`stats` 的 QC 报告不写日志（0.3.x 同） | 命令、版本、每个统计量的方法与文献、过滤漏斗、计数器 |
 
 ### 7.5 例子
 

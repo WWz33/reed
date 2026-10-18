@@ -147,7 +147,8 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 `bcftools filter -S .` 一致。被掩基因型对后续位点过滤按缺失计。
 
 样本过滤：`--mind <FLOAT>` 丢弃缺失率超阈值的样本。
-`--indep-pairwise <W[kb] [S] R2>` 用 plink2 算法按 LD 剪枝并输出保留位点；
+`--indep-pairwise <W[kb] [S] R2>` 用 plink2 算法按 LD 剪枝并输出保留位点（窗口带
+`kb` 后缀时步长固定为 1，如 `50kb 0.2`；`S` 是位点个数）；
 窗口 `W` 可带 `kb` 后缀，步长 `S` 默认 1，`R2` 是 r² 上限。
 
 INFO 处理：样本集变化时 reed 更新 `INFO/AC` 与 `INFO/AN`（无 GT 列的记录
