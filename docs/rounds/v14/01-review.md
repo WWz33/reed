@@ -129,7 +129,7 @@ Miscellaneous 组的成员先例（reed 用 `clap_complete`，本轮不做）。
 | **stats（运行/输出族）** | `-o/--output` `--threads` `--tmp-dir` `--memory` `--verbosity` | 两命令各自保留（`--tmp-dir` 帮助文本过期的 D-3 项顺手修正） |
 | **popg（搬）** | `--pi --dxy --theta --tajima-d --fst --fst-global --pbs --pbs-normed --f2 --f3 --f4 --dstat --f4-ratio --block-size --ld-decay --ld-pairs --sfs --proj --sfs-int` | 拼写不变，仅换所属命令 |
 | **popg（搬）** | `--variant-only --bypass-invariant-check --contig-lengths` | 清单族（`--pop/--force-samples` 见上：popg 侧照旧） |
-| **popg（搬）** | `--window --step --levels --skip-empty --bed-file --sites-file` | 窗口族 |
+| **popg（搬）** | `--window --step --levels --skip-empty --bed-file` | 窗口族。`--sites-file` 是共享的位点选择参数：`stats`（QC 门控）与 `popg` 都保留（§5 判据：选择参数共享） |
 | **popg（共享组）** | Region/Sample/Site 三组 | 照旧 |
 | **popg（运行/输出族）** | `-o/--output` `--threads` `--tmp-dir` `--memory` `--verbosity` | 同 stats |
 | **遗留 stats 上的群体 flag** | 上三行的全部 | 解析期报错 + 改写提示（removed-flag 模式，§3.3） |

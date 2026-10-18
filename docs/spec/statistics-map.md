@@ -23,7 +23,7 @@
 | HWE | HWE 精确检验 | ✅ | ✅(+卡方) | — | — | ✅ | ✅(+mid-p) | — | ✅(SNPObject) | — | — | — | — |
 | HWE | Hobs/Hexp/Fis | ✅ | ✅(--het) | ✅ `hw.py` | — | ✅ | ✅(--het) | ✅ `popStats` | — | ✅(--ibc) | — | — | — |
 | LD | r²(Rogers–Huff/PLINK) | ✅ | ✅ | ✅ | — | ✅ | ✅(+相位三次方程) | ✅ `vcfld` | — | ✅ | — | — | — |
-| f-统计 | f2/f3/f4/D | ✅(朴素) | — | ✅(无偏校正) | — | — | — | ✅ abba-baba | ✅(无偏校正+刀切) | — | — | — | — |
+| f-统计 | f2/f3/f4/D | ✅(无偏+块刀切) | — | ✅(无偏校正) | — | — | — | ✅ abba-baba | ✅(无偏校正+刀切) | — | — | — | — |
 | 选择 | EHH/iHS/XPEHH/nSL | — | — | ✅ | — | — | — | ✅(iHS/xpEHH/EHH) | — | — | — | — | — |
 | 单倍型 | Garud H1/H12 | — | — | ✅ | — | ✅ | — | — | — | — | — | — | — |
 | 结构 | PCA | — | ✅(dgeev,有缺失bug) | ✅ | — | ✅ | ✅ | — | ✅(processing) | ✅(GRM谱) | ✅(Lanczos) | — | — |
@@ -101,7 +101,7 @@
 | scikit-allel | `stats/admixture.py`:`h_hat`:11、`patterson_f2`:43、`f3`:90、`patterson_d`:147;jackknife `average_patterson_d`:373 | **Patterson 2012 无偏 ĥ 校正**(f2 减 ĥ 项;f4 共享群体协方差权重) |
 | snputils | `fstats.py`:f2:668、f3:812、f4:945、D:1087、f4_ratio:1222 | 同类校正 + **五种 jackknife 助手**(:85/:125/:175/:188)+ `BlockJackknifeResult`(est/se/z/p) |
 | vcflib | `abba-baba.cpp:27-46` | 仅位点分类计数 |
-| reed | `estimators/fstats.rs` | **朴素**(无校正、无刀切) |
+| reed | `stats/writers/fstats.rs` + `reed-stats::patterson` | **无偏校正 + bp 块刀切**(`se/z/n_blocks` 列) |
 
 **裁决**:正典 = snputils(BSD-3,五助手+数据类可直接移植)+ allel admixture.py(MIT,Patterson 校正)。reed v0.3:加 `apply_correction` 旗标(f2:−p(1−p)/(n−1)/群;f3:−目标项;f4:重叠权重)+ block jackknife(块长加权,ADMIXTOOLS 语义)。
 
@@ -144,7 +144,7 @@
 4. **Tajima/θ_W**:allel 常数块(教科书逐字)——已对拍。
 5. **HWE**:Wigginton 算法三家同源;**mid-p 升级版看 plink2**。
 6. **PBS**:allel(normed 两版)——已对拍;注意与 sgkit 的 clip 上界分歧。
-7. **f-统计**:snputils(校正+刀切,BSD-3 直接移植)> allel admixture.py —— reed 现为朴素版,**v0.3 升级**。
+7. **f-统计**:snputils(校正+刀切,BSD-3 直接移植)> allel admixture.py —— reed 已落地无偏校正 + bp 块刀切(与 snputils 同类)。
 8. **LD**:allel cython 核;plink2 的整数精确/相位三次方程为速度与相位变体参考。
 9. **GRM**:GCTA(Yang 2010 正典);PCA:Halko 2011(plink2/flashpca 两家)。
 10. **πN/πS**:SNPGenie 论文规则(未来密码子模块)。

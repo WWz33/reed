@@ -43,6 +43,9 @@ split is byte-identical for every existing output
   built-ins `qual`, `dp`, `dp-site`, `gq`, `idl`, `af`, plus generic
   `INFO/<TAG>` and `FMT/<TAG>` requests; one `PREFIX.<m>.hist` TSV per
   metric with exact mean/median/p95 for integer metrics.
+- `reed stats --singletons`: the per-allele singleton/private-doubleton
+  table in vcftools' layout (`CHROM POS SINGLETON/DOUBLETON ALLELE INDV`,
+  `PREFIX.singletons`), with a POP column under `--pop`.
 - `reed stats --pop FILE` (with `--force-samples`): stratified QC
   (doc_v14 §2.2) — `--freq`/`--missing` write `PREFIX.afreq.pop` and
   `PREFIX.vmiss.pop` (one row per population, first-appearance order),
@@ -162,7 +165,7 @@ split is byte-identical for every existing output
   `--write-used-sites`; the vcftools `--012` triple; the TASSEL hapmap
   (`.hmp.txt`); a reference-driven whole-site MSA with vcf2msa semantics
   (`--msa --reference`, `--region`, `--flank`, `--collapse-suffix`); and
-  `--sfs`, byte-identical to `reed stats --sfs` (one shared request builder,
+  `--sfs`, byte-identical to `reed popg --sfs` (one shared request builder,
   one SFS fold). Outputs are independent of `--threads`; parity is gated by
   `gold/popgen/run_convert_parity.sh` (vcf2phylip five files, vcftools
   `--012`, TASSEL read-back, vcf2msa sequences). Deliberate divergences from
@@ -189,7 +192,7 @@ split is byte-identical for every existing output
   → hapmap → VCF round trip reproduces every record, and TASSEL 5 reads
   reed's VCF back (`gold/popgen/run_convert_parity.sh` gate 6).
 - `-g/--genotype [^](hom|het|miss)` (bcftools `-g`) for `reed filter` and
-  `reed stats`: a post-mask site rule over the genotype classes
+  `reed popg`: a post-mask site rule over the genotype classes
   (`TailRules::gt_class` → `TailRule::GtClass`). A half-call (`0/.`) reads
   as missing (bcftools `bcf_gt_type` UNKN), so `SiteCounts` gains
   `n_half_called`, counted by `count_site`, the plane sketch and the

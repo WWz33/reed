@@ -338,7 +338,7 @@ reed-rs/
 │   │   ├── src/
 │   │   │   ├── lib.rs
 │   │   │   ├── statistic.rs      # Statistic/Accumulator trait、StatSpec 封闭枚举、StatOutput
-│   │   │   ├── request.rs        # StatsRequest（值类型 builder）+ 构建期校验
+│   │   │   ├── request.rs        # PopgenRequest（值类型 request；v14 前名 StatsRequest）+ 构建期校验
 │   │   │   ├── window.rs         # 分箱累加、窗口完成、水位线
 │   │   │   ├── jackknife.rs      # BlockJackknife<A>
 │   │   │   ├── pi.rs  dxy.rs  fst.rs  pbs.rs
@@ -929,7 +929,10 @@ pub trait Statistic: Clone + fmt::Debug + Send + Sync {
 - 保留一次性自由函数（`reed_stats::pi(&block, group, PiEstimator::AccessibleBp)`），供库用户和测试使用。
   它们内部就是 `new_acc → push_site* → finish`。
 
-### 8.2 请求（StatsRequest）
+### 8.2 请求（`PopgenRequest`；设计期名 `StatsRequest`）
+
+> v14 起窗口统计的对外请求类型名为 `PopgenRequest`，QC 报告面为
+> `StatsReportRequest`（doc_v14 02 §6）。下面的设计草图保留原拼写。
 
 ```rust
 let request = StatsRequest::builder(&groups, WindowGrid::Bp { size: 100_000, step: 50_000 })
@@ -1437,7 +1440,7 @@ VCF/VCF.gz/BCF + 可选索引；`--report` JSON；stderr 漏斗表。header 带 
 | 后缀/形式 | 含义 | 例 |
 |---|---|---|
 | `*Spec` | 用户声明（值类型，serde） | `FilterSpec` |
-| `*Request` | 统计请求集合 | `StatsRequest` |
+| `*Request` | 统计请求集合 | `PopgenRequest`（窗口统计）、`StatsReportRequest`（QC/报告） |
 | `*Plan` | 编译后的执行计划 | `FilterPlan`、`FieldPlan`（⚠ 取代 `ExecutionPlan`/`Plan`） |
 | `*Options` | 资源/行为旋钮，无副作用 | `ReadOptions` |
 | `*Report` | 一次运行的结果与指标 | `FilterReport`、`RunReport` |
@@ -1567,7 +1570,7 @@ criterion 的 id 采用 `<crate>/<subject>/<parameter>`，例如 `core/group_cou
   `-o/--output`、`-O/--output-type`（`v|z|b|u`）、`-r/--regions`（需要索引）、`-R/--regions-file`、
   `-t/--targets`（流式）、`-T/--targets-file`、`-s/--samples`、`-S/--samples-file`、`-W/--write-index`。
 - ⚠ `--threads` 没有短参数（bcftools 的 `-t` 是 targets）。
-- 数值带单位：`--window 100kb`、`--mem 16G`（解析器统一支持 `bp/kb/Mb/Gb` 与 `K/M/G`）。
+- 数值带单位：`--window 100kb`（解析器支持 `bp/kb/Mb/Gb` 与 `K/M/G`）；`--memory` 以 MiB 计、不吃单位后缀。
 - 子命令为单个动词或名词：`filter`、`stats`、`popg`、`index`、`convert`、
   `rename`（v14：`stats` 是 QC 报告，`popg` 是窗口群体统计，`rename` 是
   标识符编辑；`reed --help` 按组列出，见 `docs/rounds/v14/02-architecture.md` §1）。
@@ -1880,7 +1883,7 @@ reed qc [OPTIONS] <INPUT>
 reed index <INPUT>   [-c|--csi | -t|--tbi]      （薄壳，调用 noodles indexer）
 ```
 
-- CLI 不允许出现库做不到的能力（原则 1）。CLI 参数先翻译成 `FilterSpec`/`StatsRequest`/`QcRequest`，再调用 L4。
+- CLI 不允许出现库做不到的能力（原则 1）。CLI 参数先翻译成 `FilterSpec`/`PopgenRequest`（QC 报告为 `StatsReportRequest`）/`QcRequest`，再调用 L4。
 - 现在的 `reed-filter` 二进制在一个版本内保留为 `reed filter` 的别名，然后移除【决 D14】。
 
 ---

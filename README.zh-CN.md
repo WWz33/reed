@@ -40,7 +40,7 @@ reed filter in.vcf.gz -o out.vcf.gz -Oz6 --geno 0.1 --maf 0.05 \
     --min-dp 5 --min-gq 20 -W
 
 # LD 剪枝
-reed filter in.vcf.gz --indep-pairwise 50kb 5 0.2 -Oz6 -o pruned.vcf.gz
+reed filter in.vcf.gz --indep-pairwise 50 5 0.2 -Oz6 -o pruned.vcf.gz
 
 # CSI 索引
 reed index in.vcf.gz
@@ -211,11 +211,13 @@ MSA 的 indel 用确定性填充（不调外部对齐器）；hapmap→VCF 的�
 
 ## 输出
 
-`filter` 与 `index` 写出 `-o` 指定的文件。`stats` 把 `-o` 当前缀，每个统计
-一份文件（见上表）。不给 `-o` 时，窗口统计输出 TSV 到 stdout，报告文件不写。
+`filter`、`convert` 与 `index` 写出 `-o` 指定的文件。`stats` 把 `-o` 当前缀，
+每个统计一份文件（见上表；`stats` 没有 stdout 模式）。`popg` 的窗口模式同样
+需要 `-o`：每个统计一份文件，另写 `PREFIX.log`；只有未请求任何统计量的调试
+TSV 才输出到 stdout。
 
 来源信息行：`filter` 的输出头部带 `##reed_version`、`##reed_command`、
-`##reed_filterCommand`、`##reed_filter`；`stats` 的写进 `PREFIX.log`。
+`##reed_filterCommand`、`##reed_filter`；`popg` 的写进 `PREFIX.log`。
 
 窗口表统一形态：每个窗口每群体（或群体对）一行，列为 `chromosome`、
 `window_pos_1`、`window_pos_2`、估计值与其背后的计数（π/dxy 的 `no_sites`、

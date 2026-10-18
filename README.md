@@ -41,7 +41,7 @@ reed filter in.vcf.gz -o out.vcf.gz -Oz6 --geno 0.1 --maf 0.05 \
     --min-dp 5 --min-gq 20 -W
 
 # LD pruning
-reed filter in.vcf.gz --indep-pairwise 50kb 5 0.2 -Oz6 -o pruned.vcf.gz
+reed filter in.vcf.gz --indep-pairwise 50 5 0.2 -Oz6 -o pruned.vcf.gz
 
 # CSI index
 reed index in.vcf.gz
@@ -231,13 +231,15 @@ overwrite. The input must be a file: an index needs a seekable source.
 
 ## Output
 
-`filter` and `index` write the file named by `-o`. `stats` treats `-o` as a
-prefix and writes one file per statistic, listed in the tables above. Without
-`-o`, window statistics print TSV to stdout and the report files are skipped.
+`filter`, `convert` and `index` write the file named by `-o`. `stats` treats
+`-o` as a prefix and writes one file per statistic, listed in the tables
+above (`stats` has no stdout mode). `popg`'s window mode also needs `-o` — it
+writes one file per statistic plus a `PREFIX.log`; its bare debug TSV (no
+statistic requested) is the only output that goes to stdout.
 
 Provenance header lines land in the output of `filter` (`##reed_version`,
-`##reed_command`, `##reed_filterCommand`, `##reed_filter`) and inside
-`PREFIX.log` for `stats`.
+`##reed_command`, `##reed_filterCommand`, `##reed_filter`) and in `popg`'s
+`PREFIX.log`.
 
 Windowed tables share a shape: one row per population (or population pair)
 per window, with `chromosome`, `window_pos_1`, `window_pos_2`, the estimate,

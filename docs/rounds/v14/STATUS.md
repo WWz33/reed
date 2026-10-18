@@ -59,9 +59,9 @@
 
 | 命令 | 结果 |
 |---|---|
-| `cargo test --workspace` | **全绿**（57 个测试组；含新 `e2e_hist` 5 + `e2e_rename` 9） |
+| `cargo test --workspace` | **全绿**（57 个测试组；含新 `e2e_hist` 8 + `e2e_rename` 14） |
 | `cargo clippy --workspace --all-targets -- -D warnings` | **exit 0**（无告警） |
-| `bash ci/check-doc-drift.sh` | **全绿**（87 → 95 项；修 4 条改名守卫 + 新增 8 条 v14 守卫） |
+| `bash ci/check-doc-drift.sh` | **全绿**（95 → 96 项；修 4 条改名守卫 + 新增 9 条 v14 守卫） |
 | `bash gold/popgen/run_split_parity.sh check` | **PASS**（22 case 逐字节，参照 0.3.x 二进制） |
 | `bash gold/popgen/run_convert_parity.sh` | **PASS**（含 `convert --sfs` ≡ `popg --sfs`） |
 | `bash gold/popgen/run_easysfs.sh` | **PASS**（rtol 1e-6） |

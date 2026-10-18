@@ -22,7 +22,7 @@
 5. **每个阈值参数都是一条"保留条件"**：要保证的量写下限 `≥`（`--maf/--mac/--hwe`），要抑制的量写上限 `≤`（`--max-maf/--max-mac/-Q/--geno/--mind`）。不存在"量 > X 则丢弃"的表述；CLI 路径上不做 `1−x` 换算（§4）。
 6. **不为语义统一而改短名字**（2026-10-09 裁决）：`--geno/--mind` 是 plink2 的拼写，值 = 允许的缺失比例，保留；语义缺口用规范条文补（§4），不用改名补。
 7. **参数在处理第一条记录之前全部校验**：标签是否声明、类型是否为数值、统计量所需群体是否存在；出错退出码 2。
-8. **库 API 是类型化结构**（`FilterSpec`、`StatsRequest`），CLI 是它的文本表示，`to_args()` 可反向渲染，往返测试锁定。
+8. **库 API 是类型化结构**（`FilterSpec` 等请求类型，如 `PopgenRequest`、`StatsReportRequest`），CLI 是它的文本表示，`to_args()` 可反向渲染，往返测试锁定。
 9. **稳定性承诺只在 CLI 与输出格式**（doc_v5 08 §6）：参数语法与输出文件格式是契约；`reed` 与各 `reed-*` crate 都是内部结构，`publish = false`，Rust 公开项不承诺兼容。前端（`reed-cli`）只依赖门面 `reed`，后端不打 stderr、不认识 clap、不定退出码。
 
 ---
@@ -111,15 +111,15 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `--maf X` / `--max-maf X` | `min(ac, an−ac)/an ≥ X` / `≤ X` | 次等位 / 已调用等位 |
 | `--mac C` / `--max-mac C` | `min(ac, an−ac) ≥ C` / `≤ C` | 次等位计数 |
 | `--hwe P [midp]` | 精确检验 `p ≥ P`；`midp` 用 mid-p | 双等位位点 |
-| **`--indep-pairwise W[kb] [S] R2`**（裁决 2026-10-10） | LD 剪枝：按 plink2 的算法选出保留位点，**本命令直接输出剪枝后的 VCF/BCF**；位点清单只是 `--prune-list PREFIX` 的可选副产品 | 掩码后的基因型；r² 只取两位点都已调用的样本（05 §3.4） |
+| **`--indep-pairwise W[kb] [S] R2`**（裁决 2026-10-10） | LD 剪枝：按 plink2 的算法选出保留位点，**本命令直接输出剪枝后的 VCF/BCF**（位点清单形式的产物不在本轮范围内） | 掩码后的基因型；r² 只取两位点都已调用的样本（05 §3.4） |
 
 `-q/-Q` 与 `--maf` 的区别写在 `--help`：前者"非参考等位频率、优先用 INFO"，后者"次等位频率、总是按基因型重算"。
 
 **LD 剪枝不照搬 plink 的两段式**（用户裁决 2026-10-10："不喜欢 prune.in / prune.out 两段式命令，但第一步选位点我需要"）：
 
 - `reed filter in.vcf.gz --indep-pairwise 50 5 0.2 -Oz -o pruned.vcf.gz` 一条命令完成"选位点 + 提取"；plink2 要 `--indep-pairwise` 再 `--extract plink.prune.in` 两次运行。
-- `--prune-list PREFIX`（可选）写 `PREFIX.prune.in` 与 `PREFIX.prune.out`：plink2 格式，变体 ID 一行一个，ID 为 `.` 时用 `chrom_pos`（与报告模式相同的规则），可直接喂给 plink2 / bcftools。不给就不写。
-- `reed stats … --indep-pairwise W S R2` 同样可用：统计只在剪枝后的位点上算（边过滤边统计的一种）。
+- 单独的位点清单（plink 的 `.prune.in`/`.prune.out` 两段式）**不在本轮范围**：要喂给 plink2 时从剪枝后的 VCF 取 ID（`bcftools query -f '%ID\n'`）。
+- `--indep-pairwise` 是 `filter` 的位点规则；统计侧只在剪枝后的输出上做（`reed filter … | reed popg …`）。
 - 反向（拿别处产出的 ID 清单筛位点）是 `--extract FILE`（plink2 拼写），与 `--sites-file`（位置清单）一起归 X6。
 - 它是**有顺序依赖的全局位点规则**，走两遍 / sketch 策略（pass0 按 contig 算保留位图，pass1 发射）；漏斗 id `after_mask.ld_prune`。算法、窗口语义、缺失处理、对拍门见 05 §3.4。
 
@@ -224,10 +224,10 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | `--theta` | Watterson θ | Watterson 1975；逐位点 n | 已对拍 |
 | `--tajima-d` | Tajima's D | Tajima 1989；方差按窗口平均调用数算一次（pixy） | 已对拍 |
 | `--fst [wc84\|hudson]` | 成对 Fst，所有群体对；默认 `wc84` | Weir & Cockerham 1984；Hudson 1992 / Bhatia 2013 | 已对拍 |
-| **`--fst-global`** | 布尔开关：三个群体以上时算**合并**的 r 群体 WC84（一个值），而非成对；默认成对 | Weir & Cockerham 1984（r 群体） | **【待实现】**（05 §3.2；裁决 2026-10-09） |
+| **`--fst-global`** | 布尔开关：三个群体以上时算**合并**的 r 群体 WC84（一个值），而非成对；默认成对 | Weir & Cockerham 1984（r 群体） | 已实现（`e2e_fst_global.rs`；05 §3.2） |
 | `--pbs A,B,C [--pbs-normed]` | PBS，A 为焦点群体；可重复 | Yi et al. 2010；PBSn1：Malaspinas 2016 | 已对拍 allel |
 | `--sfs [folded] --proj N[,N…]` | 投影 SFS：每群体一维；两群体起另写每对联合（二维）谱 | Marth 2004；Gutenkunst 2009 | 已对拍 easySFS（`run_easysfs.sh`，含二维联合谱） |
-| `--freq` / `--hardy [midp]` / `--het` / `--missing` | 逐位点频率 / HWE 与杂合度 / 个体 F / 缺失率 | Wigginton 2005；Graffelman 2013 | 已对拍 plink2 |
+| `--freq` / `--hardy` / `--het` / `--missing` | 逐位点频率 / HWE 与杂合度 / 个体 F / 缺失率 | Wigginton 2005；Graffelman 2013 | 已对拍 plink2 |
 | `--depth` | 逐样本、逐位点平均深度 | — | 已对拍 vcftools |
 | `--summary` | bcftools stats 格式 QC 汇总 | — | 已对拍 |
 | **`--f2/--f3/--f4/--dstat/--f4-ratio`**、**`--ld-decay [MAX_BP]` / `--ld-pairs`** | f 统计（block jackknife）、LD 衰减 | Patterson 2012；Purcell 2007 | f 统计 X4.3 已落地；LD 衰减见 05 §3.4.2。`--indep-pairwise` **不是** stats 独有的统计量，它是 §3.4 的过滤规则，stats 里的含义是"只在剪枝后位点上统计" |
@@ -254,7 +254,7 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | π | `PREFIX_pi.txt` | `pop chromosome window_pos_1 window_pos_2 avg_pi no_sites count_diffs count_comparisons count_missing` |
 | dxy | `PREFIX_dxy.txt` | `pop1 pop2 chromosome window_pos_1 window_pos_2 avg_dxy no_sites count_diffs count_comparisons count_missing` |
 | Fst | `PREFIX_fst.txt` | `pop1 pop2 chromosome window_pos_1 window_pos_2 avg_wc_fst\|avg_hudson_fst no_snps`（列名取 pixy 的拼写 `avg_wc_fst`，使下游 pixy 脚本可直接用） |
-| Fst global | `PREFIX_fst_global.txt` | `pops chromosome window_pos_1 window_pos_2 avg_wc_fst no_snps`【待实现】 |
+| Fst global | `PREFIX_fst_global.txt` | `pops chromosome window_pos_1 window_pos_2 avg_wc_fst no_snps` |
 | θ | `PREFIX_watterson_theta.txt` | `pop chromosome window_pos_1 window_pos_2 avg_watterson_theta no_sites raw_watterson_theta no_var_sites weighted_no_sites` |
 | Tajima's D | `PREFIX_tajima_d.txt` | `pop chromosome window_pos_1 window_pos_2 tajima_d no_sites raw_pi raw_watterson_theta tajima_d_stdev` |
 | PBS | `PREFIX_pbs.txt` | `pop1 pop2 pop3 chromosome window_pos_1 window_pos_2 pbs no_snps fst_12 fst_13 fst_23` |
@@ -262,18 +262,18 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | freq / hardy / het / missing | `PREFIX.afreq .hardy .het .smiss .vmiss`；`--pop` 时另写 `.afreq.pop`/`.vmiss.pop`（每群体一行，§12.2） | plink2 列布局 |
 | depth | `PREFIX.idepth`、`PREFIX.ldepth.mean` | vcftools 列布局 |
 | summary | `PREFIX.stats` | bcftools stats 文本 |
-| f 统计 / LD | `PREFIX.fstats`、`PREFIX.ld.decay`、`PREFIX.ld`（`--ld-pairs`） | 05 §3.3–3.4。剪枝清单 `.prune.in/.prune.out` 不是 stats 的输出，只由 `--prune-list PREFIX` 产生（filter 与 stats 都可给） |
-| 日志 | `PREFIX.log` | 命令、版本、每个统计量的方法与文献、过滤漏斗、计数器 |
+| f 统计 / LD | `PREFIX.fstats`、`PREFIX.ld.decay`、`PREFIX.ld`（`--ld-pairs`，需与 `--ld-decay` 同给） | 05 §3.3–3.4。剪枝只输出剪枝后的 VCF/BCF（`filter --indep-pairwise`），单独的位点清单（plink 的 `.prune.in/.out`）不在本轮范围内 |
+| 日志 | `popg` 的窗口模式写 `PREFIX.log`；`stats` 的 QC 报告不写日志 | 命令、版本、每个统计量的方法与文献、过滤漏斗、计数器 |
 
 ### 7.5 例子
 
 ```bash
-reed stats allsites.vcf.gz --pop pops.txt --pi --dxy --fst --tajima-d --window 10k -o out --threads 56
-reed stats clean.vcf.gz --pop pops.txt --variant-only --pi --fst --fst-global --window 100k --step 50k -o out
+reed popg allsites.vcf.gz --pop pops.txt --pi --dxy --fst --tajima-d --window 10k -o out --threads 56
+reed popg clean.vcf.gz --pop pops.txt --variant-only --pi --fst --fst-global --window 100k --step 50k -o out
 reed stats clean.vcf.gz --freq --hardy --het --missing --depth --summary -o qc
 reed stats clean.vcf.gz --pop pops.txt --freq --missing --singletons -o qc   # 另写 .afreq.pop/.vmiss.pop，singletons 加 POP 列
-reed stats clean.vcf.gz --pop pops.txt --variant-only --min-dp 5 --min-gq 20 --geno 0.1 --maf 0.05 --pi --window 100k -o out
-reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
+reed popg clean.vcf.gz --pop pops.txt --variant-only --min-dp 5 --min-gq 20 --geno 0.1 --maf 0.05 --pi --window 100k -o out
+reed popg clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 ```
 
 ---
@@ -290,7 +290,7 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 
 | 参数 | 语义 | 来源 |
 |---|---|---|
-| `--sfs [folded] --proj N[,N…] --sfs-int --pop FILE` | 投影 SFS：与 `reed stats --sfs` **逐字节等价**（同前缀同输入下 `diff -r` 为空）；`--pop` 缺省全体一组 | easySFS |
+| `--sfs [folded] --proj N[,N…] --sfs-int --pop FILE` | 投影 SFS：与 `reed popg --sfs` **逐字节等价**（同前缀同输入下 `diff -r` 为空）；`--pop` 缺省全体一组 | easySFS |
 | `--phylip` / `--fasta` / `--nexus` | 核苷酸矩阵（relaxed PHYLIP 布局 / FASTA / NEXUS）；三格式共享一份列模型，**`--phylip` 是 opt-in**（与 vcf2phylip 默认写相反，B13-1） | vcf2phylip |
 | `--nexus-binary` | 二元 NEXUS（SNAPP；仅双等位、二倍体 GT 参与，其余 `?`） | vcf2phylip |
 | `--outgroup NAME` | 该样本写在每个矩阵第一行；不在（子集后的）样本集 → usage 错（B13-4） | vcf2phylip |
@@ -317,7 +317,7 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 
 ## 10. 库 API 与往返
 
-`FilterSpec`（`spec/{cohort,mask,missing_rate,predicate,recompute,region,render}.rs`）与 `StatsRequest` 是类型化结构；`to_args()` 渲染为 §3/§7 的参数且 `parse(render(x)) == x`（`translate::filter::tests::spec_to_args_round_trips_through_the_flags` 等）。clap 结构体、单位解析、错误渲染只在 `reed-cli`。
+`FilterSpec`（`spec/{cohort,mask,missing_rate,predicate,recompute,region,render}.rs`）与 `PopgenRequest`/`StatsReportRequest` 是类型化结构；`to_args()` 渲染为 §3/§7 的参数且 `parse(render(x)) == x`（`translate::filter::tests::spec_to_args_round_trips_through_the_flags` 等）。clap 结构体、单位解析、错误渲染只在 `reed-cli`。
 
 ---
 
@@ -363,7 +363,7 @@ ALT 频率为折叠单值，与 `.afreq` 的 `CollapseAlt` 约定一致）。不
 
 ### 12.3 搬迁 flag 的重定向
 
-§7 窗口族与统计族 flag 出现在 `reed stats` 上时，是**解析期用法错（exit 2）
+§7 的窗口族与统计族 flag 出现在 `reed stats` 上时，是**解析期用法错（exit 2）
 + 完整改写提示**，例如：
 
 ```
