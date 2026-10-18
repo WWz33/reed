@@ -237,12 +237,13 @@ check "the default Levels is the window level (doc_v11 A11-1)" \
     bash -c 'grep -q "impl Default for Levels" crates/reed/src/stats/request.rs &&
         ! grep -q "derive(Clone, Copy, Debug, Default, PartialEq, Eq)" crates/reed/src/stats/request.rs'
 
-# N2: the stats driver borrows the request like its sibling drivers.
-check "run_stats borrows its request (doc_v11 A11-2)" \
-    bash -c 'grep -q "request: &StatsRequest" crates/reed/src/stats/driver.rs'
+# N2: the popgen driver borrows its request like its sibling drivers (the
+# v14 rename: run_stats -> run_popgen, StatsRequest -> PopgenRequest).
+check "run_popgen borrows its request (doc_v11 A11-2, doc_v14 §6)" \
+    bash -c 'grep -q "request: &PopgenRequest" crates/reed/src/stats/driver.rs'
 
 # N3: `to_args` reports unspellable requests as usage errors, never panics.
-check "StatsRequest::to_args errors instead of panicking (doc_v11 A11-3)" \
+check "PopgenRequest::to_args errors instead of panicking (doc_v11 A11-3, doc_v14 §6)" \
     bash -c 'grep -q "pub fn to_args(&self, group_names: &\[String\]) -> Result<Vec<String>, crate::error::Error>" crates/reed/src/stats/render.rs &&
         ! grep -q "panic!" crates/reed/src/stats/render.rs &&
         ! grep -q "assert!" crates/reed/src/stats/render.rs'
@@ -253,10 +254,11 @@ check "the facade Error is sealed (doc_v11 A11-5)" \
     bash -c 'grep -q "pub struct Error(Box<ErrorInner>)" crates/reed/src/error.rs &&
         grep -q "^enum ErrorInner" crates/reed/src/error.rs'
 
-# N6: the four drivers and their reports are all at the root.
-check "run_reports and its types are at the facade root (doc_v11 A11-6)" \
-    bash -c 'grep -q "run_reports" crates/reed/src/lib.rs &&
-        grep -q "ReportsOutcome" crates/reed/src/lib.rs &&
+# N6: the four drivers and their reports are all at the root (the v14
+# rename: run_reports -> run_stats, ReportsOutcome -> StatsOutcome).
+check "run_stats and its types are at the facade root (doc_v11 A11-6, doc_v14 §6)" \
+    bash -c 'grep -q "run_stats" crates/reed/src/lib.rs &&
+        grep -q "StatsOutcome" crates/reed/src/lib.rs &&
         grep -q "FilterReport" crates/reed/src/lib.rs'
 
 # N8: the dead re-exports stay gone (bgzf/chunk are live front-end helpers).
@@ -346,17 +348,74 @@ check "edit_vcf_line does not re-parse its LineRef (doc_v12 D12-15)" \
 check "the deliberate htslib divergences are registered (doc_v12 2.5-B)" \
     bash -c 'grep -q "与 htslib 的有意分歧" docs/spec/cli.md'
 
+# --- doc_v14 (the stats/popg split, grouped help, --hist, rename) ------------
+# Guard 1/2: the six commands, each in exactly one help group (the unit test
+# in cli/mod.rs is the full check; this pins the group table's existence).
+check "the v14 commands and the GROUPS table exist (doc_v14 guard 1/2)" \
+    bash -c 'grep -q "Popg(PopgCli)" crates/reed-cli/src/cli/mod.rs &&
+        grep -q "Rename(RenameCli)" crates/reed-cli/src/cli/mod.rs &&
+        grep -q "pub(crate) const GROUPS" crates/reed-cli/src/cli/mod.rs &&
+        grep -q "groups_cover_every_command_exactly_once" crates/reed-cli/src/cli/mod.rs'
+
+# Guard 3/11/D14-2: the moved flags on `stats` are parse-time usage errors
+# naming the rewrite (never silent aliases).
+check "the moved stats flags redirect to reed popg (doc_v14 guard 3/11, D14-2)" \
+    bash -c 'grep -q "fn moved_flag" crates/reed-cli/src/translate/stats.rs &&
+        grep -q "moved to \`reed popg\`" crates/reed-cli/src/translate/stats.rs &&
+        grep -q "moved_flags_redirect_to_popg" crates/reed-cli/src/translate/stats.rs'
+
+# Guard 4/D14-7: the renamed drivers are at the facade root.
+check "run_popgen and run_stats are at the facade root (doc_v14 guard 4, §6)" \
+    bash -c 'grep -q "run_popgen_opened" crates/reed/src/lib.rs &&
+        grep -q "run_stats_opened" crates/reed/src/lib.rs &&
+        grep -q "PopgenRequest" crates/reed/src/lib.rs'
+
+# Guard 6/7: `--hist` has its contract and determinism gates.
+check "--hist has its e2e and determinism gates (doc_v14 guard 6/7)" \
+    bash -c 'grep -q "HistMetric" crates/reed/src/stats/writers/histogram.rs &&
+        grep -q "builtin_metrics_write_hist_files" crates/reed/tests/e2e_hist.rs &&
+        grep -q "hist_is_deterministic_across_threads" crates/reed/tests/e2e_hist.rs'
+
+# Guard 8/D14-4: `rename` never decodes genotypes (structural: no scanner or
+# GtCode reference in the module).
+check "rename never decodes genotypes (doc_v14 guard 8, D14-4)" \
+    bash -c '! grep -rn "GenotypeScanner\|GtCode" crates/reed/src/rename/ | grep -v "//" | grep -q .'
+
+# Guard 9/D14-5: contig renames touch the header and the records together.
+check "rename --rename-chrs has its both-sides gate (doc_v14 guard 9, D14-5)" \
+    bash -c 'grep -q "contig_rename_touches_header_and_records_together" crates/reed/tests/e2e_rename.rs'
+
+# Guard 10/D14-4: rename refuses coordinate/allele edits (no such flags).
+check "rename takes no POS/REF/ALT edits (doc_v14 guard 10, D14-4)" \
+    bash -c '! sed -n "/pub(crate) struct RenameCli/,/^}/p" crates/reed-cli/src/cli/mod.rs | grep -q "update-map\|update-alleles"'
+
+# Guard 13: the grouped help renderer and its snapshot test exist.
+check "the grouped help is rendered and snapshotted (doc_v14 guard 13)" \
+    bash -c 'grep -q "render_grouped_commands" crates/reed-cli/src/cli/mod.rs &&
+        grep -q "grouped_help_lists_the_five_groups" crates/reed-cli/src/cli/mod.rs'
+
+# Guard 14/C3-d: `stats --pop` stratifies the QC reports (the request
+# carries the populations, the stratified files exist, the gate compares
+# against per-population plink2 runs, and --pop alone is refused).
+check "stats --pop stratifies the QC reports (doc_v14 guard 14, 02 §2.2)" \
+    bash -c 'grep -q "populations: Option<Populations>" crates/reed/src/stats/writers/reports.rs &&
+        grep -q "afreq.pop" crates/reed/src/stats/writers/reports.rs &&
+        grep -q "pop_stratifies_freq_missing_and_singletons" crates/reed/tests/e2e_hist.rs &&
+        grep -q "pop_requires_a_stratified_report" crates/reed-cli/src/translate/stats.rs &&
+        test -f gold/popgen/run_popqc.sh'
+
 # --- doc_v13 (`reed convert`) ------------------------------------------------
-# Guard 1: the subcommand exists and is listed.
-check "Command has exactly four variants including Convert (doc_v13 guard 1)" \
+# Guard 1: the subcommands exist and are listed (v13 had four; v14 adds
+# Popg and Rename — the v14 guard below pins the six-name set).
+check "Command has exactly six variants including Convert (doc_v13 guard 1, doc_v14 guard 1)" \
     bash -c 'grep -q "Convert(ConvertCli)" crates/reed-cli/src/cli/mod.rs &&
-        [ "$(grep -c "^    [A-Z][a-z]*(.*Cli)" crates/reed-cli/src/cli/mod.rs)" -eq 4 ]'
+        [ "$(grep -c "^    [A-Z][a-z]*(.*Cli)" crates/reed-cli/src/cli/mod.rs)" -eq 6 ]'
 
 # Guard 2/6: the SFS request construction is one shared function (D13-6) and
 # --phylip is opt-in.
 check "SFS request building is shared (doc_v13 D13-6)" \
     bash -c '[ "$(grep -rn "fn build_sfs_request" crates --include=*.rs | wc -l)" -eq 1 ] &&
-        grep -q "build_sfs_request" crates/reed-cli/src/translate/stats.rs &&
+        grep -q "build_sfs_request" crates/reed-cli/src/translate/popg.rs &&
         grep -q "build_sfs_request" crates/reed-cli/src/translate/convert.rs'
 
 # Guard 3: the SFS fold has one implementation (D13-5).

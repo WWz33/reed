@@ -1,4 +1,4 @@
-//! `StatsRequest::to_args`: the text contract (doc_v5 08 §6.2) for the
+//! `PopgenRequest::to_args`: the text contract (doc_v5 08 §6.2) for the
 //! statistics flags — render a request back to the CLI spelling clap
 //! accepts. The name-based spellings (`--pbs A,B,C`, `--f2 A,B`) need the
 //! population assignment order, so unlike `FilterSpec::to_args` this takes
@@ -16,9 +16,9 @@ use reed_stats::request::StatKind;
 use reed_core::args::push_flag as flag;
 use reed_core::grid::WindowGrid;
 
-use crate::stats::request::{FStatTest, InvariantMode, Levels, Populations, StatsRequest};
+use crate::stats::request::{FStatTest, InvariantMode, Levels, Populations, PopgenRequest};
 
-impl StatsRequest {
+impl PopgenRequest {
     /// Renders the windowed form of this request (`layout: Some`) to the
     /// flags `reed stats` accepts; `group_names` is the assignment order
     /// (`--pop` resolved), required by the name-based spellings.

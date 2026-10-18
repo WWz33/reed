@@ -301,7 +301,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     let mut opened = Some(reed::open_regions(input_file.as_deref(), &[])?);
     let facts = opened.as_ref().expect("invariant: just opened").facts();
     let sample_names: Vec<String> = facts.sample_names.clone();
-    let keep_samples = super::stats::parse_sample_keep(&args.sample_args, &sample_names)
+    let keep_samples = super::common::parse_sample_keep(&args.sample_args, &sample_names)
         .map_err(reed::Error::usage)?;
 
     // ---- Targets ---------------------------------------------------------

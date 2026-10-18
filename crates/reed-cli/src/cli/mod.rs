@@ -46,7 +46,11 @@ const LONG_VERSION: &str = concat!(
     name = "reed",
     version,
     long_version = LONG_VERSION,
-    about = "Population-genetics statistics and hard filtering, in pure Rust"
+    about = "Population-genetics statistics and hard filtering, in pure Rust",
+    // doc_v14 02 §1.3: the flat `{subcommands}` section is replaced by the
+    // grouped list (`render_grouped_commands`, set as `after_help` by the
+    // parser below); `{options}` still renders clap's own options.
+    help_template = "{before-help}{about-with-newline}\n{usage-heading} {usage}\n\n{after-help}{options}"
 )]
 pub(crate) struct Cli {
     /// The subcommand to run.
@@ -60,14 +64,75 @@ pub(crate) struct Cli {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Hard filtering
+    /// Hard filtering: selection, genotype masking, QC thresholds, LD pruning
     Filter(FilterCli),
-    /// Window statistics
+    /// Per-site and per-sample QC: freq, hardy, het, missing, depth, summary
     Stats(StatsCli),
+    /// Windowed population genetics: pi, dxy, Fst, PBS, SFS, f-stats, LD decay
+    #[command(visible_alias = "popgen")]
+    Popg(PopgCli),
     /// Build a CSI/TBI index
     Index(IndexCli),
     /// Convert to phylogenetic matrices, genotype matrices, hapmap, MSA, SFS
     Convert(ConvertCli),
+    /// Edit identifiers: sample names, contig names, variant IDs, header lines
+    #[command(visible_alias = "reheader")]
+    Rename(RenameCli),
+}
+
+/// The help groups (doc_v14 02 §1.2): the single source of the grouping.
+/// The order here is the order `reed --help` prints; a test asserts every
+/// `Command` variant appears in exactly one group (plus clap's automatic
+/// `help`, which is not an enum variant).
+pub(crate) const GROUPS: &[(&str, &[&str])] = &[
+    ("Filtering", &["filter"]),
+    ("Statistics", &["stats", "popg"]),
+    ("Transform", &["convert", "rename"]),
+    ("File Operations", &["index"]),
+    ("Miscellaneous", &["help"]),
+];
+
+/// Renders the grouped command list for `reed --help` (doc_v14 02 §1.3):
+/// each group's title, then `name` padded to the width clap uses, then the
+/// subcommand's own `about` text (taken from clap, never copied here, so the
+/// two cannot drift).
+pub(crate) fn render_grouped_commands() -> String {
+    use clap::CommandFactory as _;
+    use std::fmt::Write as _;
+    let root = Cli::command();
+    let mut out = String::new();
+    for (title, names) in GROUPS {
+        let _ = writeln!(out, "Commands for {title}:");
+        for name in *names {
+            let about = if *name == "help" {
+                // clap's auto-generated help subcommand's own about is long;
+                // the group list keeps one line (doc_v14 02 §1.1).
+                "Print this message or a subcommand's help".to_string()
+            } else {
+                let cmd = root.get_subcommands().find(|c| c.get_name() == *name);
+                let about = cmd
+                    .and_then(|c| c.get_about())
+                    .map_or_else(String::new, |a| a.to_string());
+                // The command list is the only place the aliases can be seen:
+                // the group template drops clap's `{subcommands}` block, which
+                // is what used to append them.
+                let aliases = cmd
+                    .map(|c| {
+                        c.get_visible_aliases()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if aliases.is_empty() {
+                    about
+                } else {
+                    format!("{about} [aliases: {}]", aliases.join(", "))
+                }
+            };
+            let _ = writeln!(out, "  {name:<12} {about}");
+        }
+    }
+    out
 }
 
 /// Hard filtering (02-cli.md §3): the bcftools `view` + `filter` + `annotate -x`
@@ -188,8 +253,11 @@ pub(crate) struct IndexCli {
     pub verbosity: Verbosity,
 }
 
-/// Window statistics (02-cli.md §5): the statistics are named after the method,
-/// never after a tool.
+/// Quality-control reports (doc_v14 02 §2.2): per-site and per-sample rows
+/// (`--freq/--hardy/--het/--missing/--depth`), the bcftools-stats summary and
+/// the histogram family. The windowed population-genetics statistics moved to
+/// `reed popg` (doc_v14); the moved flags stay here as hidden parse-time
+/// redirects so a 0.3.x command line fails with the exact rewrite.
 #[derive(Args)]
 pub(crate) struct StatsCli {
     #[arg(help = INPUT_HELP)]
@@ -205,6 +273,176 @@ pub(crate) struct StatsCli {
     #[arg(long, value_name = "FLOAT", hide = true,
           value_parser = filter_flags::unsupported_stats_mind)]
     pub mind: Option<String>,
+    /// Withdrawn flag: it stated the fraction that must be called
+    #[arg(long, value_name = "FLOAT", hide = true,
+          value_parser = filter_flags::removed_max_missing_sample)]
+    pub max_missing_sample: Option<String>,
+    /// Groups file: `sample<TAB>population` rows, no header. Stratifies
+    /// `--freq`/`--missing` (`PREFIX.afreq.pop`, `PREFIX.vmiss.pop`) and adds
+    /// the POP column to `PREFIX.singletons`; the cohort files are unchanged
+    /// (doc_v14 02 §2.2)
+    #[arg(
+        long = "pop",
+        visible_alias = "populations",
+        alias = "groups",
+        value_name = "FILE"
+    )]
+    pub pop: Option<String>,
+    /// Skip --pop rows naming samples absent from the header (they warn)
+    #[arg(long)]
+    pub force_samples: bool,
+    /// Per-site allele frequencies (PREFIX.afreq, plink2 layout)
+    #[arg(long)]
+    pub freq: bool,
+    /// Per-site HWE exact test and observed/expected heterozygosity
+    /// (PREFIX.hardy, plink2 layout)
+    #[arg(long)]
+    pub hardy: bool,
+    /// Per-sample inbreeding coefficient F (PREFIX.het, plink2 layout)
+    #[arg(long)]
+    pub het: bool,
+    /// Per-sample and per-site missingness (PREFIX.smiss, PREFIX.vmiss)
+    #[arg(long)]
+    pub missing: bool,
+    /// Per-sample and per-site mean depth (PREFIX.idepth,
+    /// PREFIX.ldepth.mean, vcftools layouts; reads FMT/DP)
+    #[arg(long)]
+    pub depth: bool,
+    /// QC summary in bcftools-stats format (PREFIX.stats)
+    #[arg(long)]
+    pub summary: bool,
+    /// Histograms: comma-separated built-ins (qual, dp, dp-site, gq, idl,
+    /// af) and INFO/<TAG> or FMT/<TAG> requests; each writes PREFIX.<m>.hist
+    #[arg(long, value_name = "LIST")]
+    pub hist: Option<String>,
+    /// Per-allele singletons and private doubletons (PREFIX.singletons, the
+    /// vcftools layout)
+    #[arg(long)]
+    pub singletons: bool,
+    /// Sites file (`CHROM<TAB>POS`, 1-based): only those sites are reported
+    /// (the QC reports see the same gated records, doc_v7 D7-6)
+    #[arg(long = "sites-file", value_name = "FILE")]
+    pub sites_file: Option<String>,
+    /// Output prefix: PREFIX.afreq, PREFIX.stats, ... (the reports write files)
+    #[arg(
+        short = 'o',
+        long = "output",
+        visible_alias = "out",
+        value_name = "PREFIX"
+    )]
+    pub out: Option<String>,
+    /// Worker threads (default: all cores)
+    #[arg(long)]
+    pub threads: Option<usize>,
+    /// Directory for temporary files (the stdin spill for report runs)
+    #[arg(long, value_name = "DIR")]
+    pub tmp_dir: Option<String>,
+    /// In-flight memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
+
+    // ---- moved to `reed popg` (doc_v14 02 §2.4): hidden redirects ----
+    // The fields keep their 0.3.x types so a 0.3.x command line parses and
+    // `translate::stats` can refuse it with the exact rewrite before any I/O.
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub pi: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub dxy: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub theta: bool,
+    /// Moved to `reed popg`.
+    #[arg(long = "tajima-d", hide = true)]
+    pub tajima_d: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true, num_args = 0..=1, default_missing_value = "wc84")]
+    pub fst: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub fst_global: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub pbs: Vec<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub pbs_normed: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub f2: Vec<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub f3: Vec<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub f4: Vec<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub dstat: Vec<String>,
+    /// Moved to `reed popg`.
+    #[arg(long = "f4-ratio", hide = true)]
+    pub f4_ratio: Vec<String>,
+    /// Moved to `reed popg`.
+    #[arg(long = "block-size", hide = true)]
+    pub block_size: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long = "ld-decay", hide = true, num_args = 0..=1, default_missing_value = "")]
+    pub ld_decay: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long = "ld-pairs", hide = true)]
+    pub ld_pairs: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true, num_args = 0..=1, default_missing_value = "unfolded")]
+    pub sfs: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub proj: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub sfs_int: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub variant_only: bool,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub bypass_invariant_check: bool,
+    /// Moved to `reed popg`.
+    #[arg(long = "contig-lengths", alias = "contig-lengths-path", hide = true)]
+    pub contig_lengths: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long = "window", alias = "size", hide = true)]
+    pub size: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long = "bed-file", hide = true)]
+    pub bed_file: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub step: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub levels: Option<String>,
+    /// Moved to `reed popg`.
+    #[arg(long, hide = true)]
+    pub skip_empty: bool,
+}
+
+/// `reed popg`: the windowed population-genetics statistics (doc_v14 02 §2.1).
+/// Report rows are per population (pair/triple) per window or genome-wide.
+#[derive(Args)]
+pub(crate) struct PopgCli {
+    #[arg(help = INPUT_HELP)]
+    pub input: String,
+    #[command(flatten)]
+    pub regions_args: filter_flags::RegionArgs,
+    #[command(flatten)]
+    pub sample_args: filter_flags::SampleArgs,
+    #[command(flatten)]
+    pub site_args: filter_flags::SiteFilterArgs,
     /// Withdrawn flag: it stated the fraction that must be called
     #[arg(long, value_name = "FLOAT", hide = true,
           value_parser = filter_flags::removed_max_missing_sample)]
@@ -246,26 +484,6 @@ pub(crate) struct StatsCli {
     /// Yi et al. 2010); repeatable
     #[arg(long, value_name = "A,B,C")]
     pub pbs: Vec<String>,
-    /// Per-site allele frequencies (PREFIX.afreq, plink2 layout)
-    #[arg(long)]
-    pub freq: bool,
-    /// Per-site HWE exact test and observed/expected heterozygosity
-    /// (PREFIX.hardy, plink2 layout)
-    #[arg(long)]
-    pub hardy: bool,
-    /// Per-sample inbreeding coefficient F (PREFIX.het, plink2 layout)
-    #[arg(long)]
-    pub het: bool,
-    /// Per-sample and per-site missingness (PREFIX.smiss, PREFIX.vmiss)
-    #[arg(long)]
-    pub missing: bool,
-    /// Per-sample and per-site mean depth (PREFIX.idepth,
-    /// PREFIX.ldepth.mean, vcftools layouts; reads FMT/DP)
-    #[arg(long)]
-    pub depth: bool,
-    /// QC summary in bcftools-stats format (PREFIX.stats)
-    #[arg(long)]
-    pub summary: bool,
     /// Report PBSn1 (Malaspinas et al. 2016) instead of the raw PBS
     #[arg(long)]
     pub pbs_normed: bool,
@@ -376,7 +594,7 @@ pub(crate) struct StatsCli {
 pub(crate) struct ConvertCli {
     #[arg(help = INPUT_HELP)]
     pub input: String,
-    /// Projected SFS (mirrors `reed stats --sfs`): writes PREFIX_sfs/dadi
+    /// Projected SFS (mirrors `reed popg --sfs`): writes PREFIX_sfs/dadi
     /// and PREFIX_sfs/fastsimcoal2; needs --proj; `--sfs folded` folds by
     /// the minor allele
     #[arg(long, value_name = "folded", num_args = 0..=1, default_missing_value = "unfolded",
@@ -488,9 +706,152 @@ pub(crate) struct ConvertCli {
     pub verbosity: Verbosity,
 }
 
+/// Identifier edits (doc_v14 02 §4.2): sample names, contig names, variant
+/// IDs and header lines. The command never decodes genotypes (D14-4).
+///
+/// `-h` is bcftools `reheader -h`'s header replacement, so the automatic
+/// `-h` help short is disabled here; `--help` stays.
+#[derive(Args)]
+#[command(disable_help_flag = true)]
+pub(crate) struct RenameCli {
+    #[arg(help = INPUT_HELP)]
+    pub input: String,
+    /// Replace the whole header (must keep the same samples)
+    #[arg(short = 'h', long, value_name = "FILE")]
+    pub header: Option<String>,
+    /// Set `##contig` lengths from a `.fai` (name<TAB>length)
+    #[arg(short = 'f', long, value_name = "FILE")]
+    pub fai: Option<String>,
+    /// Append a `##key=value` header line; repeatable
+    #[arg(long = "add-meta", value_name = "LINE")]
+    pub add_meta: Vec<String>,
+    /// Remove every `##KEY=` header line; repeatable
+    #[arg(long = "remove-meta", value_name = "KEY")]
+    pub remove_meta: Vec<String>,
+    /// Contig renames: `old<TAB>new` lines (the `##contig` lines and the
+    /// CHROM column change together)
+    #[arg(long = "rename-chrs", value_name = "FILE")]
+    pub rename_chrs: Option<String>,
+    /// Normalize contig names: plain (1, MT), ucsc (chr1, chrMT) or
+    /// mt-is-m (chr1, chrM)
+    #[arg(long = "chr-style", value_name = "STYLE")]
+    pub chr_style: Option<String>,
+    /// Rewrite every variant ID with a template: `%CHROM %POS %REF %ALT`
+    #[arg(long = "set-id", value_name = "PATTERN")]
+    pub set_id: Option<String>,
+    /// Fill in IDs that are `.` with a template
+    #[arg(long = "set-missing-var-ids", value_name = "PATTERN")]
+    pub set_missing_var_ids: Option<String>,
+    /// ID renames: `old<TAB>new` lines
+    #[arg(long = "update-name", value_name = "FILE")]
+    pub update_name: Option<String>,
+    /// Replace `:` in IDs with SEP (GCTA/treemix-safe IDs)
+    #[arg(long = "idspace-to", value_name = "SEP")]
+    pub idspace_to: Option<String>,
+    /// Suffix repeated IDs with `_1`, `_2`, … (never drop a record)
+    #[arg(long = "rm-dup-ids")]
+    pub rm_dup_ids: bool,
+    /// Set every ID to `.`
+    #[arg(long = "clear-ids")]
+    pub clear_ids: bool,
+    /// Sample renames as `old new,old2 new2`
+    #[arg(short = 's', long, value_name = "PAIRS")]
+    pub samples: Option<String>,
+    /// Sample renames: `old<TAB>new` lines
+    #[arg(short = 'N', long = "samples-file", value_name = "FILE")]
+    pub samples_file: Option<String>,
+    /// Rewrite matching sample names: a `*` prefix/suffix strips, else the
+    /// text is removed wherever it occurs
+    #[arg(long = "replace-sample-name", value_name = "PATTERN")]
+    pub replace_sample_name: Option<String>,
+    /// Output file (default: stdout); the format comes from -O or the
+    /// extension
+    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
+    pub out: Option<String>,
+    /// Output type: v (plain VCF) or z (BGZF VCF); optional compression
+    /// level (`-Oz6`)
+    #[arg(short = 'O', long = "output-type", value_name = "v|z[0-9]")]
+    pub output_type: Option<String>,
+    /// Do not write the ##reed_* provenance header lines
+    #[arg(long)]
+    pub no_version: bool,
+    /// Do not write the ##reed_command line
+    #[arg(long)]
+    pub no_command: bool,
+    /// Write an index next to the output: -W or -W=csi (default), or
+    /// -W=tbi; omit for no index (bcftools semantics)
+    #[arg(short = 'W', long = "write-index", value_name = "csi|tbi",
+          num_args = 0..=1, default_missing_value = "csi")]
+    pub write_index: Option<String>,
+    /// Print help (the `-h` short belongs to --header here)
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
+    /// Worker threads (default: all cores)
+    #[arg(long)]
+    pub threads: Option<usize>,
+    /// In-flight memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// doc_v14 02 §1.4 (guard 1/2): every `Command` variant appears in
+    /// exactly one `GROUPS` entry, and the groups name nothing else. The
+    /// automatic `help` subcommand is not a variant but is listed, so the
+    /// comparison is against the variants plus `help`.
+    #[test]
+    fn groups_cover_every_command_exactly_once() {
+        use clap::CommandFactory as _;
+        // `build()` injects clap's automatic `help` subcommand; without it
+        // the enumeration misses it and the guard would be vacuous for it.
+        let mut root = Cli::command();
+        root.build();
+        let names: Vec<String> = root
+            .get_subcommands()
+            .map(|c| c.get_name().to_string())
+            .collect();
+        let mut listed: Vec<&str> = GROUPS
+            .iter()
+            .flat_map(|(_, members)| members.iter().copied())
+            .collect();
+        let total = listed.len();
+        listed.sort_unstable();
+        listed.dedup();
+        assert_eq!(total, listed.len(), "a command is listed in two groups");
+        for name in &names {
+            assert!(
+                listed.contains(&name.as_str()),
+                "{name} is in no group"
+            );
+        }
+        for name in &listed {
+            assert!(
+                names.iter().any(|n| n == name),
+                "group lists unknown command {name}"
+            );
+        }
+    }
+
+    /// doc_v14 02 §1.4 (guard 13): `reed --help` renders the five group
+    /// titles and every command's about text comes from clap.
+    #[test]
+    fn grouped_help_lists_the_five_groups() {
+        let text = render_grouped_commands();
+        for title in ["Filtering", "Statistics", "Transform", "File Operations", "Miscellaneous"] {
+            assert!(text.contains(&format!("Commands for {title}:")), "{title} missing:\n{text}");
+        }
+        for name in ["filter", "stats", "popg", "convert", "index"] {
+            assert!(text.contains(name), "{name} missing:\n{text}");
+        }
+    }
+
 
     /// A representative convert request renders to flags clap accepts, and
     /// the parsed flags rebuild the same request field by field (doc_v13
@@ -588,7 +949,7 @@ mod tests {
         assert_eq!(plain.to_args().expect("to_args"), vec!["--vcf", "-O", "v"]);
     }
 
-    /// `reed convert --sfs` and `reed stats --sfs` render the SFS portion
+    /// `reed convert --sfs` and `reed popg --sfs` render the SFS portion
     /// identically (D13-6: one request, two entries).
     #[test]
     fn convert_and_stats_sfs_spellings_agree() {

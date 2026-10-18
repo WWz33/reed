@@ -20,22 +20,26 @@ use std::sync::{Arc, Mutex};
 use reed_core::ChunkId;
 use reed_core::count::SiteGroupCounts;
 use reed_core::genotype::{
-    GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters,
+    GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters, STATE_ALT,
+    STATE_MISSING,
 };
 use reed_core::math::hwe::HweCache;
 use reed_core::sample::SampleMask;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
-use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING};
+use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
 use reed_stats::IndividualFAcc;
 use reed_stats::summary::report::QcReportAcc;
 
+use crate::stats::driver::resolve_groups;
+use crate::stats::request::Populations;
+
 /// Which reports to write.
 #[derive(Clone, Debug, Default)]
-pub struct ReportRequest {
+pub struct StatsReportRequest {
     /// `--freq`: `PREFIX.afreq`.
     pub freq: bool,
     /// `--hardy`: `PREFIX.hardy`.
@@ -50,6 +54,21 @@ pub struct ReportRequest {
     /// `--summary`: also accumulate the bcftools-stats QC summary in this
     /// same pass (doc_v4 O-1: the two families used to read twice).
     pub summary: bool,
+    /// `--hist LIST` (doc_v14 02 §3): built-in metrics (`qual`, `dp`,
+    /// `dp-site`, `gq`, `idl`, `af`) and `INFO/TAG`/`FMT/TAG` requests, in
+    /// the order given. Empty = no histograms.
+    pub hist: Vec<crate::stats::writers::histogram::HistMetric>,
+    /// `--singletons`: one row per singleton/doubleton allele
+    /// (`PREFIX.singletons`, the vcftools layout).
+    pub singletons: bool,
+    /// Population assignment (`--pop FILE`, doc_v14 02 §2.2): stratifies
+    /// `--freq`/`--missing` (`PREFIX.afreq.pop`, `PREFIX.vmiss.pop`) and adds
+    /// the POP column to `PREFIX.singletons`. `None` = the whole cohort (the
+    /// 0.3.x behavior; `Populations::All` also means that here).
+    pub populations: Option<Populations>,
+    /// `--force-samples`: population-file rows naming samples absent from the
+    /// header are skipped with a warning instead of failing.
+    pub force_samples: bool,
     /// Streamed targets (`-t/-T`, `^` = exclude): the region predicate gates
     /// every record (doc_v4 01 F4-10: report mode used to reject them).
     pub targets: Vec<reed_filter::spec::region::RegionTriple>,
@@ -59,17 +78,24 @@ pub struct ReportRequest {
     pub prefix: PathBuf,
 }
 
-impl ReportRequest {
+impl StatsReportRequest {
     /// Whether any report is requested.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        !(self.freq || self.hardy || self.het || self.missing || self.depth || self.summary)
+        !(self.freq
+            || self.hardy
+            || self.het
+            || self.missing
+            || self.depth
+            || self.summary
+            || self.singletons)
+            && self.hist.is_empty()
     }
 }
 
 /// Files written and records seen.
 #[derive(Clone, Debug)]
-pub struct ReportsOutcome {
+pub struct StatsOutcome {
     /// Paths written, in the order of the flags.
     pub files: Vec<PathBuf>,
     /// Records scanned.
@@ -77,6 +103,9 @@ pub struct ReportsOutcome {
     /// The merged QC summary when `summary` was requested (`render_bcftools_stats`
     /// turns it into `PREFIX.stats`).
     pub qc: Option<QcReportAcc>,
+    /// The merged histograms when `--hist` was requested: one entry per
+    /// metric in request order.
+    pub hist: Vec<crate::stats::writers::histogram::HistOut>,
     /// The engine's stage metrics (doc_v4 03 A4-5).
     pub metrics: reed_engine::metrics::StageMetrics,
 }
@@ -92,10 +121,16 @@ struct ReportPlan {
     het: bool,
     depth: bool,
     summary: bool,
+    hist: bool,
+    singletons: bool,
+    /// `--pop`: per-population afreq/vmiss rows (doc_v14 02 §2.2).
+    pop_freq: bool,
+    pop_vmiss: bool,
 }
 
 impl ReportPlan {
-    fn from_request(request: &ReportRequest) -> Self {
+    fn from_request(request: &StatsReportRequest, n_groups: usize) -> Self {
+        let pop = n_groups > 0;
         Self {
             freq: request.freq,
             hardy: request.hardy,
@@ -105,24 +140,48 @@ impl ReportPlan {
             het: request.het,
             depth: request.depth,
             summary: request.summary,
+            hist: !request.hist.is_empty(),
+            singletons: request.singletons,
+            pop_freq: pop && request.freq,
+            pop_vmiss: pop && request.missing,
         }
     }
 
     /// Whether any per-site row is printed.
     const fn sites(&self) -> bool {
-        self.freq || self.hardy || self.vmiss || self.ldepth
+        self.freq || self.hardy || self.vmiss || self.ldepth || self.pop_freq || self.pop_vmiss
     }
+}
+
+/// `--pop`: the per-group counts at one site (stratified afreq/vmiss rows).
+#[derive(Default)]
+struct PopSiteCounts {
+    /// ALT allele count per group.
+    alt: Vec<u32>,
+    /// Called allele count per group (the OBS_CT denominator).
+    an: Vec<u32>,
+    /// Fully-missing genotype count per group.
+    missing: Vec<u32>,
 }
 
 /// Worker → sink partial: rendered rows plus the per-sample accumulators.
 #[derive(Default)]
 struct ReportPartial {
+    /// `--hist`: the generic-tag and GQ accumulators for this chunk.
+    hist: Option<crate::stats::writers::histogram::HistAcc>,
     /// The QC summary pieces this chunk accumulated (`--summary`).
     qc: Option<QcReportAcc>,
+    /// The `--hist` pieces this chunk accumulated.
     freq: Vec<u8>,
+    /// `--singletons`: rendered `PREFIX.singletons` rows.
+    singletons: Vec<u8>,
     hardy: Vec<u8>,
     vmiss: Vec<u8>,
     ldepth: Vec<u8>,
+    /// `--pop --freq`: rendered `PREFIX.afreq.pop` rows.
+    freq_pop: Vec<u8>,
+    /// `--pop --missing`: rendered `PREFIX.vmiss.pop` rows.
+    vmiss_pop: Vec<u8>,
     /// Per sample: fully missing genotype count (`--missing`).
     missing: Vec<u64>,
     /// Per sample: plink `--het` moment components.
@@ -138,6 +197,14 @@ struct ReportJob {
     n_samples: usize,
     policies: GenotypePolicies,
     plan: ReportPlan,
+    /// The `--hist` request (empty = no histograms).
+    hist: Vec<crate::stats::writers::histogram::HistMetric>,
+    /// Sample names (the `--singletons` INDV column).
+    sample_names: Vec<String>,
+    /// `--pop`: each sample's group slot (`None` = not in the populations
+    /// file) and the group names in first-appearance order (empty = no
+    /// `--pop`).
+    groups: Option<(Vec<Option<u32>>, Vec<String>)>,
     /// Streamed target predicate (`-t/-T`).
     targets: Vec<reed_filter::spec::region::RegionTriple>,
     targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
@@ -152,29 +219,48 @@ struct ReportScratch {
     mask: SampleMask,
     /// The QC summary accumulator (`--summary`, doc_v4 O-1).
     qc: Option<crate::stats::writers::summary::QcAccumulator>,
+    /// The `--hist` accumulators (`None` unless requested).
+    hist: Option<crate::stats::writers::histogram::HistAcc>,
     /// HWE memo behind the `--hardy` p column (A6-16).
     hwe: HweCache,
 }
 
 impl ReportScratch {
+    // The flags mirror `ReportPlan`'s; grouping them into a struct would
+    // just restate it.
+    #[allow(clippy::fn_params_excessive_bools)]
     fn new(
         n_samples: usize,
         policies: GenotypePolicies,
         het: bool,
         depth: bool,
         summary: bool,
+        hist: Option<&[crate::stats::writers::histogram::HistMetric]>,
+        singletons: bool,
     ) -> Self {
+        use crate::stats::writers::histogram::HistMetric;
+        let qc = summary || hist.is_some_and(HistMetric::any_needs_qc);
+        // `--singletons` reads the raw allele indices like the QC summary.
+        let needs_alleles = qc || singletons;
+        // The QC accumulator's DP sections and `--hist dp` both read FMT/DP.
+        let needs_dp = depth
+            || summary
+            || hist.is_some_and(|m| m.iter().any(HistMetric::needs_dp));
         Self {
-            // DP is decoded for `--depth` and for `--summary` (whose DP
-            // sections read the genotype depth); `--summary` also needs the
-            // raw allele indices for its per-ALT counts (doc_v5 03 §5).
+            // DP is decoded for `--depth`, `--summary` (whose DP sections
+            // read the genotype depth) and `--hist dp`; the QC accumulator
+            // also needs the raw allele indices for its per-ALT counts
+            // (doc_v5 03 §5).
             scanner: {
-                let scanner = if depth || summary {
+                let scanner = if needs_dp {
                     GenotypeScanner::new(n_samples, &[b"DP"], &[], policies)
                 } else {
                     GenotypeScanner::new(n_samples, &[], &[], policies)
                 };
-                if summary {
+                // The QC accumulator (which `--hist`'s built-in metrics
+                // also ride) and `--singletons` read the raw allele indices
+                // (doc_v5 03 §5).
+                if needs_alleles {
                     scanner.tracking_alleles()
                 } else {
                     scanner
@@ -183,7 +269,8 @@ impl ReportScratch {
             planes: het.then(|| PlaneBlock::new(1, n_samples, false)),
             counters: PolicyCounters::default(),
             mask: SampleMask::all(n_samples),
-            qc: summary.then(|| crate::stats::writers::summary::QcAccumulator::new(n_samples)),
+            qc: qc.then(|| crate::stats::writers::summary::QcAccumulator::new(n_samples)),
+            hist: hist.map(crate::stats::writers::histogram::HistAcc::new),
             hwe: HweCache::new(),
         }
     }
@@ -206,6 +293,8 @@ impl ChunkJob for ReportJob {
                 self.plan.het,
                 self.plan.depth,
                 self.plan.summary,
+                self.plan.hist.then_some(&self.hist),
+                self.plan.singletons,
             )
         });
         let mut partial = self.new_partial();
@@ -232,6 +321,8 @@ impl ChunkJob for ReportJob {
                 self.plan.het,
                 self.plan.depth,
                 self.plan.summary,
+                self.plan.hist.then_some(&self.hist),
+                self.plan.singletons,
             )
         });
         let mut partial = self.new_partial();
@@ -247,6 +338,12 @@ impl ReportJob {
     fn drain_qc(&self, scratch: &mut ReportScratch, partial: &mut ReportPartial) {
         if let Some(qc) = &mut scratch.qc {
             partial.qc = Some(qc.take_acc());
+        }
+        if let Some(hist) = &mut scratch.hist {
+            partial.hist = Some(std::mem::replace(
+                hist,
+                crate::stats::writers::histogram::HistAcc::new(&self.hist),
+            ));
         }
     }
 
@@ -339,6 +436,48 @@ impl ReportJob {
             site_depth = (sum, sq, n);
         }
 
+        // `--pop`: the per-group alt-allele, called-allele and fully-missing
+        // counts at this site (the stratified afreq/vmiss rows). Samples
+        // outside every group are invisible to the stratified rows, as in a
+        // per-population run.
+        let mut pop = PopSiteCounts::default();
+        if self.plan.pop_freq || self.plan.pop_vmiss {
+            let Some((slots, names)) = &self.groups else {
+                return Ok(());
+            };
+            let n_groups = names.len();
+            pop = PopSiteCounts {
+                alt: vec![0; n_groups],
+                an: vec![0; n_groups],
+                missing: vec![0; n_groups],
+            };
+            for (i, &code) in out.codes.iter().enumerate() {
+                let Some(slot) = slots.get(i).copied().flatten() else {
+                    continue;
+                };
+                let g = slot as usize;
+                if g >= n_groups {
+                    continue;
+                }
+                // The same per-code tally `SiteGroupCounts::add_code` runs,
+                // scoped to one group.
+                let states = (code.slot_state(0), code.slot_state(1));
+                if states == (STATE_MISSING, STATE_MISSING) {
+                    pop.missing[g] += 1;
+                    continue;
+                }
+                for state in [states.0, states.1] {
+                    match state {
+                        STATE_ALT => {
+                            pop.an[g] += 1;
+                            pop.alt[g] += 1;
+                        }
+                        STATE_MISSING => {}
+                        _ => pop.an[g] += 1,
+                    }
+                }
+            }
+        }
         // plink `--het` moment components at biallelic sites.
         let n_group = u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX");
         if self.plan.het {
@@ -364,6 +503,7 @@ impl ReportJob {
                 &counts,
                 n_missing,
                 site_depth,
+                &pop,
                 &mut scratch.hwe,
                 partial,
             );
@@ -374,8 +514,207 @@ impl ReportJob {
         if let Some(qc) = &mut scratch.qc {
             qc.push_scan(&out, &lr, &site)?;
         }
+        // The scan output borrows the scratch scanner, so the hist
+        // accumulator moves out for the call and back afterwards.
+        if let Some(mut acc) = scratch.hist.take() {
+            self.push_hist(&lr, &mut acc);
+            scratch.hist = Some(acc);
+        }
+        if self.plan.singletons {
+            self.render_singletons(&lr, &out, &mut partial.singletons);
+        }
         partial.n_records += 1;
         Ok(())
+    }
+
+    /// Renders the `--singletons` rows for one record (vcftools layout:
+    /// `CHROM POS SINGLETON/DOUBLETON ALLELE INDV`). Semantics follow
+    /// vcftools `output_singletons` (variant_file_output.cpp:2715): per
+    /// allele index including REF, `S` for a count of 1 and `D` for a count
+    /// of 2 with a homozygous carrier. With `--pop` a sixth column carries
+    /// the carrier's population (`.` for a sample outside every group);
+    /// counting still runs over the whole cohort (doc_v14 02 §2.2).
+    fn render_singletons(
+        &self,
+        lr: &LineRef<'_>,
+        out: &ScanOutput<'_>,
+        buf: &mut Vec<u8>,
+    ) {
+        let Some(alleles) = out.alleles else {
+            return;
+        };
+        let alts = lr.alts();
+        let n_alt = if alts == b"." {
+            0
+        } else {
+            memchr::memchr_iter(b',', alts).count() + 1
+        };
+        let n_alleles = n_alt + 1;
+        let mut counts = vec![0_u32; n_alleles];
+        for index in alleles.iter().flatten() {
+            if let Some(slot) = counts.get_mut(usize::from(*index)) {
+                *slot += 1;
+            }
+        }
+        for (index, &count) in counts.iter().enumerate() {
+            if count != 1 && count != 2 {
+                continue;
+            }
+            let want_hom = count == 2;
+            for (sample, token) in alleles.chunks(2).enumerate() {
+                let index = u16::try_from(index).unwrap_or(u16::MAX);
+                let carries = if want_hom {
+                    token == [Some(index), Some(index)]
+                } else {
+                    token.iter().flatten().any(|a| *a == index)
+                };
+                if !carries {
+                    continue;
+                }
+                let allele: &[u8] = if index == 0 {
+                    lr.reference()
+                } else {
+                    alt_at(alts, usize::from(index) - 1)
+                };
+                let kind = if want_hom { b'D' } else { b'S' };
+                let name = self.sample_names.get(sample).map_or("?", String::as_str);
+                let _ = match &self.groups {
+                    Some((slots, names)) => writeln!(
+                        buf,
+                        "{}\t{}\t{}\t{}\t{}\t{}",
+                        String::from_utf8_lossy(lr.chrom()),
+                        String::from_utf8_lossy(lr.pos_text()),
+                        kind as char,
+                        String::from_utf8_lossy(allele),
+                        name,
+                        slots
+                            .get(sample)
+                            .copied()
+                            .flatten()
+                            .and_then(|g| names.get(g as usize))
+                            .map_or_else(|| ".".to_string(), String::clone)
+                    ),
+                    None => writeln!(
+                        buf,
+                        "{}\t{}\t{}\t{}\t{}",
+                        String::from_utf8_lossy(lr.chrom()),
+                        String::from_utf8_lossy(lr.pos_text()),
+                        kind as char,
+                        String::from_utf8_lossy(allele),
+                        name
+                    ),
+                };
+                break;
+            }
+        }
+    }
+
+    /// Feeds the `--hist` accumulators for one record (doc_v14 02 §3.3): the
+    /// built-in metrics ride the QC accumulator (same pass); `gq` and the
+    /// generic `FMT/`/`INFO/` tags decode their own field here — the FORMAT
+    /// keys are read once per record, so a tag costs one split per sample.
+    fn push_hist(&self, lr: &LineRef<'_>, acc: &mut crate::stats::writers::histogram::HistAcc) {
+        // FORMAT key offsets, computed lazily (only when a FMT metric asks).
+        let mut fmt_keys: Option<Vec<Vec<u8>>> = None;
+        let key_index = |keys: &mut Option<Vec<Vec<u8>>>, tag: &[u8]| -> Option<usize> {
+            let list = keys.get_or_insert_with(|| {
+                lr.format_text()
+                    .split(|&b| b == b':')
+                    .map(<[u8]>::to_vec)
+                    .collect()
+            });
+            list.iter().position(|k| k.as_slice() == tag)
+        };
+        for (idx, metric) in self.hist.iter().enumerate() {
+            let tag_bytes: &[u8];
+            let (is_fmt, kind, is_gq) = match metric {
+                crate::stats::writers::histogram::HistMetric::Gq => {
+                    tag_bytes = b"GQ";
+                    (true, crate::stats::writers::histogram::HistKind::Int, true)
+                }
+                crate::stats::writers::histogram::HistMetric::Tag { format, tag, kind } => {
+                    tag_bytes = tag.as_bytes();
+                    (*format, *kind, false)
+                }
+                _ => continue,
+            };
+            if !is_fmt {
+                // INFO/<TAG>: read the record's INFO field.
+                let value = reed_io::vcf::info::info_fragments(lr.info_text())
+                    .find(|(t, _)| *t == tag_bytes)
+                    .and_then(|(_, v)| v);
+                match (kind, value) {
+                    (crate::stats::writers::histogram::HistKind::Int, Some(text)) => {
+                        for token in text.split(|&b| b == b',') {
+                            match parse_int_token(token) {
+                                Some(v) => {
+                                    if let Some(h) = acc.int.get_mut(idx).and_then(Option::as_mut) {
+                                        h.push(v);
+                                    }
+                                }
+                                None => bump_missing(acc, idx),
+                            }
+                        }
+                    }
+                    (crate::stats::writers::histogram::HistKind::Float, Some(text)) => {
+                        for token in text.split(|&b| b == b',') {
+                            match parse_float_token(token) {
+                                Some(v) => {
+                                    if let Some(f) = acc.float.get_mut(idx).and_then(Option::as_mut)
+                                    {
+                                        f.push(Some(v));
+                                    }
+                                }
+                                None => bump_missing(acc, idx),
+                            }
+                        }
+                    }
+                    (_, None) => bump_missing(acc, idx),
+                }
+                continue;
+            }
+            // FMT/<TAG> (and `gq`): subfield `key_index` of every sample. A
+            // key the record's FORMAT lacks is one missing observation per
+            // sample (the opportunity count), not one per record.
+            let Some(key) = key_index(&mut fmt_keys, tag_bytes) else {
+                bump_missing_n(
+                    acc,
+                    idx,
+                    u64::try_from(self.n_samples).unwrap_or(u64::MAX),
+                );
+                continue;
+            };
+            for sample in lr.samples_text().split(|&b| b == b'\t') {
+                let token = sample.split(|&b| b == b':').nth(key).unwrap_or(b".");
+                // A Number=A/G/R subfield carries several comma-separated
+                // values; each is one observation (the INFO path's rule).
+                for value in token.split(|&b| b == b',') {
+                    match kind {
+                        crate::stats::writers::histogram::HistKind::Int => {
+                            match parse_int_token(value) {
+                                Some(v) if is_gq => acc.gq.push(v),
+                                Some(v) => {
+                                    if let Some(h) = acc.int.get_mut(idx).and_then(Option::as_mut) {
+                                        h.push(v);
+                                    }
+                                }
+                                None => bump_missing(acc, idx),
+                            }
+                        }
+                        crate::stats::writers::histogram::HistKind::Float => {
+                            match parse_float_token(value) {
+                                Some(v) => {
+                                    if let Some(f) = acc.float.get_mut(idx).and_then(Option::as_mut) {
+                                        f.push(Some(v));
+                                    }
+                                }
+                                None => bump_missing(acc, idx),
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Renders every requested per-site row for one record (O1: the worker
@@ -391,6 +730,7 @@ impl ReportJob {
         counts: &SiteGroupCounts,
         n_missing: u32,
         depth: (f64, f64, u64),
+        pop: &PopSiteCounts,
         hwe: &mut HweCache,
         partial: &mut ReportPartial,
     ) {
@@ -503,27 +843,85 @@ impl ReportJob {
             }
             out.push(b'\n');
         }
+        // `--pop`: one stratified row per group, in group order, after the
+        // cohort files' row (the group order is the file's first-appearance
+        // order, so the output is deterministic).
+        if self.plan.pop_freq {
+            let Some((_, names)) = &self.groups else {
+                return;
+            };
+            for (g, name) in names.iter().enumerate() {
+                let out = &mut partial.freq_pop;
+                write_prefix(out);
+                let _ = write!(out, "\t{name}\t");
+                out.extend_from_slice(reference);
+                out.push(b'\t');
+                out.extend_from_slice(alt);
+                out.push(b'\t');
+                let an = pop.an[g];
+                if an > 0 {
+                    g6_into(out, f64::from(pop.alt[g]) / f64::from(an));
+                } else {
+                    out.extend_from_slice(b"NA");
+                }
+                let _ = write!(out, "\t{an}");
+                out.push(b'\n');
+            }
+        }
+        if self.plan.pop_vmiss {
+            let Some((slots, names)) = &self.groups else {
+                return;
+            };
+            let mut group_n = vec![0_u32; names.len()];
+            for slot in slots.iter().flatten() {
+                if let Some(n) = group_n.get_mut(*slot as usize) {
+                    *n += 1;
+                }
+            }
+            for (g, name) in names.iter().enumerate() {
+                let out = &mut partial.vmiss_pop;
+                write_prefix(out);
+                let _ = write!(out, "\t{name}\t");
+                let obs = group_n[g];
+                let _ = write!(out, "{}\t{obs}\t", pop.missing[g]);
+                if obs > 0 {
+                    g6_into(out, f64::from(pop.missing[g]) / f64::from(obs));
+                } else {
+                    out.extend_from_slice(b"NA");
+                }
+                out.push(b'\n');
+            }
+        }
     }
 }
 
 /// Ordered consumer: appends the worker-rendered rows, folds per-sample
 /// vectors.
 struct ReportSink {
-    request: ReportRequest,
+    request: StatsReportRequest,
     plan: ReportPlan,
     n_samples: usize,
     sample_names: Vec<String>,
     afreq: Option<BufWriter<std::fs::File>>,
+    singletons: Option<BufWriter<std::fs::File>>,
     hardy: Option<BufWriter<std::fs::File>>,
     vmiss: Option<BufWriter<std::fs::File>>,
     ldepth: Option<BufWriter<std::fs::File>>,
+    /// `--pop --freq`: `PREFIX.afreq.pop`.
+    freq_pop: Option<BufWriter<std::fs::File>>,
+    /// `--pop --missing`: `PREFIX.vmiss.pop`.
+    vmiss_pop: Option<BufWriter<std::fs::File>>,
     missing: Vec<u64>,
     depth_sums: Vec<(f64, u64)>,
     individual: IndividualFAcc,
     n_records: u64,
     /// The `--summary` accumulator (`None` unless it shares the pass).
     qc: Option<QcReportAcc>,
-    out: Arc<Mutex<Option<ReportsOutcome>>>,
+    /// The merged `--hist` accumulators.
+    hist: crate::stats::writers::histogram::HistAcc,
+    /// The rendered histograms, filled at `finish`.
+    hist_out: Vec<crate::stats::writers::histogram::HistOut>,
+    out: Arc<Mutex<Option<StatsOutcome>>>,
 }
 
 impl ReportSink {
@@ -545,9 +943,12 @@ impl OrderedSink<ReportPartial> for ReportSink {
             Ok::<(), EngineError>(())
         };
         append(&mut self.afreq, &partial.freq)?;
+        append(&mut self.singletons, &partial.singletons)?;
         append(&mut self.hardy, &partial.hardy)?;
         append(&mut self.vmiss, &partial.vmiss)?;
         append(&mut self.ldepth, &partial.ldepth)?;
+        append(&mut self.freq_pop, &partial.freq_pop)?;
+        append(&mut self.vmiss_pop, &partial.vmiss_pop)?;
         if self.plan.depth {
             for (dst, src) in self.depth_sums.iter_mut().zip(&partial.depth_sums) {
                 dst.0 += src.0;
@@ -565,6 +966,9 @@ impl OrderedSink<ReportPartial> for ReportSink {
         if let (Some(dst), Some(src)) = (&mut self.qc, partial.qc.take()) {
             dst.merge(&src);
         }
+        if let Some(src) = partial.hist.take() {
+            self.hist.merge(&src);
+        }
         Ok(())
     }
 
@@ -579,6 +983,10 @@ impl OrderedSink<ReportPartial> for ReportSink {
             w.flush().map_err(EngineError::Io)?;
             files.push(path(".afreq"));
         }
+        if let Some(mut w) = self.singletons.take() {
+            w.flush().map_err(EngineError::Io)?;
+            files.push(path(".singletons"));
+        }
         if let Some(mut w) = self.hardy.take() {
             w.flush().map_err(EngineError::Io)?;
             files.push(path(".hardy"));
@@ -590,6 +998,14 @@ impl OrderedSink<ReportPartial> for ReportSink {
         if let Some(mut w) = self.ldepth.take() {
             w.flush().map_err(EngineError::Io)?;
             files.push(path(".ldepth.mean"));
+        }
+        if let Some(mut w) = self.freq_pop.take() {
+            w.flush().map_err(EngineError::Io)?;
+            files.push(path(".afreq.pop"));
+        }
+        if let Some(mut w) = self.vmiss_pop.take() {
+            w.flush().map_err(EngineError::Io)?;
+            files.push(path(".vmiss.pop"));
         }
         if self.request.depth {
             let mut w = ReportSink::open(&self.request.prefix, ".idepth")?;
@@ -643,19 +1059,84 @@ impl OrderedSink<ReportPartial> for ReportSink {
             w.flush().map_err(EngineError::Io)?;
             files.push(path(".smiss"));
         }
+        // `--hist`: one `PREFIX.<m>.hist` per metric (doc_v14 02 §3.2).
+        if self.request.hist.is_empty() {
+            // nothing to write
+        } else {
+            let merged = crate::stats::writers::histogram::merge_hist(
+                &self.request.hist,
+                self.qc.as_ref(),
+                &self.hist,
+            );
+            for out in &merged {
+                let suffix = format!(".{}.hist", out.metric.infix());
+                let mut w = ReportSink::open(&self.request.prefix, &suffix)?;
+                let text = crate::stats::writers::histogram::render_hist(out);
+                w.write_all(text.as_bytes()).map_err(EngineError::Io)?;
+                w.flush().map_err(EngineError::Io)?;
+                files.push(path(&suffix));
+            }
+            // The library caller gets the same histograms the files carry
+            // (`StatsOutcome::hist`); it used to be left empty.
+            self.hist_out = merged;
+        }
+        // The QC accumulator may also run for `--hist`'s built-in metrics
+        // (its data is consumed above); `PREFIX.stats` and `outcome.qc` exist
+        // only when `--summary` asked for them.
+        if !self.request.summary {
+            self.qc = None;
+        }
         let n_records = self.n_records;
         *self
             .out
             .lock()
-            .expect("invariant: reports slot not poisoned") = Some(ReportsOutcome {
+            .expect("invariant: reports slot not poisoned") = Some(StatsOutcome {
             files,
             n_records,
             qc: self.qc.take(),
+            hist: std::mem::take(&mut self.hist_out),
             // The engine metrics come from the run, not the sink; the
             // driver fills this after `run` returns.
             metrics: reed_engine::metrics::StageMetrics::default(),
         });
         Ok(n_records)
+    }
+}
+
+/// The `index`-th comma-separated ALT allele of `alts`.
+fn alt_at(alts: &[u8], index: usize) -> &[u8] {
+    alts.split(|&b| b == b',').nth(index).unwrap_or(alts)
+}
+
+/// One `--hist` integer token: `.` and unparsable text are missing.
+fn parse_int_token(token: &[u8]) -> Option<u32> {
+    std::str::from_utf8(token)
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok())
+}
+
+/// One `--hist` float token: `.`, non-finite text (`NaN`, `inf`) and
+/// unparsable text are missing — a non-finite value has no bin.
+fn parse_float_token(token: &[u8]) -> Option<f32> {
+    std::str::from_utf8(token)
+        .ok()
+        .and_then(|t| t.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+}
+
+/// Counts one unreadable observation for the metric at `idx`.
+fn bump_missing(acc: &mut crate::stats::writers::histogram::HistAcc, idx: usize) {
+    bump_missing_n(acc, idx, 1);
+}
+
+/// Counts `n` unreadable observations for the metric at `idx`.
+fn bump_missing_n(
+    acc: &mut crate::stats::writers::histogram::HistAcc,
+    idx: usize,
+    n: u64,
+) {
+    if let Some(m) = acc.missing.get_mut(idx) {
+        *m += n;
     }
 }
 
@@ -730,13 +1211,13 @@ fn trim_trailing_zeros(s: &str) -> String {
 /// # Errors
 ///
 /// Transport, job and output failures.
-pub fn run_reports(
+pub fn run_stats(
     input: Option<&Path>,
-    request: &ReportRequest,
+    request: &StatsReportRequest,
     budget: &ThreadBudget,
-) -> Result<ReportsOutcome, crate::error::Error> {
+) -> Result<StatsOutcome, crate::error::Error> {
     let opened = crate::input::open(input).map_err(EngineError::from)?;
-    run_reports_opened(opened, request, budget)
+    run_stats_opened(opened, request, budget)
 }
 
 /// Runs the requested reports over an already-opened input (the CLI opens
@@ -744,17 +1225,38 @@ pub fn run_reports(
 ///
 /// # Errors
 ///
-/// As [`run_reports`].
-pub fn run_reports_opened(
+/// As [`run_stats`].
+pub fn run_stats_opened(
     opened: crate::input::OpenedInput,
-    request: &ReportRequest,
+    request: &StatsReportRequest,
     budget: &ThreadBudget,
-) -> Result<ReportsOutcome, crate::error::Error> {
+) -> Result<StatsOutcome, crate::error::Error> {
     let n_samples = opened.facts.n_samples();
-    let plan = ReportPlan::from_request(request);
+    // `--pop` (doc_v14 02 §2.2): resolve the assignment against the header
+    // before the run; `None` keeps the whole-cohort behavior. An empty group
+    // set (every row skipped) is a usage error — the stratified files would
+    // be all headers.
+    let groups = match &request.populations {
+        Some(populations) => {
+            let (slots, names) =
+                resolve_groups(populations, request.force_samples, &opened.facts.sample_names, None)?;
+            if names.is_empty() {
+                return Err(crate::error::Error::usage(
+                    "the populations file assigns no sample from the header",
+                ));
+            }
+            Some((slots, names))
+        }
+        None => None,
+    };
+    let n_groups = groups.as_ref().map_or(0, |(_, names)| names.len());
+    let plan = ReportPlan::from_request(request, n_groups);
     let job = ReportJob {
         n_samples,
         plan,
+        hist: request.hist.clone(),
+        sample_names: opened.facts.sample_names.clone(),
+        groups,
         policies: GenotypePolicies {
             ploidy: PloidyPolicy::HaploidAsHalfCall,
             multiallelic: MultiallelicPolicy::CollapseAlt,
@@ -769,6 +1271,23 @@ pub fn run_reports_opened(
         .transpose()?;
     if let Some(w) = &mut afreq {
         writeln!(w, "#CHROM\tID\tREF\tALT\tALT_FREQS\tOBS_CT").map_err(EngineError::Io)?;
+    }
+    let mut singletons = request
+        .singletons
+        .then(|| ReportSink::open(&request.prefix, ".singletons"))
+        .transpose()?;
+    if let Some(w) = &mut singletons {
+        // With `--pop` the vcftools five columns gain the POP column
+        // (doc_v14 02 §2.2: `.` for a carrier outside every group).
+        if n_groups > 0 {
+            writeln!(
+                w,
+                "CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV\tPOP"
+            )
+            .map_err(EngineError::Io)?;
+        } else {
+            writeln!(w, "CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV").map_err(EngineError::Io)?;
+        }
     }
     let mut hardy = request
         .hardy
@@ -795,6 +1314,20 @@ pub fn run_reports_opened(
     if let Some(w) = &mut ldepth {
         writeln!(w, "CHROM\tPOS\tMEAN_DEPTH\tVAR_DEPTH").map_err(EngineError::Io)?;
     }
+    let mut freq_pop = plan
+        .pop_freq
+        .then(|| ReportSink::open(&request.prefix, ".afreq.pop"))
+        .transpose()?;
+    if let Some(w) = &mut freq_pop {
+        writeln!(w, "#CHROM\tID\tPOP\tREF\tALT\tALT_FREQS\tOBS_CT").map_err(EngineError::Io)?;
+    }
+    let mut vmiss_pop = plan
+        .pop_vmiss
+        .then(|| ReportSink::open(&request.prefix, ".vmiss.pop"))
+        .transpose()?;
+    if let Some(w) = &mut vmiss_pop {
+        writeln!(w, "#CHROM\tID\tPOP\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
+    }
     let abort = reed_engine::abort::abort_for(budget);
     let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
     let crate::input::OpenedInput {
@@ -806,18 +1339,25 @@ pub fn run_reports_opened(
         n_samples,
         sample_names: facts.sample_names.clone(),
         afreq,
+        singletons,
         hardy,
         vmiss,
         ldepth,
+        freq_pop,
+        vmiss_pop,
         missing: vec![0; n_samples],
         depth_sums: vec![(0.0, 0); n_samples],
         individual: IndividualFAcc::new(n_samples),
         n_records: 0,
-        qc: request.summary.then(|| {
+        qc: (request.summary
+            || crate::stats::writers::histogram::HistMetric::any_needs_qc(&request.hist))
+        .then(|| {
             reed_stats::summary::report::QcReportAcc::new(
                 u32::try_from(n_samples).unwrap_or(u32::MAX),
             )
         }),
+        hist: crate::stats::writers::histogram::HistAcc::new(&request.hist),
+        hist_out: Vec::new(),
         out: Arc::new(Mutex::new(None)),
     };
     let out = Arc::clone(&sink.out);

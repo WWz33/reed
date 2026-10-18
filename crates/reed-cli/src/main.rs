@@ -6,7 +6,7 @@ mod cli;
 mod translate;
 mod units;
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 
 use cli::{Cli, Command};
 
@@ -26,11 +26,22 @@ fn main() {
     }
 }
 
+/// Parses the command line with the grouped `--help` (doc_v14 02 §1.3): the
+/// group list is dynamic (`GROUPS` + clap's own `about` texts), so it rides
+/// `after_help` on the command clap parses with.
+fn parse_cli() -> Cli {
+    let command = Cli::command().after_help(cli::render_grouped_commands());
+    let matches = command.get_matches();
+    Cli::from_arg_matches(&matches).expect("invariant: matches come from Cli::command()")
+}
+
 fn run() -> Result<(), reed::Error> {
-    match Cli::parse().command {
+    match parse_cli().command {
         Command::Filter(args) => translate::filter::run_filter_cli(args),
         Command::Stats(args) => translate::stats::run_stats_cli(args),
+        Command::Popg(args) => translate::popg::run_popg_cli(args),
         Command::Index(args) => translate::index::run_index_cli(args),
         Command::Convert(args) => translate::convert::run_convert_cli(args),
+        Command::Rename(args) => translate::rename::run_rename_cli(args),
     }
 }

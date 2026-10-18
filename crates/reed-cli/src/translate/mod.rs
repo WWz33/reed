@@ -1,8 +1,11 @@
 //! Flag → typed request translation and subcommand dispatch.
 
+pub(crate) mod common;
 pub(crate) mod convert;
 pub(crate) mod filter;
 pub(crate) mod index;
+pub(crate) mod popg;
+pub(crate) mod rename;
 pub(crate) mod stats;
 
 /// Builds the projected-SFS request from `--sfs [mode]` and `--proj`

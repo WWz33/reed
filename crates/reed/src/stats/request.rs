@@ -1,5 +1,5 @@
 //! Request, plan and report types of the statistics driver: what a caller asks
-//! for (`StatsRequest` and its sub-requests) and what comes back (`StatsReport`).
+//! for (`PopgenRequest` and its sub-requests) and what comes back (`PopgenReport`).
 //! The run driver lives in `run.rs`; the ordered sink in `sink.rs`.
 
 use reed_core::count::SiteGroupCounts;
@@ -174,7 +174,7 @@ pub struct Levels {
 impl Default for Levels {
     /// The default is the window level (doc_v11 N1): `Levels`'s "zero value"
     /// is not the all-`false` bool tuple — a request built from
-    /// `StatsRequest::default()` must still emit its window rows.
+    /// `PopgenRequest::default()` must still emit its window rows.
     fn default() -> Self {
         Self {
             window: true,
@@ -254,7 +254,7 @@ pub struct WindowRow {
 
 /// The population assignment for a stats run (`--pop` vs the bare
 /// `--sfs`/`--ld` one-group synthesis). The assignment against the header's
-/// sample names happens inside `run_stats_opened` (08 §6.2: request
+/// sample names happens inside `run_popgen_opened` (08 §6.2: request
 /// construction in the front end, executable plans in the driver).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Populations {
@@ -303,17 +303,17 @@ fn first_appearance_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<Strin
     out
 }
 
-/// One `run_stats` request: statistics, group assignment, window grid.
+/// One `run_popgen` request: statistics, group assignment, window grid.
 #[derive(Clone, Debug, Default)]
-pub struct StatsRequest {
+pub struct PopgenRequest {
     /// Statistics to compute, in output-column order.
     pub kinds: Vec<StatKind>,
     /// Site rules in typed form; compiled against the header inside
-    /// `run_stats_opened` (08 §6.2: the front end builds typed requests, it
+    /// `run_popgen_opened` (08 §6.2: the front end builds typed requests, it
     /// does not compile plans). `None` = no site-level filtering.
     pub site: Option<reed_filter::spec::FilterSpec>,
     /// Population assignment; resolved against the header's sample names
-    /// inside `run_stats_opened`.
+    /// inside `run_popgen_opened`.
     pub populations: Populations,
     /// `--force-samples`: population-file rows naming samples absent from
     /// the header are skipped with a warning instead of failing.
@@ -777,7 +777,7 @@ impl SfsPartial {
 
 /// The run's output and counters.
 #[derive(Clone, Debug)]
-pub struct StatsReport {
+pub struct PopgenReport {
     /// Structured window rows, one per selected level; both the
     /// window-layout files and the flat table render from these.
     pub windows: Vec<WindowRow>,
@@ -791,11 +791,11 @@ pub struct StatsReport {
     pub n_records: u64,
     /// Records skipped for a multi-allelic ALT column.
     pub n_multiallelic_skipped: u64,
-    /// The projected spectra when [`StatsRequest::sfs`] was set.
+    /// The projected spectra when [`PopgenRequest::sfs`] was set.
     pub sfs: Option<SfsReport>,
-    /// The Patterson f-statistics when [`StatsRequest::fstats`] was set.
+    /// The Patterson f-statistics when [`PopgenRequest::fstats`] was set.
     pub fstats: Option<FStatsReport>,
-    /// The LD tables when [`StatsRequest::ld`] was set.
+    /// The LD tables when [`PopgenRequest::ld`] was set.
     pub ld: Option<LdReport>,
     /// Chunks processed.
     pub n_chunks: u64,

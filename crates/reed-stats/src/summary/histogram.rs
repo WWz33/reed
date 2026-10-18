@@ -190,6 +190,13 @@ impl QualDist {
         self.bins.get(&index).copied().unwrap_or(0)
     }
 
+    /// The occupied bins in index order. Rendering walks these rather than
+    /// `0..nbins`: a single observation at iqual 10^9 must not materialize a
+    /// billion rows.
+    pub fn occupied(&self) -> impl Iterator<Item = (usize, u64)> + '_ {
+        self.bins.iter().map(|(bin, count)| (*bin, *count))
+    }
+
     /// Number of bins (`nbins` = highest inserted index + 1, like
     /// bcftools's realloc-grown array).
     #[must_use]

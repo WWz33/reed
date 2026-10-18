@@ -1,5 +1,5 @@
 //! The statistics run driver: chunk job (`StatsJob`), per-chunk partials, the
-//! grid/contig accumulation state, and `run_stats` / `run_stats_opened`.
+//! grid/contig accumulation state, and `run_popgen` / `run_popgen_opened`.
 
 use crate::stats::request::{FStatsPartial, FStatsPlan, LdPartial, LdRun, SfsPartial, SfsPlan};
 use reed_core::count::SiteGroupCounts;
@@ -255,7 +255,7 @@ impl StatsJob {
     /// Builds the SFS-only job the convert driver composes (doc_v13 §7.5
     /// plan A): the statistics chunk path restricted to the genome-wide SFS
     /// fold. The same line/site/scan stages run — so `reed convert --sfs`
-    /// and `reed stats --sfs` cannot drift — but no window accumulator is
+    /// and `reed popg --sfs` cannot drift — but no window accumulator is
     /// ever allocated (`GridMode::None`).
     pub(crate) fn for_sfs(
         n_samples: usize,
