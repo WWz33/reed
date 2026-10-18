@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-reed computes population-genetics statistics on VCF/BCF files and applies
-hard filters. No system libraries, multi-threaded, with the BGZF and BCF
-codecs compiled in; also a library, crate name `reed`.
+reed is a population-genetics API library written in Rust. It computes
+π, dxy, Fst, θ and Tajima's D on VCF/BCF files, and does filtering, LD
+pruning, indexing and conversion.
 
 ## Installation
 
@@ -62,31 +62,31 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 The windowed population-genetics statistics. Pass any combination of
 statistics flags; each one adds its output file.
 
-| Flag | Output |
+| Option | Description |
 |---|---|
-| `--pi` | pi per population, `PREFIX_pi.txt` |
-| `--dxy` | dxy per population pair, `PREFIX_dxy.txt` |
-| `--fst [wc84\|hudson]` | Fst for all population pairs, `PREFIX_fst.txt` |
-| `--fst-global` | Global WC84 Fst over all populations, `PREFIX_fst_global.txt` |
-| `--theta` | Watterson's theta per population, `PREFIX_watterson_theta.txt` |
-| `--tajima-d` | Tajima's D per population, `PREFIX_tajima_d.txt` |
-| `--pbs A,B,C` | PBS for the named triple, `PREFIX_pbs.txt`; `--pbs-normed` for PBSn1 |
-| `--sfs` | Projected SFS under `PREFIX_sfs/dadi/` and `PREFIX_sfs/fastsimcoal2/`; needs `--proj N` |
-| `--f2 A,B`, `--f3 C;A,B`, `--f4 A,B;C,D`, `--dstat A,B;C,D`, `--f4-ratio A,B;C,D;X` | Patterson f-statistics with block jackknife, `PREFIX.fstats` |
-| `--ld-decay [MAX_BP]` | Pairwise r² in 1 kb bins, `PREFIX.ld.decay`; `--ld-pairs` for the per-pair table `PREFIX.ld` |
+| `--pi` | pi per population (`PREFIX_pi.txt`) |
+| `--dxy` | dxy per population pair (`PREFIX_dxy.txt`) |
+| `--fst [wc84\|hudson]` | Fst for all population pairs, wc84 by default (`PREFIX_fst.txt`) |
+| `--fst-global` | Global WC84 Fst over all populations (`PREFIX_fst_global.txt`) |
+| `--theta` | Watterson's theta per population (`PREFIX_watterson_theta.txt`) |
+| `--tajima-d` | Tajima's D per population (`PREFIX_tajima_d.txt`) |
+| `--pbs A,B,C` | PBS for the named triple, repeatable; `--pbs-normed` writes PBSn1 (`PREFIX_pbs.txt`) |
+| `--sfs` | Projected SFS, needs `--proj N` (`PREFIX_sfs/dadi/`, `PREFIX_sfs/fastsimcoal2/`) |
+| `--f2 A,B`, `--f3 C;A,B`, `--f4 A,B;C,D`, `--dstat A,B;C,D`, `--f4-ratio A,B;C,D;X` | Patterson f-statistics with block jackknife (`PREFIX.fstats`) |
+| `--ld-decay [MAX_BP]` | Pairwise r² in 1 kb bins (`PREFIX.ld.decay`); `--ld-pairs` adds the per-pair table (`PREFIX.ld`) |
 
 Window options:
 
-| Flag | Meaning |
+| Option | Description |
 |---|---|
-| `--window <SIZE>` | Window size in bp; accepts `100k`, `1M` (default 100000) |
-| `--step <STEP>` | Window step (default: the window size) |
-| `--levels <LIST>` | Rows to report: `window`, `contig`, `genome` (default `window`) |
+| `--window SIZE` | Window size in bp, accepts `100k`, `1M`; default 100000 |
+| `--step STEP` | Window step; default: the window size |
+| `--levels LIST` | Rows to report: `window`, `contig`, `genome`; default `window` |
 | `--skip-empty` | Drop windows that no site fell into |
-| `--pop <FILE>` | `sample<TAB>population` rows, no header; required by the windowed modes |
+| `--pop FILE` | `sample<TAB>population` rows, no header; required by the windowed modes |
 | `--variant-only` | Treat the input as all-variant: missing positions count as monomorphic |
 | `--bypass-invariant-check` | Compute over the sites present (biases pi/dxy denominators) |
-| `--contig-lengths <FILE>` | `.fai`-style `name<TAB>length`, for headers without `##contig` lines |
+| `--contig-lengths FILE` | `.fai`-style `name<TAB>length`, for headers without `##contig` lines |
 
 `popgen` is a visible alias. The windowed flags were on `reed stats` in 0.3.x;
 there they are now parse-time errors naming the rewrite.
@@ -95,12 +95,16 @@ there they are now parse-time errors naming the rewrite.
 
 The per-site and per-sample QC reports. Each flag adds its output file.
 
-| Flag | Output |
+| Option | Description |
 |---|---|
-| `--freq`, `--hardy`, `--het`, `--missing`, `--depth` | `PREFIX.afreq`, `PREFIX.hardy`, `PREFIX.het`, `PREFIX.smiss` + `PREFIX.vmiss`, `PREFIX.idepth` + `PREFIX.ldepth.mean` |
-| `--summary` | QC summary in bcftools-stats layout, `PREFIX.stats` |
-| `--hist <LIST>` | One `PREFIX.<m>.hist` TSV per metric |
-| `--singletons` | Per-allele singleton/doubleton table, `PREFIX.singletons` (vcftools layout) |
+| `--freq` | Per-site allele frequencies (`PREFIX.afreq`) |
+| `--hardy` | HWE exact test with observed/expected heterozygosity (`PREFIX.hardy`) |
+| `--het` | Per-sample inbreeding coefficient F (`PREFIX.het`) |
+| `--missing` | Per-sample and per-site missingness (`PREFIX.smiss`, `PREFIX.vmiss`) |
+| `--depth` | Per-sample and per-site mean depth (`PREFIX.idepth`, `PREFIX.ldepth.mean`) |
+| `--summary` | QC summary in bcftools-stats layout (`PREFIX.stats`) |
+| `--hist LIST` | One `PREFIX.<m>.hist` TSV per metric |
+| `--singletons` | Per-allele singleton/doubleton table (`PREFIX.singletons`, vcftools layout) |
 
 `--hist` takes comma-separated built-ins (`qual`, `dp`, `dp-site`, `gq`,
 `idl`, `af`) and any numeric tag as `INFO/<TAG>` or `FMT/<TAG>`. Every file
@@ -121,7 +125,7 @@ frequencies stay collapsed, as in `.afreq`.
 Identifier edits: sample names, contig names, variant IDs and header lines.
 Genotypes are never decoded; records pass through unchanged.
 
-| Flag | Meaning |
+| Option | Description |
 |---|---|
 | `-s "old new,…"`, `-N FILE` | Rename samples (`old<TAB>new` in the file) |
 | `--replace-sample-name PATTERN` | Literal rewrite (`pre*` strips a prefix, `*suf` a suffix, else removes the text; regex metacharacters are an error) |
@@ -181,7 +185,7 @@ Reads once and writes any number of targets at the same time. Supports
 vcf2phylip, vcftools `--012`, TASSEL hapmap, MSA, and the reverse
 hapmap → VCF.
 
-| Flag | Output |
+| Option | Output |
 |---|---|
 | `--phylip` / `--fasta` / `--nexus` | `PREFIX.phy` / `.fasta` / `.nexus` nucleotide matrices |
 | `--nexus-binary` | `PREFIX.bin.nexus` (SNAPP) |
@@ -280,7 +284,7 @@ let request = PopgenRequest {
 };
 ```
 
-The facade re-exports everything needed: `run_filter`, `run_popgen`,
+The crate root re-exports: `run_filter`, `run_popgen`,
 `run_stats`, `run_rename`, `run_index`, `run_convert`, the request types
 (`PopgenRequest`, `FilterSpec`, `StatsReportRequest`, `RenameSpec`,
 `ConvertRequest`), the reports (`PopgenReport`, `FilterReport`,
@@ -289,7 +293,7 @@ The facade re-exports everything needed: `run_filter`, `run_popgen`,
 `reed::fstats`, `reed::ld`, `reed::summary`), and a single `reed::Error`.
 `PopgenRequest::to_args(&group_names)` and `FilterSpec::to_args()` render a
 request back to the CLI spelling; requests the CLI cannot spell (per-bp
-kinds, a `Regions` grid) return a usage error. Only this facade carries a
+kinds, a `Regions` grid) return a usage error. Only the crate root carries a
 stability promise; the lower crates under `crates/` are internal. Classify
 errors with `Error::kind()`, read messages with `Display`/`source()`.
 

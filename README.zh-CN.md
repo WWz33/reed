@@ -2,8 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-reed 对 VCF/BCF 文件计算群体遗传学统计量并执行硬过滤。无系统库依赖、多线程，
-BGZF 与 BCF 编解码直接编译进二进制；也是库，crate 名 `reed`。
+reed 是一个用 Rust 写的群体遗传学 API 库。它能对 VCF/BCF 文件算 π、dxy、Fst、
+θ、Tajima's D，还能做各种过滤、LD 剪枝、索引和转换。
 
 ## 安装
 
@@ -60,31 +60,31 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 
 窗口群体遗传统计学。统计开关任意组合，每个开关产出自己的文件。
 
-| 开关 | 输出 |
+| 选项 | 说明 |
 |---|---|
-| `--pi` | 每群体 π，`PREFIX_pi.txt` |
-| `--dxy` | 每群体对 dxy，`PREFIX_dxy.txt` |
-| `--fst [wc84\|hudson]` | 全部群体对的 Fst，`PREFIX_fst.txt` |
-| `--fst-global` | 全群体 WC84 Fst，`PREFIX_fst_global.txt` |
-| `--theta` | 每群体 Watterson θ，`PREFIX_watterson_theta.txt` |
-| `--tajima-d` | 每群体 Tajima's D，`PREFIX_tajima_d.txt` |
-| `--pbs A,B,C` | 指定三重 PBS，`PREFIX_pbs.txt`；`--pbs-normed` 产 PBSn1 |
-| `--sfs` | 投影 SFS，落在 `PREFIX_sfs/dadi/` 与 `PREFIX_sfs/fastsimcoal2/`；需要 `--proj N` |
-| `--f2 A,B`、`--f3 C;A,B`、`--f4 A,B;C,D`、`--dstat A,B;C,D`、`--f4-ratio A,B;C,D;X` | Patterson f 统计量 + 区块刀切，`PREFIX.fstats` |
-| `--ld-decay [MAX_BP]` | 1 kb 分箱的配对 r²，`PREFIX.ld.decay`；`--ld-pairs` 加逐对表 `PREFIX.ld` |
+| `--pi` | 每群体 π（`PREFIX_pi.txt`） |
+| `--dxy` | 每群体对 dxy（`PREFIX_dxy.txt`） |
+| `--fst [wc84\|hudson]` | 全部群体对的 Fst，默认 wc84（`PREFIX_fst.txt`） |
+| `--fst-global` | 全群体 WC84 Fst（`PREFIX_fst_global.txt`） |
+| `--theta` | 每群体 Watterson θ（`PREFIX_watterson_theta.txt`） |
+| `--tajima-d` | 每群体 Tajima's D（`PREFIX_tajima_d.txt`） |
+| `--pbs A,B,C` | 指定三重的 PBS，可重复；`--pbs-normed` 写 PBSn1（`PREFIX_pbs.txt`） |
+| `--sfs` | 投影 SFS，需要 `--proj N`（`PREFIX_sfs/dadi/`、`PREFIX_sfs/fastsimcoal2/`） |
+| `--f2 A,B`、`--f3 C;A,B`、`--f4 A,B;C,D`、`--dstat A,B;C,D`、`--f4-ratio A,B;C,D;X` | Patterson f 统计量与区块刀切（`PREFIX.fstats`） |
+| `--ld-decay [MAX_BP]` | 1 kb 分箱的配对 r²（`PREFIX.ld.decay`）；`--ld-pairs` 另写逐对表（`PREFIX.ld`） |
 
 窗口选项：
 
-| 开关 | 含义 |
+| 选项 | 说明 |
 |---|---|
-| `--window <SIZE>` | 窗口大小（bp）；接受 `100k`、`1M`（默认 100000） |
-| `--step <STEP>` | 窗口步长（默认等于窗口大小） |
-| `--levels <LIST>` | 输出的层级：`window`、`contig`、`genome`（默认 `window`） |
+| `--window SIZE` | 窗口大小（bp），接受 `100k`、`1M`；默认 100000 |
+| `--step STEP` | 窗口步长；默认等于窗口大小 |
+| `--levels LIST` | 输出层级：`window`、`contig`、`genome`；默认 `window` |
 | `--skip-empty` | 丢弃无位点落入的窗口 |
-| `--pop <FILE>` | `样本<TAB>群体` 行、无表头；窗口模式必需 |
+| `--pop FILE` | `样本<TAB>群体` 行、无表头；窗口模式必需 |
 | `--variant-only` | 按全变异输入处理：文件不含的位置计为纯合且全部样本有调用 |
 | `--bypass-invariant-check` | 只在文件含有的位点上计算（π/dxy 分母有偏） |
-| `--contig-lengths <FILE>` | `.fai` 式 `名称<TAB>长度`，用于缺 `##contig` 行的头 |
+| `--contig-lengths FILE` | `.fai` 式 `名称<TAB>长度`，用于缺 `##contig` 行的头 |
 
 `popgen` 是可见别名。这些窗口开关在 0.3.x 属于 `reed stats`；现在在
 `reed stats` 上使用会得到指出改写命令的解析期报错（不是静默别名）。
@@ -93,12 +93,16 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 
 位点级与样本级 QC 报告。每个开关产出自己的文件。
 
-| 开关 | 输出 |
+| 选项 | 说明 |
 |---|---|
-| `--freq`、`--hardy`、`--het`、`--missing`、`--depth` | `PREFIX.afreq`、`PREFIX.hardy`、`PREFIX.het`、`PREFIX.smiss` + `PREFIX.vmiss`、`PREFIX.idepth` + `PREFIX.ldepth.mean` |
-| `--summary` | bcftools-stats 布局的 QC 汇总，`PREFIX.stats` |
-| `--hist <LIST>` | 每个指标一份 `PREFIX.<m>.hist` TSV |
-| `--singletons` | 逐等位 singleton/doubleton 表，`PREFIX.singletons`（vcftools 布局） |
+| `--freq` | 逐位点等位频率（`PREFIX.afreq`） |
+| `--hardy` | HWE 精确检验与观测/期望杂合度（`PREFIX.hardy`） |
+| `--het` | 逐样本近交系数 F（`PREFIX.het`） |
+| `--missing` | 逐样本与逐位点缺失率（`PREFIX.smiss`、`PREFIX.vmiss`） |
+| `--depth` | 逐样本与逐位点平均深度（`PREFIX.idepth`、`PREFIX.ldepth.mean`） |
+| `--summary` | bcftools-stats 布局的 QC 汇总（`PREFIX.stats`） |
+| `--hist LIST` | 每个指标一份 TSV（`PREFIX.<m>.hist`） |
+| `--singletons` | 逐等位 singleton/doubleton 表（`PREFIX.singletons`，vcftools 布局） |
 
 `--hist` 用逗号分隔内建指标（`qual`、`dp`、`dp-site`、`gq`、`idl`、`af`）
 与任意数值标签（`INFO/<TAG>` 或 `FMT/<TAG>`）。每份文件含 `bin_lower`、
@@ -116,7 +120,7 @@ flag 之一同给则是用法错误。多等位 ALT 频率保持折叠（与 `.a
 标识符编辑：样本名、染色体名、变异 ID 与 header 行。不解码基因型，记录
 原样通过。
 
-| 开关 | 含义 |
+| 选项 | 说明 |
 |---|---|
 | `-s "old new,…"`、`-N FILE` | 样本改名（文件里是 `old<TAB>new`） |
 | `--replace-sample-name PATTERN` | 字面改名（`pre*` 去前缀、`*suf` 去后缀，否则删除该文本；正则元字符报错） |
@@ -258,7 +262,7 @@ let request = PopgenRequest {
 };
 ```
 
-门面 re-export 所有需要的东西：`run_filter`、`run_popgen`、`run_stats`、
+crate 根导出：`run_filter`、`run_popgen`、`run_stats`、
 `run_rename`、`run_index`、`run_convert`，请求类型（`PopgenRequest`、
 `FilterSpec`、`StatsReportRequest`、`RenameSpec`、`ConvertRequest`），
 报告（`PopgenReport`、`FilterReport`、`StatsOutcome`、`RenameReport`、
@@ -266,7 +270,7 @@ let request = PopgenRequest {
 `reed::histogram`、`reed::sfs`、`reed::fstats`、`reed::ld`、`reed::summary`），
 以及单一 `reed::Error`。`PopgenRequest::to_args(&group_names)` 与
 `FilterSpec::to_args()` 把请求渲染回 CLI 拼写，CLI 拼写不出来的请求
-（per-bp kind、`Regions` grid）返回用法错误。只有这个门面是稳定性承诺，
+（per-bp kind、`Regions` grid）返回用法错误。只有 crate 根是稳定性承诺，
 `crates/` 下的下层 crate 是内部实现；错误用 `Error::kind()` 分类，消息走
 `Display`/`source()`。
 
