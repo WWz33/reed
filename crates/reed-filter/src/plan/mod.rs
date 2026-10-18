@@ -150,12 +150,33 @@ fn warn_stale_info(expr: &crate::expr::Expr, text: &str, tags: &TagTable) {
     }
 }
 
-/// `-q/-Q` reads `INFO/AC,AN` when the header declares both and no cohort
-/// change forces the genotype path (doc_v12 D12-6; cli.md:78 promises this
-/// warning). The dataset trap is the same as the expressions': the INFO
-/// counts may describe a different cohort than the genotypes do.
-fn warn_stale_af(tags: &TagTable) {
-    let _ = tags;
+/// Which `-q/-Q` bounds read `INFO/AC,AN` — `(min, max)`. A bound does when
+/// the header declares both tags, its threshold is the `nref` form (the
+/// `:type` variants are genotype-derived), and no cohort change forces the
+/// genotype path (doc_v12 D12-6; cli.md §3.2 promises the warning 取到时 —
+/// when the INFO value is taken, not whenever the header declares the
+/// trap: every GATK header declares AC+AN). The dataset trap is the same
+/// as the expressions': the INFO counts may describe a different cohort
+/// than the genotypes do. The `HeadRule` pushes and the warning both read
+/// this one decision, so they cannot drift apart.
+fn af_info_sides(
+    tail: &crate::spec::TailRules,
+    info_af: bool,
+    cohort_changed: bool,
+) -> (bool, bool) {
+    let nref_form = |bound: Option<f64>, kind: Option<crate::spec::AfKind>| {
+        bound.is_some() && kind.unwrap_or(crate::spec::AfKind::Nref) == crate::spec::AfKind::Nref
+    };
+    if !info_af || cohort_changed {
+        return (false, false);
+    }
+    (
+        nref_form(tail.min_af, tail.min_af_kind),
+        nref_form(tail.max_af, tail.max_af_kind),
+    )
+}
+
+fn warn_stale_af() {
     tracing::warn!(
         "-q/-Q reads INFO/AC,INFO/AN, which may be stale; use --maf/--mac for \
          genotype-recomputed values or remove the tags with -x INFO/AC,INFO/AN"
@@ -451,23 +472,14 @@ pub fn compile(
         || spec.mind.is_some()
         || !spec.genotype.mask_if.is_empty()
         || spec.genotype.set_gts.is_some();
-    if info_af && !cohort_changed {
-        warn_stale_af(tags);
-    }
+    let (min_af_info, max_af_info) = af_info_sides(&spec.site_after_mask, info_af, cohort_changed);
     for bound in spec.site_after_mask.min_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
             return Err(FilterError::Spec(format!(
                 "min_af out of range [0,1]: {bound}"
             )));
         }
-        if info_af
-            && !cohort_changed
-            && spec
-                .site_after_mask
-                .min_af_kind
-                .unwrap_or(crate::spec::AfKind::Nref)
-                == crate::spec::AfKind::Nref
-        {
+        if min_af_info {
             head.push(HeadRule::MinAfInfo(af_threshold(bound)));
         }
     }
@@ -477,16 +489,14 @@ pub fn compile(
                 "max_af out of range [0,1]: {bound}"
             )));
         }
-        if info_af
-            && !cohort_changed
-            && spec
-                .site_after_mask
-                .max_af_kind
-                .unwrap_or(crate::spec::AfKind::Nref)
-                == crate::spec::AfKind::Nref
-        {
+        if max_af_info {
             head.push(HeadRule::MaxAfInfo(af_threshold(bound)));
         }
+    }
+    // Warn only after both bounds validate, so an out-of-range threshold
+    // errors without the stale-INFO noise first.
+    if min_af_info || max_af_info {
+        warn_stale_af();
     }
     // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
     // genotype-dependent ones after the mask stage ----
@@ -996,5 +1006,81 @@ mod stale_info_tests {
             let expr = expr::parse(text).expect("invariant: parses");
             assert_eq!(stale_info_hits(&expr, &tags), expected, "{text}");
         }
+    }
+
+    /// cli.md §3.2: the `-q/-Q` stale-INFO warning fires only when a
+    /// threshold actually takes the INFO path — not whenever the header
+    /// declares AC+AN (every GATK header does).
+    #[test]
+    fn af_warning_fires_only_when_the_info_path_is_taken() {
+        fn tail(
+            min_af: Option<f64>,
+            min_kind: Option<crate::spec::AfKind>,
+            max_af: Option<f64>,
+            max_kind: Option<crate::spec::AfKind>,
+        ) -> crate::spec::TailRules {
+            crate::spec::TailRules {
+                min_af,
+                min_af_kind: min_kind,
+                max_af,
+                max_af_kind: max_kind,
+                ..Default::default()
+            }
+        }
+        // A `nref` threshold, an AC+AN header, the cohort intact: taken —
+        // the default kind is `nref`, and either bound alone takes it.
+        assert_eq!(
+            af_info_sides(&tail(Some(0.05), None, None, None), true, false),
+            (true, false)
+        );
+        assert_eq!(
+            af_info_sides(&tail(None, None, Some(0.95), None), true, false),
+            (false, true)
+        );
+        assert_eq!(
+            af_info_sides(
+                &tail(
+                    Some(0.05),
+                    Some(crate::spec::AfKind::Nref),
+                    Some(0.95),
+                    Some(crate::spec::AfKind::Nref)
+                ),
+                true,
+                false
+            ),
+            (true, true)
+        );
+        // No threshold at all (a plain `-e 'QD<2 || ...'` run): not taken.
+        assert_eq!(
+            af_info_sides(&tail(None, None, None, None), true, false),
+            (false, false)
+        );
+        // A typed threshold never reads INFO, on either bound.
+        assert_eq!(
+            af_info_sides(
+                &tail(Some(0.05), Some(crate::spec::AfKind::Alt1), None, None),
+                true,
+                false
+            ),
+            (false, false)
+        );
+        assert_eq!(
+            af_info_sides(
+                &tail(None, None, Some(0.95), Some(crate::spec::AfKind::Alt1)),
+                true,
+                false
+            ),
+            (false, false)
+        );
+        // A cohort change (`--set-gts .` and friends) forces the GT path.
+        assert_eq!(
+            af_info_sides(&tail(Some(0.05), None, Some(0.95), None), true, true),
+            (false, false)
+        );
+        // A header without both AC and AN.
+        assert_eq!(
+            af_info_sides(&tail(Some(0.05), None, Some(0.95), None), false, false),
+            (false, false)
+        );
     }
 }

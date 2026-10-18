@@ -159,7 +159,7 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 
 语法语义同 bcftools 手册 EXPRESSIONS，reed 实现其子集，超出子集报 "not supported yet"，不用另一种语义执行：
 
-- 支持：`QUAL FILTER ID CHROM POS TYPE`、`INFO/TAG` 与裸名 `TAG`（裸名先查 INFO）、`FMT/TAG`、`N_ALT N_SAMPLES AC AN AF MAC MAF N_MISSING F_MISSING`；比较 `== = != < <= > >=`、正则 `~ !~`；逻辑 `&& || & |`（对 FORMAT 的含义照 bcftools 区分）、`!`、括号；缺失值 `"."`。
+- 支持：`QUAL FILTER ID CHROM POS TYPE`、`INFO/TAG` 与裸名 `TAG`（裸名先查 INFO）、`FMT/TAG`、`N_ALT N_SAMPLES AC AN AF MAC MAF N_MISSING F_MISSING`；比较 `== = != < <= > >=`、正则 `~ !~`；逻辑 `&& || & |`（对 FORMAT 的含义照 bcftools 区分）、`!`、括号；缺失值 `"."`；负数字面量（`-12.5`，对应 bcftools `filter.c:3902` 的一元负号，无前导 `+`——bcftools 将其词法化为加法运算符，`filter.c:332`；标识符内的 `-` 不受影响，reed 无算术故 `A - B` 仍是错误）。
 - 未支持：`FMT/` 下标 `[0]/[*]`、通用正则、函数（`MAX/MIN/AVG/…`）。
 - `AC/AN/AF/MAC/MAF`：INFO 中存在时取 INFO 值，否则按基因型。检测到表达式使用了 INFO 中已存在的 AC/AN 时打印"陈旧 INFO"警告，提示改用 `--maf/--mac` 或先 `-x INFO/AC,INFO/AN`。
 - 与缺失值比较为假（bcftools 语义）。

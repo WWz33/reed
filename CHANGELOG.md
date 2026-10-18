@@ -36,6 +36,12 @@ split is byte-identical for every existing output
 
 ### Added
 
+- Expressions (`-i/-e`) accept negative number literals (`MQRankSum<-12.5`,
+  the GATK hard-filter shape; bcftools' unary minus, `filter.c:3902`). A
+  `-` before a digit starts the number; a leading `+` stays an error, as in
+  bcftools, which lexes it as the addition operator (`filter.c:332`); `-`
+  inside identifiers stays part of the name, and there is no arithmetic, so
+  `A - B` remains an error.
 - `reed popg`: the windowed statistics (π, dxy, Fst, θ, Tajima's D, PBS,
   SFS, Patterson f-statistics, LD decay), with the 0.3.x flags and
   byte-identical outputs.
@@ -64,6 +70,11 @@ split is byte-identical for every existing output
 
 ### Fixed
 
+- The `-q/-Q` stale-INFO warning fired on every run whose header declares
+  `INFO/AC` and `INFO/AN` with an unchanged cohort (every GATK header does),
+  asserting "-q/-Q reads INFO/AC,INFO/AN" of commands that never passed
+  `-q/-Q`. It now fires only when a `nref`-form threshold actually takes
+  the INFO path (spec cli.md §3.2: 取到时).
 - `reed rename` wrote a blank line at every chunk boundary (the seam record
   arrives with its terminator and got a second one), so every output over
   one chunk carried stray empty lines; with `--rm-dup-ids` the same doubled
