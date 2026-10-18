@@ -86,14 +86,23 @@ fn builtin_metrics_write_hist_files() {
         vec![HistMetric::Qual, HistMetric::Dp, HistMetric::DpSite, HistMetric::Gq, HistMetric::Idl, HistMetric::Af],
         2,
     );
-    let dp = read(&prefix.with_extension("dp.hist").parent().map_or_else(
-        || PathBuf::from(format!("{}.dp.hist", prefix.display())),
-        |p| p.join(format!("{}.dp.hist", prefix.file_name().unwrap().to_string_lossy())),
-    ));
+    let dp = read(&PathBuf::from(format!("{}.dp.hist", prefix.display())));
     assert!(dp.starts_with("bin_lower\tbin_upper\tcount\tpercent\n"), "{dp}");
     // 12 genotypes with DP 5,15,25,35,45,55,10,20,30,40,50,60 → median 30.
     assert!(dp.contains("#median\t30"), "{dp}");
     assert!(dp.contains("#mean\t32.500000"), "{dp}");
+    // QUAL is labelled in quality units, not bcftools' internal iqual index
+    // (`iqual = 1 + QUAL·10`, so the six QUAL=50 records land in [50.0, 50.1)).
+    let qual = read(&PathBuf::from(format!("{}.qual.hist", prefix.display())));
+    assert!(qual.contains("50.000000\t50.100000\t6\t"), "{qual}");
+    // AF bins use bcftools' printed frequency ((i−1)/(m_af−1)): every site
+    // here has one ALT copy, so the singletons fold into the first row.
+    let af = read(&PathBuf::from(format!("{}.af.hist", prefix.display())));
+    assert!(af.contains("0.000000\t0.010000\t6\t"), "{af}");
+    // GQ is an integer metric with exact quantiles (median of the twelve
+    // values 0,5,10,20,30,40,50,50,60,80,90,99 under the ceiling rule).
+    let gq = read(&PathBuf::from(format!("{}.gq.hist", prefix.display())));
+    assert!(gq.contains("#median\t40"), "{gq}");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -311,6 +320,7 @@ fn render_hist_shape() {
     let out = reed::histogram::HistOut {
         metric: HistMetric::Dp,
         int_bins: vec![(1, 3), (2, 1)],
+        overflow: None,
         stats: Some(reed::histogram::HistStats {
             mean: 1.25,
             median: 1,

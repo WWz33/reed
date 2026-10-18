@@ -88,8 +88,8 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
     // Window-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with the reference column layout (02-cli.md §5). LD is genome-wide (no
     // window rows), but it rides the same job as the windowed statistics; a
-    // bare `--ld-decay`/`--ld-pairs` takes this path with no window kinds and
-    // no `--pop` (F6-9).
+    // bare `--ld-decay` takes this path with no window kinds and no `--pop`
+    // (F6-9). `--ld-pairs` needs `--ld-decay` (the builder refuses it alone).
     if windowed_route || args.sfs.is_some() || args.ld_decay.is_some() || args.ld_pairs {
         let ctx = WindowedContext {
             regions: regions.clone(),
@@ -515,11 +515,22 @@ fn build_fstats_request(
 
 /// Builds the LD request from `--ld-decay [MAX]`, `--ld-pairs` and
 /// `--indep-pairwise W S R2` (docs/rounds/v5/05-algorithms.md §3.4).
+///
+/// # Errors
+///
+/// `--ld-pairs` without `--ld-decay`: the pair table is that table's detail
+/// level, and alone the flag used to produce no output at all.
 fn build_ld_request(
     ld_decay: Option<&str>,
     ld_pairs: bool,
 ) -> Result<Option<reed::LdRequest>, reed::Error> {
     if ld_decay.is_none() {
+        if ld_pairs {
+            return Err(reed::Error::usage(
+                "--ld-pairs writes the per-pair table of --ld-decay; pass --ld-decay [MAX_BP] \
+                 as well",
+            ));
+        }
         return Ok(None);
     }
     let decay_max_bp = match ld_decay {

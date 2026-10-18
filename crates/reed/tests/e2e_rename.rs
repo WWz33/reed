@@ -43,6 +43,7 @@ fn run(spec: &RenameSpec, input: &Path, output: &Path, threads: usize) -> reed::
         level: 6,
         command_line: String::new(),
         no_version: true,
+        no_command: false,
         write_index: None,
     };
     run_rename(Some(input), spec, &out, &budget(threads)).expect("invariant: rename run")
@@ -176,6 +177,7 @@ fn validation_rejects_bad_input() {
         level: 6,
         command_line: String::new(),
         no_version: true,
+        no_command: false,
         write_index: None,
     };
     let bad = [
@@ -279,6 +281,7 @@ fn write_index_produces_a_sidecar() {
         level: 6,
         command_line: String::new(),
         no_version: true,
+        no_command: false,
         write_index: Some(reed::WriteIndex::Csi),
     };
     let report = run_rename(Some(&input), &spec, &out_cfg, &budget(1)).expect("rename -W");
@@ -314,5 +317,192 @@ fn rename_is_deterministic_across_threads() {
     run(&spec, &input, &out1, 1);
     run(&spec, &input, &out4, 4);
     assert_eq!(read(&out1), read(&out4));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A multi-chunk input (the engine stitches a seam record at every chunk
+/// boundary) keeps exactly one line per record: the seam line used to arrive
+/// with its terminator and get a second one, so every output over one chunk
+/// carried blank lines, and `--rm-dup-ids` (which splits the raw text on
+/// newlines) died on the empty piece.
+#[test]
+fn multi_chunk_records_stay_one_line_each() {
+    let d = dir("multichunk");
+    let input = d.join("big.vcf");
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=100000000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n",
+    );
+    // Well past the 1 MiB chunk size, so several seams are exercised.
+    for i in 0..120_000 {
+        use std::fmt::Write as _;
+        let _ = writeln!(text, "chr1\t{}\trs{}\tA\tG\t50\t.\t.\tGT\t0/1", i + 1, i);
+    }
+    write(&input, &text);
+    for (tag, spec) in [
+        (
+            "clear",
+            RenameSpec {
+                clear_ids: true,
+                ..RenameSpec::default()
+            },
+        ),
+        (
+            "dedup",
+            RenameSpec {
+                rm_dup_ids: true,
+                set_id: Some("dup".into()),
+                ..RenameSpec::default()
+            },
+        ),
+    ] {
+        let out = d.join(format!("{tag}.vcf"));
+        let report = run(&spec, &input, &out, 4);
+        let text = read(&out);
+        let body: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(report.n_records, 120_000, "{tag}: records");
+        assert_eq!(body.len(), 120_000, "{tag}: one output line per record");
+        assert!(
+            body.iter().all(|l| !l.is_empty()),
+            "{tag}: no blank line at a chunk seam"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `--fai` adds a `##contig` line the header lacks *before* `#CHROM`: a `##`
+/// line after it is not a valid VCF header.
+#[test]
+fn fai_lines_land_in_the_header_block() {
+    let d = dir("fai");
+    let input = d.join("in.vcf");
+    write(&input, VCF);
+    let fai = d.join("ref.fai");
+    write(&fai, "chr1\t999\nchr2\t888\n");
+    let out = d.join("out.vcf");
+    let spec = RenameSpec {
+        fai: Some(fai),
+        ..RenameSpec::default()
+    };
+    run(&spec, &input, &out, 2);
+    let text = read(&out);
+    let chrom_at = text.find("#CHROM").expect("the header line");
+    for line in text.lines().filter(|l| l.starts_with("##contig")) {
+        let at = text.find(line).expect("line offset");
+        assert!(at < chrom_at, "{line:?} must precede #CHROM");
+    }
+    assert!(text.contains("##contig=<ID=chr2,length=888>"), "{text}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A contig-less input is legal VCF: plain (unindexed) output must pass the
+/// records through, and an index request says what is missing instead of
+/// failing mid-run.
+#[test]
+fn contig_less_input_is_accepted_without_an_index() {
+    let d = dir("nocontig");
+    let input = d.join("in.vcf");
+    write(
+        &input,
+        "##fileformat=VCFv4.2\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         c1\t1\trs1\tA\tG\t.\t.\t.\tGT\t0/1\n",
+    );
+    let out = d.join("out.vcf");
+    let spec = RenameSpec {
+        clear_ids: true,
+        ..RenameSpec::default()
+    };
+    run(&spec, &input, &out, 1);
+    assert!(read(&out).contains("c1\t1\t.\tA\tG"), "{}", read(&out));
+
+    // `-W` needs the contig dictionary: a clear usage error, not a crash.
+    let header = d.join("h.vcf");
+    write(
+        &header,
+        "##fileformat=VCFv4.2\n##contig=<ID=c1,length=10>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n",
+    );
+    let spec = RenameSpec {
+        header: Some(header),
+        clear_ids: true,
+        ..RenameSpec::default()
+    };
+    let out = d.join("idx.vcf");
+    let io = RenameOutput {
+        path: Some(out.clone()),
+        compressed: true,
+        level: 6,
+        command_line: String::new(),
+        no_version: true,
+        no_command: false,
+        write_index: Some(reed::WriteIndex::Csi),
+    };
+    // The replacement header declares c1, so the index is buildable here;
+    // the run must succeed and the sidecar must exist.
+    run_rename(Some(&input), &spec, &io, &budget(2)).expect("invariant: index run");
+    assert!(out.with_extension("vcf.csi").exists(), "the sidecar is written");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A CRLF header's last sample keeps its `\r` in the line, so a rename keyed
+/// on the plain name must still match it (it used to be counted but skipped).
+#[test]
+fn crlf_sample_renames_apply() {
+    let d = dir("crlf");
+    let input = d.join("in.vcf");
+    write(
+        &input,
+        "##fileformat=VCFv4.2\r\n##contig=<ID=chr1,length=10>\r\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\r\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\r\n\
+         chr1\t1\trs1\tA\tG\t.\t.\t.\tGT\t0/1\t0/0\r\n",
+    );
+    let out = d.join("out.vcf");
+    let spec = RenameSpec {
+        samples: Some("s1 LAST".into()),
+        ..RenameSpec::default()
+    };
+    let report = run(&spec, &input, &out, 1);
+    assert_eq!(report.n_samples, 1);
+    let text = read(&out);
+    assert!(text.contains("s0\tLAST\r\n"), "{text:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `--update-name` mapping a name the input lacks is a typo: the run fails
+/// instead of renaming nothing and reporting success.
+#[test]
+fn update_name_validates_its_keys() {
+    let d = dir("updatename");
+    let input = d.join("in.vcf");
+    write(&input, VCF);
+    let bad = d.join("bad.txt");
+    write(&bad, "nosuchid\tX\n");
+    let out = d.join("out.vcf");
+    let spec = RenameSpec {
+        update_name: Some(bad),
+        ..RenameSpec::default()
+    };
+    let err = run_rename(
+        Some(&input),
+        &spec,
+        &RenameOutput {
+            path: Some(out.clone()),
+            compressed: false,
+            level: 6,
+            command_line: String::new(),
+            no_version: true,
+            no_command: false,
+            write_index: None,
+        },
+        &budget(1),
+    )
+    .expect_err("an unknown --update-name key must fail");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage);
+    assert!(err.to_string().contains("nosuchid"), "{err}");
     let _ = std::fs::remove_dir_all(&d);
 }

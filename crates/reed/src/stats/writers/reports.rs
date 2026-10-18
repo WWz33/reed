@@ -673,33 +673,43 @@ impl ReportJob {
                 }
                 continue;
             }
-            // FMT/<TAG> (and `gq`): subfield `key_index` of every sample.
+            // FMT/<TAG> (and `gq`): subfield `key_index` of every sample. A
+            // key the record's FORMAT lacks is one missing observation per
+            // sample (the opportunity count), not one per record.
             let Some(key) = key_index(&mut fmt_keys, tag_bytes) else {
-                bump_missing(acc, idx);
+                bump_missing_n(
+                    acc,
+                    idx,
+                    u64::try_from(self.n_samples).unwrap_or(u64::MAX),
+                );
                 continue;
             };
             for sample in lr.samples_text().split(|&b| b == b'\t') {
                 let token = sample.split(|&b| b == b':').nth(key).unwrap_or(b".");
-                match kind {
-                    crate::stats::writers::histogram::HistKind::Int => {
-                        match parse_int_token(token) {
-                            Some(v) if is_gq => acc.gq.push(v),
-                            Some(v) => {
-                                if let Some(h) = acc.int.get_mut(idx).and_then(Option::as_mut) {
-                                    h.push(v);
+                // A Number=A/G/R subfield carries several comma-separated
+                // values; each is one observation (the INFO path's rule).
+                for value in token.split(|&b| b == b',') {
+                    match kind {
+                        crate::stats::writers::histogram::HistKind::Int => {
+                            match parse_int_token(value) {
+                                Some(v) if is_gq => acc.gq.push(v),
+                                Some(v) => {
+                                    if let Some(h) = acc.int.get_mut(idx).and_then(Option::as_mut) {
+                                        h.push(v);
+                                    }
                                 }
+                                None => bump_missing(acc, idx),
                             }
-                            None => bump_missing(acc, idx),
                         }
-                    }
-                    crate::stats::writers::histogram::HistKind::Float => {
-                        match parse_float_token(token) {
-                            Some(v) => {
-                                if let Some(f) = acc.float.get_mut(idx).and_then(Option::as_mut) {
-                                    f.push(Some(v));
+                        crate::stats::writers::histogram::HistKind::Float => {
+                            match parse_float_token(value) {
+                                Some(v) => {
+                                    if let Some(f) = acc.float.get_mut(idx).and_then(Option::as_mut) {
+                                        f.push(Some(v));
+                                    }
                                 }
+                                None => bump_missing(acc, idx),
                             }
-                            None => bump_missing(acc, idx),
                         }
                     }
                 }
@@ -1066,6 +1076,9 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 w.flush().map_err(EngineError::Io)?;
                 files.push(path(&suffix));
             }
+            // The library caller gets the same histograms the files carry
+            // (`StatsOutcome::hist`); it used to be left empty.
+            self.hist_out = merged;
         }
         // The QC accumulator may also run for `--hist`'s built-in metrics
         // (its data is consumed above); `PREFIX.stats` and `outcome.qc` exist
@@ -1102,17 +1115,28 @@ fn parse_int_token(token: &[u8]) -> Option<u32> {
         .and_then(|t| t.trim().parse::<u32>().ok())
 }
 
-/// One `--hist` float token: `.` and unparsable text are missing.
+/// One `--hist` float token: `.`, non-finite text (`NaN`, `inf`) and
+/// unparsable text are missing — a non-finite value has no bin.
 fn parse_float_token(token: &[u8]) -> Option<f32> {
     std::str::from_utf8(token)
         .ok()
         .and_then(|t| t.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
 }
 
 /// Counts one unreadable observation for the metric at `idx`.
 fn bump_missing(acc: &mut crate::stats::writers::histogram::HistAcc, idx: usize) {
+    bump_missing_n(acc, idx, 1);
+}
+
+/// Counts `n` unreadable observations for the metric at `idx`.
+fn bump_missing_n(
+    acc: &mut crate::stats::writers::histogram::HistAcc,
+    idx: usize,
+    n: u64,
+) {
     if let Some(m) = acc.missing.get_mut(idx) {
-        *m += 1;
+        *m += n;
     }
 }
 

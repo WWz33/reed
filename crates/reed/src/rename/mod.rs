@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
@@ -119,6 +120,8 @@ pub struct RenameOutput {
     pub command_line: String,
     /// Suppress the `##reed_*` provenance lines.
     pub no_version: bool,
+    /// Suppress the `##reed_command` line only (`--no-command`).
+    pub no_command: bool,
     /// `-W[=csi|tbi]`: write an index next to the output (filter's
     /// semantics; omitted = no index).
     pub write_index: Option<crate::filter::WriteIndex>,
@@ -154,7 +157,15 @@ struct CompiledPlan {
     chr_style: Option<ChrStyle>,
     set_id: Option<IdTemplate>,
     set_missing_var_ids: Option<IdTemplate>,
-    update_name: HashMap<Vec<u8>, Vec<u8>>,
+    /// ID mapping with the slot of each key in `update_keys` (the hit flags
+    /// are indexed by slot).
+    update_name: HashMap<Vec<u8>, (Vec<u8>, usize)>,
+    /// The `--update-name` keys in file order and one hit flag each; a key
+    /// that never matched an ID is a typo and fails the run (02 §4.3: a
+    /// misspelt name must not be skipped silently). The flags are shared by
+    /// the workers, so no per-chunk merge is needed.
+    update_keys: Vec<Vec<u8>>,
+    update_hits: Vec<AtomicBool>,
     idspace_to: Option<Vec<u8>>,
     rm_dup_ids: bool,
     clear_ids: bool,
@@ -295,7 +306,9 @@ fn parse_inline_pairs(text: &str) -> Result<Vec<(String, String)>, crate::Error>
 /// The `--replace-sample-name` rule: `pre*` strips a prefix, `*suf` a
 /// suffix, and any other pattern removes the text wherever it occurs. No
 /// regex engine: a `$1`-style substitution is not supported, and the
-/// workspace takes no dependency for one flag (B14-4's spirit).
+/// workspace takes no dependency for one flag (B14-4's spirit). A pattern
+/// carrying regex metacharacters is a usage error rather than a silent
+/// no-op: the flag's help and cli.md §12.4 document the literal rule.
 enum NameRewrite {
     Prefix(String),
     Suffix(String),
@@ -303,15 +316,30 @@ enum NameRewrite {
 }
 
 impl NameRewrite {
+    /// Regex metacharacters the literal rule cannot honour; refusing them
+    /// keeps `s[0-9]` or `^s` from looking like a successful rewrite.
+    const METACHARS: &'static [char] = &['^', '$', '[', ']', '(', ')', '|', '+', '?', '{', '}', '\\'];
+
     /// Parses the CLI pattern.
-    fn parse(pattern: &str) -> Self {
-        if let Some(prefix) = pattern.strip_suffix('*') {
+    ///
+    /// # Errors
+    ///
+    /// A usage message when the pattern uses regex syntax.
+    fn parse(pattern: &str) -> Result<Self, crate::Error> {
+        let body = pattern.strip_suffix('*').or_else(|| pattern.strip_prefix('*')).unwrap_or(pattern);
+        if let Some(bad) = body.chars().find(|c| Self::METACHARS.contains(c)) {
+            return Err(crate::Error::usage(format!(
+                "--replace-sample-name: {bad:?} is regex syntax; the pattern is literal \
+                 (`pre*` strips a prefix, `*suf` a suffix, anything else is deleted)"
+            )));
+        }
+        Ok(if let Some(prefix) = pattern.strip_suffix('*') {
             Self::Prefix(prefix.to_string())
         } else if let Some(suffix) = pattern.strip_prefix('*') {
             Self::Suffix(suffix.to_string())
         } else {
             Self::Remove(pattern.to_string())
-        }
+        })
     }
 
     /// Applies the rule to one name.
@@ -361,6 +389,23 @@ pub fn run_rename_opened(
     }
     let sample_names = facts.sample_names.clone();
     let n_samples = sample_names.len();
+    // A sites-only VCF (8 columns) has no parsable record form for this
+    // editor: the CHROM/ID planes would silently do nothing while the run
+    // "succeeded". Refuse instead (the header planes alone still work).
+    let record_planes = spec.rename_chrs.is_some()
+        || spec.chr_style.is_some()
+        || spec.set_id.is_some()
+        || spec.set_missing_var_ids.is_some()
+        || spec.update_name.is_some()
+        || spec.idspace_to.is_some()
+        || spec.rm_dup_ids
+        || spec.clear_ids;
+    if n_samples == 0 && record_planes {
+        return Err(crate::Error::usage(
+            "the input has no sample columns (a sites-only VCF); the CHROM/ID planes need \
+             9-column records — use the header planes only, or add the samples first",
+        ));
+    }
 
     // ---- header: the replacement, the contig edits and the meta edits ----
     let mut header_text = String::from_utf8_lossy(&facts.text).into_owned();
@@ -392,16 +437,30 @@ pub fn run_rename_opened(
             }
         }
     }
-    let mut n_contigs = u64::try_from(contig_map.len()).unwrap_or(u64::MAX);
     if let Some(style) = spec.chr_style {
+        // 02 §4.3 step 2: the explicit rename and the convention stack, so
+        // the style applies to the *mapped* name (the two used to fight,
+        // with the style silently discarding the rename).
         for name in &facts.contig_names {
-            let renamed = style.apply(name);
-            if renamed.as_bytes() != name.as_bytes() {
+            let base = contig_map.get(name.as_bytes()).map_or_else(
+                || name.clone(),
+                |new| String::from_utf8_lossy(new).into_owned(),
+            );
+            let renamed = style.apply(&base);
+            if renamed.as_bytes() != base.as_bytes() {
                 contig_map.insert(name.as_bytes().to_vec(), renamed.into_bytes());
-                n_contigs += 1;
             }
         }
     }
+    // Contigs whose name actually changed (a style that maps a contig onto
+    // itself is not an edit).
+    let n_contigs = u64::try_from(
+        contig_map
+            .iter()
+            .filter(|(old, new)| old.as_slice() != new.as_slice())
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
     if !contig_map.is_empty() {
         header_text = rewrite_contig_lines(&header_text, &contig_map);
     }
@@ -435,7 +494,7 @@ pub fn run_rename_opened(
         }
     }
     if let Some(pattern) = &spec.replace_sample_name {
-        let rewrite = NameRewrite::parse(pattern);
+        let rewrite = NameRewrite::parse(pattern)?;
         for name in &sample_names {
             let new = rewrite.apply(name);
             if new != *name {
@@ -454,7 +513,7 @@ pub fn run_rename_opened(
         {
             use std::fmt::Write as _;
             let _ = writeln!(prov, "##reed_version={}", env!("CARGO_PKG_VERSION"));
-            if !output.command_line.is_empty() {
+            if !output.command_line.is_empty() && !output.no_command {
                 let _ = writeln!(prov, "##reed_command={}", output.command_line);
             }
             let mut planes = Vec::new();
@@ -476,19 +535,33 @@ pub fn run_rename_opened(
     }
 
     // ---- per-record plan ----
-    // Post-rename contig names → header index (the records carry the new
-    // names, the block writer keys them by header order).
+    // The *written* header is the truth for the index and for the record
+    // keys: `-h` may replace the contig set/order, and the renames above
+    // change the names. Deriving from `facts` here made `-h` + `-W` build an
+    // index that described the input's contigs (silently wrong queries).
+    let contig_names: Vec<Vec<u8>> = header_contig_names(&header_text);
     let mut contigs: HashMap<Vec<u8>, reed_core::ContigId> = HashMap::new();
-    for (idx, name) in facts.contig_names.iter().enumerate() {
-        let renamed = contig_map
-            .get(name.as_bytes())
-            .cloned()
-            .unwrap_or_else(|| name.as_bytes().to_vec());
+    for (idx, name) in contig_names.iter().enumerate() {
         contigs.insert(
-            renamed,
+            name.clone(),
             reed_core::ContigId(u32::try_from(idx).unwrap_or(u32::MAX)),
         );
     }
+    // `--update-name`: the pairs in file order (the hit flags are indexed by
+    // slot, so a typo can be named at the end of the run).
+    let update_pairs: Vec<(Vec<u8>, Vec<u8>)> = match &spec.update_name {
+        Some(path) => read_pairs(path, "--update-name")?
+            .into_iter()
+            .map(|(old, new)| (old.into_bytes(), new.into_bytes()))
+            .collect(),
+        None => Vec::new(),
+    };
+    let update_keys: Vec<Vec<u8>> = update_pairs.iter().map(|(old, _)| old.clone()).collect();
+    let update_name: HashMap<Vec<u8>, (Vec<u8>, usize)> = update_pairs
+        .into_iter()
+        .enumerate()
+        .map(|(slot, (old, new))| (old, (new, slot)))
+        .collect();
     let plan = Arc::new(CompiledPlan {
         contigs,
         chrs: contig_map,
@@ -505,13 +578,9 @@ pub fn run_rename_opened(
             .map(IdTemplate::parse)
             .transpose()
             .map_err(crate::Error::usage)?,
-        update_name: match &spec.update_name {
-            Some(path) => read_pairs(path, "--update-name")?
-                .into_iter()
-                .map(|(old, new)| (old.into_bytes(), new.into_bytes()))
-                .collect(),
-            None => HashMap::new(),
-        },
+        update_name,
+        update_keys: update_keys.clone(),
+        update_hits: update_keys.iter().map(|_| AtomicBool::new(false)).collect(),
         idspace_to: spec.idspace_to.as_ref().map(|s| s.as_bytes().to_vec()),
         rm_dup_ids: spec.rm_dup_ids,
         clear_ids: spec.clear_ids,
@@ -551,21 +620,17 @@ pub fn run_rename_opened(
         )),
     };
     // `-W`: an index needs BGZF framing and a real file; the contig names
-    // are the *post-rename* ones (the index keys them by header order).
-    let contig_names: Arc<[Vec<u8>]> = Arc::from(
-        facts
-            .contig_names
-            .iter()
-            .map(|name| {
-                plan.chrs
-                    .get(name.as_bytes())
-                    .cloned()
-                    .unwrap_or_else(|| name.as_bytes().to_vec())
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
+    // are the *written* header's (derived above), so the index matches the
+    // file it ships with.
+    let contig_names: Arc<[Vec<u8>]> = Arc::from(contig_names.into_boxed_slice());
     let indexable = output.compressed && output.path.is_some() && output.write_index.is_some();
+    if indexable && contig_names.is_empty() {
+        return Err(crate::Error::usage(
+            "-W needs the header's ##contig lines and this header has none; add them with \
+             -f FILE or -h FILE",
+        ));
+    }
+    let need_key = indexable;
     let indexer = if indexable {
         let flavor = output.write_index.expect("invariant: checked above");
         Some(
@@ -611,6 +676,7 @@ pub fn run_rename_opened(
         plan: Arc::clone(&plan),
         level: output.level,
         compressed: output.compressed,
+        need_key,
     };
     let report_slot: Arc<std::sync::Mutex<Option<RenameReport>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -618,6 +684,7 @@ pub fn run_rename_opened(
         out,
         plan: Arc::clone(&plan),
         seen_ids: std::collections::HashSet::new(),
+        next_suffix: std::collections::HashMap::new(),
         dedup_writer: plan.rm_dup_ids.then(|| {
             reed_io::write::block_writer::BlockWriter::new(output.level, output.compressed)
                 .expect("invariant: the level comes from the CLI clamp")
@@ -645,6 +712,24 @@ pub fn run_rename_opened(
     // The sink's `finish` already counts the records; `sink_report` carries
     // the same number (the engine returns it).
     report.n_records = run_report.sink_report;
+    // Every `--update-name` key must have matched an ID: a typo would
+    // otherwise rename nothing and still exit 0 (02 §4.3). Only meaningful
+    // when the ID plane actually consulted the map.
+    if plan.set_id.is_none()
+        && !plan.clear_ids
+        && let Some((slot, key)) = plan
+            .update_keys
+            .iter()
+            .enumerate()
+            .find(|(slot, _)| !plan.update_hits[*slot].load(Ordering::Relaxed))
+    {
+        return Err(crate::Error::usage(format!(
+            "--update-name: {:?} is not an ID of the input (key #{}); names are not \
+             skipped silently",
+            String::from_utf8_lossy(key),
+            slot + 1
+        )));
+    }
     Ok(report)
 }
 
@@ -782,13 +867,20 @@ fn apply_fai(header: &str, lengths: &[(String, String)]) -> String {
             out.push_str(line);
         }
     }
-    // Contigs the header lacks get a fresh line (the .fai is authoritative).
+    // Contigs the header lacks get a fresh line, *before* `#CHROM`: a `##`
+    // line after it is not a valid VCF header (this used to append at the
+    // end of the whole header text).
+    let mut missing = String::new();
     for (name, len) in lengths {
         if !seen.iter().any(|s| *s == name) {
-            let _ = writeln!(out, "##contig=<ID={name},length={len}>");
+            let _ = writeln!(missing, "##contig=<ID={name},length={len}>");
         }
     }
-    out
+    if missing.is_empty() {
+        out
+    } else {
+        insert_before_chrom(&out, &missing)
+    }
 }
 
 /// Drops every `##KEY=` line.
@@ -818,6 +910,14 @@ fn insert_before_chrom(header: &str, text: &str) -> String {
     }
 }
 
+/// Splits a line into its body and its terminator (`\n`, `\r\n`, `\r` or
+/// none), so the last column of a CRLF header is not read with a trailing
+/// `\r` (which made sample renames silently miss).
+fn split_line_end(line: &str) -> (&str, &str) {
+    let body = line.trim_end_matches(['\n', '\r']);
+    (&line[..body.len()], &line[body.len()..])
+}
+
 /// Rewrites the `#CHROM` line's sample columns per `map`.
 fn rewrite_sample_line(header: &str, map: &HashMap<String, String>) -> String {
     let mut out = String::with_capacity(header.len());
@@ -827,8 +927,7 @@ fn rewrite_sample_line(header: &str, map: &HashMap<String, String>) -> String {
             continue;
         };
         out.push_str("#CHROM");
-        let body = rest.trim_end_matches('\n');
-        let newline = if rest.ends_with('\n') { "\n" } else { "" };
+        let (body, newline) = split_line_end(rest);
         // `rest` begins with the tab before POS; split past it so the first
         // field is POS (no leading empty field).
         let body = body.strip_prefix('\t').unwrap_or(body);
@@ -852,6 +951,21 @@ fn rewrite_sample_line(header: &str, map: &HashMap<String, String>) -> String {
     out
 }
 
+/// The `##contig` IDs of a header text, in file order. The index and the
+/// record keys follow the *written* header (a `-h` replacement or a contig
+/// rename changes the set and the order).
+fn header_contig_names(header: &str) -> Vec<Vec<u8>> {
+    let mut names = Vec::new();
+    for line in header.lines() {
+        let Some(rest) = line.strip_prefix("##contig=<ID=") else {
+            continue;
+        };
+        let end = rest.find([',', '>']).unwrap_or(rest.len());
+        names.push(rest.as_bytes()[..end].to_vec());
+    }
+    names
+}
+
 /// The per-chunk job: rewrite the CHROM/ID columns, pass the rest through.
 /// Records are re-deflated in the worker (the filter's pattern), so the sink
 /// only appends ordered blocks.
@@ -859,6 +973,10 @@ struct RenameJob {
     plan: Arc<CompiledPlan>,
     level: u8,
     compressed: bool,
+    /// An index is being written, so the block writer consumes the record
+    /// key. Without an index the key is never read, and computing it would
+    /// reject perfectly legal input (no `##contig` lines).
+    need_key: bool,
 }
 
 /// Worker scratch: the reusable block writer.
@@ -939,13 +1057,26 @@ impl RenameJob {
         scratch: &mut RenameScratch,
         partial: &mut RenamePartial,
     ) -> Result<(), EngineError> {
+        // A chunk body splits its records on `\n`, but a seam record arrives
+        // with its terminator (pipeline.rs: "a complete line ending in \n").
+        // Normalizing here keeps the rewrite and the dedup text on exactly
+        // one terminator per record.
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
         let mut rewritten = self
             .rewrite_line(line, partial)
             .unwrap_or_else(|| line.to_vec());
         // The block writer keys each record for the index; parse the key
         // from the rewritten line (CHROM may have been renamed, so the key
-        // must come after the edit).
-        let key = self.index_key(&rewritten)?;
+        // must come after the edit). Without an index the key is unused.
+        let key = if self.need_key {
+            self.index_key(&rewritten)?
+        } else {
+            reed_io::write::block_writer::IndexKey {
+                contig: reed_core::ContigId(0),
+                start1: 0,
+                ref_len: 0,
+            }
+        };
         rewritten.push(b'\n');
         scratch
             .writer
@@ -1045,8 +1176,11 @@ impl RenameJob {
             return template.render(chrom, lr, pos1);
         }
         let mut id = original.to_vec();
-        if let Some(new) = plan.update_name.get(&id) {
+        if let Some((new, slot)) = plan.update_name.get(&id) {
             id = new.clone();
+            if let Some(hit) = plan.update_hits.get(*slot) {
+                hit.store(true, Ordering::Relaxed);
+            }
             partial.n_ids += 1;
         }
         if let Some(sep) = &plan.idspace_to {
@@ -1069,7 +1203,14 @@ impl RenameJob {
 
 /// Renames one record's ID to a unique `id_1`, `id_2`, … form when it has
 /// been seen before (B14-6: suffix, never drop). Returns `(bytes, dup)`.
-fn dedup_line(line: &[u8], seen: &mut std::collections::HashSet<Vec<u8>>) -> (Vec<u8>, bool) {
+/// `next_suffix` remembers where the last probe for a base ID stopped: a run
+/// of N identical IDs is otherwise quadratic (each duplicate re-probed
+/// `_2`, `_3`, … from the start).
+fn dedup_line(
+    line: &[u8],
+    seen: &mut std::collections::HashSet<Vec<u8>>,
+    next_suffix: &mut std::collections::HashMap<Vec<u8>, u32>,
+) -> (Vec<u8>, bool) {
     let Some(lr) = LineRef::parse(line) else {
         return (line.to_vec(), false);
     };
@@ -1077,11 +1218,12 @@ fn dedup_line(line: &[u8], seen: &mut std::collections::HashSet<Vec<u8>>) -> (Ve
     if id == b"." || seen.insert(id.clone()) {
         return (line.to_vec(), false);
     }
-    let mut n = 2_u32;
+    let mut n = next_suffix.get(&id).copied().unwrap_or(2);
     loop {
         let mut candidate = id.clone();
         candidate.extend_from_slice(format!("_{n}").as_bytes());
         if seen.insert(candidate.clone()) {
+            next_suffix.insert(id.clone(), n.saturating_add(1));
             // Replace the ID column (the 3rd field): copy CHROM<TAB>POS<TAB>,
             // then the new ID, then the rest from the next tab on.
             let mut out = Vec::with_capacity(line.len() + 4);
@@ -1115,6 +1257,9 @@ struct RenameSink {
     slot: Arc<std::sync::Mutex<Option<RenameReport>>>,
     /// `--rm-dup-ids`: the IDs already emitted, in record order.
     seen_ids: std::collections::HashSet<Vec<u8>>,
+    /// `--rm-dup-ids`: the next suffix to try per base ID (keeps a run of
+    /// identical IDs linear instead of re-probing from `_2`).
+    next_suffix: std::collections::HashMap<Vec<u8>, u32>,
     /// The contig table for the dedup path's block keys.
     plan: Arc<CompiledPlan>,
     /// `--rm-dup-ids`: the sink-side deflater for the deduplicated text.
@@ -1139,7 +1284,7 @@ impl OrderedSink<RenamePartial> for RenameSink {
                 }
                 // The parser wants the record without its terminator.
                 let bare = line.strip_suffix(b"\n").unwrap_or(line);
-                let (bytes, dup) = dedup_line(bare, &mut self.seen_ids);
+                let (bytes, dup) = dedup_line(bare, &mut self.seen_ids, &mut self.next_suffix);
                 if dup {
                     self.report.n_dup_ids += 1;
                 }

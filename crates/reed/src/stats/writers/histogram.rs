@@ -115,12 +115,6 @@ impl HistMetric {
         }
     }
 
-    /// Whether the metric reads FMT/GQ (the scanner must decode it).
-    #[must_use]
-    pub const fn needs_gq(&self) -> bool {
-        matches!(self, Self::Gq)
-    }
-
     /// Whether the metric reads FMT/DP (the scanner must decode the column).
     #[must_use]
     pub const fn needs_dp(&self) -> bool {
@@ -217,13 +211,17 @@ impl HistAcc {
 pub struct HistOut {
     /// The metric (request order).
     pub metric: HistMetric,
-    /// Integer bins `(value, count)` when the metric is integer-valued.
-    /// Signed: `idl` follows the bcftools IDD convention (deletions
-    /// negative, insertions positive).
+    /// Integer bins `(value, count)` when the metric is integer-valued,
+    /// occupied values only. Signed: `idl` follows the bcftools IDD
+    /// convention (deletions negative, insertions positive).
     pub int_bins: Vec<(i64, u64)>,
-    /// Exact mean/median/p95 for integer metrics.
+    /// The accumulator's overflow bucket `(max + 1, count)`: observations
+    /// above the histogram's range. It is printed as `>max` and kept out of
+    /// the exact statistics (its values are unknown).
+    pub overflow: Option<(i64, u64)>,
+    /// Exact mean/median/p95 over the exact (`int_bins`) observations.
     pub stats: Option<HistStats>,
-    /// Float bins `(lower, upper, count)` (0.1 resolution to 100).
+    /// Float bins `(lower, upper, count)`, occupied only.
     pub float_bins: Vec<(f64, f64, u64)>,
     /// Observations that could not be read.
     pub n_missing: u64,
@@ -251,6 +249,7 @@ pub(crate) fn merge_hist(
         let mut entry = HistOut {
             metric: metric.clone(),
             int_bins: Vec::new(),
+            overflow: None,
             stats: None,
             float_bins: Vec::new(),
             n_missing: acc.missing.get(tag_idx).copied().unwrap_or(0),
@@ -258,26 +257,40 @@ pub(crate) fn merge_hist(
         match metric {
             HistMetric::Qual => {
                 if let Some(qc) = qc {
-                    let mut bins: Vec<(i64, u64)> = Vec::new();
-                    let nbins = qc.qual.snv.nbins().max(qc.qual.indel.nbins());
-                    for i in 0..nbins {
-                        let (lo, _hi) = QualDist::bin_range(i);
-                        let n = qc.qual.snv.count_at(i) + qc.qual.indel.count_at(i);
-                        bins.push((i64::from(lo), n));
+                    // bcftools keys QUAL on `iqual = 1 + round(qual·10)`
+                    // (dist.c): a bin index maps to the quality range
+                    // `[(i−1)/10, i/10)`. Bin 0 is missing/negative/NaN and
+                    // is counted as such, not shown as a `0.0` observation.
+                    let mut bins: Vec<(usize, u64)> = Vec::new();
+                    for (index, n) in qc.qual.snv.occupied() {
+                        bump_index(&mut bins, index, n);
                     }
-                    entry.int_bins = bins;
+                    for (index, n) in qc.qual.indel.occupied() {
+                        bump_index(&mut bins, index, n);
+                    }
+                    bins.sort_unstable_by_key(|(index, _)| *index);
+                    for (index, n) in bins {
+                        if index == 0 {
+                            entry.n_missing += n;
+                            continue;
+                        }
+                        let (lo, hi) = QualDist::bin_range(index);
+                        entry
+                            .float_bins
+                            .push((qual_of(lo), qual_of(hi), n));
+                    }
                 }
             }
             HistMetric::Dp => {
                 if let Some(qc) = qc {
-                    entry.int_bins = qc.dp_genotypes.iter().map(|(v, n)| (i64::from(v), n)).collect();
-                    entry.stats = Some(stats_of(&qc.dp_genotypes));
+                    (entry.int_bins, entry.overflow) = split_int(&qc.dp_genotypes);
+                    entry.stats = stats_of_bins(&entry.int_bins);
                 }
             }
             HistMetric::DpSite => {
                 if let Some(qc) = qc {
-                    entry.int_bins = qc.dp_sites.iter().map(|(v, n)| (i64::from(v), n)).collect();
-                    entry.stats = Some(stats_of(&qc.dp_sites));
+                    (entry.int_bins, entry.overflow) = split_int(&qc.dp_sites);
+                    entry.stats = stats_of_bins(&entry.int_bins);
                 }
             }
             HistMetric::Idl => {
@@ -298,23 +311,36 @@ pub(crate) fn merge_hist(
             }
             HistMetric::Af => {
                 if let Some(qc) = qc {
-                    let m = qc.af.m_af;
-                    for (bin, &snps) in qc.af.snps.iter().enumerate() {
-                        let lower = bin as f64 / (m.saturating_sub(2)).max(1) as f64;
-                        let upper = (bin + 1) as f64 / (m.saturating_sub(2)).max(1) as f64;
-                        entry.float_bins.push((lower, upper, snps));
+                    // bcftools's AF section (vcfstats.c): the singletons bin
+                    // (index 0) folds into index 1 and the printed frequency
+                    // for index i is `(i−1)/(m_af−1)`; the indel column
+                    // counts too (the `.hist` has one count column).
+                    let m = qc.af.m_af.max(2);
+                    let denom = (m - 1) as f64;
+                    for i in 1..m {
+                        let mut n = qc.af.snps[i] + qc.af.indels[i];
+                        if i == 1 {
+                            n += qc.af.snps[0] + qc.af.indels[0];
+                        }
+                        if n == 0 {
+                            continue;
+                        }
+                        entry.float_bins.push((
+                            (i as f64 - 1.0) / denom,
+                            i as f64 / denom,
+                            n,
+                        ));
                     }
                 }
             }
             HistMetric::Gq => {
-                let h = &acc.gq;
-                entry.int_bins = h.iter().map(|(v, n)| (i64::from(v), n)).collect();
-                entry.stats = Some(stats_of(h));
+                (entry.int_bins, entry.overflow) = split_int(&acc.gq);
+                entry.stats = stats_of_bins(&entry.int_bins);
             }
             HistMetric::Tag { .. } => {
                 if let Some(h) = acc.int.get(tag_idx).and_then(Option::as_ref) {
-                    entry.int_bins = h.iter().map(|(v, n)| (i64::from(v), n)).collect();
-                    entry.stats = Some(stats_of(h));
+                    (entry.int_bins, entry.overflow) = split_int(h);
+                    entry.stats = stats_of_bins(&entry.int_bins);
                 } else if let Some(f) = acc.float.get(tag_idx).and_then(Option::as_ref) {
                     entry.float_bins = float_bins_of(f);
                 }
@@ -323,6 +349,45 @@ pub(crate) fn merge_hist(
         out.push(entry);
     }
     out
+}
+
+/// The quality of an `iqual` value: `iqual = 1 + qual·10`, so
+/// `qual = (iqual − 1)/10`.
+fn qual_of(iqual: u32) -> f64 {
+    (f64::from(iqual) - 1.0) / 10.0
+}
+
+/// Adds `n` to the count at `index` (occupied-bin merges for float dists).
+fn bump_index(bins: &mut Vec<(usize, u64)>, index: usize, n: u64) {
+    if let Some(slot) = bins.iter_mut().find(|(i, _)| *i == index) {
+        slot.1 += n;
+    } else {
+        bins.push((index, n));
+    }
+}
+
+/// An integer histogram's occupied exact rows plus its overflow bucket.
+type IntSplit = (Vec<(i64, u64)>, Option<(i64, u64)>);
+
+/// Splits an integer accumulator into its occupied exact values and, when
+/// non-empty, its overflow bucket (`max + 1`) — the bucket holds values
+/// above the histogram's range, so it must not pass as an exact value.
+fn split_int(h: &IntHistogram) -> IntSplit {
+    let all: Vec<(u32, u64)> = h.iter().collect();
+    let last = all.len().saturating_sub(1);
+    let mut bins = Vec::new();
+    let mut overflow = None;
+    for (i, (value, n)) in all.into_iter().enumerate() {
+        if n == 0 {
+            continue;
+        }
+        if i == last {
+            overflow = Some((i64::from(value), n));
+        } else {
+            bins.push((i64::from(value), n));
+        }
+    }
+    (bins, overflow)
 }
 
 /// Adds `n` to the signed bin `value` (the IDD histogram's merge).
@@ -334,40 +399,91 @@ fn bump_signed(bins: &mut Vec<(i64, u64)>, value: i64, n: u64) {
     }
 }
 
+/// The occupied float bins of a distribution, in quality units.
 fn float_bins_of(dist: &QualDist) -> Vec<(f64, f64, u64)> {
-    let mut bins = Vec::new();
-    for i in 0..dist.nbins() {
-        let (lo, hi) = QualDist::bin_range(i);
-        bins.push((f64::from(lo) / 10.0, f64::from(hi) / 10.0, dist.count_at(i)));
-    }
+    let mut bins: Vec<(f64, f64, u64)> = dist
+        .occupied()
+        .map(|(index, n)| {
+            let (lo, hi) = QualDist::bin_range(index);
+            (qual_of(lo), qual_of(hi), n)
+        })
+        .collect();
+    bins.sort_by(|a, b| a.0.total_cmp(&b.0));
     bins
 }
 
-fn stats_of(h: &IntHistogram) -> HistStats {
-    let total = h.total();
-    let mean = if total > 0 {
-        h.weighted_sum() as f64 / total as f64
-    } else {
-        0.0
-    };
-    HistStats {
-        mean,
-        median: h.quantile(0.5).unwrap_or(0),
-        p95: h.quantile(0.95).unwrap_or(0),
+/// Exact mean/median/p95 over `(value, count)` pairs (the overflow bucket is
+/// not one of them: its values are unknown).
+fn stats_of_bins(bins: &[(i64, u64)]) -> Option<HistStats> {
+    let total: u64 = bins.iter().map(|(_, n)| n).sum();
+    if total == 0 {
+        return None;
     }
+    let weighted: f64 = bins
+        .iter()
+        .map(|(value, n)| *value as f64 * *n as f64)
+        .sum();
+    // The quantile rank is `ceil(num·total/den)` (integer arithmetic, so
+    // the rank is exact), counted from the smallest value up.
+    let quantile = |num: u64, den: u64| -> u32 {
+        let target = (num * total).div_ceil(den).clamp(1, total);
+        let mut acc = 0_u64;
+        for (value, n) in bins {
+            acc += n;
+            if acc >= target {
+                return u32::try_from((*value).max(0)).unwrap_or(0);
+            }
+        }
+        0
+    };
+    Some(HistStats {
+        mean: weighted / total as f64,
+        median: quantile(1, 2),
+        p95: quantile(95, 100),
+    })
 }
 
 /// Renders one metric's TSV (`bin_lower`, `bin_upper`, `count`, `percent`),
-/// integer metrics first, then the exact `#mean`/`#median`/`#p95` lines and
-/// `#missing` (doc_v14 02 §3.2).
+/// occupied bins only; integer metrics then carry the exact
+/// `#mean`/`#median`/`#p95` lines and `#missing` (doc_v14 02 §3.2).
 #[must_use]
 pub fn render_hist(out: &HistOut) -> String {
     let mut text = String::new();
     text.push_str("bin_lower\tbin_upper\tcount\tpercent\n");
-    if out.int_bins.is_empty() && out.float_bins.is_empty() {
+    if out.int_bins.is_empty() && out.float_bins.is_empty() && out.overflow.is_none() {
+        if out.n_missing > 0 {
+            let _ = writeln!(text, "#missing\t{}", out.n_missing);
+        }
         return text;
     }
-    if out.int_bins.is_empty() {
+    if !out.int_bins.is_empty() || out.overflow.is_some() {
+        let total: u64 = out
+            .int_bins
+            .iter()
+            .map(|(_, n)| n)
+            .chain(out.overflow.iter().map(|(_, n)| n))
+            .sum();
+        let pct = |n: u64| {
+            if total > 0 {
+                n as f64 * 100.0 / total as f64
+            } else {
+                0.0
+            }
+        };
+        for &(value, n) in &out.int_bins {
+            let _ = writeln!(text, "{value}\t{value}\t{n}\t{:.6}", pct(n));
+        }
+        if let Some((value, n)) = out.overflow {
+            // Above the accumulator's range: `>max`, not an exact value.
+            let max = value - 1;
+            let _ = writeln!(text, ">{max}\t>{max}\t{n}\t{:.6}", pct(n));
+        }
+        if let Some(stats) = &out.stats {
+            let _ = writeln!(text, "#mean\t{:.6}", stats.mean);
+            let _ = writeln!(text, "#median\t{}", stats.median);
+            let _ = writeln!(text, "#p95\t{}", stats.p95);
+        }
+    } else {
         let total: u64 = out.float_bins.iter().map(|(_, _, n)| n).sum();
         for &(lo, hi, n) in &out.float_bins {
             let pct = if total > 0 {
@@ -375,22 +491,7 @@ pub fn render_hist(out: &HistOut) -> String {
             } else {
                 0.0
             };
-            let _ = writeln!(text, "{lo:.1}\t{hi:.1}\t{n}\t{pct:.6}");
-        }
-    } else {
-        let total: u64 = out.int_bins.iter().map(|(_, n)| n).sum();
-        for &(value, n) in &out.int_bins {
-            let pct = if total > 0 {
-                n as f64 * 100.0 / total as f64
-            } else {
-                0.0
-            };
-            let _ = writeln!(text, "{value}\t{value}\t{n}\t{pct:.6}");
-        }
-        if let Some(stats) = &out.stats {
-            let _ = writeln!(text, "#mean\t{:.6}", stats.mean);
-            let _ = writeln!(text, "#median\t{}", stats.median);
-            let _ = writeln!(text, "#p95\t{}", stats.p95);
+            let _ = writeln!(text, "{lo:.6}\t{hi:.6}\t{n}\t{pct:.6}");
         }
     }
     if out.n_missing > 0 {
@@ -429,10 +530,13 @@ mod tests {
         for v in [1_u32, 2, 2, 3, 3, 3, 4] {
             h.push(v);
         }
+        let (bins, overflow) = split_int(&h);
+        let stats = stats_of_bins(&bins);
         let out = HistOut {
             metric: HistMetric::Dp,
-            int_bins: h.iter().map(|(v, n)| (i64::from(v), n)).collect(),
-            stats: Some(stats_of(&h)),
+            int_bins: bins,
+            overflow,
+            stats,
             float_bins: Vec::new(),
             n_missing: 2,
         };
@@ -440,5 +544,70 @@ mod tests {
         assert!(text.contains("2\t2\t2\t28.571429"), "{text}");
         assert!(text.contains("#median\t3"), "{text}");
         assert!(text.contains("#missing\t2"), "{text}");
+    }
+
+    /// The overflow bucket is labelled `>max` and kept out of the exact
+    /// statistics: two DP values of 600 and 1000 must not read as an exact
+    /// `501` with mean 501.
+    #[test]
+    fn overflow_is_labelled_and_excluded_from_the_stats() {
+        let mut h = IntHistogram::new(500);
+        h.push(600);
+        h.push(1000);
+        let (bins, overflow) = split_int(&h);
+        let out = HistOut {
+            metric: HistMetric::Dp,
+            int_bins: bins,
+            overflow,
+            stats: stats_of_bins(&[]),
+            float_bins: Vec::new(),
+            n_missing: 0,
+        };
+        let text = render_hist(&out);
+        assert!(text.contains(">500\t>500\t2\t100.000000"), "{text}");
+        assert!(!text.contains("#mean"), "no exact stats without exact bins: {text}");
+    }
+
+    /// A capped accumulator with in-range data still reports exact stats.
+    #[test]
+    fn in_range_values_keep_exact_stats() {
+        let mut h = IntHistogram::new(500);
+        for v in [10_u32, 20, 30, 40] {
+            h.push(v);
+        }
+        let (bins, overflow) = split_int(&h);
+        assert!(overflow.is_none());
+        let stats = stats_of_bins(&bins).expect("in-range stats");
+        assert!((stats.mean - 25.0).abs() < 1e-9);
+        assert_eq!(stats.median, 20);
+    }
+
+    /// `floats` are labelled in the tag's own units: `iqual = 1 + v·10`, so
+    /// `v = (iqual − 1)/10` (the old code divided the iqual index by 10 and
+    /// put every value one 0.1 bin high).
+    #[test]
+    fn float_bins_use_the_value_units() {
+        let mut dist = QualDist::new();
+        dist.push(Some(1.0));
+        dist.push(Some(0.25));
+        let bins = float_bins_of(&dist);
+        assert_eq!(bins.len(), 2);
+        assert_eq!(bins[0], (0.2, 0.3, 1));
+        assert_eq!(bins[1], (1.0, 1.1, 1));
+    }
+
+    /// The QUAL metric counts iqual 0 (missing/negative/NaN) as missing
+    /// rather than as a real `0.0` observation, and labels bins in QUAL
+    /// units.
+    #[test]
+    fn qual_counts_missing_separately() {
+        let mut qc = QcReportAcc::new(1);
+        qc.qual.snv.push(Some(50.0));
+        qc.qual.snv.push(None);
+        let acc = HistAcc::new(&[HistMetric::Qual]);
+        let out = merge_hist(&[HistMetric::Qual], Some(&qc), &acc);
+        let entry = &out[0];
+        assert_eq!(entry.float_bins, vec![(50.0, 50.1, 1)]);
+        assert_eq!(entry.n_missing, 1);
     }
 }

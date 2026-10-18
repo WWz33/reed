@@ -99,6 +99,7 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
         level,
         command_line,
         no_version: args.no_version,
+        no_command: args.no_command,
         write_index: (write_index != reed::WriteIndex::None).then_some(write_index),
     };
     let input_file = input_path(&args.input);

@@ -58,6 +58,28 @@ fn parse_hist(
                 tag: tag.clone(),
                 kind,
             };
+        } else {
+            // The built-ins ride fields the header must declare too; without
+            // this the run wrote an all-zero histogram and exited 0
+            // (doc_v14 02 §3.3 promises a usage error).
+            let required: Option<(&str, &str)> = match metric {
+                HistMetric::Gq => Some(("FORMAT", "GQ")),
+                HistMetric::Dp => Some(("FORMAT", "DP")),
+                HistMetric::DpSite => Some(("INFO", "DP")),
+                _ => None,
+            };
+            if let Some((scope, name)) = required {
+                let declared = if scope == "FORMAT" {
+                    tags.format(name)
+                } else {
+                    tags.info(name)
+                };
+                if declared.is_none() {
+                    return Err(reed::Error::usage(format!(
+                        "--hist {element:?}: the header declares no {scope}/{name}"
+                    )));
+                }
+            }
         }
         if !metrics.contains(&metric) {
             metrics.push(metric);
@@ -190,6 +212,13 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         .header
         .clone();
     let hist = parse_hist(args.hist.as_deref(), &reed::tag_table(&facts_header))?;
+    // An all-empty list (`--hist ""`, `--hist ",,"`) used to pass the guard
+    // above (it tested `is_none`) and then write nothing while exiting 0.
+    if args.hist.is_some() && hist.is_empty() {
+        return Err(reed::Error::usage(
+            "--hist: the list is empty (want qual/dp/dp-site/gq/idl/af or INFO/<TAG>/FMT/<TAG>)",
+        ));
+    }
     let request = reed::reports::StatsReportRequest {
         hist,
         freq: args.freq,
