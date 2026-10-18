@@ -109,10 +109,25 @@ pub(crate) fn render_grouped_commands() -> String {
                 // the group list keeps one line (doc_v14 02 §1.1).
                 "Print this message or a subcommand's help".to_string()
             } else {
-                root.get_subcommands()
-                    .find(|c| c.get_name() == *name)
+                let cmd = root.get_subcommands().find(|c| c.get_name() == *name);
+                let about = cmd
                     .and_then(|c| c.get_about())
-                    .map_or_else(String::new, |a| a.to_string())
+                    .map_or_else(String::new, |a| a.to_string());
+                // The command list is the only place the aliases can be seen:
+                // the group template drops clap's `{subcommands}` block, which
+                // is what used to append them.
+                let aliases = cmd
+                    .map(|c| {
+                        c.get_visible_aliases()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if aliases.is_empty() {
+                    about
+                } else {
+                    format!("{about} [aliases: {}]", aliases.join(", "))
+                }
             };
             let _ = writeln!(out, "  {name:<12} {about}");
         }
@@ -579,7 +594,7 @@ pub(crate) struct PopgCli {
 pub(crate) struct ConvertCli {
     #[arg(help = INPUT_HELP)]
     pub input: String,
-    /// Projected SFS (mirrors `reed stats --sfs`): writes PREFIX_sfs/dadi
+    /// Projected SFS (mirrors `reed popg --sfs`): writes PREFIX_sfs/dadi
     /// and PREFIX_sfs/fastsimcoal2; needs --proj; `--sfs folded` folds by
     /// the minor allele
     #[arg(long, value_name = "folded", num_args = 0..=1, default_missing_value = "unfolded",
@@ -934,7 +949,7 @@ mod tests {
         assert_eq!(plain.to_args().expect("to_args"), vec!["--vcf", "-O", "v"]);
     }
 
-    /// `reed convert --sfs` and `reed stats --sfs` render the SFS portion
+    /// `reed convert --sfs` and `reed popg --sfs` render the SFS portion
     /// identically (D13-6: one request, two entries).
     #[test]
     fn convert_and_stats_sfs_spellings_agree() {

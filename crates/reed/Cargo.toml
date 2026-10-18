@@ -1,6 +1,6 @@
 [package]
 name = "reed"
-description = "Facade library for reed: wires the pure policy layers onto the parallel engine (run_filter / run_stats / run_index / run_reports)."
+description = "Facade library for reed: wires the pure policy layers onto the parallel engine (run_filter / run_popgen / run_stats / run_index / run_convert / run_rename)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

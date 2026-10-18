@@ -327,7 +327,7 @@ pub(crate) fn build_windowed_request(
         reed::InvariantMode::VariantOnly
     } else if args.bypass_invariant_check {
         eprintln!(
-            "reed stats: warning: --bypass-invariant-check computes over present sites \
+            "reed popg: warning: --bypass-invariant-check computes over present sites \
                  only; π and dxy are overestimated"
         );
         reed::InvariantMode::Bypass
@@ -360,7 +360,7 @@ pub(crate) fn build_windowed_request(
         }
         if group_names.len() == 2 {
             eprintln!(
-                "reed stats: note: two populations: --fst-global equals the pairwise wc84 value"
+                "reed popg: note: two populations: --fst-global equals the pairwise wc84 value"
             );
         }
     }

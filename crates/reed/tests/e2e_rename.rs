@@ -150,7 +150,7 @@ fn id_planes_are_independent() {
         .filter(|l| !l.starts_with('#'))
         .map(|l| l.split('\t').nth(2).unwrap())
         .collect();
-    assert_eq!(ids, ["rs1", "rs1_2", "v3"], "{text}");
+    assert_eq!(ids, ["rs1", "rs1_1", "v3"], "{text}");
 
     let spec = RenameSpec {
         set_id: Some("%CHROM:%POS".into()),

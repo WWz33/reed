@@ -1218,7 +1218,7 @@ fn dedup_line(
     if id == b"." || seen.insert(id.clone()) {
         return (line.to_vec(), false);
     }
-    let mut n = next_suffix.get(&id).copied().unwrap_or(2);
+    let mut n = next_suffix.get(&id).copied().unwrap_or(1);
     loop {
         let mut candidate = id.clone();
         candidate.extend_from_slice(format!("_{n}").as_bytes());
