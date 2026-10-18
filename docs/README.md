@@ -20,6 +20,7 @@
 | 性能 | **`docs/rounds/v6/04-performance.md`**（当前基线）+ `docs/rounds/v5/04-performance.md` + `docs/rounds/v4/04-performance.md` | v6/04：3 次中位数基线、线程效率、deflate 级别研究、与 plink2/bcftools 对照、LD 执行模型问题、P6-1…P6-10；测量纪律在 v5/04 §4 + v6/04 §9 |
 | 命名 | `docs/spec/naming.md` + `docs/rounds/v2/05-naming.md` | 版本后缀禁令（v2 05 §4）由 `ci/check-doc-drift.sh` 守卫 |
 | 项目定位 | `docs/rounds/v5/08-api-surface.md` | 前后端形态（`reed-cli` 是唯一前端）与门面边界（§6） |
+| 参照工具差异与对拍 | **`docs/convert-parity.md`** | README 只留参数与输出；convert 的差异清单与布局细节、f 统计 SE / Tajima's D / LD 剪枝的参照约定、全部对拍脚本总表集中在此 |
 | 路线与验收门 | **`docs/rounds/v6/06-roadmap.md`** | Y0–Y7；v5/07 的 X0–X7 已落地（未完成项并入 Y6），v4/06 的 W0–W6 已完成 |
 | 缺陷修复（外部审查核实） | **`docs/rounds/v7/01-review.md`** + `docs/rounds/v7/06-roadmap.md` | 对一份外部审查报告的独立核实与修复规范（D7-1…D7-29）；路线 Z0–Z4。v7 是缺陷修复轮，不重开 v6 的 Y 系列结构项 |
 | 线程模型与并行预算 | **`docs/rounds/v8/01-review.md`** + `docs/rounds/v8/06-roadmap.md`** | 全部线程创建点台账与 spec §7.3 的逐条对照；rayon 三阶段与 stats LD sink 脱离 `ThreadBudget` 的修复规范（D8-1…D8-5）；路线 P0–P2。v8 是缺陷修复轮，不重开 v6/v7 的结构项 |
