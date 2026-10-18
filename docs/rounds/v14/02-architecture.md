@@ -157,7 +157,7 @@ reed: --window moved to reed popg: run 'reed popg <input> --window 100k …'
 --hist LIST        # 逗号分隔；元素 = 内建 metric 或 INFO/TAG 或 FMT/TAG
 ```
 
-- 内建 metric：`qual`（QUAL，0.1 bin，SNV/indel 分列）、`dp`
+- 内建 metric：`qual`（QUAL，0.1 bin，SNV/indel 合并计数，与 `--summary` 的 QUAL 节同源）、`dp`
   （FMT/DP，逐基因型）、`dp-site`（INFO/DP，逐位点）、`gq`（FMT/GQ，
   逐基因型，**新增解码**）、`idl`（indel 长度，ins/del 分列）、`af`
   （等位频率，bcftools `init_iaf` 的 bin 语义）。
@@ -242,7 +242,7 @@ reed rename <INPUT> [编辑平面 flags…] [-o FILE] [-O v|z|b|u[0-9]] [-W[=csi
 | ID | `--clear-ids` | 全部置 `.` |
 | 样本 | `-s, --samples PAIRS` | `"old new,old2 new2"`（bcftools reheader `-s`） |
 | 样本 | `-N, --samples-file FILE` | 改名对文件（bcftools reheader `-N`） |
-| 样本 | `--replace-sample-name REGEX` | 正则改名（seqkit replace；`sed -E` 语法，捕获组 `$1`） |
+| 样本 | `--replace-sample-name PATTERN` | 字面改名：`pre*` 去前缀、`*suf` 去后缀、其余整体删除；带正则元字符（`^$[]()|+?{}\`）报用法错（不引入正则依赖） |
 
 输出族 `-o/-O/-W` 与运行族（`--threads/--memory/--verbosity/--no-version/
 --no-command`）复用 filter 的拼写与语义。**不收** Region/Sample/Site

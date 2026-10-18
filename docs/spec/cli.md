@@ -335,10 +335,13 @@ reed stats clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 `--freq/--hardy/--het/--missing/--depth/--summary` 的拼写、输出文件与列布局
 零变化。新增 `--hist LIST`：逗号分隔的内建指标（`qual`、`dp`、`dp-site`、
 `gq`、`idl`、`af`）与通用 `INFO/<TAG>`/`FMT/<TAG>`；每个 metric 写
-`PREFIX.<m>.hist` TSV（列 `bin_lower bin_upper count percent`；整数指标附
-精确 `#mean`/`#median`/`#p95` 行，缺失观测附 `#missing` 行）。`idl` 用有
-符号长度（缺失为负、插入为正，bcftools IDD 约定）。标签必须在 header 声明
-且为 Integer/Float，否则用法错（§0.7）。`--hist` 可单独使用（裸
+`PREFIX.<m>.hist` TSV（列 `bin_lower bin_upper count percent`，只写非空桶；
+整数指标附精确 `#mean`/`#median`/`#p95` 行，缺失观测附 `#missing` 行）。
+浮点边界就是该量的单位（QUAL 用质量值、`af` 用频率，不是 bcftools 内部的
+iqual 索引）；超出累加器量程的整数观测写 `>max` 行且不进分位数。`idl` 用有
+符号长度（缺失为负、插入为正，bcftools IDD 约定）。内建与通用标签都必须在
+header 声明对应字段且为 Integer/Float，否则用法错（§0.7）；空列表
+（`--hist ""`）同样是用法错。`--hist` 可单独使用（裸
 `reed stats` 仍是用法错，但给了 `--hist` 即为合法请求）。
 
 另有 `--singletons`：逐等位（含 REF）输出 singleton（计数 1）与 private
@@ -381,7 +384,7 @@ reed: --pi moved to `reed popg`: the windowed population-genetics statistics
 | header | `-h/--header FILE`、`-f/--fai FILE`、`--add-meta LINE`、`--remove-meta KEY` |
 | 染色体 | `--rename-chrs FILE`（`##contig` 行与 CHROM 列同改）、`--chr-style plain\|ucsc\|mt-is-m` |
 | ID | `--set-id PATTERN`（`%CHROM %POS %REF %ALT`；ID 用改名后的 CHROM）、`--set-missing-var-ids PATTERN`、`--update-name FILE`、`--idspace-to SEP`、`--rm-dup-ids`、`--clear-ids` |
-| 样本 | `-s "old new,…"`、`-N/--samples-file FILE`、`--replace-sample-name PATTERN` |
+| 样本 | `-s "old new,…"`、`-N/--samples-file FILE`、`--replace-sample-name PATTERN`（字面：`pre*` 去前缀、`*suf` 去后缀、其余整体删除；正则元字符报用法错） |
 
 输出 `-o FILE`（默认 stdout）、`-O v\|z[level]`（BCF 输入/输出暂不支持）、
 `-W[=csi\|tbi]`（filter 语义：默认不写索引；索引按改名后的 contig 名建）。

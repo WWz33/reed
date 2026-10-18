@@ -61,6 +61,53 @@ split is byte-identical for every existing output
 
 ### Fixed
 
+- `reed rename` wrote a blank line at every chunk boundary (the seam record
+  arrives with its terminator and got a second one), so every output over
+  one chunk carried stray empty lines; with `--rm-dup-ids` the same doubled
+  newline made the dedup pass fail outright (`job failed: dedup: unparsable
+  record`). The suffix probe no longer restarts at `_2` for every duplicate,
+  so a run of identical IDs is linear instead of quadratic.
+- `reed rename` ran its record planes on inputs whose CHROM is not declared
+  in `##contig`: a contig-less VCF (legal VCF) and a sites-only 8-column VCF
+  both failed mid-run. Plain output now passes them through, `-W` says what
+  the header is missing, and the record planes are refused up front on
+  sites-only input.
+- `reed rename -h FILE -W` built the index from the *input* header's contig
+  order while writing the replacement header, so region queries could
+  resolve to the wrong contig; the index now follows the written header.
+- `reed rename -f FILE` appended the missing `##contig` lines after the
+  `#CHROM` line (not a valid VCF header); they are inserted before it.
+- `--rename-chrs` and `--chr-style` overwrote each other instead of
+  stacking (the style was applied to the pre-rename name and discarded the
+  explicit rename).
+- A CRLF header's last sample kept its `\r`, so sample renames counted the
+  edit but silently did not apply it.
+- `--replace-sample-name` used to accept regex syntax and silently do
+  nothing (or strip the wrong text); the flag is documented as literal, so
+  metacharacters are now a usage error.
+- `--update-name` did not check that a mapped name exists (the one
+  validation-table row that was missing): a typo renamed nothing and exited
+  0; the run now fails naming the key.
+- `--no-command` was parsed and ignored by `reed rename` (the
+  `##reed_command` line was written anyway).
+- `--hist` float tags were labelled one 0.1 step high (`iqual` divided by
+  10 instead of `(iqual−1)/10`), so `SC=1.0` printed as the bin `1.1 1.2`;
+  a missing QUAL became a real `0.0` bin instead of `#missing`; the `af`
+  bins used the wrong denominator and dropped indels; integer metrics
+  passed the overflow bucket off as an exact value (`DP 600` → row `501`,
+  mean 501). Bins are now labelled in the quantity's own units, capped
+  observations print `>max` and stay out of the exact quantiles, and only
+  occupied bins are written (a single huge value used to materialize a
+  half-million-row file).
+- `--hist gq`/`dp`/`dp-site` did not check that the header declares the
+  field and wrote an all-zero histogram with exit 0; an all-empty
+  `--hist ""` list did the same. Both are usage errors now.
+- `--hist FMT/<TAG>` counted one missing observation per record when the
+  FORMAT key was absent (it is one per sample) and never split
+  Number=A/G/R subfields, so `FMT/AD` looked empty.
+- `StatsOutcome::hist` (the library's histogram output) was always empty.
+- `reed popg --ld-pairs` without `--ld-decay` exited 0 and produced no
+  output; it is a usage error now.
 - INFO values survive the BCF round trip: an Integer outside the 32-bit
   range becomes missing instead of wrapping (`3000000000` used to be
   written as `-1294967296`; htslib and VCFv4.5 §1.3 both forbid the value),

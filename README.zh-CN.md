@@ -121,7 +121,7 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 | 开关 | 含义 |
 |---|---|
 | `-s "old new,…"`、`-N FILE` | 样本改名（文件里是 `old<TAB>new`） |
-| `--replace-sample-name PATTERN` | 正则式改名（`pre*` 去前缀、`*suf` 去后缀，否则删除该文本） |
+| `--replace-sample-name PATTERN` | 字面改名（`pre*` 去前缀、`*suf` 去后缀，否则删除该文本；正则元字符报错） |
 | `--rename-chrs FILE` | `old<TAB>new` 染色体名；`##contig` 行与 CHROM 列同改 |
 | `--chr-style plain\|ucsc\|mt-is-m` | 染色体命名规范化（无 `chr`、带 `chr`、`chrM`） |
 | `--set-id PATTERN` | 用 `%CHROM %POS %REF %ALT` 模板重写全部 ID |
