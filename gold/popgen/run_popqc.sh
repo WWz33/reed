@@ -33,6 +33,7 @@ mkdir -p "$OUT"
 
 [[ -x "$REED" ]] || { echo "reed binary not found: $REED" >&2; exit 1; }
 [[ -x "$PLINK2" ]] || { echo "plink2 not found: $PLINK2" >&2; exit 1; }
+command -v bcftools >/dev/null 2>&1 || { echo "bcftools not found on PATH" >&2; exit 1; }
 
 THREADS="${THREADS:-4}"
 FAIL=0
@@ -45,7 +46,12 @@ FAIL=0
 
 # Cohort invariance (doc_v14 02 §2.2): --pop must not touch the cohort
 # files. .singletons gains the POP column by design, so its cohort check is
-# the first five columns.
+# the first five columns. A missing file is a failure, not an empty match
+# (two absent files used to compare equal).
+for suffix in .afreq .vmiss .singletons; do
+    [[ -s "$OUT/strat$suffix" && -s "$OUT/cohort$suffix" ]] || {
+        echo "missing output: $OUT/{strat,cohort}$suffix" >&2; FAIL=1; continue; }
+done
 for suffix in .afreq .vmiss; do
     if cmp -s "$OUT/cohort$suffix" "$OUT/strat$suffix"; then
         echo "cohort$suffix unchanged: SAME"
@@ -53,27 +59,48 @@ for suffix in .afreq .vmiss; do
         echo "cohort$suffix unchanged: DIFF" >&2; FAIL=1
     fi
 done
-if cmp -s <(cut -f1-5 "$OUT/cohort.singletons") \
-          <(cut -f1-5 "$OUT/strat.singletons"); then
-    echo "cohort.singletons columns 1-5 unchanged: SAME"
-else
-    echo "cohort.singletons columns 1-5 unchanged: DIFF" >&2; FAIL=1
+if [[ -f "$OUT/cohort.singletons" && -f "$OUT/strat.singletons" ]]; then
+    if cmp -s <(cut -f1-5 "$OUT/cohort.singletons") \
+              <(cut -f1-5 "$OUT/strat.singletons"); then
+        echo "cohort.singletons columns 1-5 unchanged: SAME"
+    else
+        echo "cohort.singletons columns 1-5 unchanged: DIFF" >&2; FAIL=1
+    fi
 fi
 
 # ---- oracle: per-population plink2 runs ---------------------------------
-# The header sample list drives the cut; populations resolve per group.
-SAMPLES=$("$REED" stats "$VCF" --freq -o "$OUT/hdr" --verbosity 0 --threads 1 >/dev/null 2>&1; true)
-# Read the sample names from the VCF header line (last #CHROM line).
-mapfile -t NAMES < <(gzip -dc "$VCF" 2>/dev/null | grep "^#CHROM" | tail -1 | cut -f10-)
+# The group's samples are cut down to the ones the VCF carries: a popfile
+# entry naming a sample the input lacks is legal for reed (--force-samples)
+# but `bcftools view -S` refuses it, which used to abort the whole gate.
+# `cut -f10-` keeps the sample columns on one line; split them into one
+# array entry each, or every comparison below reads the whole list as a
+# single name (which silently skipped every group).
+mapfile -t NAMES < <(gzip -dc "$VCF" 2>/dev/null | grep "^#CHROM" | tail -1 | cut -f10- | tr '\t' '\n')
 if [[ ${#NAMES[@]} -eq 0 ]]; then
     # plain (uncompressed) VCF
-    mapfile -t NAMES < <(grep "^#CHROM" "$VCF" | tail -1 | cut -f10-)
+    mapfile -t NAMES < <(grep "^#CHROM" "$VCF" | tail -1 | cut -f10- | tr '\t' '\n')
 fi
+[[ ${#NAMES[@]} -gt 0 ]] || { echo "no samples in $VCF" >&2; exit 1; }
+in_header() {
+    local want="$1" name
+    for name in "${NAMES[@]}"; do
+        [[ "$name" == "$want" ]] && return 0
+    done
+    return 1
+}
 
 for GROUP in $(awk -F'\t' '{print $2}' "$POPS" | awk '!seen[$0]++'); do
     # The group's samples, as a keep-list file for bcftools.
     KEEP="$OUT/group_$GROUP.samples"
-    awk -F'\t' -v g="$GROUP" '$2==g {print $1}' "$POPS" > "$KEEP"
+    : > "$KEEP"
+    while IFS=$'\t' read -r sample group; do
+        [[ "$group" == "$GROUP" ]] || continue
+        in_header "$sample" && printf '%s\n' "$sample" >> "$KEEP"
+    done < "$POPS"
+    if [[ ! -s "$KEEP" ]]; then
+        echo "afreq.pop $GROUP: no sample of the group is in the VCF (skipped)"
+        continue
+    fi
     GVCF="$OUT/group_$GROUP.vcf.gz"
     bcftools view -S "$KEEP" -Oz -o "$GVCF" "$VCF" 2>/dev/null
     bcftools index -t "$GVCF" 2>/dev/null
@@ -97,7 +124,11 @@ for GROUP in $(awk -F'\t' '{print $2}' "$POPS" | awk '!seen[$0]++'); do
         s = 0; for (i = 1; i <= n; i++) s += f[i];
         print $3"\t"$4"\t"s"\t"$6
     }' "$OUT/p2_$GROUP.afreq" > "$OUT/p2_$GROUP.afreq.vals"
-    if cmp -s "$OUT/reed_$GROUP.afreq.vals" "$OUT/p2_$GROUP.afreq.vals"; then
+    # Numeric, not byte-wise: plink2 prints 6 significant digits, so summing
+    # its per-ALT frequencies can land one ulp below reed's collapsed value
+    # (0.333333+0.333333 = 0.666666 vs 0.666667).
+    if python3 "$GOLD_DIR/popgen/compare_numeric.py" \
+        "$OUT/reed_$GROUP.afreq.vals" "$OUT/p2_$GROUP.afreq.vals"; then
         echo "afreq.pop $GROUP vs plink2: SAME"
     else
         echo "afreq.pop $GROUP vs plink2: DIFF" >&2; FAIL=1
@@ -116,15 +147,26 @@ for GROUP in $(awk -F'\t' '{print $2}' "$POPS" | awk '!seen[$0]++'); do
     fi
 done
 
-# The singletons rows: the POP column must name the carrier's group and the
-# first five columns must equal the cohort run's rows (counting runs over
-# the whole cohort, doc_v14 02 §2.2).
-if [[ $(wc -l < "$OUT/strat.singletons") -gt 1 ]]; then
-    if awk -F'\t' 'NR>1 {print $6}' "$OUT/strat.singletons" | \
-       grep -qvE '^(popA|popB|pop1|pop2|pop3|\.)$'; then
-        echo "singletons POP column: DIFF (unexpected names)" >&2; FAIL=1
+# The singletons POP column must name the carrier's population, resolved
+# from the popfile (`.` for a carrier outside it) — a name whitelist used to
+# pass any of five hardcoded strings and fail any other legitimate popfile.
+rows=0
+[[ -f "$OUT/strat.singletons" ]] && rows=$(($(wc -l < "$OUT/strat.singletons") - 1))
+if [[ $rows -le 0 ]]; then
+    echo "singletons: no rows on this input (nothing to check)"
+else
+    if awk -F'\t' 'NR == FNR { pop[$1] = $2; next }
+        FNR > 1 {
+            want = ($5 in pop) ? pop[$5] : "."
+            if ($6 != want) {
+                printf "row %d: carrier %s is in %s, the POP column says %s\n", FNR, $5, want, $6
+                bad = 1
+            }
+        }
+        END { exit bad }' "$POPS" "$OUT/strat.singletons"; then
+        echo "singletons POP column: OK ($rows rows)"
     else
-        echo "singletons POP column: OK"
+        echo "singletons POP column: DIFF" >&2; FAIL=1
     fi
 fi
 

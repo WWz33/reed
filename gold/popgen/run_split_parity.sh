@@ -110,7 +110,6 @@ is_popg() { [[ " $popg_cases " == *" $1 "* ]]; }
 run_case() {
     local bin="$1" sub="$2" flags="$3" outdir="$4"
     local popflag=""
-    [[ "$flags" == *"--pop"* ]] || popflag=""
     mkdir -p "$outdir"
     # `--pop` is needed by the windowed family; the QC family ignores it but
     # 0.3.x tolerates it, and the split `stats` keeps it optional, so pass it
@@ -119,15 +118,29 @@ run_case() {
         popflag="--pop $POPS"
     fi
     # shellcheck disable=SC2086
-    "$bin" "$sub" "$VCF" $popflag $flags -o "$outdir/out" --threads 1 \
+    "$bin" "$sub" "$VCF" $popflag $flags -o "$outdir/out" --threads "$THREADS" \
         > "$outdir/stdout.txt" 2> "$outdir/stderr.txt"
     echo "exit=0" > "$outdir/exit.txt"
 }
 
 record() {
     [[ -x "$REED_REF" ]] || { echo "reference binary not found: $REED_REF" >&2; exit 1; }
+    # The frozen reference is pinned by hash when the digest file is next to
+    # it: a rebuilt or replaced 0.3.x binary must not silently define truth.
+    local digest="$REED_REF.sha256"
+    if [[ -f "$digest" ]]; then
+        local want have
+        want="$(awk '{print $1}' "$digest")"
+        have="$(sha256sum "$REED_REF" | awk '{print $1}')"
+        [[ "$want" == "$have" ]] || {
+            echo "reference binary $REED_REF does not match $digest" >&2; exit 1; }
+    else
+        echo "warning: no digest at $digest; the reference is not hash-pinned" >&2
+    fi
     local root="$SCRATCH/ref-0.3.0/$(basename "$VCF")"
-    rm -rf "$root"; mkdir -p "$root"
+    rm -rf "$root"
+    [[ ! -e "$root" ]] || { echo "cannot clear the stale reference tree $root" >&2; exit 1; }
+    mkdir -p "$root"
     for case in "${CASES[@]}"; do
         IFS='|' read -r name stats_flags _ <<< "$case"
         echo "record $name"
@@ -141,7 +154,11 @@ check() {
     local ref="$SCRATCH/ref-0.3.0/$(basename "$VCF")"
     [[ -d "$ref" ]] || { echo "run 'record' first (no tree at $ref)" >&2; exit 1; }
     local root="$SCRATCH/new/$(basename "$VCF")"
-    rm -rf "$root"; mkdir -p "$root"
+    rm -rf "$root"
+    # A leftover tree would be compared as if freshly produced (false PASS),
+    # so a failed clear is fatal rather than ignored.
+    [[ ! -e "$root" ]] || { echo "cannot clear the stale output tree $root" >&2; exit 1; }
+    mkdir -p "$root"
     local fail=0
     for case in "${CASES[@]}"; do
         IFS='|' read -r name stats_flags popg_flags <<< "$case"
@@ -152,16 +169,22 @@ check() {
             sub="stats"; flags="$stats_flags"
         fi
         echo "check  $name ($sub)"
+        # A missing reference case would otherwise compare nothing and pass:
+        # an empty truth tree must fail the gate, not satisfy it.
+        if [[ ! -d "$ref/$name" ]]; then
+            echo "  FAIL $name: no reference case at $ref/$name"; fail=1; continue
+        fi
         if ! run_case "$REED" "$sub" "$flags" "$root/$name" "$name" 2>/dev/null; then
             echo "  FAIL $name: run failed"; fail=1; continue
         fi
         # Compare every produced file except the log (it carries the command
         # line, which legitimately changed: stats -> popg) and stderr.
-        local drift=0
+        local drift=0 compared=0
         while IFS= read -r rel; do
             if [[ "$rel" == *".log" || "$rel" == *"stdout.txt" || "$rel" == *"stderr.txt" || "$rel" == *"exit.txt" ]]; then
                 continue
             fi
+            compared=$((compared + 1))
             if ! cmp -s "$ref/$name/$rel" "$root/$name/$rel"; then
                 echo "  FAIL $name: differs: $rel"; drift=1
             fi
@@ -170,6 +193,11 @@ check() {
         while IFS= read -r rel; do
             [[ -e "$root/$name/$rel" ]] || { echo "  FAIL $name: missing: $rel"; drift=1; }
         done < <(cd "$ref/$name" && find . -type f | sed 's|^\./||' | sort)
+        # The reference case must carry at least one output to compare (the
+        # run's own stdout/stderr/exit files are excluded above).
+        if [[ $compared -eq 0 ]]; then
+            echo "  FAIL $name: the reference case has no output to compare"; drift=1
+        fi
         [[ $drift -eq 0 ]] || fail=1
     done
     if [[ $fail -eq 0 ]]; then
