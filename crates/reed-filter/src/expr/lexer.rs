@@ -154,24 +154,20 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, String> {
                 }
             }
             b'0'..=b'9' => {
-                let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
-                    i += 1;
-                }
-                // Exponent form (1e-3) is accepted too.
-                if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
-                    i += 1;
-                    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-                        i += 1;
-                    }
-                    while i < bytes.len() && bytes[i].is_ascii_digit() {
-                        i += 1;
-                    }
-                }
-                let text_num = &text[start..i];
-                let value: f64 = text_num
-                    .parse()
-                    .map_err(|_| format!("invalid number {text_num:?} at column {}", start + 1))?;
+                let (end, value) = scan_number(text, i)?;
+                i = end;
+                out.push(Token::Number(value));
+            }
+            // Negative literal (`MQRankSum<-12.5`): a `-` before a digit
+            // starts the number, bcftools' unary minus (filter.c:3902). A
+            // leading `+` stays an error as in bcftools, which lexes it as
+            // TOK_ADD, never as a sign (filter.c:332). A `-` inside an
+            // identifier was already consumed by the ident scan, so this
+            // arm never splits names; there is no arithmetic, so `A - B`
+            // stays an error.
+            b'-' if bytes.get(i + 1).is_some_and(u8::is_ascii_digit) => {
+                let (end, value) = scan_number(text, i)?;
+                i = end;
                 out.push(Token::Number(value));
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
@@ -194,6 +190,33 @@ pub fn tokenize(text: &str) -> Result<Vec<Token>, String> {
         }
     }
     Ok(out)
+}
+
+/// Scans a number literal at `start` — an optional leading `-`, digits,
+/// optional exponent (`1e-3`) — returning the end index and the value.
+fn scan_number(text: &str, start: usize) -> Result<(usize, f64), String> {
+    let bytes = text.as_bytes();
+    let mut i = start;
+    if bytes[i] == b'-' {
+        i += 1;
+    }
+    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+        i += 1;
+    }
+    if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
+        i += 1;
+        if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+            i += 1;
+        }
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+    }
+    let text_num = &text[start..i];
+    let value: f64 = text_num
+        .parse()
+        .map_err(|_| format!("invalid number {text_num:?} at column {}", start + 1))?;
+    Ok((i, value))
 }
 
 #[cfg(test)]
@@ -241,5 +264,37 @@ mod tests {
             tokenize("AF != .").expect("invariant"),
             [Token::Ident("AF".into()), Token::Cmp("!="), Token::Missing,]
         );
+    }
+
+    #[test]
+    fn tokenizes_negative_literals() {
+        // GATK hard-filter shape: the sign belongs to the number, `-`
+        // inside identifiers stays part of the name.
+        assert_eq!(
+            tokenize("MQRankSum<-12.5").expect("invariant"),
+            [
+                Token::Ident("MQRankSum".into()),
+                Token::Cmp("<"),
+                Token::Number(-12.5)
+            ]
+        );
+        assert_eq!(
+            tokenize("ReadPosRankSum < -8").expect("invariant"),
+            [
+                Token::Ident("ReadPosRankSum".into()),
+                Token::Cmp("<"),
+                Token::Number(-8.0)
+            ]
+        );
+        assert_eq!(
+            tokenize("-1e-3").expect("invariant"),
+            [Token::Number(-0.001)]
+        );
+        // No unary `+`: bcftools lexes it as TOK_ADD (filter.c:332), and
+        // its only unary rewrite is the minus (filter.c:3902), so `POS>+100`
+        // fails to parse there — reed errors too.
+        assert!(tokenize("DP>=+10").is_err());
+        // No arithmetic: `-` starts a number only, never an operator.
+        assert!(tokenize("A - B").is_err());
     }
 }
