@@ -171,19 +171,6 @@ impl<'a> SiteView<'a> {
             .and_then(|(_, value)| value)
     }
 
-    /// INFO tag as an integer (`None` when absent or unparsable).
-    #[must_use]
-    pub fn info_int(&self, tag: &[u8]) -> Option<i64> {
-        let text = self.info_value(tag)?;
-        std::str::from_utf8(text).ok()?.trim().parse().ok()
-    }
-
-    /// INFO tag as a float (`None` when absent or unparsable).
-    #[must_use]
-    pub fn info_float(&self, tag: &[u8]) -> Option<f64> {
-        let text = self.info_value(tag)?;
-        std::str::from_utf8(text).ok()?.trim().parse().ok()
-    }
 }
 
 #[cfg(test)]
@@ -206,8 +193,6 @@ mod tests {
         assert_eq!(site.qual, Some(50.0));
         assert_eq!(site.filter, b"PASS");
         assert!(!site.is_invariant());
-        assert_eq!(site.info_int(b"DP"), Some(5));
-        assert_eq!(site.info_float(b"AF"), Some(0.25));
         assert_eq!(site.info_value(b"AF"), Some(b"0.25".as_slice()));
         assert_eq!(site.info_value(b"ABSENT"), None);
     }

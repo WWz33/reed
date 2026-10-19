@@ -364,6 +364,47 @@ fn worker_panic_becomes_worker_panicked() {
     }
 }
 
+/// doc_v15 D15-40: a panicking input source surfaces as the typed
+/// `ReaderPanicked` instead of unwinding out of the scope with a raw panic
+/// (which bypassed the single error exit; exit 101 in the CLI).
+#[test]
+fn reader_panic_becomes_reader_panicked() {
+    struct PanickySource {
+        chunks: std::vec::IntoIter<ChunkBytes>,
+        good_chunks: usize,
+    }
+    impl ChunkSource for PanickySource {
+        // The panic message is the contract under test, so the assert is
+        // deliberately allowed to unwind.
+        fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, reed_io::IoError> {
+            assert!(self.good_chunks != 0, "boom in the reader");
+            self.good_chunks -= 1;
+            Ok(self.chunks.next())
+        }
+    }
+    let text = fixture_text(200);
+    let chunks = make_chunks(&text, 500);
+    let mut source = PanickySource {
+        chunks: chunks.into_iter(),
+        good_chunks: 1,
+    };
+    let abort = abort();
+    let err = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &budget(3),
+        &abort,
+    )
+    .unwrap_err();
+    match err {
+        EngineError::ReaderPanicked { message } => {
+            assert_eq!(message, "boom in the reader");
+        }
+        other => panic!("expected ReaderPanicked, got {other:?}"),
+    }
+}
+
 #[test]
 fn external_abort_stops_the_run() {
     struct SlowJob;

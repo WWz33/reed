@@ -61,22 +61,34 @@ pub(crate) fn resolve_groups(
 ///
 /// # Errors
 ///
-/// A projection count that contradicts the groups, or a projection below
-/// two chromosomes.
+/// A projection count that contradicts the groups, a projection below two
+/// chromosomes, or one above a group's chromosome count (2 × samples).
 pub(crate) fn build_sfs_plan(
     sfs: &crate::stats::request::SfsRequest,
-    n_groups: usize,
+    group_names: &[String],
+    group_sizes: &[u32],
 ) -> Result<SfsPlan, crate::error::Error> {
+    let n_groups = group_sizes.len();
     if sfs.projections.len() != n_groups {
         return Err(crate::error::Error::usage(format!(
             "the SFS requests {} group projection(s) but the sample assignment declares {n_groups} group(s)",
             sfs.projections.len()
         )));
     }
-    for &n in &sfs.projections {
+    for (group, &n) in sfs.projections.iter().enumerate() {
         if n < 2 {
             return Err(crate::error::Error::usage(format!(
                 "projection size must be at least 2 chromosomes, got {n}"
+            )));
+        }
+        // A projection above the group's chromosome count (2 x samples) can
+        // never absorb a site: the run would quietly emit an all-zero
+        // spectrum (doc_v15 D15-9; shared by popg and convert, D13-6).
+        let max_chrom = 2 * u64::from(group_sizes[group]);
+        if u64::from(n) > max_chrom {
+            return Err(crate::error::Error::usage(format!(
+                "--proj {n} exceeds population {}'s {max_chrom} chromosomes (2 x {} samples)",
+                group_names[group], group_sizes[group]
             )));
         }
     }
@@ -229,17 +241,17 @@ pub fn run_popgen_opened(
         decay_bin_bp: ld.decay_bin_bp.max(1),
         pairs: ld.pairs,
     });
-    let sfs_plan = request
-        .sfs
-        .as_ref()
-        .map(|sfs| build_sfs_plan(sfs, n_groups))
-        .transpose()?;
     // `-s/-S/--keep/--remove`: the keep mask already emptied excluded
     // samples' group slots inside `resolve_groups`.
     let mut group_sizes = vec![0_u32; n_groups];
     for group in gt_groups.iter().flatten() {
         group_sizes[*group as usize] += 1;
     }
+    let sfs_plan = request
+        .sfs
+        .as_ref()
+        .map(|sfs| build_sfs_plan(sfs, &group_names, &group_sizes))
+        .transpose()?;
     // The LD plane layout: samples packed group-major (word-aligned), so a
     // group's pair sums read one contiguous slice and the cohort sums are
     // the exact sum of the group sums (docs/rounds/v6/02-models.md §2.2).

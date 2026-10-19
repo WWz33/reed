@@ -316,6 +316,10 @@ fn count_matrix_matches_vcftools_and_flags_half_calls() {
     // Multiallelic (skipped: >2 alleles) and ALT='.' (kept: all zeros).
     text.push_str("chr1\t3\t.\tA\tG,T\t50\tPASS\t.\tGT\t0/0\t0/1\t2/2\t./.\n");
     text.push_str("chr1\t4\t.\tA\t.\t50\tPASS\t.\tGT\t0/0\t0/0\t0/0\t0/0\n");
+    // Triallelic with no allele-2 usage: the gate counts alleles, not
+    // observed indices, so this is skipped too (doc_v15 D15-5 — it used to
+    // slip through and be coded against REF/first-ALT only).
+    text.push_str("chr1\t6\t.\tA\tG,T\t50\tPASS\t.\tGT\t0/0\t0/1\t0/0\t0/0\n");
     // The B13-8 rows: haploid and half call.
     text.push_str("chr1\t5\t.\tA\tG\t50\tPASS\t.\tGT\t0\t1\t0/.\t./1\n");
     let vcf = write_fixture(&dir, "in.vcf", &text);
@@ -816,5 +820,294 @@ fn msa_covers_whole_contigs_by_default() {
         fasta,
         ">chr1:1-10_s0\nARCCGGTCAA\n>chr1:1-10_s1\nAACCKGTYAA\n>chr1:1-10_s2\nAGCCGGTTAA\n"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v15 D15-26: a 300 bp REF value must survive the MSA (the per-sample
+/// lengths used to wrap at 255, truncating the alignment and shifting every
+/// downstream column).
+#[test]
+fn msa_long_deletion_is_not_truncated() {
+    let dir = fixture_dir("msa-long");
+    let reference_seq = "ACGT".repeat(250); // 1000 bp
+    let reference = format!(">chr1\n{reference_seq}\n");
+    let deletion_ref = &reference_seq[..300]; // positions 1..=300
+    let vcf_text = format!(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t1\t.\t{deletion_ref}\tA\t50\tPASS\t.\tGT\t0/1\t0/0\n\
+         chr1\t601\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n"
+    );
+    let vcf = write_fixture(&dir, "in.vcf", &vcf_text);
+    let r#ref = write_fixture(&dir, "ref.fa", &reference);
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference: r#ref,
+            regions: vec![MsaRegion {
+                contig: "chr1".into(),
+                start1: Some(1),
+                end1: Some(1000),
+            }],
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let fasta = read(&dir.join("out_chr1_1-1000.fasta"));
+    let mut seqs: Vec<(String, String)> = Vec::new();
+    for line in fasta.lines() {
+        if let Some(name) = line.strip_prefix('>') {
+            seqs.push((name.to_string(), String::new()));
+        } else if let Some(last) = seqs.last_mut() {
+            last.1.push_str(line);
+        }
+    }
+    assert_eq!(seqs.len(), 2, "{fasta}");
+    let (s0_name, s0) = &seqs[0];
+    let (s1_name, s1) = &seqs[1];
+    assert_eq!(s0_name, "chr1:1-1000_s0");
+    assert_eq!(s1_name, "chr1:1-1000_s1");
+    // The indel record contributes its 300-column REF block, then the walk
+    // emits one column per remaining position (the SNP site included as its
+    // own column): 300 + 999 = 1299. Pre-fix the u8 wrap gave 1043.
+    assert_eq!(s0.len(), 1299, "alignment width follows the REF block");
+    assert_eq!(s1.len(), 1299);
+    // s0 carries the 1-base ALT plus 299 gaps; s1 the full 300 bp REF.
+    assert!(s0.starts_with(&format!("A{}", "-".repeat(299))), "{}", &s0[..320]);
+    assert_eq!(&s1[..300], &reference_seq[..300]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v15 D15-7 (bounded form): a hapmap whose rows exceed the 4 MiB spill
+/// threshold is written to a temp file at the sink and streamed back at
+/// render time. The output must be byte-identical to the in-memory path;
+/// the fixture is sized to cross the threshold by construction.
+#[test]
+fn hapmap_spills_past_the_threshold() {
+    use std::fmt::Write as _;
+
+    let dir = fixture_dir("hmp-spill");
+    let n = 120_000_u32;
+    let mut text = String::with_capacity(n as usize * 64);
+    text.push_str(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=1000000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+    );
+    for pos in 1..=n {
+        writeln!(
+            text,
+            "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t./."
+        )
+        .expect("invariant: write");
+    }
+    // Plain (uncompressed) input keeps the fixture cheap to build.
+    let vcf = dir.join("in.vcf");
+    std::fs::write(&vcf, &text).expect("invariant: write");
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Hapmap],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+
+    let mut expected = String::from(
+        "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\ts1\ts2\ts3\n",
+    );
+    expected.reserve(n as usize * 64);
+    for pos in 1..=n {
+        writeln!(
+            expected,
+            "chr1:{pos}\tA/G\tchr1\t{pos}\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\tR\tG\tN"
+        )
+        .expect("invariant: write");
+    }
+    assert!(
+        expected.len() > 4 << 20,
+        "fixture must cross the 4 MiB spill threshold: {}",
+        expected.len()
+    );
+    let hmp = read(&dir.join("out.hmp.txt"));
+    assert_eq!(hmp, expected, "spilled hapmap must match byte for byte");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v15 D15-7 (bounded form, targets 2+3): the `--012` cells and the
+/// phylogenetic columns exceed the 4 MiB spill threshold and are streamed
+/// back at render time. Byte-identical output is asserted against the
+/// in-memory expectation; the fixture is sized to cross the threshold.
+#[test]
+fn count_matrix_and_phylo_spill_past_the_threshold() {
+    use std::fmt::Write as _;
+
+    let dir = fixture_dir("spill-012");
+    let n_samples = 200_usize;
+    let n_sites = 25_000_usize;
+    assert!(
+        n_samples * n_sites > 4 << 20,
+        "fixture must cross the 4 MiB spill threshold"
+    );
+    let gt = ["0/0", "0/1", "1/1", "./."];
+    // One constant GT per sample keeps the fixture cheap: every sample
+    // column is a repeat of one token.
+    let mut suffix = String::with_capacity(n_samples * 4);
+    for j in 0..n_samples {
+        write!(suffix, "\t{}", gt[j % 4]).expect("invariant: write");
+    }
+    let mut text = String::with_capacity(n_sites * (32 + n_samples * 4));
+    text.push_str(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=1000000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT",
+    );
+    for j in 0..n_samples {
+        write!(text, "\ts{j}").expect("invariant: write");
+    }
+    text.push('\n');
+    for pos in 1..=n_sites {
+        write!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT").expect("invariant: write");
+        text.push_str(&suffix);
+        text.push('\n');
+    }
+    let vcf = dir.join("in.vcf");
+    std::fs::write(&vcf, &text).expect("invariant: write");
+    let request = ConvertRequest {
+        targets: vec![
+            ConvertTarget::CountMatrix,
+            ConvertTarget::Phylo {
+                formats: PhyloFormats {
+                    phylip: true,
+                    ..PhyloFormats::default()
+                },
+                options: PhyloOptions {
+                    outgroup: None,
+                    resolve_iupac: false,
+                    write_used_sites: false,
+                },
+            },
+        ],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+
+    // `--012`: one row per sample, the same token repeated.
+    let tokens = ["0", "1", "2", "-1"];
+    let suffixes: Vec<String> = tokens
+        .iter()
+        .map(|t| {
+            let mut s = String::with_capacity(n_sites * 3);
+            for _ in 0..n_sites {
+                s.push('\t');
+                s.push_str(t);
+            }
+            s
+        })
+        .collect();
+    let mut expected_012 = String::with_capacity(n_samples * (4 + n_sites * 3));
+    for j in 0..n_samples {
+        write!(expected_012, "{j}").expect("invariant: write");
+        expected_012.push_str(&suffixes[j % 4]);
+        expected_012.push('\n');
+    }
+    assert_eq!(read(&dir.join("out.012")), expected_012);
+
+    // `.012.pos` and `.012.indv`.
+    let mut expected_pos = String::with_capacity(n_sites * 10);
+    for pos in 1..=n_sites {
+        writeln!(expected_pos, "chr1\t{pos}").expect("invariant: write");
+    }
+    assert_eq!(read(&dir.join("out.012.pos")), expected_pos);
+    let mut expected_indv = String::new();
+    for j in 0..n_samples {
+        writeln!(expected_indv, "s{j}").expect("invariant: write");
+    }
+    assert_eq!(read(&dir.join("out.012.indv")), expected_indv);
+
+    // PHYLIP: header + padded rows of one repeated letter.
+    let runs: Vec<String> = ["A", "R", "G", "N"]
+        .iter()
+        .map(|letter| letter.repeat(n_sites))
+        .collect();
+    let width = "s199".len() + 3;
+    let mut expected_phy = format!("{n_samples} {n_sites}\n");
+    for j in 0..n_samples {
+        let name = format!("s{j}");
+        expected_phy.push_str(&name);
+        expected_phy.push_str(&" ".repeat(width - name.len()));
+        expected_phy.push_str(&runs[j % 4]);
+        expected_phy.push('\n');
+    }
+    assert_eq!(read(&dir.join("out.phy")), expected_phy);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v15 D15-7 (MSA): the per-contig frame streams exceed the 4 MiB spill
+/// threshold and the render walks them once per sample, so no region-sized
+/// buffer is materialized. Byte-identical output is asserted against a
+/// formula-built expectation; the fixture is sized to cross the threshold.
+#[test]
+fn msa_frames_spill_past_the_threshold() {
+    use std::fmt::Write as _;
+
+    let dir = fixture_dir("msa-spill");
+    let n_samples = 80_usize;
+    let n_sites = 60_000_usize;
+    assert!(
+        n_sites * (12 + n_samples) > 4 << 20,
+        "fixture must cross the 4 MiB spill threshold"
+    );
+    // Constant GT per sample keeps the expected rows a repeated letter.
+    let gt = ["0/0", "0/1", "1/1", "./."];
+    let mut suffix = String::with_capacity(n_samples * 4);
+    for j in 0..n_samples {
+        write!(suffix, "\t{}", gt[j % 4]).expect("invariant: write");
+    }
+    let mut text = String::with_capacity(n_sites * (32 + n_samples * 4));
+    text.push_str(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=60000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT",
+    );
+    for j in 0..n_samples {
+        write!(text, "\ts{j}").expect("invariant: write");
+    }
+    text.push('\n');
+    for pos in 1..=n_sites {
+        // REF = A, ALT = G at every position (the FASTA is not consulted on
+        // record positions; A/G het is IUPAC R).
+        write!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT").expect("invariant: write");
+        text.push_str(&suffix);
+        text.push('\n');
+    }
+    let vcf = dir.join("in.vcf");
+    std::fs::write(&vcf, &text).expect("invariant: write");
+    let reference = dir.join("ref.fa");
+    std::fs::write(&reference, format!(">chr1\n{}\n", "A".repeat(n_sites)))
+        .expect("invariant: write reference");
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference: reference.clone(),
+            regions: Vec::new(),
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+
+    let letters = ["A", "R", "G", "A"]; // 0/0, 0/1, 1/1, ./.
+    let mut expected = String::with_capacity(n_samples * (n_sites + 32));
+    for j in 0..n_samples {
+        writeln!(expected, ">chr1:1-{n_sites}_s{j}").expect("invariant: write");
+        expected.push_str(&letters[j % 4].repeat(n_sites));
+        expected.push('\n');
+    }
+    assert_eq!(read(&dir.join("out_chr1.fasta")), expected);
     let _ = std::fs::remove_dir_all(&dir);
 }

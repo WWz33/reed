@@ -6,7 +6,7 @@
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::sum::NeumaierSum;
 use reed_stats::jackknife::{BlockJackknife, BlockPartial};
-use reed_stats::patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
+use reed_stats::patterson::{F2Acc, F3Acc, F4Acc, f4_ratio};
 
 fn row(an: [u32; 4], alt: [u32; 4]) -> Vec<SiteGroupCounts> {
     an.iter()
@@ -57,7 +57,7 @@ fn ref_d(an: [u32; 4], alt: [u32; 4]) -> (f64, f64) {
 
 #[test]
 fn f2_corrected_matches_allel_formula() {
-    let mut acc = F2Acc::new(0, 1, PattersonKind::Corrected);
+    let mut acc = F2Acc::new(0, 1);
     let sites = [
         ([10_u32, 10, 10, 10], [2_u32, 7, 1, 5]),
         ([8, 6, 12, 4], [4, 3, 6, 2]),
@@ -73,22 +73,8 @@ fn f2_corrected_matches_allel_formula() {
 }
 
 #[test]
-fn f2_naive_drops_the_correction() {
-    let mut corrected = F2Acc::new(0, 1, PattersonKind::Corrected);
-    let mut naive = F2Acc::new(0, 1, PattersonKind::Naive);
-    let (an, alt) = ([10_u32, 10, 10, 10], [2_u32, 7, 1, 5]);
-    corrected.push(&row(an, alt));
-    naive.push(&row(an, alt));
-    let (p1, p2) = (0.2, 0.7);
-    assert!((naive.value().expect("invariant: sites") - (p1 - p2) * (p1 - p2)).abs() < 1e-12);
-    assert!(
-        corrected.value().expect("invariant: sites") < naive.value().expect("invariant: sites")
-    );
-}
-
-#[test]
 fn f2_corrected_skips_single_chromosome_sites() {
-    let mut acc = F2Acc::new(0, 1, PattersonKind::Corrected);
+    let mut acc = F2Acc::new(0, 1);
     acc.push(&row([1_u32, 10, 10, 10], [1_u32, 5, 3, 2])); // anA = 1
     assert_eq!(acc.site_tally(), (0, 1));
     assert!(acc.value().is_none());
@@ -96,7 +82,7 @@ fn f2_corrected_skips_single_chromosome_sites() {
 
 #[test]
 fn f3_carries_the_normalized_variant() {
-    let mut acc = F3Acc::new(2, 0, 1, PattersonKind::Corrected);
+    let mut acc = F3Acc::new(2, 0, 1);
     let sites = [
         ([10_u32, 8, 12, 10], [3_u32, 4, 6, 5]),
         ([8, 10, 6, 12], [2, 6, 1, 7]),

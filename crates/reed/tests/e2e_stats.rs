@@ -687,3 +687,224 @@ fn malformed_record_under_site_filter_is_fatal() {
     );
     let _ = std::fs::remove_dir_all(path.parent().expect("temp dir"));
 }
+
+/// doc_v15 D15-20: a skipped multiallelic record trailing the last counted
+/// site still advances the window walk — the trailing windows must be
+/// emitted, and the window rows must sum to the contig row exactly. The
+/// skipped site is "present but not comparable" (doc_v7 D7-11): the window
+/// holding it contributes 98 absent positions x 6 + 1 real site x 6, not
+/// 100 x 6.
+#[test]
+fn trailing_skipped_site_advances_the_windows() {
+    let text = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=2000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
+chr1\t100\t.\tA\tT\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t0/0
+chr1\t200\t.\tA\tT\t50\tPASS\t.\tGT\t0/0\t0/1\t0/1\t0/0
+chr1\t300\t.\tA\tT\t50\tPASS\t.\tGT\t1/1\t0/1\t0/0\t0/1
+chr1\t450\t.\tA\tT\t50\tPASS\t.\tGT\t0/1\t0/0\t1/1\t0/1
+chr1\t500\t.\tA\tT,G\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/1
+";
+    let vcf = write_fixture("tail-skip.vcf.gz", text);
+    let dir = std::env::temp_dir().join(format!("reed-stats-tail-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let pops = dir.join("pops.tsv");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let kinds = vec![StatKind::Pi {
+        group: 0,
+        per_bp: false,
+    }];
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let request = PopgenRequest {
+        kinds: kinds.clone(),
+        populations: Populations::File(pops),
+        grid: reed::WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        },
+        levels: Levels {
+            window: true,
+            contig: true,
+            genome: true,
+        },
+        skip_empty: false,
+        contig_lengths: HashMap::new(),
+        layout: Some(reed::WindowLayoutOptions {
+            invariant: reed::InvariantMode::VariantOnly,
+        }),
+        regions: Vec::new(),
+        targets: Vec::new(),
+        targets_exclude: Vec::new(),
+        keep_samples: None,
+        site: None,
+        force_samples: false,
+        sfs: None,
+        fstats: None,
+        ld: None,
+    };
+    let report = run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
+    // (start1, end, scored sites, diffs, avg) per row.
+    let mut windows: Vec<(u64, u64, u64, u64, Option<f64>)> = Vec::new();
+    let mut contig: Option<(u64, u64, u64, Option<f64>)> = None;
+    let mut genome_avg: Option<Option<f64>> = None;
+    for w in &report.windows {
+        let reed_stats::StatAcc::Pi(pi) = &w.accs[0] else {
+            panic!("pi acc");
+        };
+        let avg = pi.value_variant_only(w.bp);
+        let scored = pi.site_tally().0;
+        let diffs = pi.counts().diffs;
+        if w.contig == "genome" {
+            genome_avg = Some(avg);
+        } else if w.start1 == 1 && w.end == 500 {
+            contig = Some((scored, diffs, pi.n_present_file(), avg));
+        } else {
+            windows.push((w.start1, w.end, scored, diffs, avg));
+        }
+    }
+    let contig = contig.expect("contig row");
+    let genome_avg = genome_avg.expect("genome row");
+
+    // The window after the last counted site used to be dropped entirely.
+    let starts: Vec<u64> = windows.iter().map(|r| r.0).collect();
+    assert_eq!(starts, [1, 101, 201, 301, 401]);
+
+    // Window rows sum to the contig row (scored sites and differences).
+    let sum_sites: u64 = windows.iter().map(|r| r.2).sum();
+    let sum_diffs: u64 = windows.iter().map(|r| r.3).sum();
+    assert_eq!(sum_sites, contig.0, "scored sites");
+    assert_eq!(sum_diffs, contig.1, "differences");
+
+    // The trailing window: 3 diffs over 98 absent x 6 + 1 real site x 6.
+    let (_, _, _, last_diffs, last_avg) = *windows.last().expect("trailing window");
+    assert_eq!(last_diffs, 3);
+    let last_avg = last_avg.expect("trailing avg");
+    assert!((last_avg - 3.0 / 594.0).abs() < 1e-12, "{last_avg}");
+    // Contig: 13 diffs over (4 present + 496 absent) x 6 = 2994.
+    let contig_avg = contig.3.expect("contig avg");
+    assert!((contig_avg - 13.0 / 2994.0).abs() < 1e-12, "{contig_avg}");
+    assert_eq!(genome_avg, Some(contig_avg), "single contig: genome == contig");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v15 D15-8: multiple `--pbs` triples each get their own file with a
+/// header naming their own groups (the shared-header layout used to name
+/// only the first triple). A single triple keeps `PREFIX_pbs.txt`
+/// byte-for-byte, which this test pins by file name and header.
+#[test]
+fn multiple_pbs_triples_get_their_own_files() {
+    let vcf = write_fixture("pbs-two.vcf.gz", &fixture_text());
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let mk = |a: usize, b: usize, c: usize| StatKind::Pbs {
+        a,
+        b,
+        c,
+        kind: reed::PbsKind::Yi2010,
+    };
+    let pairs = [[0, 1, 2], [1, 0, 2]];
+    let kinds: Vec<StatKind> = pairs.iter().map(|t| mk(t[0], t[1], t[2])).collect();
+    let layout = reed::WindowLayoutOptions {
+        invariant: reed::InvariantMode::Bypass,
+    };
+    let request = PopgenRequest {
+        kinds: kinds.clone(),
+        populations: Populations::File(pops_fixture()),
+        grid: reed::WindowGrid::Bp {
+            size: 100,
+            step: 100,
+        },
+        levels: Levels {
+            window: true,
+            contig: false,
+            genome: false,
+        },
+        skip_empty: false,
+        contig_lengths: HashMap::new(),
+        layout: Some(layout),
+        regions: Vec::new(),
+        targets: Vec::new(),
+        targets_exclude: Vec::new(),
+        keep_samples: None,
+        site: None,
+        force_samples: false,
+        sfs: None,
+        fstats: None,
+        ld: None,
+    };
+    let report = run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
+    let names = vec!["pop1".to_string(), "pop2".to_string(), "pop3".to_string()];
+
+    let dir = std::env::temp_dir().join(format!("reed-stats-pbs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+
+    // Two triples: one file each, each header naming its own groups.
+    let prefix = dir.join("multi");
+    let files = reed::windows::write(&prefix, &report, &names, &kinds, layout, "test", "0")
+        .expect("invariant: write");
+    let base: Vec<String> = files
+        .iter()
+        .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        base.contains(&"multi_pbs.pop1-pop2-pop3.txt".to_string()),
+        "{base:?}"
+    );
+    assert!(
+        base.contains(&"multi_pbs.pop2-pop1-pop3.txt".to_string()),
+        "{base:?}"
+    );
+    let first = std::fs::read_to_string(dir.join("multi_pbs.pop1-pop2-pop3.txt"))
+        .expect("invariant: read");
+    let second = std::fs::read_to_string(dir.join("multi_pbs.pop2-pop1-pop3.txt"))
+        .expect("invariant: read");
+    assert!(
+        first.starts_with("pop1\tpop2\tpop3\tchromosome\t"),
+        "{first}"
+    );
+    assert!(
+        second.starts_with("pop2\tpop1\tpop3\tchromosome\t"),
+        "{second}"
+    );
+    // The two files may differ only after the three label columns; both
+    // carry the same number of rows.
+    let rows_of = |t: &str| t.lines().count();
+    assert_eq!(rows_of(&first), rows_of(&second));
+    let values = |t: &str| -> Vec<String> {
+        t.lines()
+            .skip(1)
+            .map(|l| l.split('\t').skip(3).collect::<Vec<_>>().join("\t"))
+            .collect()
+    };
+    assert_ne!(values(&first), values(&second), "different triples, different values");
+
+    // One triple: the documented single-file name, unchanged layout.
+    let single = dir.join("single");
+    let files = reed::windows::write(&single, &report, &names, &kinds[..1], layout, "test", "0")
+        .expect("invariant: write");
+    let base: Vec<String> = files
+        .iter()
+        .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
+        .collect();
+    assert!(base.contains(&"single_pbs.txt".to_string()), "{base:?}");
+    assert!(
+        !base
+            .iter()
+            .any(|f| f != "single_pbs.txt" && f.starts_with("single_pbs.")),
+        "a single triple must not get a per-triple file: {base:?}"
+    );
+    let text = std::fs::read_to_string(dir.join("single_pbs.txt")).expect("invariant: read");
+    assert!(
+        text.starts_with("pop1\tpop2\tpop3\tchromosome\t"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

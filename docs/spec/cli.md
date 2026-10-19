@@ -57,7 +57,7 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `-W, --write-index[=csi\|tbi]` | 边写边建索引；**不给则不写**（bcftools 语义；W1 修正了"默认写"的缺陷） | filter |
 | `--threads INT` | worker 线程数，默认全部核 | 三者 |
 | `--memory MB` | 在途内存预算（MiB），默认物理内存一半 | filter / stats |
-| `--tmp-dir DIR` | 临时目录（多遍运行的 stdin 溢写） | filter / stats |
+| `--tmp-dir DIR` | 临时目录（多遍运行的 stdin 溢写）；**filter 使用**，stats 保留接受但不使用（报告单遍读取；doc_v15 D15-23） | filter；stats（接受不使用） |
 | `--verbosity 0..3` | 0 静默；1 摘要（默认）；2 阶段计时；3 调试（`RUST_LOG`，默认 debug）；>3 报错 | 三者 |
 | `--no-version` | 不写任何 `##reed_*` provenance 行 | filter |
 | `--no-command` | 只省略 `##reed_command`（argv 含机器路径）；正文不受影响 | filter |
@@ -225,7 +225,7 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | `--tajima-d` | Tajima's D | Tajima 1989；方差按窗口平均调用数算一次（pixy） | 已对拍 |
 | `--fst [wc84\|hudson]` | 成对 Fst，所有群体对；默认 `wc84` | Weir & Cockerham 1984；Hudson 1992 / Bhatia 2013 | 已对拍 |
 | **`--fst-global`** | 布尔开关：三个群体以上时算**合并**的 r 群体 WC84（一个值），而非成对；默认成对 | Weir & Cockerham 1984（r 群体） | 已实现（`e2e_fst_global.rs`；05 §3.2） |
-| `--pbs A,B,C [--pbs-normed]` | PBS，A 为焦点群体；可重复 | Yi et al. 2010；PBSn1：Malaspinas 2016 | 已对拍 allel |
+| `--pbs A,B,C [--pbs-normed]` | PBS，A 为焦点群体；**可重复**。单三元组写 `PREFIX_pbs.txt`；多三元组时**每三元组一份文件** `PREFIX_pbs.<A>-<B>-<C>.txt`（组名中 `[A-Za-z0-9_.-]` 以外的字符记为 `_`，重名追加 `-2`/`-3`；doc_v15 D15-8），每份表头各指自己的三元组 | Yi et al. 2010；PBSn1：Malaspinas 2016 | 已对拍 allel |
 | `--sfs [folded] --proj N[,N…]` | 投影 SFS：每群体一维；两群体起另写每对联合（二维）谱 | Marth 2004；Gutenkunst 2009 | 已对拍 easySFS（`run_easysfs.sh`，含二维联合谱） |
 | `--freq` / `--hardy` / `--het` / `--missing` | 逐位点频率 / HWE 与杂合度 / 个体 F / 缺失率 | Wigginton 2005；Graffelman 2013 | 已对拍 plink2 |
 | `--depth` | 逐样本、逐位点平均深度 | — | 已对拍 vcftools |
@@ -257,7 +257,7 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | Fst global | `PREFIX_fst_global.txt` | `pops chromosome window_pos_1 window_pos_2 avg_wc_fst no_snps` |
 | θ | `PREFIX_watterson_theta.txt` | `pop chromosome window_pos_1 window_pos_2 avg_watterson_theta no_sites raw_watterson_theta no_var_sites weighted_no_sites` |
 | Tajima's D | `PREFIX_tajima_d.txt` | `pop chromosome window_pos_1 window_pos_2 tajima_d no_sites raw_pi raw_watterson_theta tajima_d_stdev` |
-| PBS | `PREFIX_pbs.txt` | `pop1 pop2 pop3 chromosome window_pos_1 window_pos_2 pbs no_snps fst_12 fst_13 fst_23` |
+| PBS | `PREFIX_pbs.txt`（多 `--pbs` 时每三元组一份 `PREFIX_pbs.<A>-<B>-<C>.txt`） | `pop1 pop2 pop3 chromosome window_pos_1 window_pos_2 pbs no_snps fst_12 fst_13 fst_23` |
 | SFS | `PREFIX_sfs/dadi/<pop>-<n>.sfs`、`PREFIX_sfs/fastsimcoal2/<pop>_MAFpop0.obs`；联合（二维，每对一份）：`PREFIX_sfs/dadi/<A>-<B>.sfs`、`PREFIX_sfs/fastsimcoal2/<prefix>_jointMAFpop<idxB>_<idxA>.obs` | dadi / fastsimcoal2 标准格式，含 mask 行（easySFS 实测布局） |
 | freq / hardy / het / missing | `PREFIX.afreq .hardy .het .smiss .vmiss`；`--pop` 时另写 `.afreq.pop`/`.vmiss.pop`（每群体一行，§12.2） | plink2 列布局 |
 | depth | `PREFIX.idepth`、`PREFIX.ldepth.mean` | vcftools 列布局 |
@@ -399,7 +399,7 @@ reed: --pi moved to `reed popg`: the windowed population-genetics statistics
 |---|---|---|
 | ~~D-1~~ | `--bed-file`、`--sites-file`（doc_v2 §5.3）已实现（Y6） | 完成 |
 | D-2 | `-q/-Q` 的 `:type` 后缀未实现 | 路线 X6 |
-| D-3 | stats `--tmp-dir` 帮助文本过期（"read twice"） | 路线 X1 |
+| D-3 | stats `--tmp-dir` 帮助文本过期（"read twice"） | **已改**（doc_v15 D15-23：help 与 §2 表同步为单遍语义） |
 | D-4 | `reed qc` 隐藏子命令仍在 | 路线 X1（03 C-2） |
 | D-5 | `--fst-pops` 仍出现在 `reed-stats/src/lib.rs:47` 注释与 doc_v2 02 §5.2 | 路线 X4 随 `--fst-global` 清理 |
 | D-6 | Fst 列名文档写 `avg_wc84_fst`、代码写 `avg_wc_fst` | 本文以代码（pixy 拼写）为准 |

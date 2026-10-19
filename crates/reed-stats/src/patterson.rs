@@ -1,8 +1,7 @@
 //! Patterson f-statistics (`docs/spec/architecture.md` §9.5): the
 //! Patterson (2012) unbiased estimators as implemented by scikit-allel's
-//! `admixture.py` (MIT), in `Corrected` and `Naive` sealed definitions.
-//! All accumulators carry per-site (numerator, denominator) sums so the
-//! §8.6 block jackknife can reuse them directly.
+//! `admixture.py` (MIT). All accumulators carry per-site (numerator,
+//! denominator) sums so the §8.6 block jackknife can reuse them directly.
 //!
 //! - f2(A,B) = (pA−pB)² − ĥA/anA − ĥB/anB, where ĥ = ac0·ac1/(an(an−1));
 //!   sites with anA < 2 or anB < 2 are skipped (ĥ undefined).
@@ -11,91 +10,50 @@
 //! - f4(A,B;C,D) = (pA−pB)(pC−pD) — unbiased, no correction; D is the
 //!   normalized form Σnum/Σden with den = (a+b−2ab)(c+d−2cd); sites with
 //!   any an == 0 skipped (p undefined).
-//! - Naive variants drop the ĥ correction terms (f2/f3 only; f4/D are
-//!   identical under both).
 
 use reed_core::count::SiteGroupCounts;
 use reed_core::math::sum::NeumaierSum;
 
-/// Which Patterson definition a value comes from (§9.5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PattersonKind {
-    /// The unbiased estimator (default).
-    Corrected,
-    /// The raw moment without the ĥ correction terms.
-    Naive,
-}
-
-impl PattersonKind {
-    /// Stable identifier.
-    #[must_use]
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Corrected => "corrected",
-            Self::Naive => "naive",
-        }
-    }
-}
-
 /// Per-site f2(A, B) (Patterson 2012; allel `patterson_f2`): the unbiased
-/// `(pA−pB)² − ĥA/anA − ĥB/anB`, or the raw moment for `Naive`. `None`
-/// when the site is skipped (anA or anB zero; corrected also needs both ≥ 2).
+/// `(pA−pB)² − ĥA/anA − ĥB/anB`. `None` when the site is skipped
+/// (either group has fewer than two called alleles).
 #[must_use]
-pub fn f2_site(row: &[SiteGroupCounts], a: usize, b: usize, kind: PattersonKind) -> Option<f64> {
+pub fn f2_site(row: &[SiteGroupCounts], a: usize, b: usize) -> Option<f64> {
     let (g1, g2) = (&row[a], &row[b]);
     let an1 = u64::from(g1.n_ref_alleles + g1.n_alt_alleles);
     let an2 = u64::from(g2.n_ref_alleles + g2.n_alt_alleles);
-    let corrected = kind == PattersonKind::Corrected;
-    if corrected && (an1 < 2 || an2 < 2) {
-        return None;
-    }
-    if an1 == 0 || an2 == 0 {
+    if an1 < 2 || an2 < 2 {
         return None;
     }
     let p1 = f64::from(g1.n_alt_alleles) / an1 as f64;
     let p2 = f64::from(g2.n_alt_alleles) / an2 as f64;
-    let mut v = (p1 - p2) * (p1 - p2);
-    if corrected {
-        v -= f64::from(g1.n_ref_alleles) * f64::from(g1.n_alt_alleles)
-            / (an1 as f64 * an1 as f64 * (an1 - 1) as f64);
-        v -= f64::from(g2.n_ref_alleles) * f64::from(g2.n_alt_alleles)
-            / (an2 as f64 * an2 as f64 * (an2 - 1) as f64);
-    }
-    Some(v)
+    Some(
+        (p1 - p2) * (p1 - p2)
+            - f64::from(g1.n_ref_alleles) * f64::from(g1.n_alt_alleles)
+                / (an1 as f64 * an1 as f64 * (an1 - 1) as f64)
+            - f64::from(g2.n_ref_alleles) * f64::from(g2.n_alt_alleles)
+                / (an2 as f64 * an2 as f64 * (an2 - 1) as f64),
+    )
 }
 
 /// Per-site f3(C; A, B): `(T, B)` — the un-normalized estimate and the
 /// heterozygosity term the normalized f3* divides by (allel
 /// `patterson_f3`). `None` when the site is skipped.
 #[must_use]
-pub fn f3_site(
-    row: &[SiteGroupCounts],
-    c: usize,
-    a: usize,
-    b: usize,
-    kind: PattersonKind,
-) -> Option<(f64, f64)> {
+pub fn f3_site(row: &[SiteGroupCounts], c: usize, a: usize, b: usize) -> Option<(f64, f64)> {
     let (gc, ga, gb) = (&row[c], &row[a], &row[b]);
     let anc = u64::from(gc.n_ref_alleles + gc.n_alt_alleles);
     let ana = u64::from(ga.n_ref_alleles + ga.n_alt_alleles);
     let anb = u64::from(gb.n_ref_alleles + gb.n_alt_alleles);
-    let corrected = kind == PattersonKind::Corrected;
-    if corrected && anc < 2 {
-        return None;
-    }
-    if anc == 0 || ana == 0 || anb == 0 {
+    if anc < 2 || ana == 0 || anb == 0 {
         return None;
     }
     let pc = f64::from(gc.n_alt_alleles) / anc as f64;
     let pa = f64::from(ga.n_alt_alleles) / ana as f64;
     let pb = f64::from(gb.n_alt_alleles) / anb as f64;
-    let mut t = (pc - pa) * (pc - pb);
     let h_hat = f64::from(gc.n_ref_alleles) * f64::from(gc.n_alt_alleles)
         / (anc as f64 * (anc as f64 - 1.0));
-    if corrected {
-        t -= h_hat / anc as f64;
-    }
-    Some((t, 2.0 * h_hat))
+    Some(((pc - pa) * (pc - pb) - h_hat / anc as f64, 2.0 * h_hat))
 }
 
 /// Per-site f4(A, B; C, D): `(num, den)` — `num = (pA−pB)(pC−pD)` and the
@@ -133,7 +91,6 @@ pub fn f4_site(
 pub struct F2Acc {
     a: usize,
     b: usize,
-    corrected: bool,
     sum: NeumaierSum,
     n_sites: u64,
     n_skipped: u64,
@@ -142,11 +99,10 @@ pub struct F2Acc {
 impl F2Acc {
     /// Accumulator over the `a`/`b` group pair.
     #[must_use]
-    pub fn new(a: usize, b: usize, kind: PattersonKind) -> Self {
+    pub fn new(a: usize, b: usize) -> Self {
         Self {
             a,
             b,
-            corrected: kind == PattersonKind::Corrected,
             sum: NeumaierSum::new(),
             n_sites: 0,
             n_skipped: 0,
@@ -155,12 +111,7 @@ impl F2Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let kind = if self.corrected {
-            PattersonKind::Corrected
-        } else {
-            PattersonKind::Naive
-        };
-        match f2_site(row, self.a, self.b, kind) {
+        match f2_site(row, self.a, self.b) {
             Some(v) => {
                 self.sum.add(v);
                 self.n_sites += 1;
@@ -196,7 +147,6 @@ pub struct F3Acc {
     c: usize,
     a: usize,
     b: usize,
-    corrected: bool,
     t: NeumaierSum,
     b_sum: NeumaierSum,
     n_sites: u64,
@@ -206,12 +156,11 @@ pub struct F3Acc {
 impl F3Acc {
     /// Accumulator over the `(c; a, b)` triple.
     #[must_use]
-    pub fn new(c: usize, a: usize, b: usize, kind: PattersonKind) -> Self {
+    pub fn new(c: usize, a: usize, b: usize) -> Self {
         Self {
             c,
             a,
             b,
-            corrected: kind == PattersonKind::Corrected,
             t: NeumaierSum::new(),
             b_sum: NeumaierSum::new(),
             n_sites: 0,
@@ -221,12 +170,7 @@ impl F3Acc {
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let kind = if self.corrected {
-            PattersonKind::Corrected
-        } else {
-            PattersonKind::Naive
-        };
-        match f3_site(row, self.c, self.a, self.b, kind) {
+        match f3_site(row, self.c, self.a, self.b) {
             Some((t, b_term)) => {
                 self.t.add(t);
                 self.b_sum.add(b_term);

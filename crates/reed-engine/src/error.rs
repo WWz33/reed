@@ -23,6 +23,14 @@ pub enum EngineError {
         /// The panic payload, when it carried a string.
         message: String,
     },
+    /// The reader panicked while cutting a chunk from the input source
+    /// (doc_v15 D15-40). The single error exit applies to the reader too:
+    /// the panic used to unwind out of the scope and escape as a raw panic.
+    #[error("reader panicked: {message}")]
+    ReaderPanicked {
+        /// The panic payload, when it carried a string.
+        message: String,
+    },
     /// The reducer (the caller's thread) panicked while delivering a chunk
     /// or finalizing the sink (`docs/rounds/v9/02-architecture.md` §2.4).
     ///

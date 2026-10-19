@@ -303,7 +303,7 @@ pub fn run_filter(
                     keep_list_from_names(names, &header, opts.force_samples)?
                 }
                 Some(SampleList::File(path)) => {
-                    keep_list_from_file(Path::new(path), &header, true, opts.force_samples)?
+                    keep_list_from_file(Path::new(path), &header, opts.force_samples)?
                 }
             };
             if let Some(remove) = &select.remove {
@@ -312,7 +312,7 @@ pub fn run_filter(
                         keep_list_from_names(names, &header, opts.force_samples)?
                     }
                     SampleList::File(path) => {
-                        keep_list_from_file(Path::new(path), &header, true, opts.force_samples)?
+                        keep_list_from_file(Path::new(path), &header, opts.force_samples)?
                     }
                 };
                 for (keep, drop) in keep.iter_mut().zip(&drop) {
@@ -394,9 +394,10 @@ pub fn run_filter(
     // The tail stage's INFO preference holds only while AC/AN describe the
     // cohort being decided on (doc_v12 D12-6): once the sample set changed,
     // bcftools recomputes from the subset GT (`vcfview.c:341-350`) and the
-    // `-q/-Q` decision must follow. `--mind` and masking change the cohort
-    // the same way, and the mask is known here from the spec.
-    if spec.sample_select.is_some() || spec.mind.is_some() || subset {
+    // `-q/-Q` decision must follow. The spec-level causes (sample subset,
+    // `--mind`, mask rules, `--set-gts .`) already clear `info_trusted` in
+    // `compile` (doc_v15 D15-2); only a runtime sample-count change is left.
+    if subset {
         plan.info_trusted = false;
     }
     if subset && !plan.no_update {
@@ -605,12 +606,6 @@ pub fn run_filter(
             },
         },
     };
-    let header_level = if bcf_level == Some(0) {
-        0
-    } else {
-        opts.compress_level
-    };
-    let _ = header_level;
     let writer: Box<dyn Write + Send> = match &opts.output {
         None => Box::new(std::io::BufWriter::with_capacity(
             1 << 20,
@@ -834,7 +829,6 @@ fn build_keep(
 fn keep_list_from_file(
     path: &Path,
     header: &vcf::Header,
-    keep_mode: bool,
     force: bool,
 ) -> Result<Vec<bool>, FilterError> {
     let text = std::fs::read_to_string(path).map_err(FilterError::from)?;
@@ -844,14 +838,7 @@ fn keep_list_from_file(
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(str::to_string)
         .collect();
-    keep_list_from_names(&names, header, force).map(|mut keep| {
-        if !keep_mode {
-            for k in &mut keep {
-                *k = !*k;
-            }
-        }
-        keep
-    })
+    keep_list_from_names(&names, header, force)
 }
 
 /// Builds the keep mask from an inline sample list.

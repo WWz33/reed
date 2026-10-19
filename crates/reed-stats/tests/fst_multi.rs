@@ -239,3 +239,33 @@ fn pbs_pairs_are_independent_under_missing_data() {
     let (f_ab, f_ac, f_bc) = per_pair.pair_fsts();
     assert!(f_ab.is_some() && f_ac.is_none() && f_bc.is_none());
 }
+
+#[test]
+fn hudson_zero_numerator_is_zero_not_na() {
+    use reed_stats::pbs::{PbsAcc, PbsKind};
+    // Group B contributes a single called allele per site (a half call):
+    // the Hudson denominator accumulates while the numerator never does,
+    // so the estimate is 0.0 — scikit-allel's `nansum` — not NA
+    // (doc_v15 D15-11).
+    let a1 = SiteGroupCounts {
+        n_ref_alleles: 1,
+        n_alt_alleles: 1,
+        ..Default::default()
+    };
+    let b1 = SiteGroupCounts {
+        n_ref_alleles: 1,
+        n_alt_alleles: 0,
+        n_half_called: 1,
+        ..Default::default()
+    };
+    let mut fst = FstAcc::new(0, 1);
+    fst.push(&[a1, b1]);
+    assert_eq!(fst.value_hudson(), Some(0.0), "an absent numerator sums to 0.0");
+
+    let mut pbs = PbsAcc::new(0, 1, 2);
+    pbs.push(&[a1, b1, SiteGroupCounts::default()]);
+    let (f_ab, f_ac, f_bc) = pbs.pair_fsts();
+    assert_eq!(f_ab, Some(0.0), "the A/B pair defines 0.0");
+    assert!(f_ac.is_none() && f_bc.is_none(), "C's pairs stay undefined");
+    assert!(pbs.value(PbsKind::Yi2010).is_none());
+}

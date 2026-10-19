@@ -41,14 +41,15 @@ impl ExecStrategy {
 }
 
 /// Sketch size upper bound for `n_records` records, `n_samples` samples
-/// and `n_rules` mask rules: `(4 + R) × W` words per head-surviving site,
+/// and `n_rules` mask rules: `(5 + R) × W` words per head-surviving site,
 /// plus the head bitmap — assuming every record survives the head stage
-/// (an upper bound, §11.4).
+/// (an upper bound, §11.4). The fifth word row is the per-sample mask
+/// plane the pruner adds (doc_v15 D15-16).
 #[must_use]
 pub fn sketch_size_bytes(n_records: u64, n_samples: usize, n_rules: usize) -> u64 {
     let w = u64::try_from(n_samples.div_ceil(64)).unwrap_or(u64::MAX);
     n_records
-        .saturating_mul((4 + u64::try_from(n_rules).unwrap_or(u64::MAX)) * w * 8)
+        .saturating_mul((5 + u64::try_from(n_rules).unwrap_or(u64::MAX)) * w * 8)
         .saturating_add(n_records.div_ceil(64) * 8)
 }
 
@@ -67,5 +68,41 @@ pub fn choose_for_mind(
         ExecStrategy::SketchThenEmit
     } else {
         ExecStrategy::TwoPassReparse
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v15 D15-16: the upper bound counts the pruner's per-sample mask
+    /// plane, i.e. `(5 + R)` words per site, not `(4 + R)`.
+    #[test]
+    fn sketch_model_includes_the_mask_plane() {
+        // One 64-bit word of samples: (5 + 0) words for the site, one word
+        // for the head bitmap.
+        assert_eq!(sketch_size_bytes(1, 64, 0), 5 * 8 + 8);
+        // Two sample words per row with 65 samples.
+        assert_eq!(sketch_size_bytes(1, 65, 0), 5 * 2 * 8 + 8);
+        // Two mask rules add two word rows.
+        assert_eq!(
+            sketch_size_bytes(1000, 64, 2),
+            1000 * 7 * 8 + 1000_u64.div_ceil(64) * 8
+        );
+    }
+
+    /// The strategy decision switches exactly at the estimate (the `<=`
+    /// boundary), which is what `--mind`'s fallback rides on.
+    #[test]
+    fn choose_for_mind_switches_at_the_estimate() {
+        let estimate = sketch_size_bytes(10_000, 128, 1);
+        assert_eq!(
+            choose_for_mind(10_000, 128, 1, estimate),
+            ExecStrategy::SketchThenEmit
+        );
+        assert_eq!(
+            choose_for_mind(10_000, 128, 1, estimate - 1),
+            ExecStrategy::TwoPassReparse
+        );
     }
 }

@@ -68,7 +68,6 @@ pub struct FstAcc {
     hudson_num: NeumaierSum,
     hudson_den: NeumaierSum,
     hudson_any: bool,
-    hudson_num_any: bool,
     wc: WcAcc,
     /// Every site pushed (the reference `no_snps` column).
     n_sites: u64,
@@ -87,7 +86,6 @@ impl FstAcc {
             hudson_num: NeumaierSum::new(),
             hudson_den: NeumaierSum::new(),
             hudson_any: false,
-            hudson_num_any: false,
             wc: WcAcc::default(),
             n_sites: 0,
         }
@@ -102,26 +100,25 @@ impl FstAcc {
         // Audit trail (every site, skipped or not) — oracle fst.rs-aligned.
         let comps_a = n_a * n_a.saturating_sub(1) / 2;
         let comps_b = n_b * n_b.saturating_sub(1) / 2;
-        self.within_a.add(
+        self.within_a.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(a.n_alt_alleles),
-            comps_a,
-            comps_a,
+comps_a,
         );
-        self.within_b.add(
+        self.within_b.add_partial(
             u64::from(b.n_ref_alleles) * u64::from(b.n_alt_alleles),
-            comps_b,
-            comps_b,
+comps_b,
         );
         let between_comps = n_a * n_b;
-        self.between.add(
+        self.between.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles),
-            between_comps,
-            between_comps,
+between_comps,
         );
 
         // Hudson (allel inclusion rule): den whenever both groups have ≥1
-        // called allele; num also requires n ≥ 2 within each group.
+        // called allele; num also requires n ≥ 2 within each group. An
+        // absent num contribution sums to 0.0 (allel `nansum`), so the
+        // estimate is 0.0 rather than NA (doc_v15 D15-11).
         let mpd_a = (n_a >= 2).then(|| {
             u64::from(a.n_ref_alleles) as f64 * u64::from(a.n_alt_alleles) as f64
                 / (n_a * (n_a - 1) / 2) as f64
@@ -140,7 +137,6 @@ impl FstAcc {
             self.hudson_any = true;
             if let (Some(pa), Some(pb)) = (mpd_a, mpd_b) {
                 self.hudson_num.add(pab - f64::midpoint(pa, pb));
-                self.hudson_num_any = true;
             }
         }
 
@@ -200,7 +196,6 @@ impl FstAcc {
         self.hudson_num.merge(&other.hudson_num);
         self.hudson_den.merge(&other.hudson_den);
         self.hudson_any |= other.hudson_any;
-        self.hudson_num_any |= other.hudson_num_any;
         self.wc.merge(&other.wc);
         self.n_sites += other.n_sites;
     }
@@ -214,7 +209,7 @@ impl FstAcc {
     /// Hudson estimate.
     #[must_use]
     pub fn value_hudson(&self) -> Option<f64> {
-        if !self.hudson_any || !self.hudson_num_any {
+        if !self.hudson_any {
             return None;
         }
         let den = self.hudson_den.value();

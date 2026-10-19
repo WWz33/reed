@@ -682,3 +682,100 @@ fn sketch_path_rejects_bcf_output() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v15 D15-3: a BCF whose header text ends exactly at a BGZF block
+/// boundary (the terminating NUL starts the next block) must decode like
+/// its one-byte-shorter twin. Both fixtures were hand-built from the same
+/// records; only the header padding differs (`crates/reed-io/tests/
+/// fixtures/bcf/boundary.bcf` vs `control.bcf`).
+#[test]
+fn bcf_header_at_a_block_boundary_decodes() {
+    let dir = dir("boundary");
+    let spec = FilterSpec::default();
+    let run = |name: &str, out: &Path| {
+        let opts = FilterOptions {
+            threads: 1,
+            output: Some(out.to_path_buf()),
+            write_index: reed::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            timing: None,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: None,
+            output_bcf: None,
+            mem_bytes: None,
+            no_version: true,
+            no_command: true,
+        };
+        run_filter(Some(&fixture(name)), &spec, &opts)
+    };
+    let boundary_out = dir.join("boundary.vcf.gz");
+    run("boundary.bcf", &boundary_out).expect("boundary header must decode (doc_v15 D15-3)");
+    let control_out = dir.join("control.vcf.gz");
+    run("control.bcf", &control_out).expect("control decodes");
+    let records = |path: &Path| -> Vec<String> {
+        inflate_bgzf(&std::fs::read(path).expect("invariant: read"))
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(str::to_string)
+            .collect()
+    };
+    let boundary = records(&boundary_out);
+    let control = records(&control_out);
+    assert_eq!(boundary.len(), 4, "four records expected: {boundary:?}");
+    assert_eq!(boundary, control, "boundary and control records must match");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v15 D15-24: an explicit `IDX=` on `##contig` lines wins over the
+/// header line order (htslib's rule). `idx.bcf` swaps the two contigs'
+/// IDX values; `idx_control.bcf` carries the same records with consistent
+/// IDX. The swapped file must resolve rid 0 to chr2 and rid 1 to chr1.
+#[test]
+fn bcf_contig_idx_wins_over_line_order() {
+    let dir = dir("idx");
+    let spec = FilterSpec::default();
+    let run = |name: &str, out: &Path| {
+        let opts = FilterOptions {
+            threads: 1,
+            output: Some(out.to_path_buf()),
+            write_index: reed::WriteIndex::None,
+            compress_level: 1,
+            strategy: None,
+            command_line: "test".into(),
+            timing: None,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: None,
+            output_bcf: None,
+            mem_bytes: None,
+            no_version: true,
+            no_command: true,
+        };
+        run_filter(Some(&fixture(name)), &spec, &opts)
+    };
+    let swapped = dir.join("swapped.vcf.gz");
+    run("idx.bcf", &swapped).expect("idx.bcf decodes");
+    let control = dir.join("idx-control.vcf.gz");
+    run("idx_control.bcf", &control).expect("idx_control.bcf decodes");
+    let chroms = |path: &Path| -> Vec<String> {
+        inflate_bgzf(&std::fs::read(path).expect("invariant: read"))
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| l.split('\t').next().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(
+        chroms(&swapped),
+        ["chr2", "chr2", "chr1", "chr1"],
+        "explicit contig IDX must win (doc_v15 D15-24)"
+    );
+    assert_eq!(chroms(&control), ["chr1", "chr1", "chr2", "chr2"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

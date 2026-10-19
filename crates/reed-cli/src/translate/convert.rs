@@ -147,7 +147,7 @@ fn run_vcf_cli(args: ConvertCli) -> Result<(), reed::Error> {
         targets: vec![ConvertTarget::Vcf {
             compressed,
             level,
-            output: args.out.as_deref().map(PathBuf::from),
+            output: args.out.as_deref().and_then(crate::units::output_path),
             command_line,
             no_version: args.no_version,
         }],
@@ -319,7 +319,10 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
             int_dtype: args.sfs_int,
         });
     }
-    if phylo_target {
+    // The outgroup is an alignment-wide option: `--outgroup` with only
+    // `--nexus-binary` still carries a formats-empty Phylo target so the bin
+    // matrix honors it and the name is validated (doc_v15 D15-6).
+    if phylo_target || args.outgroup.is_some() {
         targets.push(ConvertTarget::Phylo {
             formats: PhyloFormats {
                 phylip: args.phylip,

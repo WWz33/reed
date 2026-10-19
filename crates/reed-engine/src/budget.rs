@@ -188,7 +188,15 @@ impl BytePermits {
 
     /// Wakes every waiter so it re-checks the abort flag. Called by
     /// [`crate::abort::AbortHandle::trigger`].
+    ///
+    /// The notify holds the same mutex the waiter checks the flag under, so
+    /// a notify that lands between the waiter's check and its `wait` cannot
+    /// be lost (doc_v15 D15-32).
     pub fn notify_abort(&self) {
+        let _guard = self
+            .available
+            .lock()
+            .expect("invariant: permits not poisoned");
         self.cv.notify_all();
     }
 

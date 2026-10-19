@@ -506,7 +506,7 @@ where
             for (i, &x) in column.iter().enumerate() {
                 if masked.get(i)
                     || !evaluated(i)
-                    || !(x.is_nan() && mask_on_missing)
+                    || (x.is_nan() && !mask_on_missing)
                     || (!x.is_nan() && !rule.cmp.apply_f64(f64::from(x)))
                 {
                     continue;

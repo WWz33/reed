@@ -151,9 +151,11 @@ impl OrderedSink<StatsPartial> for StatsSink {
             let mut current = match self.current.take() {
                 Some(mut cur) if cur.name == segment.contig => {
                     // Cross-chunk seam (04-algorithms.md §6): a later chunk
-                    // may not rewind into positions this sink already
-                    // emitted windows for.
-                    if segment.first_pos0 < cur.last_pos0 {
+                    // may not rewind below the last site or below a window
+                    // already emitted (the VCF order is non-decreasing; a
+                    // same-POS duplicate at a seam is legal and now lands in
+                    // the still-open window, doc_v15 D15-19).
+                    if segment.first_pos0 < cur.last_pos0.max(cur.next_start) {
                         return Err(EngineError::from(
                             reed_core::CoreError::PositionNotAscending {
                                 prev_pos0: cur.last_pos0,
@@ -183,7 +185,6 @@ impl OrderedSink<StatsPartial> for StatsSink {
         self.finalize_ld()?;
         let mut ld = self.ld_merged.take();
         self.join_ld(&mut ld)?;
-        let ld = ld.or(self.ld_merged.take());
         if let Some(current) = self.current.take() {
             self.close_contig(current)?;
         }
@@ -331,11 +332,18 @@ impl StatsSink {
     }
 
     /// Emits every window that the watermark proves complete: with sorted
-    /// input, no future site can land in `[s, s+size)` once the last seen
-    /// position reaches `s+size−1` (§8.3). Consumed bins are freed. The
-    /// contig length does not gate this loop — only the trailing windows
-    /// in `close_contig` need it. Regions grids emit nothing here: their
-    /// windows are the BED intervals, known up front.
+    /// input, no future site can land in `[s, s+size)` once a position at or
+    /// beyond `s+size` has been seen (§8.3). The check demands a *strictly
+    /// later* position rather than merely reaching the window's last one
+    /// (doc_v15 D15-19): the VCF specification permits multiple records at
+    /// the same POS ("Positions are sorted numerically, in increasing
+    /// order ... It is permitted to have multiple records with the same
+    /// POS", VCFv4.3 Fixed fields), and a same-POS duplicate that straddles
+    /// a BGZF chunk seam must still land in the window it belongs to.
+    /// Consumed bins are freed. The contig length does not gate this loop —
+    /// only the trailing windows in `close_contig` need it. Regions grids
+    /// emit nothing here: their windows are the BED intervals, known up
+    /// front.
     #[allow(clippy::unnecessary_wraps)] // callers share the Result-returning shape of the window writers
     pub(super) fn emit_complete_windows(
         &mut self,
@@ -344,7 +352,7 @@ impl StatsSink {
         let GridMode::Bp { size, step, width } = self.grid else {
             return Ok(());
         };
-        let watermark = cur.last_pos0.saturating_add(1);
+        let watermark = cur.last_pos0;
         let mut s = cur.next_start;
         let ContigAcc::Bins(bins) = &mut cur.acc else {
             return Ok(());
@@ -469,5 +477,158 @@ impl StatsSink {
             bp,
             accs: accs.to_vec(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reed_core::count::SiteGroupCounts;
+    use reed_engine::budget::MemBudget;
+    use reed_stats::request::{StatKind, build_accs};
+
+    fn site_row(n_ref: u32, n_alt: u32) -> Vec<SiteGroupCounts> {
+        vec![SiteGroupCounts {
+            n_ref_alleles: n_ref,
+            n_alt_alleles: n_alt,
+            ..SiteGroupCounts::default()
+        }]
+    }
+
+    /// One worker segment: one contig, one site, bins built exactly like the
+    /// worker builds them (`BpBinning::new(width)`).
+    fn segment(pos0: u64, n_ref: u32, n_alt: u32, seed: &[StatAcc]) -> SegmentPartial {
+        let mut bins = ContigBins::new(BpBinning::new(100), seed);
+        bins.push_site(pos0, &site_row(n_ref, n_alt), n_alt > 0);
+        SegmentPartial {
+            contig: b"chr1".to_vec(),
+            acc: ContigAcc::Bins(bins),
+            first_pos0: pos0,
+            last_pos0: pos0,
+        }
+    }
+
+    /// doc_v15 D15-19: the ordered sink receives one segment per chunk, so a
+    /// *legal* same-POS duplicate (VCFv4.3: "It is permitted to have
+    /// multiple records with the same POS") can straddle a seam at a
+    /// window's last position. Window [1,100] closes only once a strictly
+    /// later position is seen, so both copies must land inside it; the old
+    /// rule emitted the window at POS 100 and silently dropped the second
+    /// copy from every window row.
+    #[test]
+    fn same_pos_seam_duplicate_lands_in_its_window() {
+        let seed = build_accs(
+            &[StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            &[2],
+        )
+        .expect("seed");
+        let out = Arc::new(std::sync::Mutex::new(None));
+        let mut sink = StatsSink {
+            sfs: None,
+            fstats: None,
+            ld_layout: None,
+            ld_matrix: None,
+            ld_jobs: Vec::new(),
+            ld_merged: None,
+            max_ld_jobs: 1,
+            ld_budget: ThreadBudget {
+                threads: 1,
+                mem: MemBudget::from_bytes(u64::MAX),
+            },
+            ld: None,
+            grid: GridMode::Bp {
+                size: 100,
+                step: 100,
+                width: 100,
+            },
+            seed: seed.clone(),
+            levels: Levels {
+                window: true,
+                contig: true,
+                genome: false,
+            },
+            skip_empty: false,
+            layout: None,
+            windows: Vec::new(),
+            n_invariant_sites: 0,
+            n_no_alt_records: 0,
+            contig_len: HashMap::from([(b"chr1".to_vec(), 1000_u64)]),
+            current: None,
+            closed: Vec::new(),
+            genome_totals: seed.clone(),
+            genome_span: 0,
+            n_windows: 0,
+            n_records: 0,
+            n_multiallelic_skipped: 0,
+            out: Arc::clone(&out),
+        };
+        // Chunk 0 ends with the first copy at POS 100 (pos0 99).
+        let mut chunk0 = StatsPartial {
+            segments: vec![segment(99, 1, 1, &seed)],
+            n_records: 1,
+            ..StatsPartial::default()
+        };
+        sink.accept(ChunkId(0), &mut chunk0).expect("accept chunk 0");
+        // Chunk 1 opens with the duplicate: same POS, still sorted.
+        let mut chunk1 = StatsPartial {
+            segments: vec![segment(99, 0, 2, &seed)],
+            n_records: 1,
+            ..StatsPartial::default()
+        };
+        sink.accept(ChunkId(1), &mut chunk1)
+            .expect("accept chunk 1 (same POS across the seam)");
+        // Chunk 2 pushes past the window so [1,100] closes through the
+        // watermark, then the run finishes.
+        let mut chunk2 = StatsPartial {
+            segments: vec![segment(249, 1, 1, &seed)],
+            n_records: 1,
+            ..StatsPartial::default()
+        };
+        sink.accept(ChunkId(2), &mut chunk2).expect("accept chunk 2");
+        sink.finish().expect("finish");
+        let output = out.lock().expect("slot").take().expect("sink output");
+
+        let window = output
+            .windows
+            .iter()
+            .find(|w| w.contig == "chr1" && w.start1 == 1 && w.end == 100)
+            .expect("window [1,100]");
+        let StatAcc::Pi(pi) = &window.accs[0] else {
+            panic!("pi acc");
+        };
+        assert_eq!(
+            pi.site_tally().0,
+            2,
+            "both same-POS copies must be inside window [1,100]"
+        );
+        assert_eq!(
+            pi.counts().diffs,
+            1,
+            "the het copy contributes one REF x ALT pair, the hom-alt one none"
+        );
+
+        // Window rows sum to the contig row.
+        let contig = output
+            .windows
+            .iter()
+            .find(|w| w.contig == "chr1" && w.start1 == 1 && w.end == 300)
+            .expect("contig row spans the emitted windows");
+        let StatAcc::Pi(contig_pi) = &contig.accs[0] else {
+            panic!("pi acc");
+        };
+        let window_sites: u64 = output
+            .windows
+            .iter()
+            .filter(|w| w.contig == "chr1" && !(w.start1 == 1 && w.end == 300))
+            .map(|w| {
+                let StatAcc::Pi(pi) = &w.accs[0] else { panic!("pi acc") };
+                pi.site_tally().0
+            })
+            .sum();
+        assert_eq!(window_sites, contig_pi.site_tally().0, "window sums == contig row");
+        assert_eq!(contig_pi.site_tally().0, 3, "two seam copies plus the later site");
     }
 }

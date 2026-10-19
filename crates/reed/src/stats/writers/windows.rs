@@ -98,22 +98,41 @@ pub fn write(
         }),
         _ => None,
     });
-    // The PBS header names the triple the request asked for (`--pbs A,B,C`).
-    let pbs_header = |names: &[String]| {
-        let name = |i: usize| names.get(i).map_or("?", String::as_str);
-        for kind in kinds {
-            if let StatKind::Pbs { a, b, c, .. } = kind {
-                return format!(
-                    "{}\t{}\t{}\tchromosome\twindow_pos_1\twindow_pos_2\tpbs\tno_snps\tfst_12\tfst_13\tfst_23\n",
-                    name(*a),
-                    name(*b),
-                    name(*c)
-                );
+    // One buffer (and later one file) per PBS triple (doc_v15 D15-8): a
+    // single triple keeps the documented single-file name, while multiple
+    // triples each get a header naming their own groups — a shared header
+    // used to name only the first triple (`--pbs A,B,C --pbs C,D,A`).
+    let pbs_slots: Vec<Option<usize>> = {
+        let mut slots = vec![None; kinds.len()];
+        let mut next = 0;
+        for (i, kind) in kinds.iter().enumerate() {
+            if matches!(kind, StatKind::Pbs { .. }) {
+                slots[i] = Some(next);
+                next += 1;
             }
         }
-        String::new()
+        slots
     };
-    let mut pbs_rows = pbs_header(group_names);
+    let mut pbs_buffers: Vec<String> = Vec::new();
+    let mut pbs_stems: Vec<String> = Vec::new();
+    for kind in kinds {
+        let StatKind::Pbs { a, b, c, .. } = kind else {
+            continue;
+        };
+        let name = |i: usize| group_names.get(i).map_or("?", String::as_str);
+        let (na, nb, nc) = (name(*a), name(*b), name(*c));
+        pbs_buffers.push(format!(
+            "{na}\t{nb}\t{nc}\tchromosome\twindow_pos_1\twindow_pos_2\tpbs\tno_snps\tfst_12\tfst_13\tfst_23\n"
+        ));
+        let base = pbs_stem(na, nb, nc);
+        let mut stem = base.clone();
+        let mut n = 2;
+        while pbs_stems.contains(&stem) {
+            stem = format!("{base}-{n}");
+            n += 1;
+        }
+        pbs_stems.push(stem);
+    }
     let mut fst_rows = match fst_method {
         Some(method) => format!(
             "pop1\tpop2\tchromosome\twindow_pos_1\twindow_pos_2\tavg_{method}_fst\tno_snps\n"
@@ -130,7 +149,7 @@ pub fn write(
     };
     let variant_only = layout.invariant == InvariantMode::VariantOnly;
     for row in &report.windows {
-        for (kind, acc) in kinds.iter().zip(&row.accs) {
+        for (kind_idx, (kind, acc)) in kinds.iter().zip(&row.accs).enumerate() {
             match kind {
                 StatKind::Pi { .. } | StatKind::Dxy { .. } => {
                     let (Some((diffs, comparable, missing)), Some(n_sites)) =
@@ -247,8 +266,9 @@ pub fn write(
                         None => "NA".to_string(),
                     };
                     let name = |i: usize| group_names.get(i).map_or("?", String::as_str);
+                    let slot = pbs_slots[kind_idx].expect("invariant: PBS kinds were indexed");
                     let _ = writeln!(
-                        pbs_rows,
+                        pbs_buffers[slot],
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{no_snps}\t{}\t{}\t{}",
                         name(*a),
                         name(*b),
@@ -284,10 +304,16 @@ pub fn write(
         std::fs::write(&path, theta_rows)?;
         written.push(path);
     }
-    if kinds.iter().any(|k| matches!(k, StatKind::Pbs { .. })) {
+    if pbs_buffers.len() == 1 {
         let path = with_suffix(prefix, "_pbs.txt");
-        std::fs::write(&path, pbs_rows)?;
+        std::fs::write(&path, &pbs_buffers[0])?;
         written.push(path);
+    } else if !pbs_buffers.is_empty() {
+        for (stem, text) in pbs_stems.iter().zip(&pbs_buffers) {
+            let path = with_suffix(prefix, &format!("_pbs.{stem}.txt"));
+            std::fs::write(&path, text)?;
+            written.push(path);
+        }
     }
     if fst_method.is_some() {
         let path = with_suffix(prefix, "_fst.txt");
@@ -321,6 +347,26 @@ fn with_suffix(prefix: &Path, suffix: &str) -> std::path::PathBuf {
     let mut s = prefix.as_os_str().to_os_string();
     s.push(suffix);
     std::path::PathBuf::from(s)
+}
+
+/// A file-name stem for one PBS triple (`A-B-C`, sanitized): characters
+/// outside `[A-Za-z0-9_.-]` become `_` (the naming is documented in
+/// cli.md §7; doc_v15 D15-8).
+fn pbs_stem(a: &str, b: &str, c: &str) -> String {
+    let mut stem = String::with_capacity(a.len() + b.len() + c.len() + 2);
+    for (i, name) in [a, b, c].iter().enumerate() {
+        if i > 0 {
+            stem.push('-');
+        }
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-') {
+                stem.push(ch);
+            } else {
+                stem.push('_');
+            }
+        }
+    }
+    stem
 }
 
 /// The window value for `kind` under the declared invariant policy.

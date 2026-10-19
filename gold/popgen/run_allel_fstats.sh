@@ -37,7 +37,7 @@ F4="${FSTATS_F4:-popA,popB;popC,popC}"
 D="${FSTATS_D:-popA,popB;popA,popC}"
 RATIO="${FSTATS_RATIO:-}"
 
-args=(stats "$VCF" --pop "$POPS" -o "$OUT/reed" --verbosity 0)
+args=(popg "$VCF" --pop "$POPS" -o "$OUT/reed" --verbosity 0)
 [[ -n "$F2" ]] && args+=(--f2 "$F2")
 [[ -n "$F3" ]] && args+=(--f3 "$F3")
 [[ -n "$F4" ]] && args+=(--f4 "$F4")

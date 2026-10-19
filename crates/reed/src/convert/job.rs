@@ -14,6 +14,8 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -179,7 +181,7 @@ pub struct ConvertScratch {
     /// MSA per-record value buffers.
     msa_vals: Vec<u8>,
     msa_starts: Vec<u32>,
-    msa_lens: Vec<u8>,
+    msa_lens: Vec<u32>,
     msa_padded: Vec<u8>,
     /// Once-flags for the skip warnings.
     warned: WarnFlags,
@@ -233,6 +235,243 @@ pub(crate) struct HmpPartial {
     pub(crate) rows: Vec<u8>,
 }
 
+/// Rendered hapmap rows: kept in memory for a small run, spilled to an
+/// append-only temp file past [`HMP_SPILL_THRESHOLD`] so a whole-genome run
+/// holds only one chunk's text at a time (doc_v15 D15-7, bounded form). The
+/// temp file is removed on drop — including on failure or abort, since the
+/// engine drops the sink.
+#[derive(Debug)]
+pub(crate) enum RowsBlob {
+    Memory(Vec<u8>),
+    Spilled { path: PathBuf, len: u64 },
+}
+
+impl Default for RowsBlob {
+    fn default() -> Self {
+        Self::Memory(Vec::new())
+    }
+}
+
+impl Drop for RowsBlob {
+    fn drop(&mut self) {
+        if let Self::Spilled { path, .. } = self {
+            let _ = std::fs::remove_file(&*path);
+        }
+    }
+}
+
+/// Spill each buffered blob past this many bytes. A whole-genome run is far
+/// larger; a small run never touches the disk.
+pub(crate) const SPILL_THRESHOLD: usize = 4 << 20;
+
+/// The sink's total in-memory blob budget: per-sample blobs are small
+/// individually (one byte per site), so a whole-genome, many-sample run
+/// would only cross the per-blob threshold on the largest ones. Past this
+/// total the sink spills whole buffers in a fixed order (bytes unchanged).
+pub(crate) const SPILL_TOTAL_BUDGET: usize = 8 << 20;
+
+impl RowsBlob {
+    /// Absorbs one chunk's rendered rows. The ordered sink appends in chunk
+    /// order, so the bytes stay identical to the in-memory form.
+    pub(crate) fn append(
+        &mut self,
+        rows: &mut Vec<u8>,
+        threshold: usize,
+    ) -> Result<(), EngineError> {
+        if let Self::Spilled { path, len } = self {
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(&*path)
+                .map_err(EngineError::Io)?;
+            file.write_all(rows).map_err(EngineError::Io)?;
+            *len = len.saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
+            return Ok(());
+        }
+        // A `Drop` type cannot be destructured by move: fill the buffer,
+        // then flip the variant once the borrow has ended.
+        let mut spilled: Option<(PathBuf, u64)> = None;
+        if let Self::Memory(buf) = self {
+            if buf.len() + rows.len() <= threshold {
+                buf.append(rows);
+                return Ok(());
+            }
+            buf.append(rows);
+            let path = spill_path();
+            let mut file = File::create(&path).map_err(EngineError::Io)?;
+            file.write_all(buf).map_err(EngineError::Io)?;
+            file.flush().map_err(EngineError::Io)?;
+            let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+            spilled = Some((path, len));
+        }
+        if let Some((path, len)) = spilled {
+            *self = Self::Spilled { path, len };
+        }
+        Ok(())
+    }
+
+    /// Streams the bytes through `f` in read-sized chunks (the transformed
+    /// renderers: `--012` maps each byte back to a cell token).
+    pub(crate) fn visit(
+        &self,
+        mut f: impl FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> Result<(), EngineError> {
+        match self {
+            Self::Memory(bytes) => f(bytes).map_err(EngineError::Io),
+            Self::Spilled { path, .. } => {
+                let mut src = std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?);
+                let mut buf = vec![0_u8; 64 << 10];
+                loop {
+                    let n = src.read(&mut buf).map_err(EngineError::Io)?;
+                    if n == 0 {
+                        return Ok(());
+                    }
+                    f(&buf[..n]).map_err(EngineError::Io)?;
+                }
+            }
+        }
+    }
+
+    /// In-memory bytes (`0` once spilled).
+    #[must_use]
+    pub(crate) fn mem_len(&self) -> usize {
+        match self {
+            Self::Memory(bytes) => bytes.len(),
+            Self::Spilled { .. } => 0,
+        }
+    }
+
+    /// Forces the in-memory buffer to a spill file (no-op when empty or
+    /// already spilled).
+    pub(crate) fn spill_now(&mut self) -> Result<(), EngineError> {
+        let mut spilled: Option<(PathBuf, u64)> = None;
+        if let Self::Memory(buf) = self
+            && !buf.is_empty()
+        {
+            let path = spill_path();
+            let mut file = File::create(&path).map_err(EngineError::Io)?;
+            file.write_all(buf).map_err(EngineError::Io)?;
+            file.flush().map_err(EngineError::Io)?;
+            let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+            spilled = Some((path, len));
+        }
+        if let Some((path, len)) = spilled {
+            *self = Self::Spilled { path, len };
+        }
+        Ok(())
+    }
+
+    /// Streams the rows into `out` (the render path).
+    pub(crate) fn write_to(&self, out: &mut impl std::io::Write) -> Result<(), EngineError> {
+        match self {
+            Self::Memory(bytes) => out.write_all(bytes).map_err(EngineError::Io),
+            Self::Spilled { path, len } => {
+                let mut src =
+                    std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?);
+                let copied = std::io::copy(&mut src, out).map_err(EngineError::Io)?;
+                debug_assert_eq!(copied, *len, "invariant: the spill length tracks writes");
+                Ok(())
+            }
+        }
+    }
+}
+
+/// A unique per-process temp path for one spilled blob (`TMPDIR` is
+/// respected through `std::env::temp_dir`).
+fn spill_path() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("reed-convert-{}-{n}.spill", std::process::id()))
+}
+
+/// The MSA sites, one frame stream per contig run (the `runs` merge rule is
+/// preserved: a run continues while the contig does not change). Each frame
+/// is `pos0: u64 LE || width: u32 LE || vals (n_samples x width)` — the
+/// render walks the frames once per sample, so nothing region-sized is ever
+/// buffered (doc_v15 D15-7).
+pub(crate) struct SpilledMsa {
+    pub(crate) runs: Vec<(Vec<u8>, RowsBlob)>,
+}
+
+/// A pull-based reader over one contig's frames. The render re-walks the
+/// frames per sample, so the reader rewinds: memory slices by index, spill
+/// files by `seek`.
+pub(crate) struct MsaFrameReader<'a> {
+    source: MsaFrameSource<'a>,
+    n_samples: usize,
+}
+
+enum MsaFrameSource<'a> {
+    Memory { bytes: &'a [u8], cursor: usize },
+    Spilled { file: std::io::BufReader<File> },
+}
+
+impl<'a> MsaFrameReader<'a> {
+    pub(crate) fn open(blob: &'a RowsBlob, n_samples: usize) -> Result<Self, EngineError> {
+        let source = match blob {
+            RowsBlob::Memory(bytes) => MsaFrameSource::Memory { bytes, cursor: 0 },
+            RowsBlob::Spilled { path, .. } => MsaFrameSource::Spilled {
+                file: std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?),
+            },
+        };
+        Ok(Self { source, n_samples })
+    }
+
+    /// Reads the next frame and copies only `sample`'s slice into `buf`.
+    /// `Ok(None)` at the end of the stream.
+    ///
+    /// The render walks the frames once per sample; reading the whole frame
+    /// every pass would be the per-sample repeated-IO shape the convert
+    /// design forbids (doc_v13 D13-2), so the spill path seeks past the
+    /// other samples' bytes (doc_v15 D15-7).
+    pub(crate) fn next_frame_for_sample(
+        &mut self,
+        sample: usize,
+        buf: &mut Vec<u8>,
+    ) -> Result<Option<u64>, EngineError> {
+        let mut header = [0_u8; 12];
+        match &mut self.source {
+            MsaFrameSource::Memory { bytes, cursor } => {
+                if *cursor + 12 > bytes.len() {
+                    return if *cursor == bytes.len() {
+                        Ok(None)
+                    } else {
+                        Err(EngineError::job("MSA spill: truncated frame header"))
+                    };
+                }
+                header.copy_from_slice(&bytes[*cursor..*cursor + 12]);
+                *cursor += 12;
+            }
+            MsaFrameSource::Spilled { file } => match file.read_exact(&mut header) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+                Err(e) => return Err(EngineError::Io(e)),
+            },
+        }
+        let pos0 = u64::from_le_bytes(header[..8].try_into().expect("invariant: 8 bytes"));
+        let width = u32::from_le_bytes(header[8..].try_into().expect("invariant: 4 bytes")) as usize;
+        let len = self.n_samples * width;
+        let lo = sample * width;
+        buf.clear();
+        buf.resize(width, 0);
+        match &mut self.source {
+            MsaFrameSource::Memory { bytes, cursor } => {
+                if *cursor + len > bytes.len() {
+                    return Err(EngineError::job("MSA spill: truncated frame values"));
+                }
+                buf.copy_from_slice(&bytes[*cursor + lo..*cursor + lo + width]);
+                *cursor += len;
+            }
+            MsaFrameSource::Spilled { file } => {
+                file.seek_relative(lo as i64).map_err(EngineError::Io)?;
+                file.read_exact(buf).map_err(EngineError::Io)?;
+                let tail = u64::try_from(len - lo - width).unwrap_or(u64::MAX);
+                file.seek_relative(tail as i64).map_err(EngineError::Io)?;
+            }
+        }
+        Ok(Some(pos0))
+    }
+}
+
 /// One contig run of in-region MSA sites (positions ascending).
 pub(crate) struct MsaRun {
     pub(crate) contig: Vec<u8>,
@@ -243,7 +482,7 @@ pub(crate) struct MsaRun {
 pub(crate) struct MsaSite {
     pub(crate) pos0: u64,
     pub(crate) vals: Vec<u8>,
-    pub(crate) width: u8,
+    pub(crate) width: u32,
 }
 
 #[derive(Default)]
@@ -260,57 +499,52 @@ impl ConvertPartial {
                 None => self.sfs = Some(std::mem::take(src)),
             }
         }
-        if let Some(src) = &mut other.phylo {
-            let dst = self.phylo.get_or_insert_with(|| PhyloPartial {
-                n_sites: 0,
-                n_bin_sites: 0,
-                cols: vec![Vec::new(); src.cols.len()],
-                bin_cols: vec![Vec::new(); src.bin_cols.len()],
-                used: Vec::new(),
-            });
-            dst.n_sites += src.n_sites;
-            dst.n_bin_sites += src.n_bin_sites;
-            for (d, s) in dst.cols.iter_mut().zip(&mut src.cols) {
-                d.append(s);
-            }
-            for (d, s) in dst.bin_cols.iter_mut().zip(&mut src.bin_cols) {
-                d.append(s);
-            }
-            dst.used.append(&mut src.used);
-        }
-        if let Some(src) = &mut other.count {
-            let dst = self.count.get_or_insert_with(|| CountPartial {
-                n_sites: 0,
-                cells: vec![Vec::new(); src.cells.len()],
-                pos: Vec::new(),
-            });
-            dst.n_sites += src.n_sites;
-            for (d, s) in dst.cells.iter_mut().zip(&mut src.cells) {
-                d.append(s);
-            }
-            dst.pos.append(&mut src.pos);
-        }
-        if let Some(src) = &mut other.hmp {
-            let dst = self.hmp.get_or_insert_with(HmpPartial::default);
-            dst.n_sites += src.n_sites;
-            dst.rows.append(&mut src.rows);
-        }
-        if let Some(src) = &mut other.msa {
-            let dst = self.msa.get_or_insert_with(MsaPartial::default);
-            for run in src.runs.drain(..) {
-                match dst.runs.last_mut() {
-                    Some(last) if last.contig == run.contig => last.sites.extend(run.sites),
-                    _ => dst.runs.push(run),
-                }
-            }
-        }
     }
 }
 
 /// Ordered sink: merges every chunk partial in input order into one state.
 pub(crate) struct ConvertSink {
     merged: ConvertPartial,
-    out: Arc<Mutex<Option<ConvertPartial>>>,
+    /// Per-target blobs taken out of each partial before the merge and
+    /// spilled past the threshold instead of held whole (doc_v15 D15-7).
+    phylo_cols: Option<Vec<RowsBlob>>,
+    phylo_bin_cols: Option<Vec<RowsBlob>>,
+    phylo_used: RowsBlob,
+    phylo_sites: u64,
+    phylo_bin_sites: u64,
+    count_cells: Option<Vec<RowsBlob>>,
+    count_pos: RowsBlob,
+    msa_runs: Option<Vec<(Vec<u8>, RowsBlob)>>,
+    hmp_rows: RowsBlob,
+    /// Per-chunk conversion scratch (cells are `i8`, the blobs hold bytes).
+    cell_scratch: Vec<u8>,
+    msa_scratch: Vec<u8>,
+    out: Arc<Mutex<Option<MergedOutput>>>,
+}
+
+/// The sink's finished state: the merged partial plus the (possibly
+/// spilled) per-target blobs.
+pub(crate) struct MergedOutput {
+    pub(crate) partial: ConvertPartial,
+    pub(crate) phylo: Option<SpilledPhylo>,
+    pub(crate) count: Option<SpilledCount>,
+    pub(crate) msa: Option<SpilledMsa>,
+    pub(crate) hmp_rows: RowsBlob,
+}
+
+/// The phylogenetic streams with their site tallies.
+pub(crate) struct SpilledPhylo {
+    pub(crate) n_sites: u64,
+    pub(crate) n_bin_sites: u64,
+    pub(crate) cols: Vec<RowsBlob>,
+    pub(crate) bin_cols: Vec<RowsBlob>,
+    pub(crate) used: RowsBlob,
+}
+
+/// The `--012` streams.
+pub(crate) struct SpilledCount {
+    pub(crate) cells: Vec<RowsBlob>,
+    pub(crate) pos: RowsBlob,
 }
 
 impl OrderedSink<ConvertPartial> for ConvertSink {
@@ -319,7 +553,73 @@ impl OrderedSink<ConvertPartial> for ConvertSink {
         _id: reed_core::ChunkId,
         partial: &mut ConvertPartial,
     ) -> Result<(), EngineError> {
+        if let Some(mut phylo) = partial.phylo.take() {
+            let cols = self.phylo_cols.get_or_insert_with(|| {
+                (0..phylo.cols.len())
+                    .map(|_| RowsBlob::default())
+                    .collect()
+            });
+            debug_assert_eq!(cols.len(), phylo.cols.len(), "invariant: kept-sample count");
+            for (dst, src) in cols.iter_mut().zip(phylo.cols.iter_mut()) {
+                dst.append(src, SPILL_THRESHOLD)?;
+            }
+            let bin_cols = self.phylo_bin_cols.get_or_insert_with(|| {
+                (0..phylo.bin_cols.len())
+                    .map(|_| RowsBlob::default())
+                    .collect()
+            });
+            debug_assert_eq!(
+                bin_cols.len(),
+                phylo.bin_cols.len(),
+                "invariant: kept-sample count"
+            );
+            for (dst, src) in bin_cols.iter_mut().zip(phylo.bin_cols.iter_mut()) {
+                dst.append(src, SPILL_THRESHOLD)?;
+            }
+            self.phylo_used.append(&mut phylo.used, SPILL_THRESHOLD)?;
+            self.phylo_sites += phylo.n_sites;
+            self.phylo_bin_sites += phylo.n_bin_sites;
+        }
+        if let Some(mut count) = partial.count.take() {
+            let cells = self.count_cells.get_or_insert_with(|| {
+                (0..count.cells.len())
+                    .map(|_| RowsBlob::default())
+                    .collect()
+            });
+            debug_assert_eq!(cells.len(), count.cells.len(), "invariant: kept-sample count");
+            for (dst, src) in cells.iter_mut().zip(count.cells.iter_mut()) {
+                self.cell_scratch.clear();
+                self.cell_scratch.extend(src.iter().map(|&cell| cell as u8));
+                dst.append(&mut self.cell_scratch, SPILL_THRESHOLD)?;
+            }
+            self.count_pos.append(&mut count.pos, SPILL_THRESHOLD)?;
+        }
+        if let Some(msa) = partial.msa.take() {
+            let runs = self.msa_runs.get_or_insert_with(Vec::new);
+            for run in msa.runs {
+                // The `runs` merge rule: the last run continues while the
+                // contig does not change.
+                let new_entry = !matches!(runs.last(), Some((name, _)) if *name == run.contig);
+                if new_entry {
+                    runs.push((run.contig, RowsBlob::default()));
+                }
+                let (_, blob) = runs.last_mut().expect("invariant: just ensured");
+                self.msa_scratch.clear();
+                for site in &run.sites {
+                    self.msa_scratch
+                        .extend_from_slice(&site.pos0.to_le_bytes());
+                    self.msa_scratch
+                        .extend_from_slice(&site.width.to_le_bytes());
+                    self.msa_scratch.extend_from_slice(&site.vals);
+                }
+                blob.append(&mut self.msa_scratch, SPILL_THRESHOLD)?;
+            }
+        }
+        if let Some(mut hmp) = partial.hmp.take() {
+            self.hmp_rows.append(&mut hmp.rows, SPILL_THRESHOLD)?;
+        }
         self.merged.absorb(partial);
+        self.enforce_spill_budget()?;
         Ok(())
     }
 
@@ -327,8 +627,78 @@ impl OrderedSink<ConvertPartial> for ConvertSink {
         *self
             .out
             .lock()
-            .expect("invariant: convert slot not poisoned") = Some(self.merged);
+            .expect("invariant: convert slot not poisoned") = Some(MergedOutput {
+            partial: self.merged,
+            phylo: self.phylo_cols.map(|cols| SpilledPhylo {
+                n_sites: self.phylo_sites,
+                n_bin_sites: self.phylo_bin_sites,
+                cols,
+                bin_cols: self.phylo_bin_cols.unwrap_or_default(),
+                used: self.phylo_used,
+            }),
+            count: self.count_cells.map(|cells| SpilledCount {
+                cells,
+                pos: self.count_pos,
+            }),
+            msa: self.msa_runs.map(|runs| SpilledMsa { runs }),
+            hmp_rows: self.hmp_rows,
+        });
         Ok(0)
+    }
+}
+
+impl ConvertSink {
+    /// Bounds the sink's buffered blob bytes: past [`SPILL_TOTAL_BUDGET`]
+    /// the in-memory buffers are spilled whole in a fixed order (doc_v15
+    /// D15-7; the bytes are unaffected, so the output is too).
+    fn enforce_spill_budget(&mut self) -> Result<(), EngineError> {
+        let mut total = self.buffered_bytes();
+        if total <= SPILL_TOTAL_BUDGET {
+            return Ok(());
+        }
+        let mut all: Vec<&mut RowsBlob> = Vec::new();
+        if let Some(cols) = &mut self.phylo_cols {
+            all.extend(cols.iter_mut());
+        }
+        if let Some(cols) = &mut self.phylo_bin_cols {
+            all.extend(cols.iter_mut());
+        }
+        if let Some(cells) = &mut self.count_cells {
+            all.extend(cells.iter_mut());
+        }
+        if let Some(runs) = &mut self.msa_runs {
+            all.extend(runs.iter_mut().map(|(_, blob)| blob));
+        }
+        all.push(&mut self.phylo_used);
+        all.push(&mut self.count_pos);
+        all.push(&mut self.hmp_rows);
+        for blob in all {
+            if total <= SPILL_TOTAL_BUDGET {
+                break;
+            }
+            let len = blob.mem_len();
+            if len > 0 {
+                blob.spill_now()?;
+                total -= len;
+            }
+        }
+        Ok(())
+    }
+
+    /// The sink's current in-memory blob bytes.
+    fn buffered_bytes(&self) -> usize {
+        let cols = |blobs: &Option<Vec<RowsBlob>>| -> usize {
+            blobs.as_ref().map_or(0, |v| v.iter().map(RowsBlob::mem_len).sum())
+        };
+        cols(&self.phylo_cols)
+            + cols(&self.phylo_bin_cols)
+            + cols(&self.count_cells)
+            + self.msa_runs.as_ref().map_or(0, |runs| {
+                runs.iter().map(|(_, blob)| blob.mem_len()).sum()
+            })
+            + self.phylo_used.mem_len()
+            + self.count_pos.mem_len()
+            + self.hmp_rows.mem_len()
     }
 }
 
@@ -383,15 +753,11 @@ impl ChunkJob for ConvertJob {
         let mut partial = ConvertPartial::default();
         if let Some(stats) = &self.sfs {
             let ConvertScratch {
-                sanitized,
                 stats: stats_scratch,
                 ..
             } = scratch;
             let sfs_line = if self.has_row_targets() && !line_is_sane(line, self.n_samples) {
                 b"".as_slice()
-            } else if self.has_row_targets() {
-                let _ = &mut *sanitized;
-                line
             } else {
                 line
             };
@@ -440,7 +806,10 @@ impl ConvertJob {
             self.bump_malformed(partial, scratch, "an unparsable POS");
             return;
         };
-        let pos0 = pos1 - 1;
+        let Some(pos0) = pos1.checked_sub(1) else {
+            self.bump_malformed(partial, scratch, "POS 0 (VCF positions are 1-based)");
+            return;
+        };
 
         // The single per-sample GT parse (D13-7).
         self.parse_gts(&lr, scratch);
@@ -455,15 +824,20 @@ impl ConvertJob {
             .count() as u32;
 
         // --- The phylogenetic stream (nucleotide + bin, vcf2phylip order) --
-        if let Some(plan) = &self.phylo {
+        // Its gates skip *this stream only*: a phylo early exit must not
+        // starve the count/hapmap/MSA folds below (doc_v15 D15-4).
+        'phylo: {
+            let Some(plan) = &self.phylo else {
+                break 'phylo;
+            };
             if present < plan.gate {
                 partial.counters.excess_missing += 1;
-                return;
+                break 'phylo;
             }
             self.build_alleles(&lr, true, scratch);
             if !is_snp(&lr, &scratch.allele_ranges) {
                 partial.counters.mnps += 1;
-                return;
+                break 'phylo;
             }
             if plan.formats.any() {
                 match self.phylo_column(scratch, key, plan.options.resolve_iupac) {
@@ -494,7 +868,7 @@ impl ConvertJob {
                             scratch,
                             "a genotype with an unknown allele letter or an index beyond the record's alleles",
                         );
-                        return;
+                        break 'phylo;
                     }
                 }
             }
@@ -752,7 +1126,7 @@ impl ConvertJob {
         }
         // vcftools' biallelic gate: `>2` alleles is skipped; `ALT='.'`
         // counts one allele and is kept.
-        if raw_alt_count(lr) > 2 {
+        if raw_alt_count(lr) > 1 {
             if !scratch.warned.multiallelic_012 {
                 scratch.warned.multiallelic_012 = true;
                 tracing::warn!(
@@ -919,7 +1293,7 @@ impl ConvertJob {
     /// Resolves every kept sample's MSA value for one record (vcf2msa's
     /// `genotype_resolve` minus the external aligner: values are right-padded
     /// with `-` to the site's maximum length, B13-6).
-    fn msa_values(&self, scratch: &mut ConvertScratch) -> Result<(Vec<u8>, u8), Malformed> {
+    fn msa_values(&self, scratch: &mut ConvertScratch) -> Result<(Vec<u8>, u32), Malformed> {
         let ConvertScratch {
             gts,
             allele_ranges,
@@ -944,7 +1318,7 @@ impl ConvertJob {
             msa_starts.push(msa_vals.len() as u32);
             resolve_msa_value(gt, allele_ranges, alleles, msa_vals)?;
             let start = *msa_starts.last().expect("invariant: just pushed");
-            msa_lens.push((msa_vals.len() as u32 - start) as u8);
+            msa_lens.push(msa_vals.len() as u32 - start);
         }
         let width = msa_lens.iter().copied().max().unwrap_or(1).max(1);
         if width == 1 {
@@ -1344,7 +1718,10 @@ pub fn run_convert_opened(
                 int_dtype,
             } => sfs_request = Some((sfs.clone(), *int_dtype)),
             ConvertTarget::Phylo { formats, options } => {
-                if !formats.any() {
+                // A formats-empty target is allowed when it carries an
+                // outgroup: the bin-only run reads it from this plan
+                // (doc_v15 D15-6).
+                if !formats.any() && options.outgroup.is_none() {
                     return Err(crate::Error::usage(
                         "the phylo target selects no format (--phylip/--fasta/--nexus)",
                     ));
@@ -1456,9 +1833,13 @@ pub fn run_convert_opened(
         request.keep_samples.as_deref(),
     )?;
     let n_groups = group_names.len();
+    let mut group_sizes = vec![0_u32; n_groups];
+    for group in gt_groups.iter().flatten() {
+        group_sizes[*group as usize] += 1;
+    }
     let sfs_plan = sfs_request
         .as_ref()
-        .map(|(sfs, _)| build_sfs_plan(sfs, n_groups))
+        .map(|(sfs, _)| build_sfs_plan(sfs, &group_names, &group_sizes))
         .transpose()?;
 
     let abort = reed_engine::abort::abort_for(budget);
@@ -1500,6 +1881,17 @@ pub fn run_convert_opened(
     let out = Arc::new(Mutex::new(None));
     let sink = ConvertSink {
         merged: ConvertPartial::default(),
+        phylo_cols: None,
+        phylo_bin_cols: None,
+        phylo_used: RowsBlob::default(),
+        phylo_sites: 0,
+        phylo_bin_sites: 0,
+        count_cells: None,
+        count_pos: RowsBlob::default(),
+        msa_runs: None,
+        hmp_rows: RowsBlob::default(),
+        cell_scratch: Vec::new(),
+        msa_scratch: Vec::new(),
         out: Arc::clone(&out),
     };
     let report = {
@@ -1511,7 +1903,13 @@ pub fn run_convert_opened(
         job.finish(report.n_chunks, true)?;
         report
     };
-    let merged = out
+    let MergedOutput {
+        partial: merged,
+        phylo: spilled_phylo,
+        count: spilled_count,
+        msa: spilled_msa,
+        hmp_rows,
+    } = out
         .lock()
         .expect("invariant: convert slot not poisoned")
         .take()
@@ -1529,7 +1927,7 @@ pub fn run_convert_opened(
             prefix,
             plan,
             &kept_names,
-            merged.phylo.as_ref(),
+            spilled_phylo.as_ref(),
         )?);
     }
     if render_count {
@@ -1537,15 +1935,11 @@ pub fn run_convert_opened(
             prefix,
             &kept_names,
             &keep,
-            merged.count.as_ref(),
+            spilled_count.as_ref(),
         )?);
     }
     if render_hmp {
-        files.extend(writers::write_hapmap(
-            prefix,
-            &kept_names,
-            merged.hmp.as_ref(),
-        )?);
+        files.extend(writers::write_hapmap(prefix, &kept_names, Some(&hmp_rows))?);
     }
     if let Some(reference) = &reference {
         files.extend(writers::write_msa(
@@ -1553,7 +1947,7 @@ pub fn run_convert_opened(
             reference,
             &msa_outputs,
             &msa_names,
-            merged.msa.as_ref(),
+            spilled_msa.as_ref(),
         )?);
     }
     let mut sfs_report_out = None;
@@ -1582,4 +1976,105 @@ pub fn run_convert_opened(
         elapsed: report.elapsed,
         metrics: report.metrics,
     })
+}
+
+#[cfg(test)]
+mod spill_tests {
+    use super::*;
+
+    fn spill_path_of(blob: &RowsBlob) -> PathBuf {
+        match blob {
+            RowsBlob::Spilled { path, .. } => path.clone(),
+            RowsBlob::Memory(_) => panic!("expected a spilled blob"),
+        }
+    }
+
+    #[test]
+    fn rows_blob_spills_and_cleans_up() {
+        let mut blob = RowsBlob::default();
+        let mut first = b"aaaa".to_vec();
+        blob.append(&mut first, 8).expect("append");
+        let mut second = b"bbbb".to_vec();
+        blob.append(&mut second, 8).expect("append"); // 8 bytes: still memory
+        assert!(matches!(blob, RowsBlob::Memory(_)));
+        let mut third = b"cccc".to_vec();
+        blob.append(&mut third, 8).expect("append"); // 12 > 8: spills
+        let path = spill_path_of(&blob);
+        assert!(path.exists(), "the spill file must exist");
+        let mut fourth = b"dddd".to_vec();
+        blob.append(&mut fourth, 8).expect("append"); // appended to the file
+        let mut out = Vec::new();
+        blob.write_to(&mut out).expect("write_to");
+        assert_eq!(out, b"aaaabbbbccccdddd");
+        drop(blob);
+        assert!(!path.exists(), "the spill file must be removed on drop");
+    }
+
+    #[test]
+    fn write_hapmap_streams_a_spilled_blob() {
+        let dir = std::env::temp_dir().join(format!("reed-convert-spill-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let row: &[u8] = b"chr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
+        let spill = dir.join("rows.spill");
+        std::fs::write(&spill, row).expect("invariant: spill file");
+        let rows = RowsBlob::Spilled {
+            path: spill.clone(),
+            len: row.len() as u64,
+        };
+        let names = vec!["s0".to_string()];
+        let files = writers::write_hapmap(&dir.join("out"), &names, Some(&rows)).expect("write");
+        let text = std::fs::read_to_string(&files[0]).expect("invariant: read");
+        let expected = "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\nchr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
+        assert_eq!(text, expected);
+        drop(rows);
+        assert!(!spill.exists(), "the spill file must be removed on drop");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rows_blob_visit_sees_the_whole_stream() {
+        let mut blob = RowsBlob::default();
+        let mut head = vec![1_u8, 2, 255];
+        blob.append(&mut head, 2).expect("append"); // 3 > 2: spills at once
+        let mut tail = vec![0_u8; 200_000];
+        blob.append(&mut tail, 2).expect("append");
+        let mut seen = Vec::new();
+        blob.visit(|chunk| {
+            seen.extend_from_slice(chunk);
+            Ok(())
+        })
+        .expect("visit");
+        assert_eq!(seen.len(), 200_003, "visit must see every byte");
+        assert_eq!(&seen[..3], &[1, 2, 255]);
+    }
+
+    #[test]
+    fn write_count_matrix_streams_spilled_cells() {
+        let dir = std::env::temp_dir().join(format!("reed-convert-cells-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let cells_path = dir.join("cells.spill");
+        let raw: Vec<u8> = vec![1, 2, 0xFF, 0]; // 0/1, 1/1, ./., 0/0
+        std::fs::write(&cells_path, &raw).expect("invariant: spill file");
+        let count = SpilledCount {
+            cells: vec![RowsBlob::Spilled {
+                path: cells_path,
+                len: raw.len() as u64,
+            }],
+            pos: RowsBlob::Memory(b"chr1\t1\nchr1\t2\nchr1\t3\nchr1\t4\n".to_vec()),
+        };
+        let names = vec!["s0".to_string()];
+        writers::write_count_matrix(&dir.join("out"), &names, &[true], Some(&count))
+            .expect("write");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("out.012")).expect("invariant: read"),
+            "0\t1\t2\t-1\t0\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("out.012.pos")).expect("invariant: read"),
+            "chr1\t1\nchr1\t2\nchr1\t3\nchr1\t4\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

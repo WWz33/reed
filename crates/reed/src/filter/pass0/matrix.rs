@@ -786,8 +786,10 @@ impl OrderedSink<MatrixPartial> for MatrixSink {
                 pruned += outcome.n_pruned;
                 per_contig.extend(outcome.keep.per_contig);
             }
+            let mut keep = super::prune::SiteKeepSet { per_contig };
+            keep.sort_index();
             prune = Some(super::prune::PruneOutcome {
-                keep: super::prune::SiteKeepSet { per_contig },
+                keep,
                 n_seen: seen,
                 n_pruned: pruned,
                 prune_secs: started.elapsed().as_secs_f64(),
@@ -926,6 +928,16 @@ impl MatrixSink {
         // only fits the mode whose tail ran inline; the sketch shape keeps
         // its matrices for the post-`--mind` mid stage.
         if self.track_chunks {
+            // The sketch shape keeps every contig's matrix for the mid stage
+            // (doc_v7 D7-19); one matrix beyond the budget cannot be
+            // admitted (doc_v15 D15-16, preventive — the engine's per-chunk
+            // guard used to bind first, hiding this skip).
+            if matrix.size_bytes() > self.budget_bytes {
+                return Err(EngineError::MemBudgetExceeded {
+                    peak_bytes: matrix.size_bytes(),
+                    budget_bytes: self.budget_bytes,
+                });
+            }
             self.matrices.push(matrix);
             return Ok(());
         }

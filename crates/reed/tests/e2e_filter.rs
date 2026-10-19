@@ -1396,3 +1396,83 @@ fn genotype_class_rules_skip_gt_less_records() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v15 D15-1: a mask on a Float-typed FORMAT field must mask — the
+/// float branch used to skip every present value (`!(x.is_nan() && ...)`).
+#[test]
+fn mask_masks_a_float_declared_format_field() {
+    let dir = std::env::temp_dir().join(format!("reed-filter-v15-d1-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=Chr01,length=100000>\n\
+        ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        ##FORMAT=<ID=GQ,Number=1,Type=Float,Description=\"q\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+        Chr01\t1\t.\tA\tG\t50\tPASS\t.\tGT:GQ\t0/1:5\t0/0:30\n";
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, bgzf(text, 4096)).expect("invariant: write");
+    let out = dir.join("out.vcf.gz");
+    let spec = FilterSpec {
+        genotype: reed_filter::spec::GenotypeRules {
+            mask_if: vec![reed_filter::spec::GenotypeMaskRule {
+                field: "GQ".into(),
+                when: "< 20".into(),
+                on_missing: OnMissing::Keep,
+            }],
+            ..Default::default()
+        },
+        ..FilterSpec::default()
+    };
+    run_filter(Some(input.as_path()), &spec, &options(None, &out)).expect("invariant: runs");
+    let text = inflate_to_string(&out);
+    let record = text
+        .lines()
+        .find(|l| !l.starts_with('#'))
+        .expect("invariant: record");
+    assert!(record.contains("./.:5"), "low Float GQ must mask s0: {record}");
+    assert!(record.contains("0/0:30"), "s1 keeps its genotype: {record}");
+}
+
+/// doc_v15 D15-2: after a mask changes the cohort, `--min-af` must
+/// recompute from the masked genotypes instead of the stale INFO/AC,AN.
+#[test]
+fn min_af_recomputes_after_a_mask_changes_the_cohort() {
+    let dir = std::env::temp_dir().join(format!("reed-filter-v15-d2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    // Pre-mask AF = 2/8; masking s1 (DP < 100) leaves AF = 1/6 < 0.2.
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=Chr01,length=100000>\n\
+        ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+        ##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">\n\
+        ##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+        Chr01\t1\t.\tA\tG\t50\tPASS\tAC=2;AN=8\tGT:DP\t0/1:200\t0/1:5\t0/0:200\t0/0:200\n";
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, bgzf(text, 4096)).expect("invariant: write");
+    let out = dir.join("out.vcf.gz");
+    let spec = FilterSpec {
+        genotype: reed_filter::spec::GenotypeRules {
+            mask_if: vec![reed_filter::spec::GenotypeMaskRule {
+                field: "DP".into(),
+                when: "< 100".into(),
+                on_missing: OnMissing::Keep,
+            }],
+            ..Default::default()
+        },
+        site_after_mask: reed_filter::spec::TailRules {
+            min_af: Some(0.2),
+            ..Default::default()
+        },
+        ..FilterSpec::default()
+    };
+    run_filter(Some(input.as_path()), &spec, &options(None, &out)).expect("invariant: runs");
+    let text = inflate_to_string(&out);
+    let records: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    assert!(
+        records.is_empty(),
+        "post-mask AF = 1/6 < 0.2 must drop the site: {records:?}"
+    );
+}

@@ -150,6 +150,8 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
              there now; run `reed popg <input> --pop FILE {flag} ...`"
         )));
     }
+    // `--tmp-dir` stays accepted (cli.md §2) but single-pass reports never
+    // spill, so the option is inert here (doc_v15 D15-23).
     let _ = &args.tmp_dir;
     // `--pop` stratifies --freq/--missing/--singletons (doc_v14 02 §2.2);
     // a popfile without any of those is a silent no-op, so it is refused

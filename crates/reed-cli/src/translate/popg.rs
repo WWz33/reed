@@ -3,6 +3,7 @@
 //! window or genome-wide; the QC reports live in `reed stats`.
 
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use reed::{Levels, Populations, PopgenRequest, default_kinds, run_popgen_opened};
@@ -18,7 +19,27 @@ use super::common::{Prelude, prelude, print_engine_metrics};
 /// Translation (unknown levels/sizes) and driver failures.
 pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
     args.verbosity.init_tracing();
-    let _ = &args.tmp_dir;
+    // Usage checks before anything is read (cli.md §0.7): the window-layout
+    // route always writes PREFIX files, so a missing `-o` is refused here,
+    // not after the whole run (doc_v15 D15-13).
+    let windowed_route = args.pi
+        || args.dxy
+        || args.theta
+        || args.tajima_d
+        || args.fst.is_some()
+        || !args.pbs.is_empty()
+        || !(args.f2.is_empty()
+            && args.f3.is_empty()
+            && args.f4.is_empty()
+            && args.dstat.is_empty()
+            && args.f4_ratio.is_empty());
+    let writes_files =
+        windowed_route || args.sfs.is_some() || args.ld_decay.is_some() || args.ld_pairs;
+    if writes_files && args.out.is_none() {
+        return Err(reed::Error::usage(
+            "window-layout mode writes files: pass -o PREFIX",
+        ));
+    }
     let Prelude {
         regions,
         targets,
@@ -74,23 +95,12 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         },
     };
 
-    let windowed_route = args.pi
-        || args.dxy
-        || args.theta
-        || args.tajima_d
-        || args.fst.is_some()
-        || !args.pbs.is_empty()
-        || !(args.f2.is_empty()
-            && args.f3.is_empty()
-            && args.f4.is_empty()
-            && args.dstat.is_empty()
-            && args.f4_ratio.is_empty());
     // Window-layout mode: one command writes PREFIX_pi.txt / PREFIX_dxy.txt
     // with the reference column layout (02-cli.md §5). LD is genome-wide (no
     // window rows), but it rides the same job as the windowed statistics; a
     // bare `--ld-decay` takes this path with no window kinds and no `--pop`
     // (F6-9). `--ld-pairs` needs `--ld-decay` (the builder refuses it alone).
-    if windowed_route || args.sfs.is_some() || args.ld_decay.is_some() || args.ld_pairs {
+    if writes_files {
         let ctx = WindowedContext {
             regions: regions.clone(),
             targets,
@@ -109,11 +119,15 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         let run_start = std::time::Instant::now();
         let report = run_popgen_opened(source, &request, &budget)?;
         let run_secs = run_start.elapsed().as_secs_f64();
-        let Some(prefix) = args.out.clone() else {
+        let prefix = args
+            .out
+            .clone()
+            .expect("invariant: -o checked before the run");
+        if prefix == "-" {
             return Err(reed::Error::usage(
-                "window-layout mode writes files: pass -o PREFIX",
+                "window-layout mode writes PREFIX files: -o - is not stdout",
             ));
-        };
+        }
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
         if let Some(ld_report) = &report.ld {
@@ -175,6 +189,19 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         return Ok(());
     }
 
+    // The bare route counts pi/dxy too: honor the same invariant-site
+    // contract as the windowed route (doc_v15 D15-15).
+    let invariant = if args.variant_only {
+        reed::InvariantMode::VariantOnly
+    } else if args.bypass_invariant_check {
+        eprintln!(
+            "reed popg: warning: --bypass-invariant-check computes over present sites \
+                 only; π and dxy are overestimated"
+        );
+        reed::InvariantMode::Bypass
+    } else {
+        reed::InvariantMode::Require
+    };
     let kinds = default_kinds(group_names.len());
     let request = PopgenRequest {
         kinds: kinds.clone(),
@@ -192,7 +219,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         levels: Levels::parse(&args.levels)?,
         skip_empty: args.skip_empty,
         contig_lengths,
-        layout: None,
+        layout: Some(reed::WindowLayoutOptions { invariant }),
     };
     let source = opened
         .take()
@@ -220,9 +247,11 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         print_engine_metrics(&report.metrics);
     }
     let text = reed::windows::render_tsv(&report.windows, &kinds, false);
-    match &args.out {
-        Some(path) => std::fs::write(path, text)?,
-        None => print!("{text}"),
+    match args.out.as_deref() {
+        Some(path) if path != "-" => std::fs::write(path, text)?,
+        // `-o -` and no `-o` both stream to stdout; write_all turns a closed
+        // pipe into a normal error instead of a panic (doc_v15 D15-14/D15-39).
+        _ => std::io::stdout().write_all(text.as_bytes())?,
     }
     Ok(())
 }
@@ -255,6 +284,18 @@ fn parse_pbs_triples(
                 .iter()
                 .position(|g| g == name)
                 .ok_or_else(|| format!("--pbs: unknown population {name:?}"))?;
+        }
+        if ids[0] == ids[1] || ids[0] == ids[2] {
+            return Err(format!(
+                "--pbs {triple:?}: population {:?} repeats (want three distinct populations)",
+                names[0]
+            ));
+        }
+        if ids[1] == ids[2] {
+            return Err(format!(
+                "--pbs {triple:?}: population {:?} repeats (want three distinct populations)",
+                names[1]
+            ));
         }
         triples.push((ids[0], ids[1], ids[2]));
     }
@@ -319,10 +360,14 @@ pub(crate) fn build_windowed_request(
     // A bare `--sfs` has no window denominators, so the all-sites check
     // does not apply (05 §3.1 accepts variant-only input).
     let ld_requested = args.ld_decay.is_some();
+    // π/dxy/θ count the all-sites denominator; the f-statistic / LD
+    // variant-only convention must not silently switch it when both are
+    // requested in one run (doc_v15 D15-18). A bare `--sfs` keeps its
+    // documented variant-only acceptance (05 §3.1).
+    let all_sites_kinds = args.pi || args.dxy || args.theta || args.tajima_d;
     let invariant = if args.variant_only
         || (args.sfs.is_some() && !windowed)
-        || fstats_requested
-        || ld_requested
+        || ((fstats_requested || ld_requested) && !all_sites_kinds)
     {
         reed::InvariantMode::VariantOnly
     } else if args.bypass_invariant_check {

@@ -5,6 +5,84 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v15 缺陷修复（2026-10-18）
+
+对一份全库评审（6 子代理静态评审 + 逐条实证复核，40 条发现）的修复；
+规范与证据见 `docs/rounds/v15/`。
+
+### Fixed
+
+- **filter**：Float 类型 FORMAT 字段的基因型掩码不再整体失效（D15-1）；
+  掩码与 `--set-gts .` 改变 cohort 后 `-q/-Q` 一律按掩码后基因型重算，
+  不再读陈旧 INFO/AC,AN（D15-2，cli.md §3.2）；`--proj` 超过群体染色体
+  数、pop 文件把同一样本分配进两个群体、`--levels` 空列表均报用法错并
+  点名（D15-9/10/21）；`--bed-file` 与 `--step` 解析期互斥、`-o -` 写
+  stdout 而非字面文件 `-`（D15-22/39）。
+- **popg**：缺少 `-o` 在打开输入前即报错（D15-13）；stdout 管道关闭由
+  panic 改为普通运行错误（D15-14）；裸 popg 不再忽略
+  `--variant-only/--bypass-invariant-check`，不变位点检查按窗口路由同款
+  执行（D15-15）；`--f2/--ld-decay` 不再静默把 π/dxy/θ 切到 variant-only
+  口径（D15-18）；窗口发射改为"严格更后位点才 emit"，跨 BGZF 块接缝的**合法同 POS 重复**（VCFv4.3："It is permitted to have multiple records with the same POS"）落入仍开窗口，窗口和与 contig 行逐项一致（D15-19）；
+  尾随三态记录之后的窗口正常输出（D15-20）；`--pbs` **可重复**：单三元组写 `PREFIX_pbs.txt`（逐字节不变），多三元组每份
+  `PREFIX_pbs.<A>-<B>-<C>.txt` 各持自身表头（D15-8，命名规则见 cli.md §7）。
+- **convert**：`--phylip` 组合运行不再吞掉 `--012/--hapmap/--msa` 的位点
+  （D15-4）；`--012` 双等位门修正，三态位点按 vcftools 语义跳过（D15-5）；
+  仅 `--nexus-binary` 时 `--outgroup` 生效且未知名报错（D15-6）；MSA 长
+  等位不再以 u8 截断（D15-26）；`POS=0` 按 malformed 跳过（D15-27）；
+  gzip hapmap 可走 stdin（D15-29）。
+- **rename**：`--rename-chrs` 撞名报错而非写出重复 `##contig` 的非法
+  VCF（D15-25）；`--idspace-to` 与 `--set-missing-var-ids` 互斥（D15-30）；
+  `--rm-dup-ids` 改为两阶段（串行定序 + 批次并行 deflate：worker 不再做
+  被丢弃的压缩、索引键随记录并行算好，有序 sink 按字节封口批次并行压缩）：
+  3M 记录 `-Oz` 1.39s → 0.23s（对照 15.4× → 2.5×），压缩流与 sidecar 对
+  任意 `--threads` 逐字节相同，decompressed 输出与改前逐字节一致（D15-28）。
+- **engine**：输入源线程的 panic 与 worker/reducer 一样收敛到单一错误
+  出口，报 `reader panicked: …`（`EngineError::ReaderPanicked`；此前该闭包
+  不在 `catch_unwind` 下，panic 会绕过引擎的错误通道，D15-40）。
+- **io**：BCF 头恰落 BGZF 块边界（头文本长度 ≡ 0 mod 65280）不再整体
+  错位一字节（D15-3）；`##contig` 行的显式 `IDX=` 按 htslib 规则生效
+  （D15-24）。
+- **stats**：Hudson Fst/PBS 在窗口内无可用分子时输出 0.0 而非 NA
+  （scikit-allel `nansum` 口径，D15-11）；oracle 的 PBS 与 f2/f3/f4 改为
+  与 shipped/allel 同口径（D15-12/31）。
+- **性能**：`--indep-pairwise` 的保留位点查询由逐 contig 线性扫描改为
+  二分（1 万 contig、30 万位点单线程 ≈11×，D15-17）；`--rm-dup-ids` 的
+  去重输出由"sink 串行重压"改为两阶段并行（3M 记录 `-Oz` 1.39s →
+  0.23s，D15-28）；GT 浮点渲染 `format_g6_into` 改为栈缓冲零分配
+  （242.9 → 182.9 ns/次，D15-35）；`sketch_size_bytes`
+  补上 mask 位平面行，`--mind`+`--indep-pairwise` 的 sketch 分支加预算
+  检查（D15-16，预防性）。
+
+### Changed
+
+- `reed popg` 不再接受 `--tmp-dir`（该命令不落临时文件）；`reed stats`
+  保留该参数并在帮助中写明"单趟报告从不落盘，此参数仅为兼容接受"
+  （doc_v15 D15-23，cli.md §2 同步）。
+- 内部收敛：Patterson 只保留校正式（`PattersonKind::Naive` 与相关死结构删除，
+  `f2_site`/`f3_site` 去掉 kind 参数）；QC summary 只剩一个实现
+  （`summary::SummaryAcc` 再导出 `report` 的活结构，`QcReportAcc::merge` 委托）；
+  fst/PBS 审计改用 `PairAcc::add_partial`，不再假装跟踪 missing（D15-38）；
+  `notify_abort` 持锁通知关闭丢失唤醒窗口（D15-32）；`--indep-pairwise` 的
+  保留位点查询与 convert/popg 的 `--proj` 校验收口到共享层。
+
+### Changed
+
+- `convert` 的输出缓冲改为两级落盘（doc_v15 D15-7）：单缓冲超 4 MiB 或
+  sink 缓冲总量超 8 MiB 即落临时文件、渲染时流回；覆盖 hapmap 行、
+  `--012` 矩阵与 `.pos`、phylo 列与 `used_sites`、MSA 帧流（渲染改为逐样本遍历，
+  并按样本 seek 只读该样本切片——不做整帧重读，延续 v13 D13-2 的禁止重复 IO）。
+  800k 位点/50 样本夹具
+  单线程峰值内存：hapmap 123.4 → 15.6 MB、`--012` 70.8 → 26.0 MB、MSA 151.4 → 15.8 MB，
+  输出逐字节不变；临时文件在成功、失败与中止路径均清理。MSA 的
+  per-contig 缓冲仍驻留内存（留待单独设计）。
+
+### Removed
+
+- 死代码：`JointSfsAcc`（连同 `tests/sfs_joint.rs`）、`PattersonKind::Naive`、
+  `Cursor::skip`、`SiteView::info_int/info_float`、`HeaderScan::n_samples`、
+  `WindowGrid::bin_of_pos0`、`keep_mode` 死参、`header_level` 弃值、stats sink 的
+  死 `or(take)`、convert 的空臂（doc_v15 D15-36）。
+
 ## [0.4.0] - 2026-10-17
 
 The doc_v14 command-surface round: `reed stats` is split into the QC command

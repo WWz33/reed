@@ -83,7 +83,9 @@ fn pbs_audit_trail_covers_skipped_and_partial_sites() {
     );
     let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).unwrap();
     let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).unwrap();
-    assert_eq!((r.n_sites, r.n_skipped), (0, 1));
+    // Every site is counted; the zero-called group only flags the site
+    // skipped and blocks the pairs that involve C (doc_v15 D15-12).
+    assert_eq!((r.n_sites, r.n_skipped), (1, 1));
     // A: fully called (4 chroms, 6 pairs) — nothing missing.
     assert_eq!((r.within_a.comparable, r.within_a.missing), (6, 0));
     // C: fully missing — all 6 within pairs and all 16 cross pairs lost.

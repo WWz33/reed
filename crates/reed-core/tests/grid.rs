@@ -50,12 +50,6 @@ proptest! {
                         "bins must not overlap across windows");
                 }
             }
-            // Positions inside one bin share the bin index (probe the first
-            // bin, which is aligned by construction).
-            let anchor = windows[0].interval.start.0;
-            let b1 = grid.bin_of_pos0(anchor, anchor).unwrap();
-            let b2 = grid.bin_of_pos0(anchor + width - 1, anchor).unwrap();
-            prop_assert_eq!(b1, b2);
         }
     }
 }

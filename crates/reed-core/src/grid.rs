@@ -112,14 +112,6 @@ impl WindowGrid {
         }
     }
 
-    /// Bin of a 0-based position (Bp grids only); `anchor0` is the contig's
-    /// first window start, already divisible by the stride.
-    #[must_use]
-    pub fn bin_of_pos0(&self, pos0: u64, anchor0: u64) -> Option<BinId> {
-        let width = self.bin_width_bp()?;
-        debug_assert_eq!(anchor0 % width, 0, "invariant: anchor aligned to bin width");
-        Some(BinId((pos0 - anchor0) / width))
-    }
 
     /// Enumerates the Bp windows touched by sites in
     /// `[first_pos0, last_pos0]`, in order, with their bin ranges.
@@ -325,9 +317,6 @@ mod tests {
         // Bins partition positions exactly.
         let width = grid.bin_width_bp().unwrap();
         assert_eq!(width, 100);
-        assert_eq!(grid.bin_of_pos0(150, 100), Some(BinId(0)));
-        assert_eq!(grid.bin_of_pos0(299, 100), Some(BinId(1)));
-        assert_eq!(grid.bin_of_pos0(300, 100), Some(BinId(2)));
     }
 
     #[test]

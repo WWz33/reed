@@ -12,7 +12,9 @@ pub struct PairAcc {
     pub diffs: u64,
     /// Comparable pairs summed over sites.
     pub comparable: u64,
-    /// Pairs lost to missing alleles.
+    /// Pairs lost to missing alleles. Only maintained by accumulators that
+    /// know their cohort totals ([`PairAcc::add`]); fst/PBS audits use
+    /// [`PairAcc::add_partial`] and leave it 0 (doc_v15 D15-38).
     pub missing: u64,
 }
 
@@ -22,6 +24,14 @@ impl PairAcc {
         self.diffs += diffs;
         self.comparable += comparable;
         self.missing += total_pairs - comparable;
+    }
+
+    /// Absorbs one site's contribution when the total pair count is not
+    /// known: fst/PBS audits carry no cohort totals, so `missing` is not
+    /// pretended to be tracked (doc_v15 D15-38).
+    pub fn add_partial(&mut self, diffs: u64, comparable: u64) {
+        self.diffs += diffs;
+        self.comparable += comparable;
     }
 
     /// Component-wise merge.

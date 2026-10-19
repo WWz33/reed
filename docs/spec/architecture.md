@@ -830,6 +830,15 @@ worker 对一个 chunk 一口气完成：**inflate → 认领行 → 解析（�
   的 in-flight cap）同取此值。
 - N ≤ 2 时退化为 reader 和 worker 合一的顺序模式。结果必须与并行模式逐字节相同（测试锁定）。
   辅助 rayon 阶段与 per-contig 线程同样走串行/受限路径（`auxiliary() == 1`，doc_v8 D8-1）。
+- **例外（doc_v15 D15-28）**：`reed rename --rm-dup-ids` 的有序 sink 可**自持一个预算内的
+  压缩池**。该路径的 ID 后缀必须按全局记录序分配，只有有序 sink 能给出，而其输出 deflate 若
+  留在 sink 内即退化为串行（3M 记录实测占 1.4s 中的 0.6s）。池的形态：随 sink 惰性创建、
+  Drop 先断队列再 join（中止路径不悬挂）；线程数取 `auxiliary()`；在途批次窗口 = 池大小 + 2
+  且不超过内存预算的 1/4（下限 2 批，池缓冲同样被 `--memory` 兜住）。上一条"不允许第二个
+  线程池"针对的是**预算外**的池（noodles MT reader/writer、rayon 全局池）；本例外不引入
+  预算外的**忙碌**并行度——该路径下 worker 先在票据窗口上背压空闲，池占用的正是这些空位，
+  且池只随该命令存在。实测与确定性（压缩流与 sidecar 跨 `--threads` 逐字节相同）见
+  `docs/rounds/v15/02-architecture.md` §D15-28。
 
 ### 7.4 背压：票据窗口【规】
 

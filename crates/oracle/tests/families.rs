@@ -199,16 +199,18 @@ fn f_statistics_match_hand_values() {
     let pops = PopulationView::from_assignment(4, &[0, 1, 2, 3], 4).unwrap();
 
     let r = f2(&w, &pops, 0, 1).unwrap();
-    assert_close(r.value(), 1.0 / 12.0);
+    // Corrected Σ: site0 (S1 het): 0.25 − ĥ/1 = 0; sites 1, 2 → 0.
+    assert_close(r.value(), 0.0);
     assert_eq!(r.n_sites, 3);
 
     let r = f3(&w, &pops, 2, 0, 1).unwrap(); // f3(S2; S0, S1)
-                                             // site0: (0−1)(0.5−1) = 0.5; site1: (0−0.5)(0−0.5) = 0.25 (S2 is 0/1 there);
-                                             // site2: 0 → mean = 0.75/3 = 0.25.
-    assert_close(r.value(), 0.25);
+    // Corrected Σ (allel patterson_f3 nansum = 0.5): site0 (S2 hom-alt)
+    // (1−0)(1−0.5) − 0 = 0.5; site1 (S2 het) 0.25 − 0.5/2 = 0; site2 → 0.
+    assert_close(r.value(), 0.5);
 
     let r = f4(&w, &pops, 0, 1, 2, 3).unwrap();
-    assert_close(r.value(), -1.0 / 12.0);
+    // Σnum: site0 (0−0.5)(1−0.5) = −0.25; sites 1, 2 → 0.
+    assert_close(r.value(), -0.25);
 
     let r = d_stat(&w, &pops, 0, 1, 2, 3).unwrap();
     assert!((r.num - (-0.25)).abs() < EPS);

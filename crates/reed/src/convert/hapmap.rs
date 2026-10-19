@@ -491,7 +491,24 @@ pub(crate) fn run_hapmap_to_vcf(
     // Open the input; gzip (including BGZF) is inflated serially like
     // `PlainChunkSource::open_gzip`.
     let mut reader: Box<dyn BufRead + Send> = match input {
-        None => Box::new(std::io::BufReader::with_capacity(1 << 20, std::io::stdin())),
+        None => {
+            // A gzipped hapmap must also work when piped (doc_v15 D15-29):
+            // peek the magic, then hand the snooped reader to the decoder —
+            // the peeked bytes are still in its buffer.
+            let mut probe = std::io::BufReader::with_capacity(1 << 20, std::io::stdin());
+            let gzipped = {
+                let head = probe
+                    .fill_buf()
+                    .map_err(|e| crate::Error::usage(format!("cannot read stdin: {e}")))?;
+                head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b
+            };
+            if gzipped {
+                let gz = flate2::read::MultiGzDecoder::new(probe);
+                Box::new(std::io::BufReader::with_capacity(1 << 20, gz))
+            } else {
+                Box::new(probe)
+            }
+        }
         Some(p) => {
             let file = std::fs::File::open(p)
                 .map_err(|e| crate::Error::usage(format!("cannot open {}: {e}", p.display())))?;

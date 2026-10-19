@@ -372,66 +372,77 @@ where
             let reader_wait_ns = Arc::clone(&reader_wait_ns);
             let chunks_read = Arc::clone(&chunks_read);
             move || {
-                loop {
-                    if first.failed() {
-                        break;
-                    }
-                    let wait_started = Instant::now();
-                    let ticket = crossbeam_channel::select! {
-                        recv(signal.receiver()) -> _ => false,
-                        recv(ticket_rx) -> token => token.is_ok(),
-                    };
-                    reader_wait_ns
-                        .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
-                    if !ticket || first.failed() {
-                        break;
-                    }
-                    let read_started = Instant::now();
-                    let chunk = source.next_chunk();
-                    reader_ns.fetch_add(read_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
-                    let chunk = match chunk {
-                        Ok(Some(chunk)) => {
-                            chunks_read.fetch_add(1, Ordering::AcqRel);
-                            chunk
-                        }
-                        Ok(None) => break,
-                        Err(err) => {
-                            first.record(EngineError::from(err));
+                // The reader's panic surface matches the workers' (doc_v15
+                // D15-40): a raw unwind would escape the scope and bypass the
+                // typed single error exit.
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    loop {
+                        if first.failed() {
                             break;
                         }
-                    };
-                    // Memory backpressure: acquire the footprint before the
-                    // chunk enters the pipeline. One chunk larger than the
-                    // whole budget cannot continue (03 §4.2).
-                    let footprint = budget.mem.estimate(chunk.compressed.len() as u64);
-                    if footprint > budget.mem.bytes {
-                        first.record(EngineError::MemBudgetExceeded {
-                            peak_bytes: footprint,
-                            budget_bytes: budget.mem.bytes,
-                        });
-                        break;
+                        let wait_started = Instant::now();
+                        let ticket = crossbeam_channel::select! {
+                            recv(signal.receiver()) -> _ => false,
+                            recv(ticket_rx) -> token => token.is_ok(),
+                        };
+                        reader_wait_ns
+                            .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+                        if !ticket || first.failed() {
+                            break;
+                        }
+                        let read_started = Instant::now();
+                        let chunk = source.next_chunk();
+                        reader_ns
+                            .fetch_add(read_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+                        let chunk = match chunk {
+                            Ok(Some(chunk)) => {
+                                chunks_read.fetch_add(1, Ordering::AcqRel);
+                                chunk
+                            }
+                            Ok(None) => break,
+                            Err(err) => {
+                                first.record(EngineError::from(err));
+                                break;
+                            }
+                        };
+                        // Memory backpressure: acquire the footprint before the
+                        // chunk enters the pipeline. One chunk larger than the
+                        // whole budget cannot continue (03 §4.2).
+                        let footprint = budget.mem.estimate(chunk.compressed.len() as u64);
+                        if footprint > budget.mem.bytes {
+                            first.record(EngineError::MemBudgetExceeded {
+                                peak_bytes: footprint,
+                                budget_bytes: budget.mem.bytes,
+                            });
+                            break;
+                        }
+                        let wait_started = Instant::now();
+                        let acquired = permits.acquire(footprint, signal);
+                        reader_wait_ns
+                            .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+                        if !acquired || first.failed() {
+                            break;
+                        }
+                        let guard =
+                            PermitGuard::new(Arc::clone(&permits), Arc::clone(&shared), footprint);
+                        let wait_started = Instant::now();
+                        let sent = crossbeam_channel::select! {
+                            recv(signal.receiver()) -> _ => false,
+                            send(chunk_tx, InFlightChunk { chunk, guard }) -> res => res.is_ok(),
+                        };
+                        reader_wait_ns
+                            .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
+                        if !sent || first.failed() {
+                            // Abort won, or no worker is left to receive: the
+                            // guard is a local and drops here either way (D9-2).
+                            break;
+                        }
                     }
-                    let wait_started = Instant::now();
-                    let acquired = permits.acquire(footprint, signal);
-                    reader_wait_ns
-                        .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
-                    if !acquired || first.failed() {
-                        break;
-                    }
-                    let guard =
-                        PermitGuard::new(Arc::clone(&permits), Arc::clone(&shared), footprint);
-                    let wait_started = Instant::now();
-                    let sent = crossbeam_channel::select! {
-                        recv(signal.receiver()) -> _ => false,
-                        send(chunk_tx, InFlightChunk { chunk, guard }) -> res => res.is_ok(),
-                    };
-                    reader_wait_ns
-                        .fetch_add(wait_started.elapsed().as_nanos() as u64, Ordering::AcqRel);
-                    if !sent || first.failed() {
-                        // Abort won, or no worker is left to receive: the
-                        // guard is a local and drops here either way (D9-2).
-                        break;
-                    }
+                }));
+                if let Err(payload) = outcome {
+                    first.record(EngineError::ReaderPanicked {
+                        message: panic_message(&payload),
+                    });
                 }
             }
         });

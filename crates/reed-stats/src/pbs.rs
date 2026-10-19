@@ -35,7 +35,6 @@ struct PairSums {
     num: NeumaierSum,
     den: NeumaierSum,
     den_any: bool,
-    num_any: bool,
 }
 
 impl PairSums {
@@ -43,13 +42,14 @@ impl PairSums {
         self.num.merge(&other.num);
         self.den.merge(&other.den);
         self.den_any |= other.den_any;
-        self.num_any |= other.num_any;
     }
 
     /// The pair's Hudson Fst, unclipped (the same value `--fst hudson`
     /// reports; the PBS transform clips it separately).
     fn fst(&self) -> Option<f64> {
-        if !self.den_any || !self.num_any {
+        // An absent numerator sums to 0.0 (`nansum`), not NA (doc_v15
+        // D15-11): the denominator alone decides definedness.
+        if !self.den_any {
             return None;
         }
         let den = self.den.value();
@@ -126,7 +126,6 @@ impl PbsAcc {
             pair.den_any = true;
             if let (Some(wx), Some(wy)) = (within_x, within_y) {
                 pair.num.add(bet - f64::midpoint(wx, wy));
-                pair.num_any = true;
             }
         }
     }
@@ -166,41 +165,35 @@ impl PbsAcc {
         let comps_a = n_a * n_a.saturating_sub(1) / 2;
         let comps_b = n_b * n_b.saturating_sub(1) / 2;
         let comps_c = n_c * n_c.saturating_sub(1) / 2;
-        self.within_a.add(
+        self.within_a.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(a.n_alt_alleles),
-            comps_a,
-            comps_a,
+comps_a,
         );
-        self.within_b.add(
+        self.within_b.add_partial(
             u64::from(b.n_ref_alleles) * u64::from(b.n_alt_alleles),
-            comps_b,
-            comps_b,
+comps_b,
         );
-        self.within_c.add(
+        self.within_c.add_partial(
             u64::from(c.n_ref_alleles) * u64::from(c.n_alt_alleles),
-            comps_c,
-            comps_c,
+comps_c,
         );
         let ab = n_a * n_b;
         let ac = n_a * n_c;
         let bc = n_b * n_c;
-        self.between_ab.add(
+        self.between_ab.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles),
-            ab,
-            ab,
+ab,
         );
-        self.between_ac.add(
+        self.between_ac.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(c.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(c.n_ref_alleles),
-            ac,
-            ac,
+ac,
         );
-        self.between_bc.add(
+        self.between_bc.add_partial(
             u64::from(b.n_ref_alleles) * u64::from(c.n_alt_alleles)
                 + u64::from(b.n_alt_alleles) * u64::from(c.n_ref_alleles),
-            bc,
-            bc,
+bc,
         );
     }
 

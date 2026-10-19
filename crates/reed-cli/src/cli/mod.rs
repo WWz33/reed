@@ -334,7 +334,8 @@ pub(crate) struct StatsCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
-    /// Directory for temporary files (the stdin spill for report runs)
+    /// Directory for temporary files (accepted for compatibility; single-pass
+    /// report runs never spill — doc_v15 D15-23)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
     /// In-flight memory budget in MiB (default: half of physical memory)
@@ -556,7 +557,8 @@ pub(crate) struct PopgCli {
     #[arg(long = "sites-file", value_name = "FILE")]
     pub sites_file: Option<String>,
     /// Window step in bp (default: the window size)
-    #[arg(long, default_value = "0", value_parser = parse_size)]
+    #[arg(long, default_value = "0", value_parser = parse_size,
+          conflicts_with = "bed_file")]
     pub step: u64,
     /// Output levels, comma-separated: window,contig,genome
     #[arg(long, default_value = "window")]
@@ -575,9 +577,6 @@ pub(crate) struct PopgCli {
     /// Worker threads (default: all cores)
     #[arg(long)]
     pub threads: Option<usize>,
-    /// Directory for temporary files (the stdin spill for report runs)
-    #[arg(long, value_name = "DIR")]
-    pub tmp_dir: Option<String>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
     pub memory: Option<u64>,
