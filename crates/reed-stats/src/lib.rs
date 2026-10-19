@@ -45,14 +45,10 @@ pub use window::{BpBinning, ContigBins};
 
 // The remaining statistics: wired into the CLI by the X4 round and covered by
 // the reference parity suites (`--fst-global`, `--sfs --proj`, `--ld-decay`,
-// the f-statistics). The one exception is `JointSfsAcc`: the two-population
-// joint spectrum has no CLI exit yet (Y6), so it stays `#[doc(hidden)]` until
-// it has one.
+// the f-statistics).
 pub use fst::{FstMatrixAcc, WcMultiAcc};
 pub use jackknife::{BlockJackknife, BlockPartial, BpBlockJackknife};
 pub use ld::{LdDecayAcc, LdPruner, PairSums, pair_sums};
 pub use matrix::{ContigMatrix, LdDecaySet, LdPairRow, SampleLayout, decay_range};
-pub use patterson::{F2Acc, F3Acc, F4Acc, PattersonKind, f4_ratio};
-#[doc(hidden)]
-pub use sfs::JointSfsAcc;
+pub use patterson::{F2Acc, F3Acc, F4Acc, f4_ratio};
 pub use sfs::{ProjectedSfsAcc, ProjectionCache, projection_weights};

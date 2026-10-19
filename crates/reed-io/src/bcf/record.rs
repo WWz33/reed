@@ -332,15 +332,6 @@ impl<'a> Cursor<'a> {
         self.take(count)
     }
 
-    /// Skips a typed value of `(ty, count)`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Cursor::take`].
-    pub fn skip(&mut self, ty: u8, count: usize) -> Result<(), IoError> {
-        self.take(type_width(ty) * count)?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

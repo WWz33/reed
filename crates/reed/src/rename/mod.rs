@@ -23,6 +23,8 @@ use reed_io::vcf::line::LineRef;
 
 use crate::input::OpenedInput;
 
+mod dedup;
+
 /// The identifier edits (doc_v14 02 §4.2), applied in the fixed order of
 /// §4.3. Every field is empty unless the operator asked for it.
 #[derive(Clone, Debug, Default)]
@@ -452,6 +454,25 @@ pub fn run_rename_opened(
             }
         }
     }
+    // Two contigs renamed onto the same final name would write duplicate
+    // `##contig` lines and merge their records: an invalid VCF, silently
+    // (doc_v15 D15-25).
+    {
+        let mut finals: HashMap<&[u8], &str> = HashMap::new();
+        for name in &facts.contig_names {
+            let final_name: &[u8] = contig_map
+                .get(name.as_bytes())
+                .map_or_else(|| name.as_bytes(), Vec::as_slice);
+            if let Some(previous) = finals.insert(final_name, name.as_str())
+                && previous != name.as_str()
+            {
+                return Err(crate::Error::usage(format!(
+                    "the contig renames map both {previous:?} and {name:?} onto {:?}",
+                    String::from_utf8_lossy(final_name)
+                )));
+            }
+        }
+    }
     // Contigs whose name actually changed (a style that maps a contig onto
     // itself is not an edit).
     let n_contigs = u64::try_from(
@@ -600,9 +621,11 @@ pub fn run_rename_opened(
             "--clear-ids cannot be combined with the other ID flags",
         ));
     }
-    if plan.set_id.is_some() && plan.idspace_to.is_some() {
+    if (plan.set_id.is_some() || plan.set_missing_var_ids.is_some())
+        && plan.idspace_to.is_some()
+    {
         return Err(crate::Error::usage(
-            "--idspace-to cannot be combined with --set-id (write the separator in the template)",
+            "--idspace-to cannot be combined with --set-id/--set-missing-var-ids (write the separator in the template)",
         ));
     }
 
@@ -682,12 +705,17 @@ pub fn run_rename_opened(
         Arc::new(std::sync::Mutex::new(None));
     let sink = RenameSink {
         out,
-        plan: Arc::clone(&plan),
         seen_ids: std::collections::HashSet::new(),
         next_suffix: std::collections::HashMap::new(),
-        dedup_writer: plan.rm_dup_ids.then(|| {
-            reed_io::write::block_writer::BlockWriter::new(output.level, output.compressed)
-                .expect("invariant: the level comes from the CLI clamp")
+        need_key,
+        dedup: plan.rm_dup_ids.then(|| {
+            dedup::BatchWriter::new(
+                output.level,
+                output.compressed,
+                need_key,
+                budget.auxiliary(),
+                budget.mem.bytes,
+            )
         }),
         report: RenameReport {
             files: output.path.iter().cloned().collect(),
@@ -986,11 +1014,15 @@ struct RenameScratch {
 
 /// Worker → sink: the rewritten block plus the counters. With
 /// `--rm-dup-ids` the raw text also rides along: the unique-ID suffix must
-/// follow the global record order, which only the ordered sink knows.
+/// follow the global record order, which only the ordered sink knows. The
+/// index keys ride along too (one per record, in record order, when an
+/// index is being written): the worker already parsed the record, so the
+/// ordered sink must not parse it a second time.
 #[derive(Default)]
 struct RenamePartial {
     output: reed_io::write::block_writer::ChunkOutput,
     raw: Vec<u8>,
+    keys: Vec<reed_io::write::block_writer::IndexKey>,
     n_records: u64,
     n_ids: u64,
 }
@@ -1012,6 +1044,7 @@ impl ChunkJob for RenameJob {
         let mut partial = RenamePartial {
             output: reed_io::write::block_writer::ChunkOutput::default(),
             raw: Vec::new(),
+            keys: Vec::new(),
             n_records: 0,
             n_ids: 0,
         };
@@ -1038,6 +1071,7 @@ impl ChunkJob for RenameJob {
         let mut partial = RenamePartial {
             output: reed_io::write::block_writer::ChunkOutput::default(),
             raw: Vec::new(),
+            keys: Vec::new(),
             n_records: 0,
             n_ids: 0,
         };
@@ -1078,12 +1112,20 @@ impl RenameJob {
             }
         };
         rewritten.push(b'\n');
-        scratch
-            .writer
-            .push_record(&rewritten, key)
-            .map_err(EngineError::from)?;
         if self.plan.rm_dup_ids {
+            // The sink re-deflates the deduplicated text; the worker's block
+            // write would be discarded, so skip it entirely — but the key
+            // still rides along, one per record, for the sink to anchor the
+            // batches it seals (doc_v15 D15-28).
             partial.raw.extend_from_slice(&rewritten);
+            if self.need_key {
+                partial.keys.push(key);
+            }
+        } else {
+            scratch
+                .writer
+                .push_record(&rewritten, key)
+                .map_err(EngineError::from)?;
         }
         partial.n_records += 1;
         Ok(())
@@ -1091,18 +1133,7 @@ impl RenameJob {
 
     /// The block index key of a rewritten record (header contig order).
     fn index_key(&self, line: &[u8]) -> Result<reed_io::write::block_writer::IndexKey, EngineError> {
-        let lr = LineRef::parse(line)
-            .ok_or_else(|| EngineError::job("record line has fewer than 9 columns"))?;
-        let site = reed_io::vcf::site::SiteView::parse(&lr).map_err(EngineError::from)?;
-        let contig = self
-            .plan
-            .contig_id(lr.chrom())
-            .ok_or_else(|| EngineError::job("record contig is not in the header"))?;
-        Ok(reed_io::write::block_writer::IndexKey {
-            contig,
-            start1: site.pos1,
-            ref_len: u32::try_from(lr.reference().len()).unwrap_or(u32::MAX),
-        })
+        index_key(&self.plan, line)
     }
 
     /// Rewrites one record line's CHROM and ID columns; `None` when the line
@@ -1201,29 +1232,48 @@ impl RenameJob {
     }
 }
 
+/// The block index key of a rewritten record (header contig order): the
+/// worker-side writer and the dedup sink both key their blocks from it.
+fn index_key(
+    plan: &CompiledPlan,
+    line: &[u8],
+) -> Result<reed_io::write::block_writer::IndexKey, EngineError> {
+    let lr = LineRef::parse(line)
+        .ok_or_else(|| EngineError::job("record line has fewer than 9 columns"))?;
+    let site = reed_io::vcf::site::SiteView::parse(&lr).map_err(EngineError::from)?;
+    let contig = plan
+        .contig_id(lr.chrom())
+        .ok_or_else(|| EngineError::job("record contig is not in the header"))?;
+    Ok(reed_io::write::block_writer::IndexKey {
+        contig,
+        start1: site.pos1,
+        ref_len: u32::try_from(lr.reference().len()).unwrap_or(u32::MAX),
+    })
+}
+
 /// Renames one record's ID to a unique `id_1`, `id_2`, … form when it has
 /// been seen before (B14-6: suffix, never drop). Returns `(bytes, dup)`.
 /// `next_suffix` remembers where the last probe for a base ID stopped: a run
 /// of N identical IDs is otherwise quadratic (each duplicate re-probed
 /// `_2`, `_3`, … from the start).
-fn dedup_line(
-    line: &[u8],
+fn dedup_line<'a>(
+    line: &'a [u8],
     seen: &mut std::collections::HashSet<Vec<u8>>,
     next_suffix: &mut std::collections::HashMap<Vec<u8>, u32>,
-) -> (Vec<u8>, bool) {
+) -> (std::borrow::Cow<'a, [u8]>, bool) {
     let Some(lr) = LineRef::parse(line) else {
-        return (line.to_vec(), false);
+        return (std::borrow::Cow::Borrowed(line), false);
     };
-    let id = lr.id().to_vec();
-    if id == b"." || seen.insert(id.clone()) {
-        return (line.to_vec(), false);
+    let id = lr.id();
+    if id == b"." || seen.insert(id.to_vec()) {
+        return (std::borrow::Cow::Borrowed(line), false);
     }
-    let mut n = next_suffix.get(&id).copied().unwrap_or(1);
+    let mut n = next_suffix.get(id).copied().unwrap_or(1);
     loop {
-        let mut candidate = id.clone();
+        let mut candidate = id.to_vec();
         candidate.extend_from_slice(format!("_{n}").as_bytes());
         if seen.insert(candidate.clone()) {
-            next_suffix.insert(id.clone(), n.saturating_add(1));
+            next_suffix.insert(id.to_vec(), n.saturating_add(1));
             // Replace the ID column (the 3rd field): copy CHROM<TAB>POS<TAB>,
             // then the new ID, then the rest from the next tab on.
             let mut out = Vec::with_capacity(line.len() + 4);
@@ -1241,10 +1291,10 @@ fn dedup_line(
                 } else if col == 3 {
                     // At the tab after ID: the rest of the line follows.
                     out.extend_from_slice(&line[i..]);
-                    return (out, true);
+                    return (std::borrow::Cow::Owned(out), true);
                 }
             }
-            return (line.to_vec(), false);
+            return (std::borrow::Cow::Borrowed(line), false);
         }
         n += 1;
     }
@@ -1260,10 +1310,11 @@ struct RenameSink {
     /// `--rm-dup-ids`: the next suffix to try per base ID (keeps a run of
     /// identical IDs linear instead of re-probing from `_2`).
     next_suffix: std::collections::HashMap<Vec<u8>, u32>,
-    /// The contig table for the dedup path's block keys.
-    plan: Arc<CompiledPlan>,
-    /// `--rm-dup-ids`: the sink-side deflater for the deduplicated text.
-    dedup_writer: Option<reed_io::write::block_writer::BlockWriter>,
+    /// An index is being written: the dedup path reads the worker's block
+    /// keys (they arrive one per record, in record order).
+    need_key: bool,
+    /// `--rm-dup-ids`: the two-phase batch writer (doc_v15 D15-28).
+    dedup: Option<dedup::BatchWriter>,
 }
 
 impl OrderedSink<RenamePartial> for RenameSink {
@@ -1274,10 +1325,11 @@ impl OrderedSink<RenamePartial> for RenameSink {
     ) -> Result<(), EngineError> {
         self.report.n_records += partial.n_records;
         self.report.n_ids += partial.n_ids;
-        if let Some(writer) = &mut self.dedup_writer {
+        if let Some(dedup) = &mut self.dedup {
             // `--rm-dup-ids`: the suffix follows the global record order, so
-            // the sink (the only ordered stage) rewrites the ID column here
-            // and re-deflates the chunk.
+            // the sink (the only ordered stage) assigns it here; the deflate
+            // is the pool's (doc_v15 D15-28).
+            let mut keys = partial.keys.iter();
             for line in partial.raw.split_inclusive(|&b| b == b'\n') {
                 if line.is_empty() || line[0] == b'#' {
                     continue;
@@ -1288,42 +1340,38 @@ impl OrderedSink<RenamePartial> for RenameSink {
                 if dup {
                     self.report.n_dup_ids += 1;
                 }
-                let key = {
-                    let lr = LineRef::parse(&bytes)
-                        .ok_or_else(|| EngineError::job("dedup: unparsable record"))?;
-                    let site = reed_io::vcf::site::SiteView::parse(&lr)
-                        .map_err(EngineError::from)?;
-                    let contig = self
-                        .plan
-                        .contig_id(lr.chrom())
-                        .ok_or_else(|| EngineError::job("dedup: contig not in the header"))?;
+                // Without an index the key is never read and the worker
+                // sent none: skip it exactly as the worker path does.
+                let key = if self.need_key {
+                    *keys.next().ok_or_else(|| {
+                        EngineError::job("rename: the dedup key stream ended before its records")
+                    })?
+                } else {
                     reed_io::write::block_writer::IndexKey {
-                        contig,
-                        start1: site.pos1,
-                        ref_len: u32::try_from(lr.reference().len()).unwrap_or(u32::MAX),
+                        contig: reed_core::ContigId(0),
+                        start1: 0,
+                        ref_len: 0,
                     }
                 };
-                let mut with_newline = bytes;
-                if !with_newline.ends_with(b"\n") {
-                    with_newline.push(b'\n');
-                }
-                writer
-                    .push_record(&with_newline, key)
-                    .map_err(EngineError::from)?;
+                dedup.push_record(&mut self.out, &bytes, key)?;
             }
-            let output = writer.finish_chunk().map_err(EngineError::from)?;
-            return self
-                .out
-                .accept_chunk(&output)
-                .map_err(EngineError::from);
+            if self.need_key && keys.next().is_some() {
+                return Err(EngineError::job(
+                    "rename: the dedup key stream outlasted its records",
+                ));
+            }
+            return Ok(());
         }
         self.out
             .accept_chunk(&partial.output)
             .map_err(EngineError::from)
     }
 
-    fn finish(self) -> Result<u64, EngineError> {
+    fn finish(mut self) -> Result<u64, EngineError> {
         let n = self.report.n_records;
+        if let Some(dedup) = &mut self.dedup {
+            dedup.finish(&mut self.out)?;
+        }
         self.out.finish().map_err(EngineError::from)?;
         *self
             .slot

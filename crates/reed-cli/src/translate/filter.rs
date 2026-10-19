@@ -360,7 +360,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     // extension is only inferred when -O is absent).
     let mut output_bcf = None;
     let (output, compress_level, output_compressed) = match output_type.as_deref() {
-        None => (out.clone().map(PathBuf::from), *compress_level, None),
+        None => (out.as_deref().and_then(crate::units::output_path), *compress_level, None),
         Some(spec) => {
             let (kind, level) = spec.split_at(1);
             let level = if level.is_empty() {
@@ -371,16 +371,16 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
                     .map_err(|_| reed::Error::usage(format!("invalid -O level in {spec:?}")))?
             };
             match kind {
-                "v" => (out.clone().map(PathBuf::from), level, Some(false)),
-                "z" => (out.clone().map(PathBuf::from), level, Some(true)),
+                "v" => (out.as_deref().and_then(crate::units::output_path), level, Some(false)),
+                "z" => (out.as_deref().and_then(crate::units::output_path), level, Some(true)),
                 "b" => {
                     output_bcf = Some(level);
-                    (out.clone().map(PathBuf::from), level, None)
+                    (out.as_deref().and_then(crate::units::output_path), level, None)
                 }
                 // `-Ou`: BGZF level-0 blocks (htslib's uncompressed BCF).
                 "u" => {
                     output_bcf = Some(0);
-                    (out.clone().map(PathBuf::from), 0, None)
+                    (out.as_deref().and_then(crate::units::output_path), 0, None)
                 }
                 other => return Err(reed::Error::usage(format!("unknown output type {other:?}"))),
             }

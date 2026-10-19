@@ -36,12 +36,23 @@ pub(crate) struct SiteKeepSet {
 }
 
 impl SiteKeepSet {
-    /// Whether the site at `(contig, pos0)` was kept.
+    /// Whether the site at `(contig, pos0)` was kept. Requires
+    /// [`Self::sort_index`] to have run after the last merge.
     pub fn contains(&self, contig: &[u8], pos0: u64) -> bool {
-        self.per_contig
+        let start = self
+            .per_contig
+            .partition_point(|(c, _)| c.as_slice() < contig);
+        self.per_contig[start..]
             .iter()
-            .filter(|(c, _)| c == contig)
+            .take_while(|(c, _)| c.as_slice() == contig)
             .any(|(_, positions)| positions.binary_search(&pos0).is_ok())
+    }
+
+    /// Sorts the contig index so `contains` binary-searches instead of
+    /// scanning every contig per surviving record (doc_v15 D15-17). Call
+    /// once after the last merge.
+    pub fn sort_index(&mut self) {
+        self.per_contig.sort_by(|a, b| a.0.cmp(&b.0));
     }
 }
 
@@ -221,5 +232,6 @@ pub(crate) fn prune_matrices(
         outcome.keep.per_contig.append(&mut site_keep.per_contig);
     }
     outcome.prune_secs = started.elapsed().as_secs_f64();
+    outcome.keep.sort_index();
     outcome
 }

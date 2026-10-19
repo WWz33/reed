@@ -37,7 +37,9 @@ const DSTAT_BIAS: &str =
      ratio of sums is otherwise invariant to monomorphic-site presence, and \
      Unknown cannot be distinguished from Filtered";
 
-/// f2(A, B) = mean over sites of `(pA − pB)²`.
+/// f2(A, B) = the bias-corrected Patterson sum
+/// `Σ[(pA−pB)² − ĥA/anA − ĥB/anB]` over sites with anA, anB ≥ 2
+/// (allel `patterson_f2`; doc_v15 D15-31).
 #[derive(Clone, Copy, Debug)]
 pub struct F2Result {
     pub contig: ContigId,
@@ -52,12 +54,15 @@ pub struct F2Result {
 }
 
 impl F2Result {
+    /// Σ of the corrected per-site terms (allel `nansum`).
     pub fn value(&self) -> Option<f64> {
-        (self.n_sites > 0).then(|| self.sum_sq / self.n_sites as f64)
+        (self.n_sites > 0).then_some(self.sum_sq)
     }
 }
 
-/// f3(target; b, c) = mean over sites of `(pB − pTarget) * (pC − pTarget)`.
+/// f3(target; b, c) = the corrected sum
+/// `Σ[(pT−pB)(pT−pC) − ĥT/anT]` over sites with anT ≥ 2 and anB, anC ≥ 1
+/// (allel `patterson_f3`; doc_v15 D15-31).
 #[derive(Clone, Copy, Debug)]
 pub struct F3Result {
     pub contig: ContigId,
@@ -73,12 +78,14 @@ pub struct F3Result {
 }
 
 impl F3Result {
+    /// Σ of the corrected per-site terms (allel `nansum`).
     pub fn value(&self) -> Option<f64> {
-        (self.n_sites > 0).then(|| self.sum_prod / self.n_sites as f64)
+        (self.n_sites > 0).then_some(self.sum_prod)
     }
 }
 
-/// f4(A, B; C, D) = mean over sites of `(pA − pB) * (pC − pD)`.
+/// f4(A, B; C, D) = `Σ(pA−pB)(pC−pD)` over sites with all four groups
+/// called (allel `patterson_d` numerator; doc_v15 D15-31).
 #[derive(Clone, Copy, Debug)]
 pub struct F4Result {
     pub contig: ContigId,
@@ -95,8 +102,9 @@ pub struct F4Result {
 }
 
 impl F4Result {
+    /// Σ of the per-site numerator products (allel `nansum` of the f4 term).
     pub fn value(&self) -> Option<f64> {
-        (self.n_sites > 0).then(|| self.sum_prod / self.n_sites as f64)
+        (self.n_sites > 0).then_some(self.sum_prod)
     }
 }
 
@@ -156,13 +164,20 @@ pub fn f2(
     let bias = super::variant_only_note(window.manifest, FSTATS_BIAS);
     let (mut n_sites, mut n_skipped, mut sum_sq) = (0u64, 0u64, 0.0f64);
     for site in 0..window.n_sites() {
-        match (alt_freq(window, sa, site), alt_freq(window, sb, site)) {
-            (Some(pa), Some(pb)) => {
-                n_sites += 1;
-                sum_sq += (pa - pb).powi(2);
-            }
-            _ => n_skipped += 1,
+        let a = window.allele_counts(site, sa);
+        let b = window.allele_counts(site, sb);
+        let an_a = a.ref_count + a.alt_count;
+        let an_b = b.ref_count + b.alt_count;
+        if an_a < 2 || an_b < 2 {
+            n_skipped += 1;
+            continue;
         }
+        let pa = a.alt_count as f64 / an_a as f64;
+        let pb = b.alt_count as f64 / an_b as f64;
+        n_sites += 1;
+        sum_sq += (pa - pb).powi(2)
+            - (a.ref_count * a.alt_count) as f64 / (an_a * an_a * (an_a - 1)) as f64
+            - (b.ref_count * b.alt_count) as f64 / (an_b * an_b * (an_b - 1)) as f64;
     }
     Ok(F2Result {
         contig: window.contig,
@@ -192,17 +207,22 @@ pub fn f3(
     let bias = super::variant_only_note(window.manifest, FSTATS_BIAS);
     let (mut n_sites, mut n_skipped, mut sum_prod) = (0u64, 0u64, 0.0f64);
     for site in 0..window.n_sites() {
-        match (
-            alt_freq(window, st, site),
-            alt_freq(window, sb, site),
-            alt_freq(window, sc, site),
-        ) {
-            (Some(pt), Some(pb), Some(pc)) => {
-                n_sites += 1;
-                sum_prod += (pb - pt) * (pc - pt);
-            }
-            _ => n_skipped += 1,
+        let t = window.allele_counts(site, st);
+        let b = window.allele_counts(site, sb);
+        let c = window.allele_counts(site, sc);
+        let an_t = t.ref_count + t.alt_count;
+        let an_b = b.ref_count + b.alt_count;
+        let an_c = c.ref_count + c.alt_count;
+        if an_t < 2 || an_b == 0 || an_c == 0 {
+            n_skipped += 1;
+            continue;
         }
+        let pt = t.alt_count as f64 / an_t as f64;
+        let pb = b.alt_count as f64 / an_b as f64;
+        let pc = c.alt_count as f64 / an_c as f64;
+        let h_hat = (t.ref_count * t.alt_count) as f64 / (an_t * (an_t - 1)) as f64;
+        n_sites += 1;
+        sum_prod += (pt - pb) * (pt - pc) - h_hat / an_t as f64;
     }
     Ok(F3Result {
         contig: window.contig,
@@ -242,18 +262,24 @@ pub fn f4(
     let bias = super::variant_only_note(window.manifest, FSTATS_BIAS);
     let (mut n_sites, mut n_skipped, mut sum_prod) = (0u64, 0u64, 0.0f64);
     for site in 0..window.n_sites() {
-        match (
-            alt_freq(window, sa, site),
-            alt_freq(window, sb, site),
-            alt_freq(window, sc, site),
-            alt_freq(window, sd, site),
-        ) {
-            (Some(pa), Some(pb), Some(pc), Some(pd)) => {
-                n_sites += 1;
-                sum_prod += (pa - pb) * (pc - pd);
-            }
-            _ => n_skipped += 1,
+        let a = window.allele_counts(site, sa);
+        let b = window.allele_counts(site, sb);
+        let c = window.allele_counts(site, sc);
+        let d = window.allele_counts(site, sd);
+        if a.ref_count + a.alt_count == 0
+            || b.ref_count + b.alt_count == 0
+            || c.ref_count + c.alt_count == 0
+            || d.ref_count + d.alt_count == 0
+        {
+            n_skipped += 1;
+            continue;
         }
+        let pa = a.alt_count as f64 / (a.ref_count + a.alt_count) as f64;
+        let pb = b.alt_count as f64 / (b.ref_count + b.alt_count) as f64;
+        let pc = c.alt_count as f64 / (c.ref_count + c.alt_count) as f64;
+        let pd = d.alt_count as f64 / (d.ref_count + d.alt_count) as f64;
+        n_sites += 1;
+        sum_prod += (pa - pb) * (pc - pd);
     }
     Ok(F4Result {
         contig: window.contig,

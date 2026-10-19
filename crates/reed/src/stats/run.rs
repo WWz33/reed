@@ -236,6 +236,9 @@ pub struct StatsScratch {
     pub(super) codes: Vec<GtCode>,
     /// Per-group projection-weight memos for the SFS path.
     pub(super) sfs_caches: Vec<ProjectionCache>,
+    /// The per-site projection-weight row the SFS joint accumulation reads
+    /// (reused across sites instead of allocating per site; doc_v15 D15-35).
+    pub(super) sfs_weights: Vec<Option<WeightsArc>>,
     /// Worker-local LD state.
     pub(super) ld: LdScratch,
 }
@@ -438,6 +441,11 @@ impl StatsJob {
             // variant-only denominator must not treat it as absent
             // (doc_v7 D7-11).
             if let Some(segment) = current.as_mut() {
+                // The skipped site still occupies its position: the trailing
+                // window walk must reach it even when it is the last record
+                // (doc_v15 D15-20).
+                segment.first_pos0 = segment.first_pos0.min(pos0);
+                segment.last_pos0 = segment.last_pos0.max(pos0);
                 segment.acc.push_skipped(pos0);
             }
             return Ok(None);
@@ -457,6 +465,7 @@ impl StatsJob {
         codes: &[GtCode],
         row: &mut [SiteGroupCounts],
         sfs_caches: &mut Vec<ProjectionCache>,
+        sfs_weights: &mut Vec<Option<WeightsArc>>,
         current: &mut Option<SegmentPartial>,
         partial: &mut StatsPartial,
         ld_scratch: &mut LdScratch,
@@ -488,8 +497,8 @@ impl StatsJob {
         if !any_alt {
             partial.n_invariant_sites += 1;
         }
-        self.push_sfs(row, partial, sfs_caches);
-        self.push_fstats(&segment.contig.clone(), pos0, row, partial);
+        self.push_sfs(row, partial, sfs_caches, sfs_weights);
+        self.push_fstats(&segment.contig, pos0, row, partial);
         self.push_ld(&segment.contig, pos0, codes, partial, ld_scratch);
         partial.n_records += 1;
         Ok(())
@@ -566,6 +575,7 @@ impl StatsJob {
         row: &[SiteGroupCounts],
         partial: &mut StatsPartial,
         sfs_caches: &mut Vec<ProjectionCache>,
+        sfs_weights: &mut Vec<Option<WeightsArc>>,
     ) {
         let Some(plan) = &self.sfs else { return };
         let sfs = partial.sfs.get_or_insert_with(|| {
@@ -578,24 +588,24 @@ impl StatsJob {
                 .map(|&n| ProjectionCache::new(n))
                 .collect();
         }
-        let mut weights: Vec<Option<WeightsArc>> = Vec::with_capacity(row.len());
+        sfs_weights.clear();
         for (g, acc) in sfs.per_group.iter_mut().enumerate() {
             let counts = &row[g];
             let m = counts.n_ref_alleles + counts.n_alt_alleles;
             if m >= acc.n() {
                 let w = sfs_caches[g].weights(m, counts.n_alt_alleles);
                 acc.push_weighted(Some(&w));
-                weights.push(Some(w));
+                sfs_weights.push(Some(w));
             } else {
                 acc.push_weighted(None);
-                weights.push(None);
+                sfs_weights.push(None);
             }
         }
         if let Some(joint) = &mut sfs.joint {
             for ((g1, g2), acc) in plan.joint_pairs.iter().zip(joint.iter_mut()) {
                 acc.push_weighted(
-                    weights[*g1].as_deref().map(|w| w.as_slice()),
-                    weights[*g2].as_deref().map(|w| w.as_slice()),
+                    sfs_weights[*g1].as_deref().map(|w| w.as_slice()),
+                    sfs_weights[*g2].as_deref().map(|w| w.as_slice()),
                 );
             }
         }
@@ -628,6 +638,7 @@ impl StatsJob {
             scanner,
             counters,
             sfs_caches,
+            sfs_weights,
             ld,
             ..
         } = scratch;
@@ -638,7 +649,16 @@ impl StatsJob {
         let out = scanner
             .scan(&lr, &site, counters)
             .map_err(EngineError::from)?;
-        self.push_row(pos0, out.codes, row, sfs_caches, current, partial, ld)
+        self.push_row(
+            pos0,
+            out.codes,
+            row,
+            sfs_caches,
+            sfs_weights,
+            current,
+            partial,
+            ld,
+        )
     }
 
     /// The record sink for a filtering wrapper (doc_v4 O-2): the wrapper
@@ -678,6 +698,7 @@ impl StatsJob {
                 rec.codes,
                 &mut scratch.row,
                 &mut scratch.sfs_caches,
+                &mut scratch.sfs_weights,
                 &mut current,
                 &mut partial,
                 &mut scratch.ld,
@@ -770,6 +791,7 @@ impl StatsJob {
             &scratch.codes,
             &mut scratch.row,
             &mut scratch.sfs_caches,
+            &mut scratch.sfs_weights,
             current,
             partial,
             &mut scratch.ld,

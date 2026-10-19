@@ -237,6 +237,13 @@ impl PopgenRequest {
             if self.levels.genome {
                 parts.push("genome");
             }
+            if parts.is_empty() {
+                // The all-off tuple is not spellable: the CLI refuses an
+                // empty --levels (doc_v15 D15-21).
+                return Err(crate::error::Error::usage(
+                    "a Levels with no level cannot be spelled (--levels wants window, contig or genome)",
+                ));
+            }
             flag(&mut args, "--levels", parts.join(","));
         }
         if self.skip_empty {

@@ -54,7 +54,7 @@ pub struct QcReportAcc {
 }
 
 /// SN + Ts/Tv + SiS + AF accumulator parts.
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SummaryAcc {
     /// Total records seen.
     pub n_records: u64,
@@ -72,6 +72,20 @@ pub struct SummaryAcc {
     pub n_multiallelic: u64,
     /// Multiallelic records whose every ALT is an SNV.
     pub n_multiallelic_snv: u64,
+}
+
+impl SummaryAcc {
+    /// Component-wise addition (the §8.4 merge law; doc_v15 D15-37).
+    pub fn merge(&mut self, other: &Self) {
+        self.n_records += other.n_records;
+        self.n_snv += other.n_snv;
+        self.n_mnv += other.n_mnv;
+        self.n_indel += other.n_indel;
+        self.n_symbolic += other.n_symbolic;
+        self.n_ref += other.n_ref;
+        self.n_multiallelic += other.n_multiallelic;
+        self.n_multiallelic_snv += other.n_multiallelic_snv;
+    }
 }
 
 /// Transitions/transversions.
@@ -207,24 +221,7 @@ impl QcReportAcc {
             self.n_samples, other.n_samples,
             "invariant: same sample count"
         );
-        let SummaryAcc {
-            n_records,
-            n_snv,
-            n_mnv,
-            n_indel,
-            n_symbolic,
-            n_ref,
-            n_multiallelic,
-            n_multiallelic_snv,
-        } = other.summary;
-        self.summary.n_records += n_records;
-        self.summary.n_snv += n_snv;
-        self.summary.n_mnv += n_mnv;
-        self.summary.n_indel += n_indel;
-        self.summary.n_symbolic += n_symbolic;
-        self.summary.n_ref += n_ref;
-        self.summary.n_multiallelic += n_multiallelic;
-        self.summary.n_multiallelic_snv += n_multiallelic_snv;
+        self.summary.merge(&other.summary);
 
         self.tstv.ts += other.tstv.ts;
         self.tstv.tv += other.tstv.tv;

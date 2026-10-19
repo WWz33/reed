@@ -6,7 +6,7 @@ use reed_core::count::SiteGroupCounts;
 use reed_core::grid::WindowGrid;
 pub use reed_stats::fst::FstKind;
 use reed_stats::jackknife::BpBlockJackknife;
-use reed_stats::patterson::{PattersonKind, f2_site, f3_site, f4_site};
+use reed_stats::patterson::{f2_site, f3_site, f4_site};
 pub use reed_stats::pbs::PbsKind;
 use reed_stats::request::StatAcc;
 pub use reed_stats::request::StatKind;
@@ -207,6 +207,11 @@ impl Levels {
                     )));
                 }
             }
+        }
+        if !levels.window && !levels.contig && !levels.genome {
+            return Err(crate::error::Error::usage(
+                "--levels lists no level (want window, contig or genome)",
+            ));
         }
         Ok(levels)
     }
@@ -617,10 +622,10 @@ impl FStatAcc {
     /// ratio path and the sum path share one accumulator.
     pub(super) fn site(&self, row: &[SiteGroupCounts]) -> Option<(f64, f64)> {
         match self.test {
-            FStatTest::F2 { a, b } => Some((f2_site(row, a, b, PattersonKind::Corrected)?, 1.0)),
+            FStatTest::F2 { a, b } => Some((f2_site(row, a, b)?, 1.0)),
             // The raw Patterson f3 = ΣT (docs/rounds/v5/05 §3.3).
             FStatTest::F3 { c, a, b } => {
-                Some((f3_site(row, c, a, b, PattersonKind::Corrected)?.0, 1.0))
+                Some((f3_site(row, c, a, b)?.0, 1.0))
             }
             FStatTest::F4 { a, b, c, d } => Some((f4_site(row, a, b, c, d)?.0, 1.0)),
             FStatTest::Dstat { a, b, c, d } => Some(f4_site(row, a, b, c, d)?),
@@ -830,7 +835,7 @@ pub fn assign_groups(
         },
     )
     .map_err(crate::error::Error::from)?;
-    group_masks(&table, sample_names.len())
+    group_masks(&table, sample_names)
 }
 
 /// The in-memory twin of [`assign_groups`] (doc_v11 N11): the same
@@ -860,7 +865,7 @@ pub fn assign_groups_in_memory(
     };
     let table = reed_core::group::GroupTable::from_assignment(&samples, &rows)
         .map_err(crate::error::Error::from)?;
-    group_masks(&table, sample_names.len())
+    group_masks(&table, sample_names)
 }
 
 fn sample_table(
@@ -874,9 +879,9 @@ fn sample_table(
 /// plus the group names in table order.
 fn group_masks(
     table: &reed_core::group::GroupTable,
-    n_samples: usize,
+    sample_names: &[String],
 ) -> Result<(Vec<Option<u32>>, Vec<String>), crate::error::Error> {
-    let mut gt_groups: Vec<Option<u32>> = vec![None; n_samples];
+    let mut gt_groups: Vec<Option<u32>> = vec![None; sample_names.len()];
     let mut names: Vec<String> = Vec::with_capacity(table.n_groups());
     for (group_idx, group) in table.iter().enumerate() {
         names.push(group.name.clone());
@@ -886,7 +891,16 @@ fn group_masks(
             let mut word = word;
             while word != 0 {
                 let bit = word.trailing_zeros() as usize;
-                gt_groups[word_idx * 64 + bit] = Some(group_idx);
+                let sample = word_idx * 64 + bit;
+                // One slot per sample: an overlap cannot be represented and
+                // would silently keep only the last group (doc_v15 D15-10).
+                if let Some(previous) = gt_groups[sample] {
+                    return Err(crate::error::Error::usage(format!(
+                        "sample {:?} is assigned to both {:?} and {:?}",
+                        sample_names[sample], names[previous as usize], group.name
+                    )));
+                }
+                gt_groups[sample] = Some(group_idx);
                 word &= word - 1;
             }
         }

@@ -41,8 +41,6 @@ pub struct BgzfChunkReader<R: Read> {
 pub struct HeaderScan {
     /// Full header text including the `#CHROM` line and its newline.
     pub text: Vec<u8>,
-    /// Number of sample columns on the `#CHROM` line.
-    pub n_samples: usize,
 }
 
 impl<R: Read> BgzfChunkReader<R> {
@@ -267,18 +265,36 @@ impl<R: Read> BgzfChunkReader<R> {
             let text_len_before = text.len();
             inflater.inflate_block(&block, &mut text)?;
             if let Some(end) = find_chrom_line_end(&text) {
-                self.carry = block;
-                self.carry_offset = block_offset;
-                // The offset is *within this block's* inflated text, not in
-                // the accumulated header text. A BCF stream NUL-terminates
-                // the header, so its records start one byte later.
+                // The offset is *within the carrying block's* inflated text,
+                // not in the accumulated header text. A BCF stream
+                // NUL-terminates the header, so its records start one byte
+                // later; that NUL may sit at the start of the next block,
+                // which is not inflated yet (doc_v15 D15-3).
                 let is_bcf = text.starts_with(b"BCF\x02");
-                let record_start = if is_bcf && text.get(end) == Some(&0) {
+                let mut record_start = if is_bcf && text.get(end) == Some(&0) {
                     end + 1
                 } else {
                     end
                 };
-                self.first_in_block_offset = (record_start - text_len_before) as u64;
+                let mut carry = block;
+                let mut carry_offset = block_offset;
+                let mut start_in_block = (record_start - text_len_before) as u64;
+                if is_bcf
+                    && record_start == text.len()
+                    && let Some((next_block, next_offset)) = self.read_block()?
+                {
+                    let next_len_before = text.len();
+                    inflater.inflate_block(&next_block, &mut text)?;
+                    if text.get(record_start) == Some(&0) {
+                        record_start += 1;
+                    }
+                    carry = next_block;
+                    carry_offset = next_offset;
+                    start_in_block = (record_start - next_len_before) as u64;
+                }
+                self.carry = carry;
+                self.carry_offset = carry_offset;
+                self.first_in_block_offset = start_in_block;
                 self.header_done = true;
                 text.truncate(end);
                 // A BCF stream prefixes the VCF header with the magic and
@@ -286,13 +302,7 @@ impl<R: Read> BgzfChunkReader<R> {
                 // (doc_v3 02-bcf.md §2.1).
                 let start = if text.starts_with(b"BCF\x02") { 9 } else { 0 };
                 let header_text = text[start..].to_vec();
-                let n_samples = count_samples(&header_text).ok_or_else(|| {
-                    IoError::Header("#CHROM line found but has no sample columns".into())
-                })?;
-                return Ok(HeaderScan {
-                    text: header_text,
-                    n_samples,
-                });
+                return Ok(HeaderScan { text: header_text });
             }
         }
     }
@@ -495,14 +505,6 @@ fn find_chrom_line_end(text: &[u8]) -> Option<usize> {
     Some(nl + 1)
 }
 
-/// Sample column count on the `#CHROM` line (tabs after FORMAT).
-fn count_samples(header_text: &[u8]) -> Option<usize> {
-    let line = header_text
-        .split(|&b| b == b'\n')
-        .find(|l| l.starts_with(b"#CHROM"))?;
-    Some(memchr::memchr_iter(b'\t', line).count().saturating_sub(8))
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::inflate_chunk;
@@ -549,7 +551,6 @@ mod tests {
         let scan = reader
             .scan_header(&mut inflater)
             .expect("invariant: header present");
-        assert_eq!(scan.n_samples, 3);
         assert!(scan.text.ends_with(b"\ts2\n"));
     }
 

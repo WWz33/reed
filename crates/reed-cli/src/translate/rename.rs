@@ -94,7 +94,7 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
     let write_index = reed::WriteIndex::parse(args.write_index.as_deref())?;
     let output = RenameOutput {
-        path: args.out.as_ref().map(PathBuf::from),
+        path: args.out.as_deref().and_then(crate::units::output_path),
         compressed,
         level,
         command_line,

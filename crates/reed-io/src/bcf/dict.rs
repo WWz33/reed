@@ -21,6 +21,9 @@ pub struct BcfDict {
     strings: BTreeMap<u32, Vec<u8>>,
     /// Contig names in `##contig` order.
     contigs: Vec<Vec<u8>>,
+    /// Contig dictionary index → position in `contigs` (an explicit `IDX=`
+    /// may disagree with the line order; doc_v15 D15-24).
+    contig_idx: BTreeMap<u32, usize>,
     /// The header declares VCF ≥ 4.4 (`##fileformat`): GT rendering applies
     /// the prefixed-phasing rules (A6-14, htslib `bcf_format_gt_v2`).
     vcf44: bool,
@@ -28,6 +31,33 @@ pub struct BcfDict {
 
 /// htslib's IDX ceiling (`idx >= INT_MAX - 1` is skipped, vcf.c:877-891).
 const IDX_MAX: u64 = (i32::MAX - 1) as u64;
+
+/// One header entry's dictionary index: its explicit `IDX=` when present
+/// and in range, else the next free slot (`next` advances). The same rule
+/// serves the tag dictionary and the contig dictionary (doc_v15 D15-24).
+fn entry_idx(rest: &[u8], next: &mut u32, what: &str) -> u32 {
+    field(rest, b"IDX")
+        .and_then(|v| std::str::from_utf8(v).ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&idx| {
+            if idx >= IDX_MAX {
+                tracing::warn!(
+                    "BCF header {what}IDX={idx} is out of range; assigning the next free index"
+                );
+                false
+            } else {
+                true
+            }
+        })
+        .map_or_else(
+            || {
+                let i = *next;
+                *next += 1;
+                i
+            },
+            |idx| u32::try_from(idx).expect("invariant: bounded by IDX_MAX"),
+        )
+}
 
 impl BcfDict {
     /// Builds the dictionaries from the header text embedded in the BCF.
@@ -38,6 +68,7 @@ impl BcfDict {
     pub fn from_header(text: &[u8]) -> Result<Self, IoError> {
         let mut dict = Self::default();
         let mut next = 0_u32;
+        let mut next_contig = 0_u32;
         for line in text.split(|&b| b == b'\n') {
             if let Some(version) = line.strip_prefix(b"##fileformat=VCFv") {
                 dict.vcf44 = parse_version(version).is_some_and(|v| v >= (4, 4));
@@ -46,7 +77,12 @@ impl BcfDict {
             if let Some(rest) = line.strip_prefix(b"##contig=<") {
                 let name = field(rest, b"ID");
                 if let Some(name) = name {
+                    // Contig lines honor an explicit `IDX=` exactly like tag
+                    // lines (htslib's rule; doc_v15 D15-24).
+                    let idx = entry_idx(rest, &mut next_contig, "contig ");
+                    dict.contig_idx.insert(idx, dict.contigs.len());
                     dict.contigs.push(name.to_vec());
+                    next_contig = next_contig.max(idx + 1);
                 }
                 continue;
             }
@@ -67,27 +103,7 @@ impl BcfDict {
                     String::from_utf8_lossy(&line[..line.len().min(60)])
                 )));
             };
-            let idx = field(rest, b"IDX")
-                .and_then(|v| std::str::from_utf8(v).ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|&idx| {
-                    if idx >= IDX_MAX {
-                        tracing::warn!(
-                            "BCF header IDX={idx} is out of range; assigning the next free index"
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .map_or_else(
-                    || {
-                        let i = next;
-                        next += 1;
-                        i
-                    },
-                    |idx| u32::try_from(idx).expect("invariant: bounded by IDX_MAX"),
-                );
+            let idx = entry_idx(rest, &mut next, "");
             dict.strings.insert(idx, name.to_vec());
             next = next.max(idx + 1);
         }
@@ -100,12 +116,15 @@ impl BcfDict {
         self.strings.get(&index).map(Vec::as_slice)
     }
 
-    /// The contig name at `index` (`None` outside the dictionary).
+    /// The contig name at `index` (`None` outside the dictionary). The
+    /// dictionary index, not the line order: an explicit `IDX=` on a
+    /// `##contig` line wins (doc_v15 D15-24).
     #[must_use]
     pub fn contig(&self, index: i32) -> Option<&[u8]> {
-        usize::try_from(index)
+        u32::try_from(index)
             .ok()
-            .and_then(|i| self.contigs.get(i))
+            .and_then(|i| self.contig_idx.get(&i))
+            .and_then(|&pos| self.contigs.get(pos))
             .map(Vec::as_slice)
     }
 

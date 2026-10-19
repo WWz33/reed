@@ -37,3 +37,9 @@ pub(crate) fn parse_size(text: &str) -> Result<u64, String> {
 pub(crate) fn input_path(arg: &str) -> Option<PathBuf> {
     (arg != "-").then(|| PathBuf::from(arg))
 }
+
+/// `-` means stdout; everything else is a file path (doc_v15 D15-39).
+#[must_use]
+pub(crate) fn output_path(arg: &str) -> Option<PathBuf> {
+    (arg != "-").then(|| PathBuf::from(arg))
+}

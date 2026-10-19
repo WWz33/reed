@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The graphify tool writes its analysis output under crates/ when run from
+# the workspace root; it is a tool artefact (see .gitignore) and must not be
+# treated as a workspace member.
+exclude = ["crates/graphify-out"]
 
 [workspace.package]
 version = "0.4.0"

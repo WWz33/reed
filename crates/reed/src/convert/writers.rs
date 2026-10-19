@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::PhyloFormats;
-use super::job::{CountPartial, HmpPartial, MsaOutput, MsaSite, PhyloPartial};
+use super::job::{MsaFrameReader, MsaOutput, RowsBlob, SpilledCount, SpilledMsa, SpilledPhylo};
 
 /// `PREFIX` + suffix appended to the full path (no extension juggling).
 fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
@@ -58,19 +58,20 @@ fn write_padded_row(
     out: &mut impl Write,
     name: &str,
     width: usize,
-    seq: &[u8],
-) -> std::io::Result<()> {
-    out.write_all(name.as_bytes())?;
+    seq: &RowsBlob,
+) -> Result<(), EngineError> {
+    out.write_all(name.as_bytes()).map_err(EngineError::Io)?;
     let pad = width.saturating_sub(name.len());
     const SPACES: &[u8; 64] = &[b' '; 64];
     let mut left = pad;
     while left > 0 {
         let chunk = left.min(SPACES.len());
-        out.write_all(&SPACES[..chunk])?;
+        out.write_all(&SPACES[..chunk]).map_err(EngineError::Io)?;
         left -= chunk;
     }
-    out.write_all(seq)?;
-    out.write_all(b"\n")
+    seq.write_to(out)?;
+    out.write_all(b"\n").map_err(EngineError::Io)?;
+    Ok(())
 }
 
 /// Writes the phylogenetic alignment files for `plan.formats` plus the
@@ -83,7 +84,7 @@ pub(crate) fn write_phylo(
     prefix: &Path,
     plan: &super::job::PhyloPlan,
     names: &[String],
-    partial: Option<&PhyloPartial>,
+    partial: Option<&SpilledPhylo>,
 ) -> Result<Vec<PathBuf>, EngineError> {
     let n = names.len();
     let order = row_order(names, plan.options.outgroup.as_deref());
@@ -92,12 +93,12 @@ pub(crate) fn write_phylo(
     let partial = match partial {
         Some(p) => p,
         None => {
-            empty = PhyloPartial {
+            empty = SpilledPhylo {
                 n_sites: 0,
                 n_bin_sites: 0,
-                cols: vec![Vec::new(); n],
-                bin_cols: vec![Vec::new(); n],
-                used: Vec::new(),
+                cols: (0..n).map(|_| RowsBlob::default()).collect(),
+                bin_cols: (0..n).map(|_| RowsBlob::default()).collect(),
+                used: RowsBlob::default(),
             };
             &empty
         }
@@ -110,8 +111,7 @@ pub(crate) fn write_phylo(
         let mut out = writer(&path)?;
         writeln!(out, "{} {}", n, partial.n_sites).map_err(EngineError::Io)?;
         for &i in &order {
-            write_padded_row(&mut out, &names[i], width, &partial.cols[i])
-                .map_err(EngineError::Io)?;
+            write_padded_row(&mut out, &names[i], width, &partial.cols[i])?;
         }
         out.flush().map_err(EngineError::Io)?;
         files.push(path);
@@ -124,7 +124,7 @@ pub(crate) fn write_phylo(
             out.write_all(names[i].as_bytes())
                 .map_err(EngineError::Io)?;
             out.write_all(b"\n").map_err(EngineError::Io)?;
-            out.write_all(&partial.cols[i]).map_err(EngineError::Io)?;
+            partial.cols[i].write_to(&mut out)?;
             out.write_all(b"\n").map_err(EngineError::Io)?;
         }
         out.flush().map_err(EngineError::Io)?;
@@ -135,8 +135,7 @@ pub(crate) fn write_phylo(
         let mut out = writer(&path)?;
         write_nexus_header(&mut out, n, partial.n_sites, b"DNA", b"N").map_err(EngineError::Io)?;
         for &i in &order {
-            write_padded_row(&mut out, &names[i], width, &partial.cols[i])
-                .map_err(EngineError::Io)?;
+            write_padded_row(&mut out, &names[i], width, &partial.cols[i])?;
         }
         out.write_all(b";\nEND;\n").map_err(EngineError::Io)?;
         out.flush().map_err(EngineError::Io)?;
@@ -148,8 +147,7 @@ pub(crate) fn write_phylo(
         write_nexus_header(&mut out, n, partial.n_bin_sites, b"SNP", b"?")
             .map_err(EngineError::Io)?;
         for &i in &order {
-            write_padded_row(&mut out, &names[i], width, &partial.bin_cols[i])
-                .map_err(EngineError::Io)?;
+            write_padded_row(&mut out, &names[i], width, &partial.bin_cols[i])?;
         }
         out.write_all(b";\nEND;\n").map_err(EngineError::Io)?;
         out.flush().map_err(EngineError::Io)?;
@@ -160,7 +158,7 @@ pub(crate) fn write_phylo(
         let mut out = writer(&path)?;
         out.write_all(b"#CHROM\tPOS\tNUM_SAMPLES\n")
             .map_err(EngineError::Io)?;
-        out.write_all(&partial.used).map_err(EngineError::Io)?;
+        partial.used.write_to(&mut out)?;
         out.flush().map_err(EngineError::Io)?;
         files.push(path);
     }
@@ -197,7 +195,7 @@ pub(crate) fn write_count_matrix(
     prefix: &Path,
     names: &[String],
     keep: &[bool],
-    partial: Option<&CountPartial>,
+    partial: Option<&SpilledCount>,
 ) -> Result<Vec<PathBuf>, EngineError> {
     let original: Vec<u32> = keep
         .iter()
@@ -215,7 +213,7 @@ pub(crate) fn write_count_matrix(
     let pos_path = with_suffix(prefix, ".012.pos");
     let mut pos = writer(&pos_path)?;
     if let Some(partial) = partial {
-        pos.write_all(&partial.pos).map_err(EngineError::Io)?;
+        partial.pos.write_to(&mut pos)?;
     }
     pos.flush().map_err(EngineError::Io)?;
 
@@ -224,15 +222,18 @@ pub(crate) fn write_count_matrix(
     for (row, name_index) in original.iter().enumerate() {
         write!(matrix, "{name_index}").map_err(EngineError::Io)?;
         if let Some(partial) = partial {
-            for cell in &partial.cells[row] {
-                matrix.write_all(b"\t").map_err(EngineError::Io)?;
-                match cell {
-                    -1 => matrix.write_all(b"-1").map_err(EngineError::Io)?,
-                    0 => matrix.write_all(b"0").map_err(EngineError::Io)?,
-                    1 => matrix.write_all(b"1").map_err(EngineError::Io)?,
-                    _ => matrix.write_all(b"2").map_err(EngineError::Io)?,
+            partial.cells[row].visit(|chunk| {
+                for &byte in chunk {
+                    matrix.write_all(b"\t")?;
+                    matrix.write_all(match byte as i8 {
+                        -1 => &b"-1"[..],
+                        0 => &b"0"[..],
+                        1 => &b"1"[..],
+                        _ => &b"2"[..],
+                    })?;
                 }
-            }
+                Ok(())
+            })?;
         }
         matrix.write_all(b"\n").map_err(EngineError::Io)?;
     }
@@ -249,7 +250,7 @@ pub(crate) fn write_count_matrix(
 pub(crate) fn write_hapmap(
     prefix: &Path,
     names: &[String],
-    partial: Option<&HmpPartial>,
+    rows: Option<&RowsBlob>,
 ) -> Result<Vec<PathBuf>, EngineError> {
     let path = with_suffix(prefix, ".hmp.txt");
     let mut out = writer(&path)?;
@@ -262,8 +263,8 @@ pub(crate) fn write_hapmap(
         out.write_all(name.as_bytes()).map_err(EngineError::Io)?;
     }
     out.write_all(b"\n").map_err(EngineError::Io)?;
-    if let Some(partial) = partial {
-        out.write_all(&partial.rows).map_err(EngineError::Io)?;
+    if let Some(rows) = rows {
+        rows.write_to(&mut out)?;
     }
     out.flush().map_err(EngineError::Io)?;
     Ok(vec![path])
@@ -280,13 +281,13 @@ pub(crate) fn write_msa(
     reference: &HashMap<Vec<u8>, Arc<[u8]>>,
     outputs: &[MsaOutput],
     names: &[String],
-    partial: Option<&super::job::MsaPartial>,
+    partial: Option<&SpilledMsa>,
 ) -> Result<Vec<PathBuf>, EngineError> {
     let mut files = Vec::new();
-    let empty_runs: Vec<super::job::MsaRun> = Vec::new();
-    let runs: &[super::job::MsaRun] = match partial {
+    let empty: Vec<(Vec<u8>, RowsBlob)> = Vec::new();
+    let runs: &[(Vec<u8>, RowsBlob)] = match partial {
         Some(p) => &p.runs,
-        None => &empty_runs,
+        None => &empty,
     };
     for output in outputs {
         let Some(sequence) = reference.get(&output.contig) else {
@@ -297,35 +298,11 @@ pub(crate) fn write_msa(
         };
         let start0 = output.start1 - 1;
         let end0 = output.end1;
-        // The sites of this contig, in position order.
-        let sites: Vec<&MsaSite> = runs
+        let blobs: Vec<&RowsBlob> = runs
             .iter()
-            .filter(|r| r.contig == output.contig)
-            .flat_map(|r| r.sites.iter())
-            .filter(|s| s.pos0 >= start0 && s.pos0 < end0)
+            .filter(|(name, _)| *name == output.contig)
+            .map(|(_, blob)| blob)
             .collect();
-        let mut buffers: Vec<Vec<u8>> = vec![Vec::new(); names.len()];
-        let mut site_idx = 0_usize;
-        for pos0 in start0..end0 {
-            if site_idx < sites.len() && sites[site_idx].pos0 == pos0 {
-                // Duplicate positions: the last record wins (vcf2msa's
-                // per-record overwrite).
-                let mut chosen = sites[site_idx];
-                while site_idx < sites.len() && sites[site_idx].pos0 == pos0 {
-                    chosen = sites[site_idx];
-                    site_idx += 1;
-                }
-                let width = usize::from(chosen.width);
-                for (s, buffer) in buffers.iter_mut().enumerate() {
-                    buffer.extend_from_slice(&chosen.vals[s * width..(s + 1) * width]);
-                }
-            } else {
-                let base = sequence[pos0 as usize];
-                for buffer in &mut buffers {
-                    buffer.push(base);
-                }
-            }
-        }
         let name_suffix = if output.explicit {
             format!("_{}-{}", output.start1, output.end1)
         } else {
@@ -334,20 +311,71 @@ pub(crate) fn write_msa(
         let contig_text = String::from_utf8_lossy(&output.contig).into_owned();
         let path = with_suffix(prefix, &format!("_{contig_text}{name_suffix}.fasta"));
         let mut out = writer(&path)?;
-        for (sample, buffer) in buffers.iter().enumerate() {
+        // One pass per sample: the frames are re-walked for every sample, so
+        // no region-sized buffer is ever materialized (doc_v15 D15-7; each
+        // pass re-reads the spill, which the frame reader supports by
+        // rewinding).
+        let mut frame = Vec::new();
+        let mut chosen = Vec::new();
+        for (sample, name) in names.iter().enumerate() {
             out.write_all(b">").map_err(EngineError::Io)?;
             out.write_all(contig_text.as_bytes())
                 .map_err(EngineError::Io)?;
             out.write_all(format!(":{}-{}_", output.start1, output.end1).as_bytes())
                 .map_err(EngineError::Io)?;
-            out.write_all(names[sample].as_bytes())
-                .map_err(EngineError::Io)?;
+            out.write_all(name.as_bytes()).map_err(EngineError::Io)?;
             out.write_all(b"\n").map_err(EngineError::Io)?;
-            out.write_all(buffer).map_err(EngineError::Io)?;
+
+            let mut cursor = start0;
+            let mut pending: Option<u64> = None;
+            for blob in &blobs {
+                let mut reader = MsaFrameReader::open(blob, names.len())?;
+                while let Some(pos0) = reader.next_frame_for_sample(sample, &mut frame)? {
+                    if pos0 < start0 {
+                        continue;
+                    }
+                    if pos0 >= end0 {
+                        break;
+                    }
+                    if pending == Some(pos0) {
+                        // Duplicate positions: the last record wins
+                        // (vcf2msa's per-record overwrite).
+                        chosen.clear();
+                        chosen.extend_from_slice(&frame);
+                        continue;
+                    }
+                    flush_msa_site(&mut out, sequence, &mut cursor, pending, &mut chosen)?;
+                    chosen.extend_from_slice(&frame);
+                    pending = Some(pos0);
+                }
+            }
+            flush_msa_site(&mut out, sequence, &mut cursor, pending, &mut chosen)?;
+            out.write_all(&sequence[cursor as usize..end0 as usize])
+                .map_err(EngineError::Io)?;
             out.write_all(b"\n").map_err(EngineError::Io)?;
         }
         out.flush().map_err(EngineError::Io)?;
         files.push(path);
     }
     Ok(files)
+}
+
+/// The MSA walk's flush step: writes the reference run between `cursor` and
+/// the pending site, then the site's bytes.
+fn flush_msa_site(
+    out: &mut impl Write,
+    sequence: &[u8],
+    cursor: &mut u64,
+    pending: Option<u64>,
+    chosen: &mut Vec<u8>,
+) -> Result<(), EngineError> {
+    if let Some(pos0) = pending {
+        let from = (*cursor).min(pos0);
+        out.write_all(&sequence[from as usize..pos0 as usize])
+            .map_err(EngineError::Io)?;
+        out.write_all(chosen).map_err(EngineError::Io)?;
+        *cursor = pos0 + 1;
+        chosen.clear();
+    }
+    Ok(())
 }

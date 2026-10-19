@@ -894,7 +894,7 @@ pub fn compile(
         auto_stale_tags: Vec::new(),
         recompute,
         no_update,
-        info_trusted: true,
+        info_trusted: !cohort_changed,
         tags: std::sync::Arc::new(tags.clone()),
         provenance,
     })

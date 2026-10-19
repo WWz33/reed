@@ -255,9 +255,43 @@ pub fn format_g6(v: f64) -> String {
     String::from_utf8(buf).expect("invariant: %g renders ASCII")
 }
 
+/// A tiny `fmt::Write` over a fixed stack buffer: the renderer's hot path
+/// stays heap-free (doc_v15 D15-35). 64 bytes fit any `%g` rendering of an
+/// `f64` by construction (the widest is `-2.22507e-308`).
+struct StackBuf {
+    bytes: [u8; 64],
+    len: usize,
+}
+
+impl StackBuf {
+    fn new() -> Self {
+        Self {
+            bytes: [0; 64],
+            len: 0,
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+impl std::fmt::Write for StackBuf {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let end = self.len + text.len();
+        if end > self.bytes.len() {
+            return Err(std::fmt::Error);
+        }
+        self.bytes[self.len..end].copy_from_slice(text.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
 /// [`format_g6`] appended to a byte buffer (the renderer's hot path avoids
 /// one allocation per value).
 pub fn format_g6_into(out: &mut Vec<u8>, v: f64) {
+    use std::fmt::Write as _;
     use std::io::Write as _;
     if v == 0.0 {
         // htslib `kputd` keeps the sign of a negative zero (A6-14).
@@ -273,45 +307,67 @@ pub fn format_g6_into(out: &mut Vec<u8>, v: f64) {
         return;
     }
     // The style is chosen from the exponent of the value rounded to 6
-    // significant digits (C %g semantics).
-    // Six significant digits first, then pick the style from the exponent
-    // *after* rounding (C %g: 999999.5 rounds to 1e+06, not 9.99999e5).
-    let scientific = format!("{:.5e}", v.abs());
-    let exp10: i32 = scientific
-        .split('e')
-        .nth(1)
-        .and_then(|e| e.parse().ok())
+    // significant digits (C %g semantics): 999999.5 rounds to 1e+06, not
+    // 9.99999e5. Everything renders into stack buffers (doc_v15 D15-35).
+    let mut wide = StackBuf::new();
+    write!(wide, "{:.5e}", v.abs()).expect("invariant: 64 bytes fit a %.5e f64");
+    let scientific = wide.as_slice();
+    let e_pos = scientific
+        .iter()
+        .position(|&b| b == b'e')
+        .expect("invariant: e-form");
+    let exp10: i32 = std::str::from_utf8(&scientific[e_pos + 1..])
+        .expect("invariant: ASCII")
+        .parse()
         .unwrap_or(0);
     if (-4..6).contains(&exp10) {
         let precision = (5 - exp10).max(0) as usize;
-        let s = format!("{v:.precision$}");
+        let mut fixed = StackBuf::new();
+        write!(fixed, "{v:.precision$}").expect("invariant: 64 bytes fit a %.*f f64");
+        let text = fixed.as_slice();
         // htslib culls trailing zeros only past a decimal point: an integer
         // like 128440 must keep its zeros (the pre-BCF version stripped
         // them, which only showed for values >= 1e5).
-        match s.split_once('.') {
-            Some((int, frac)) => {
-                let frac = frac.trim_end_matches('0');
-                out.extend_from_slice(int.as_bytes());
-                if !frac.is_empty() {
+        match text.iter().position(|&b| b == b'.') {
+            Some(dot) => {
+                let (int, frac) = (&text[..dot], &text[dot + 1..]);
+                let mut end = frac.len();
+                while end > 0 && frac[end - 1] == b'0' {
+                    end -= 1;
+                }
+                out.extend_from_slice(int);
+                if end > 0 {
                     out.push(b'.');
-                    out.extend_from_slice(frac.as_bytes());
+                    out.extend_from_slice(&frac[..end]);
                 }
             }
-            None => out.extend_from_slice(s.as_bytes()),
+            None => out.extend_from_slice(text),
         }
     } else {
         // Scientific: 5 fractional digits, trailing zeros stripped,
         // exponent at least two digits with a sign.
-        let mantissa_exp = format!("{v:.5e}");
-        let (mantissa, exp) = mantissa_exp.split_once('e').expect("invariant: e-form");
-        let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
-        let exp: i32 = exp.parse().expect("invariant: integer exponent");
-        let _ = write!(
-            out,
-            "{mantissa}e{}{:02}",
-            if exp < 0 { '-' } else { '+' },
-            exp.abs()
-        );
+        let text = scientific;
+        let mut mantissa = &text[..e_pos];
+        while mantissa.last() == Some(&b'0') {
+            mantissa = &mantissa[..mantissa.len() - 1];
+        }
+        if mantissa.last() == Some(&b'.') {
+            mantissa = &mantissa[..mantissa.len() - 1];
+        }
+        let exp: i32 = std::str::from_utf8(&text[e_pos + 1..])
+            .expect("invariant: ASCII")
+            .parse()
+            .expect("invariant: integer exponent");
+        out.extend_from_slice(mantissa);
+        out.push(b'e');
+        out.push(if exp < 0 { b'-' } else { b'+' });
+        let magnitude = exp.unsigned_abs();
+        if magnitude < 10 {
+            out.push(b'0');
+            out.push(b'0' + magnitude as u8);
+        } else {
+            let _ = write!(out, "{magnitude}");
+        }
     }
 }
 
@@ -463,4 +519,5 @@ mod tests {
         let got = edit(line, &plan, Some(1));
         assert!(got.contains("\t15:./.\t12:1|1"), "{got}");
     }
+
 }

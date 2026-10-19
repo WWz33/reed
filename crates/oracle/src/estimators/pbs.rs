@@ -224,11 +224,13 @@ pub fn pbs(
         between_bc.diffs += b.ref_count * c.alt_count + b.alt_count * c.ref_count;
         between_bc.missing += between_total_bc - n_b * n_c;
 
+        // Every site counts; a fully-uncalled group flags the site skipped
+        // but the two called pairs still accumulate independently — the
+        // shipped PbsAcc semantics (04-algorithms.md §1; doc_v15 D15-12).
+        n_sites += 1;
         if n_a == 0 || n_b == 0 || n_c == 0 {
             n_skipped += 1;
-            continue;
         }
-        n_sites += 1;
 
         // allel inclusion rule (see fst.rs): `den` whenever both groups are
         // called; `num` additionally requires both within terms.
