@@ -84,8 +84,12 @@ mod rename;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).
+mod genotype;
+mod pca;
+
 pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
+pub use crate::pca::{read_genotype_matrix, run_pca, run_pca_opened, PcaReport, PcaRequest};
 pub use crate::index::{IndexOutcome, run_index};
 pub use crate::input::OpenedInput;
 pub use crate::stats::{

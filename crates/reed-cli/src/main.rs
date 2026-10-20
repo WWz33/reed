@@ -43,5 +43,7 @@ fn run() -> Result<(), reed::Error> {
         Command::Index(args) => translate::index::run_index_cli(args),
         Command::Convert(args) => translate::convert::run_convert_cli(args),
         Command::Rename(args) => translate::rename::run_rename_cli(args),
+        Command::Pca(args) => translate::pca::run_pca_cli(args),
+        Command::Distance(args) => translate::distance::run_distance_cli(args),
     }
 }
