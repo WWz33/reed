@@ -406,10 +406,11 @@ check "stats --pop stratifies the QC reports (doc_v14 guard 14, 02 §2.2)" \
 
 # --- doc_v13 (`reed convert`) ------------------------------------------------
 # Guard 1: the subcommands exist and are listed (v13 had four; v14 adds
-# Popg and Rename — the v14 guard below pins the six-name set).
-check "Command has exactly six variants including Convert (doc_v13 guard 1, doc_v14 guard 1)" \
+# Popg and Rename, v16/v17 add Pca and Distance — the guard pins the
+# eight-name set).
+check "Command has exactly eight variants including Convert (doc_v13 guard 1, doc_v14 guard 1, doc_v16/v17)" \
     bash -c 'grep -q "Convert(ConvertCli)" crates/reed-cli/src/cli/mod.rs &&
-        [ "$(grep -c "^    [A-Z][a-z]*(.*Cli)" crates/reed-cli/src/cli/mod.rs)" -eq 6 ]'
+        [ "$(grep -c "^    [A-Z][a-z]*(.*Cli)" crates/reed-cli/src/cli/mod.rs)" -eq 8 ]'
 
 # Guard 2/6: the SFS request construction is one shared function (D13-6) and
 # --phylip is opt-in.

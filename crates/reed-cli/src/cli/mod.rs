@@ -78,6 +78,11 @@ pub(crate) enum Command {
     /// Edit identifiers: sample names, contig names, variant IDs, header lines
     #[command(visible_alias = "reheader")]
     Rename(RenameCli),
+    /// Principal components of the sample relationship matrix
+    Pca(PcaCli),
+    /// Individual-by-individual matrices: distance, IBS, GRM, KING, PI_HAT,
+    /// relatedness, discordance
+    Distance(DistanceCli),
 }
 
 /// The help groups (doc_v14 02 §1.2): the single source of the grouping.
@@ -86,7 +91,8 @@ pub(crate) enum Command {
 /// `help`, which is not an enum variant).
 pub(crate) const GROUPS: &[(&str, &[&str])] = &[
     ("Filtering", &["filter"]),
-    ("Statistics", &["stats", "popg"]),
+    ("Statistics", &["stats", "popg", "pca"]),
+    ("Relatedness", &["distance"]),
     ("Transform", &["convert", "rename"]),
     ("File Operations", &["index"]),
     ("Miscellaneous", &["help"]),
@@ -137,6 +143,90 @@ pub(crate) fn render_grouped_commands() -> String {
 
 /// Hard filtering (02-cli.md §3): the bcftools `view` + `filter` + `annotate -x`
 /// flags in one command.
+#[derive(Args)]
+pub(crate) struct PcaCli {
+    #[arg(help = INPUT_HELP)]
+    pub input: String,
+    /// Number of principal components to write
+    #[arg(long = "pcs", value_name = "INT", default_value_t = 10)]
+    pub pcs: usize,
+    /// Genotype standardization: binom2 = sqrt(2p(1-p)) (GCTA/plink2/
+    /// flashpca), binom = sqrt(p(1-p)) (older EIGENSOFT). binom and binom2
+    /// give the same components with eigenvalues differing by exactly 2x
+    #[arg(long, value_name = "binom2|binom", default_value = "binom2")]
+    pub stand: String,
+    /// Missing-genotype policy: pairwise (each pair uses its own denominator,
+    /// plink2/GCTA default) or meanimpute (flashpca/plink2 meanimpute)
+    #[arg(long, value_name = "pairwise|meanimpute", default_value = "pairwise")]
+    pub missing: String,
+    /// Solver: auto picks dense when N^2 doubles fit the memory budget,
+    /// stream otherwise; dense materializes the N x N matrix and extracts the
+    /// full spectrum, stream is matrix-free block Lanczos
+    #[arg(long, value_name = "auto|dense|stream", default_value = "auto")]
+    pub solver: String,
+    /// Output prefix: writes PREFIX.eigenvec, PREFIX.eigenval and PREFIX.pve
+    #[arg(short = 'o', long = "out", value_name = "PREFIX")]
+    pub output: Option<String>,
+    /// Sample subsets (same spelling as `reed filter -s/-S/--keep/--remove`)
+    #[command(flatten)]
+    pub samples: filter_flags::SampleArgs,
+    /// Worker threads (default: available parallelism)
+    #[arg(long, value_name = "INT")]
+    pub threads: Option<usize>,
+    /// Memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
+}
+
+#[derive(Args)]
+pub(crate) struct DistanceCli {
+    #[arg(help = INPUT_HELP)]
+    pub input: String,
+    /// Which matrix: allele-ct (plink --distance), ibs, 1-ibs, grm
+    /// (plink2 --make-rel / GCTA), cov (--make-rel cov), king
+    /// (plink2 --make-king), pihat (plink --genome), phi (vcftools
+    /// --relatedness2), ajk (vcftools --relatedness), discordance
+    /// (bcftools gtcheck)
+    #[arg(long = "type", value_name = "KIND", default_value = "grm")]
+    pub matrix_type: String,
+    /// Output layout for matrix kinds: triangle (plink default), square,
+    /// square0 (upper-right zeroed) or bin (double-precision, R-readable)
+    #[arg(long, value_name = "FMT", default_value = "triangle")]
+    pub format: String,
+    /// Genotype standardization: binom2 (default) or binom
+    #[arg(long, value_name = "binom2|binom", default_value = "binom2")]
+    pub stand: String,
+    /// For grm/cov: divide every entry by the total site count instead of the
+    /// per-pair called count (plink's meanimpute)
+    #[arg(long)]
+    pub mean_impute: bool,
+    /// For pihat: skip the [0,1] clipping (plink --genome unbounded)
+    #[arg(long)]
+    pub unbounded: bool,
+    /// For pihat: snap to a possible configuration when PI_HAT^2 < Z2
+    #[arg(long)]
+    pub nudge: bool,
+    /// For discordance: report the mismatch count instead of the probability
+    /// score (bcftools gtcheck -E 0)
+    #[arg(long)]
+    pub mismatch_count: bool,
+    /// For discordance: phred-scaled genotyping error probability
+    #[arg(long, value_name = "INT", default_value_t = 40)]
+    pub error_probability: u32,
+    /// Output prefix: writes PREFIX.<suffix>
+    #[arg(short = 'o', long = "out", value_name = "PREFIX")]
+    pub output: Option<String>,
+    /// Sample subsets (same spelling as `reed filter -s/-S/--keep/--remove`)
+    #[command(flatten)]
+    pub samples: filter_flags::SampleArgs,
+    /// Worker threads (default: available parallelism)
+    #[arg(long, value_name = "INT")]
+    pub threads: Option<usize>,
+    /// Memory budget in MiB (default: half of physical memory)
+    #[arg(long, value_name = "MB")]
+    pub memory: Option<u64>,
+}
+
 #[derive(Args)]
 pub(crate) struct FilterCli {
     #[arg(help = INPUT_HELP)]

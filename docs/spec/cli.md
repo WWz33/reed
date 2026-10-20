@@ -37,6 +37,8 @@
 | `reed rename`（别名 `reheader`） | bcftools `reheader`、`annotate --rename-chrs/--set-id`；plink2 `--set-*-var-ids/--update-name` | **标识符编辑**：样本名/染色体名/变异 ID/header 行（§12） |
 | `reed index` | `bcftools index` | CSI（默认）/ TBI |
 | `reed convert` | vcf2phylip 2.9（Ortiz 2019）、vcftools `--012`、TASSEL hapmap（双向）、vcf2msa、easySFS | 转换：系统发育矩阵 / 0-1-2 矩阵 / hapmap / 参考 MSA / 投影 SFS；hapmap → VCF 反向 |
+| `reed pca` | plink2 `--pca`、GCTA `--pca`、flashpca（doc_v16） | **主成分**：样本关系矩阵（GRM）的前 k 个特征对；输出 plink 兼容的 `.eigenvec`/`.eigenval`/`.pve`（§11b） |
+| `reed distance` | plink `--distance`/`--make-rel`/`--genome`、plink2 `--make-king`、vcftools `--relatedness2`/`--relatedness`、bcftools `gtcheck`（doc_v17） | **个体×个体矩阵**：等位基因计数距离、IBS、GRM/协方差、KING、PI_HAT、Manichaikul φ、Yang Ajk、不一致度（§11c） |
 
 **分组 help（v14 §1）**：`reed --help` 按 Filtering / Statistics / Transform /
 File Operations / Miscellaneous 五组列出命令；命令路径本身不变（扁平）。
@@ -392,6 +394,96 @@ reed: --pi moved to `reed popg`: the windowed population-genetics statistics
 校验（§4.3）：改后样本名重复、名字不存在、`--set-id` 与
 `--set-missing-var-ids` 同给、`--clear-ids` 与其他 ID flag 同给、
 `--idspace-to` 与 `--set-id` 同给、无任何编辑 flag —— 全部用法错。
+
+## 11c. `reed distance`（doc_v17）
+
+个体×个体矩阵族。每种 `--type` 复刻一个参照工具的公式，输出文件名沿用
+参照工具的后缀。
+
+```
+reed distance in.vcf.gz --type grm -o out      # out.rel + out.rel.id
+```
+
+| `--type` | 参照 | 输出 | 对拍状态 |
+|---|---|---|---|
+| `allele-ct` | plink `--distance` | `.dist` | 匹配（5e-6） |
+| `ibs` | plink `--distance ibs` | `.mibs` | 由 distance 换算 |
+| `1-ibs` | plink `--distance 1-ibs` | `.mdist` | 由 distance 换算 |
+| `grm` | plink2 `--make-rel`、GCTA | `.rel` | 匹配（5e-6） |
+| `cov` | plink2 `--make-rel cov` | `.rel` | 未对拍 |
+| `king` | plink2 `--make-king` | `.king` | 匹配（5e-7） |
+| `pihat` | plink `--genome` | `.genome` | **未对齐**（见下） |
+| `phi` | vcftools `--relatedness2` | `.relatedness2` | 匹配（计数零差异） |
+| `ajk` | vcftools `--relatedness` | `.relatedness` | 未对拍 |
+| `discordance` | bcftools `gtcheck` | `.gtcheck` | 匹配（计数模式） |
+
+| 参数 | 说明 |
+|---|---|
+| `--format triangle\|square\|square0\|bin` | 矩阵类输出布局。`triangle` 含对角线（plink 语义）；`bin` 是双精度方阵（R `readBin` 可读） |
+| `--stand binom2\|binom` | 标准化口径 |
+| `--mean-impute` | `grm`/`cov` 用总位点数作分母（plink `meanimpute`） |
+| `--unbounded`、`--nudge` | `pihat` 的裁剪与修正（plink 同名修饰符） |
+| `--mismatch-count` | `discordance` 输出失配计数而非概率分数（`gtcheck -E 0`） |
+| `--error-probability INT` | `discordance` 的概率模型参数（`gtcheck -E`，默认 40） |
+| `-o PREFIX` | 必填 |
+
+**已知差异**：
+
+- **`pihat` 未对齐 plink**。plink 的期望 IBS 系数用 PLINK 1.07 的 Nei
+  偏差修正（`1.9/plink_calc.c:4848-4872`），reed 用的是理论期望值；两者
+  的 Z0/Z1/Z2 不同。输出保留但不要用于与 plink 对拍。
+- `discordance` 的第 5 列（`average -log P(HWE)`）写 0，未实现。
+- `--genome` 的 DST/PPC/RATIO 写占位值。
+- `king` 需要只喂常染色体（plink2 强制），reed 的 VCF 桥接不过滤 contig。
+
+## 11b. `reed pca`（doc_v16）
+
+样本关系（GRM）矩阵的主成分。数据流与 GCTA/plink2 一致：逐 SNP 标准化
+基因型 → 建 N×N 关系矩阵 → 取前 k 个特征对。**缺失策略与标准化口径是
+与 plink2/GCTA/flashpca 对拍的两条主线**，两者都实测逐位一致。
+
+```
+reed pca in.vcf.gz --pcs 10 -o out
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--pcs INT` | 输出的 PC 数（默认 10） |
+| `--stand binom2\|binom` | 标准化：`binom2 = sqrt(2p(1-p))`（GCTA/plink2/flashpca，默认）；`binom = sqrt(p(1-p))`（老 EIGENSOFT）。两者给出**相同的 PC**，特征值恰好相差 2 倍 |
+| `--missing pairwise\|meanimpute` | 缺失策略：`pairwise`（每对用自己的分母，plink2/GCTA 默认）；`meanimpute`（flashpca、plink2 `meanimpute`） |
+| `--solver auto\|dense\|stream` | `auto`（默认）：`N²·8` 在内存预算内走 `dense`，否则 `stream`；`dense` 物化 N×N 并取全谱；`stream` 是矩阵-free 的块 Lanczos |
+| `-o PREFIX` | **必填**：写 `PREFIX.eigenvec`、`PREFIX.eigenval`、`PREFIX.pve` |
+| `-s/-S/--samples-file/--keep/--remove` | 样本子集（与 `reed filter` 同拼写） |
+| `--threads INT`、`--memory MB` | 线程与内存预算 |
+
+**输出**：
+
+- `PREFIX.eigenvec`：表头 `#FID	IID	PC1..PCk`（plink 兼容），每样本一行，
+  特征向量按单位范数写、9 位小数；`FID` 与 `IID` 都用样本名。
+- `PREFIX.eigenval`：每行一个特征值（降序，= GRM 的特征值）。
+- `PREFIX.pve`：每个 PC 占全谱的比例。
+
+**语义要点**：
+
+- 只计**双等位**位点（多等位位点无 0/1/2 剂量，跳过）；无变异的位点跳过。
+- 只计**二倍体** GT（半调用、单倍体、等位编号越界 → 缺失）。
+- `--stand`/`--missing`/`--solver` 的非法值、缺 `-o`、`--pcs 0` 都是用法错
+  （exit 2）。
+- 不接收 `--indep-pairwise`：LD 修剪是上游预处理，先跑
+  `reed filter --indep-pairwise` 再喂输出（与 `stats`/`popg` 同款约束）。
+
+**与参照物的实测一致性**（HapMap3 957×14266，k=10）：
+
+| stand + missing | reed λ1 | plink2 对应模式 |
+|---|---|---|
+| binom2 + meanimpute | 26.200944934 | 26.2009（`--pca 10 meanimpute`） |
+| binom2 + pairwise | 26.280628904 | 26.2806（`--pca 10`） |
+| binom + meanimpute | 52.401889869 | = binom2 × 2（精确） |
+
+**不做**（doc_v16 §P2 定稿）：`--missing em`（换了估计量，不是同一 PCA 的
+缺失策略）、`--use-gl`（PCAngsd 是独立算法）、`sd/center/none` 标准化
+（面向非基因型矩阵）、`--window`（Local PCA）、`--tw`（Tracy–Widom）——
+后两项登记为后续轮。
 
 ## 11. 本轮核对出的差异（登记到 01-review.md）
 

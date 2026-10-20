@@ -1,0 +1,9 @@
+[package]
+name = "reed-distance"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Individual-by-individual matrices for VCF data: allele-count distance, IBS, GRM, KING, PI_HAT, relatedness"
+
+[dependencies]
+reed-core.workspace = true

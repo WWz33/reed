@@ -5,6 +5,8 @@
 //! the math helpers. No I/O except the one sanctioned group-file reader in
 //! [`group`]. Estimator definitions live in reed-stats.
 
+pub mod linalg;
+
 pub mod args;
 pub mod bitset;
 pub mod coord;

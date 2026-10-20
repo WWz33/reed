@@ -1,0 +1,17 @@
+[package]
+name = "reed-reduce"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Dimension reduction (PCA/PCoA/kernel/diffusion/UMAP/t-SNE) with a pure-Rust dense backend"
+
+[features]
+default = ["faer-backend"]
+# Pure-Rust dense eigensolver and blocked GEMM (faer). Disable to build with
+# only the dependency-free fallback (much slower; kept for auditing).
+faer-backend = ["dep:faer"]
+
+[dependencies]
+faer = { version = "0.20", optional = true }
+reed-core.workspace = true
+reed-distance = { path = "../reed-distance" }

@@ -2,8 +2,10 @@
 
 pub(crate) mod common;
 pub(crate) mod convert;
+pub(crate) mod distance;
 pub(crate) mod filter;
 pub(crate) mod index;
+pub(crate) mod pca;
 pub(crate) mod popg;
 pub(crate) mod rename;
 pub(crate) mod stats;

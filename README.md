@@ -53,6 +53,13 @@ reed convert panels.hmp.txt --vcf -Oz -o panels.vcf.gz
 
 # The projected SFS
 reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
+
+# Principal components (plink-compatible output)
+reed pca clean.vcf.gz --pcs 20 --missing pairwise -o pcs
+
+# Individual-by-individual matrices
+reed distance clean.vcf.gz --type grm -o rel      # .rel + .rel.id
+reed distance clean.vcf.gz --type phi -o kin      # vcftools-compatible .relatedness2
 ```
 
 ## Commands
@@ -60,6 +67,8 @@ reed convert clean.vcf.gz --pop pops.txt --sfs --proj 20,20 -o out
 - `filter` .. selection, genotype masking, QC thresholds, LD pruning
 - `stats` .. per-site and per-sample QC: freq, hardy, het, missing, depth, summary
 - `popg` .. windowed statistics: pi, dxy, Fst, PBS, SFS, f-stats, LD decay
+- `pca` .. principal components of the sample relationship matrix
+- `distance` .. individual-by-individual matrices: distance, IBS, GRM, KING, relatedness, discordance
 - `convert` .. phylogenetic matrices, genotype matrices, hapmap, MSA, SFS
 - `rename` .. identifier edits: samples, contigs, variant IDs, header lines
 - `index` .. build a CSI/TBI index
@@ -97,6 +106,26 @@ Population-genetics statistics per window, contig or genome.
 | `--variant-only` | Declare an all-variant input: window positions the file does not contain count as monomorphic with all samples called |
 | `--bypass-invariant-check` | Compute over the sites the file contains (overestimates π/dxy) |
 | `--contig-lengths FILE` | `.fai`-style `name<TAB>length`, for headers without `##contig` lines |
+
+## reed pca [OPTIONS] FILE
+
+Principal components of the sample relationship matrix (the GRM), matching
+the plink2/GCTA/flashpca standardization.
+
+| Option | Description |
+|---|---|
+| `--pcs INT` | Number of principal components to write. Default: 10 |
+| `--stand binom2\|binom` | Standardization: `binom2` = `sqrt(2p(1-p))` (GCTA/plink2/flashpca, default), `binom` = `sqrt(p(1-p))` (older EIGENSOFT). The two give identical components with eigenvalues exactly 2x apart |
+| `--missing pairwise\|meanimpute` | Missing-genotype policy: `pairwise` (per-pair denominator, plink2/GCTA default) or `meanimpute` (flashpca, plink2 `meanimpute`) |
+| `--solver auto\|dense\|stream` | `auto` (default) picks `dense` when the N×N matrix fits the memory budget, `stream` otherwise. `dense` extracts the full spectrum, `stream` is matrix-free block Lanczos |
+| `-o PREFIX` | Required: writes `PREFIX.eigenvec`, `PREFIX.eigenval`, `PREFIX.pve` |
+| `-s/-S`, `--keep`, `--remove` | Sample subsets (same spelling as `reed filter`) |
+| `--threads N`, `--memory MB` | Threads and memory budget |
+
+`PREFIX.eigenvec` uses plink's header (`#FID IID PC1..PCk`) so existing
+scripts read it unchanged. Only biallelic sites with a diploid GT contribute;
+LD pruning is an upstream step, so run `reed filter --indep-pairwise` first
+rather than passing it here.
 
 ## reed stats [OPTIONS] FILE
 

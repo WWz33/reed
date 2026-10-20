@@ -5,6 +5,136 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v17 个体间距离矩阵族（2026-10-20）
+
+新增 `reed-distance` crate 与 `reed distance` 命令；PCA 的 GRM 构建迁入
+该 crate，成为所有矩阵的统一底座。
+
+### Added
+
+- **`crates/reed-distance`**：10 种个体×个体矩阵，每种复刻一个参照工具。
+  - `allele_ct_distance` / `ibs` / `one_minus_ibs`（plink `--distance`）
+  - `grm` / `covariance`（plink2 `--make-rel`、GCTA）
+  - `king`（plink2 `--make-king`，KING-robust）
+  - `pi_hat`（plink `--genome`）
+  - `phi`（vcftools `--relatedness2`，Manichaikul）
+  - `ajk`（vcftools `--relatedness`，Yang）
+  - `discordance`（bcftools `gtcheck`）
+  - 4 种输出格式：`triangle`（含对角线）、`square`、`square0`、`bin`
+- **`reed distance`**：`--type`、`--format`、`--stand`、`--mean-impute`、
+  `--unbounded`/`--nudge`、`--mismatch-count`/`--error-probability`。
+- **`reed::read_genotype_matrix`**：VCF→剂量矩阵的共享桥接，PCA 与
+  distance 共用。
+- **`docs/rounds/v17/`**：三子代理的源码调研台账（file:line + 公式）、
+  规范、路线、状态。
+
+### Changed
+
+- `Mat` 从 `reed-reduce::linalg` 下沉到 `reed-core::linalg`，打破
+  `reed-reduce` ↔ `reed-distance` 的循环依赖。
+- `Grm`/`Stand`/`Standardized`/`standardize` 迁入 `reed-distance`；
+  `reed-reduce::pca` 改为 re-export，v16 API 不变（PCA 数值不变：
+  HapMap3 λ1 = 26.200944934）。
+
+### Verified
+
+| 矩阵 | 参照 | 结果 |
+|---|---|---|
+| `grm` | plink `--make-rel` | max abs 5e-6 |
+| `king` | plink2 `--make-king` | max abs 5e-7 |
+| `allele-ct` | plink `--distance` | max rel 5e-6 |
+| `phi` | vcftools `--relatedness2` | 915849 对，计数零差异 |
+| `discordance`（count） | bcftools `gtcheck -E 0` | 逐对相同 |
+
+### Known issues
+
+- **`pihat` 未对齐 plink**：plink 用 PLINK 1.07 的 Nei 偏差修正，reed 用
+  理论期望值。输出保留但标记未对齐。
+- `discordance` 的 HWE 列、`--genome` 的 DST/PPC/RATIO 未实现。
+- `ajk` 与 `cov` 未对拍。
+
+## [Unreleased] — doc_v16 CLI 接入：`reed pca`（2026-10-20）
+
+把 `reed-reduce` 接进命令面，新增 `reed pca`。
+
+### Added
+
+- **`reed pca in.vcf.gz --pcs 20 -o out`**：样本关系矩阵（GRM）的主成分。
+  - `--stand binom2|binom`（默认 binom2）、`--missing pairwise|meanimpute`
+    （默认 pairwise，对齐 plink2/GCTA）、`--solver auto|dense|stream`
+    （auto 按内存预算选）、`-o PREFIX` 写 plink 兼容的
+    `PREFIX.eigenvec`/`.eigenval`/`.pve`。
+  - `--samples/-S/--keep/--remove` 样本子集；`--threads`/`--memory` 复用
+    既有预算机制。
+  - 门面新增 `reed::run_pca` / `reed::run_pca_opened` / `PcaRequest` /
+    `PcaReport`（`run_pca_opened` 让 CLI 只开一次输入，stdin 可流式）。
+- **`crates/reed-cli/tests/e2e_pca.rs`**：6 个用例——文件与表头形状、
+  binom/binom2 精确 2 倍、无缺失时两种策略一致、样本子集、5 个用法错
+  （exit 2）、dense 与 stream 一致（rel < 1e-6）。
+
+### Verified
+
+HapMap3（957×14266，k=10）与 plink2 逐位一致：
+
+| stand + missing | reed λ1 | plink2 |
+|---|---|---|
+| binom2 + meanimpute | 26.200944934 | 26.2009 |
+| binom2 + pairwise | 26.280628904 | 26.2806 |
+| binom + meanimpute | 52.401889869 | = binom2 × 2 |
+
+`cargo test --workspace`：59 个测试二进制全绿。
+
+### Not included
+
+`--missing em`、`--use-gl`、`sd/center/none` 标准化、`--window`（Local
+PCA）、`--tw`（Tracy–Widom）、`--indep-pairwise`（上游预处理）。理由见
+`docs/rounds/v16/06-roadmap.md` §P2 与 `docs/spec/cli.md` §11b。
+
+## [Unreleased] — doc_v16 降维族（2026-10-20）
+
+新增 crate `reed-reduce`（零外部依赖，3119 行，29 个单元测试），并完成
+PCA 求解器与降维族的源码级调研。**未接入 CLI**；命令面接入见
+`docs/rounds/v16/06-roadmap.md` P2。
+
+### Added
+
+- **`crates/reed-reduce`**：零依赖的降维原型库。
+  - `pca`：binom2 标准化、GRM（mean-impute / pairwise）、稠密 PCA、
+    scores/loadings。HapMap3（957×14266）上 λ1/2/3 =
+    26.200944934 / 23.394076211 / 6.932494547，与 plink2 exact 逐位一致。
+  - `lanczos`：矩阵-free 块子空间迭代（top-k），与稠密解特征值一致。
+  - `graph`：PCoA、Kernel PCA（linear/RBF/IBS）、Laplacian eigenmaps、
+    Diffusion map、Isomap。
+  - `grm_reduce`：上述五种方法的 GRM 驱动入口（缺失策略在 GRM 构建时
+    确定一次，全部方法继承）。
+  - `umap`：fuzzy simplicial set + SGD，按 umap-learn 0.5.12 逐行实现；
+    `find_ab_params(1.0, 0.1)` = (1.576943618, 0.895060710) 与参考实现
+    差 < 1e-7。
+  - `extra`：t-SNE、NMF、LLE、PPCA-EM（缺失值原生）。
+  - `eig`：稠密对称特征分解（EISPACK `tred2` + `tql2`），以及**部分谱
+    求解器**（Householder 三对角化 + Sturm 二分 + 逆迭代），只提取前 k
+    个特征对。N=4000 时比稠密路径快 2×（170.6 s vs 334 s），λ 逐位一致，
+    残差 < 1e-13。
+- **`docs/rounds/v16/`**：README、01-research（12 条判决 + 产物索引）、
+  02-spec（API 与精度契约）、06-roadmap（P1–P4）、STATUS。
+- **`docs/pca-algorithms.md` §8–§15**：flashpca `stand` 五选项、跨工具
+  对拍、GRM 角色、求解器族谱、速度/精度实测、纯 Rust 实现路线。
+
+### Verified
+
+- 与 numpy `eigh` 相对误差 4.5e-16（机器精度）。
+- 与 plink2 / GCTA / plink 1.9 / flashpca 在同集合同缺失策略下数值一致
+  （2e-6 = 文本位数极限）。
+- 与 sklearn 对拍：PCA 2.91 vs 2.91、KernelPCA 1.80 vs 1.80、
+  Isomap 1.93 vs 1.95、NMF 重构误差 0.1907 vs 0.1905。
+
+### Known limitations
+
+- 块子空间迭代在 HapMap3 上 `max_rel_residual ≈ 1e-2`（特征值已收敛，
+  Ritz 向量残差未达生产级）；稠密路径是精确参照。
+- 稠密路径 O(N³) 单线程（4000×20000 需 334 s），因零依赖约束无 BLAS。
+- UMAP 用精确 kNN、t-SNE 无 Barnes-Hut、Isomap 用 Floyd-Warshall。
+
 ## [Unreleased] — doc_v15 缺陷修复（2026-10-18）
 
 对一份全库评审（6 子代理静态评审 + 逐条实证复核，40 条发现）的修复；
