@@ -15,6 +15,7 @@ tracing-subscriber.workspace = true
 reed.workspace = true
 reed-distance = { path = "../reed-distance" }
 reed-reduce = { path = "../reed-reduce" }
+reed-graph.workspace = true
 
 [[bin]]
 name = "reed"

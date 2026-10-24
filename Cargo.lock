@@ -1514,6 +1514,7 @@ dependencies = [
  "reed-core",
  "reed-engine",
  "reed-filter",
+ "reed-graph",
  "reed-io",
  "reed-reduce",
  "reed-stats",
@@ -1529,6 +1530,7 @@ dependencies = [
  "clap",
  "reed",
  "reed-distance",
+ "reed-graph",
  "reed-reduce",
  "tracing",
  "tracing-subscriber",
@@ -1550,6 +1552,7 @@ dependencies = [
 name = "reed-distance"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "reed-core",
 ]
 
@@ -1576,6 +1579,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "tracing",
+]
+
+[[package]]
+name = "reed-graph"
+version = "0.4.0"
+dependencies = [
+ "reed-core",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

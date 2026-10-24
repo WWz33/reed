@@ -19,6 +19,7 @@ reed-io = { path = "crates/reed-io", version = "0.4.0" }
 reed-engine = { path = "crates/reed-engine", version = "0.4.0" }
 reed-stats = { path = "crates/reed-stats", version = "0.4.0" }
 reed-filter = { path = "crates/reed-filter", version = "0.4.0" }
+reed-graph = { path = "crates/reed-graph" }
 reed = { path = "crates/reed", version = "0.4.0" }
 
 # Transport / engine.

@@ -3,4 +3,5 @@
 
 pub mod harmonic;
 pub mod hwe;
+pub mod r_compat;
 pub mod sum;
