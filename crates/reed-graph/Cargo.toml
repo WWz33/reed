@@ -1,0 +1,14 @@
+[package]
+name = "reed-graph"
+description = "Trees and networks over genetic distance matrices"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+reed-core.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

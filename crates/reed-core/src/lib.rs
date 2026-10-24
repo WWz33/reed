@@ -18,6 +18,7 @@ pub mod group;
 pub mod id;
 pub mod iupac;
 pub mod math;
+pub mod rng;
 pub mod sample;
 pub mod site;
 pub mod tag_table;
@@ -33,5 +34,6 @@ pub use genotype::{
 pub use grid::{BinId, BpWindow, RegionSet, SitesWindow, WindowGrid};
 pub use group::{Group, GroupFileOptions, GroupTable};
 pub use id::{ChunkId, ContigId, GroupId, RecordOrdinal, SampleId, TagId};
+pub use rng::Rng;
 pub use sample::{SampleMask, SampleTable};
 pub use site::{SiteFlags, SiteKey, VariantClass};

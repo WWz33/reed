@@ -45,8 +45,10 @@ pub mod graph;
 pub mod grm_reduce;
 
 pub mod lanczos;
+pub mod lda;
 pub mod pca;
 pub mod umap;
+pub mod xval;
 
 pub use backend::{gram_divide, sym_eig, sym_eig_top_k, Backend, SymEigResult, COMPILED_BACKEND};
 pub use eig::SymEig;
@@ -55,5 +57,7 @@ pub use grm_reduce::{grm_diffusion, grm_distances, grm_isomap, grm_kernel, grm_k
 pub use graph::{diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa, pairwise_distances, Embedding, Kernel};
 pub use reed_core::linalg::Mat;
 pub use lanczos::{lanczos_top_k, LanczosConfig, PartialEig, StreamConfig, StreamEig};
+pub use lda::{fit as fit_lda, Lda, LdaError, LdaProjection};
+pub use xval::{candidate_counts, XvalConfig, XvalError, XvalReport, XvalResult};
 pub use umap::{fuzzy_simplicial_set, fuzzy_simplicial_set_from_distances, umap, umap_from_distances, UmapConfig};
 pub use pca::{pca_dense, pca_dense_pairwise, pca_dense_pairwise_with, pca_dense_with, pca_top_k, pca_top_k_with, standardize, standardize_binom2, Grm, Pca, Stand, Standardized};

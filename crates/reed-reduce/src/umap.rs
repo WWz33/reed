@@ -55,25 +55,10 @@ impl Default for UmapConfig {
     }
 }
 
-struct Rng(u64);
-
-impl Rng {
-    fn new(seed: u64) -> Self {
-        Self(seed.wrapping_mul(2685821657736338717).wrapping_add(1))
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    fn next_f64(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
-    }
-    fn below(&mut self, n: usize) -> usize {
-        (self.next_u64() % n as u64) as usize
-    }
-}
+// The generator is shared with every other randomised procedure in reed
+// (`reed_core::rng`); a private xorshift here would be a second, weaker
+// source of randomness with a modulo bias in `below`.
+use reed_core::rng::Rng;
 
 /// `smooth_knn_dist` (umap_.py:153): returns (sigmas, rhos).
 fn smooth_knn_dist(knn_dists: &Mat, k: f64, local_connectivity: f64) -> (Vec<f64>, Vec<f64>) {
@@ -389,7 +374,7 @@ pub fn umap_from_distances(d: &Mat, cfg: &UmapConfig) -> Mat {
     let n = d.rows;
     let g = fuzzy_simplicial_set_from_distances(d, cfg);
     let (a, b) = find_ab_params(cfg.spread, cfg.min_dist);
-    let mut rng = Rng::new(cfg.seed);
+    let mut rng = Rng::from_seed(cfg.seed);
     let mut emb = spectral_init(&g.weights, cfg.n_components, &mut rng);
 
     // Edge list from the fuzzy graph (both directions).
