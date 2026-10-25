@@ -83,7 +83,22 @@ pub fn eval_head(
             HeadRule::MinAltAlleles(min) => reed_io::vcf::site::count_alts(alts) >= *min,
             HeadRule::MaxAltAlleles(max) => reed_io::vcf::site::count_alts(alts) <= *max,
             HeadRule::BiallelicGate => !alts.contains(&b','),
-            HeadRule::RequireFilter(set) => set.iter().any(|s| s == line.filter_text()),
+            // bcftools `-f` matches any `;`-separated value of the column,
+            // not the whole text (`bcftools filter` routinely writes
+            // `LowQual;LowMQ`; doc_v20 R1). A listed `.` means "unfiltered":
+            // htslib maps `.` to filter id -1, which only matches a column
+            // with no filter ids at all, so `LowQual;.` must NOT pass `-f .`
+            // (verified against bcftools 1.24; v20 review).
+            HeadRule::RequireFilter(set) => {
+                let column = line.filter_text();
+                set.iter().any(|s| {
+                    if s.as_slice() == b"." {
+                        column == b"."
+                    } else {
+                        column.split(|&b| b == b';').any(|value| value == s.as_slice())
+                    }
+                })
+            }
             // The INFO preference holds only while AC/AN describe the
             // cohort being decided on (doc_v12 D12-6): the compile drops
             // these rules when the sample set changes, so a rule that is
@@ -101,7 +116,12 @@ pub fn eval_head(
             }
             HeadRule::Info(rule) => eval_info(line, rule, scratch),
             HeadRule::Expr { include, expr, .. } => {
-                let mut values = crate::expr::SiteValues::from_line(line, pos1, None);
+                // Head rules decide on the input cohort, where the record's
+                // INFO is trusted: the genotype-dependent built-ins are
+                // rejected at compile time and the `-q/-Q` INFO
+                // short-circuits are dropped when the cohort changes
+                // (doc_v20 S58), so `true` is exact here.
+                let mut values = crate::expr::SiteValues::from_line(line, pos1, None, true);
                 values.info_index = Some(&scratch.index);
                 values.tags = Some(tags);
                 let truth = crate::expr::eval(expr, &values);
@@ -251,4 +271,63 @@ fn parse_number(value: &[u8]) -> Option<f64> {
 /// `Locus` (and its `String`) is built only when an error carries it (A6-11).
 fn locus<'a>(line: &'a LineRef<'_>, pos1: u64) -> (&'a [u8], u64) {
     (line.chrom(), pos1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One synthetic record with the given FILTER column against a single
+    /// `RequireFilter` rule carrying `list` (empty tags: no INFO rule runs,
+    /// so the table is never read).
+    fn require_filter_passes(filter_column: &str, list: &[&str]) -> bool {
+        let text = format!("chr1\t100\t.\tA\tG\t50.0\t{filter_column}\t.\tGT\t0/0\t0/1");
+        let line = LineRef::parse(text.as_bytes()).expect("invariant: 10 columns");
+        let rules = vec![HeadRule::RequireFilter(
+            list.iter().map(|s| s.as_bytes().to_vec()).collect(),
+        )];
+        let mut hits = [0];
+        let mut scratch = HeadScratch::new();
+        eval_head(
+            &line,
+            100,
+            &rules,
+            &mut hits,
+            &mut scratch,
+            &reed_core::tag_table::TagTable::new(),
+        )
+    }
+
+    /// R1 (doc_v20): bcftools `-f` keeps a record when the FILTER column
+    /// *contains* any listed value, not when the whole column equals one
+    /// entry — `bcftools filter` routinely writes `LowQual;LowMQ`, and
+    /// `-f LowQual` silently dropped such records.
+    #[test]
+    fn r1_filter_list_matches_any_semicolon_separated_value() {
+        // The reported bug: a two-value column dropped by a listed member.
+        assert!(require_filter_passes("LowQual;LowMQ", &["LowQual"]));
+        // The second column value and a non-first listed entry both count.
+        assert!(require_filter_passes("LowQual;LowMQ", &["Other", "LowMQ"]));
+        assert!(require_filter_passes("A;B;C", &["B"]));
+        // Behaviors that were right before the fix and must stay so:
+        // a single-value column still matches exactly.
+        assert!(require_filter_passes("LowQual", &["LowQual"]));
+        // a listed "." matches the unfiltered "." column.
+        assert!(require_filter_passes(".", &["."]));
+        // PASS and "." never match a listed name, nor names PASS, unless
+        // literally listed.
+        assert!(!require_filter_passes("PASS", &["LowQual"]));
+        assert!(!require_filter_passes("LowQual", &["PASS"]));
+        assert!(!require_filter_passes("LowQual;LowMQ", &["PASS", "."]));
+        assert!(require_filter_passes("PASS", &["PASS", "."]));
+        // a listed name the column does not contain still drops the record.
+        assert!(!require_filter_passes("LowQual;LowMQ", &["Other"]));
+        // doc_v20 review of R1: a listed "." matches only a column that is
+        // exactly ".", never a "." element inside a multi-value column —
+        // bcftools maps "." to filter id -1, which matches only unfiltered
+        // columns (verified with bcftools 1.24).
+        assert!(!require_filter_passes("LowQual;.", &["."]));
+        assert!(!require_filter_passes("PASS;.", &["."]));
+        assert!(require_filter_passes(".", &["LowQual", "."]));
+    }
 }

@@ -13,13 +13,16 @@
 //! A window yields a value only when all three pairwise Fst denominators are
 //! non-zero.
 //!
-//! Site set: a site enters the estimator only when **all three** groups have
-//! at least one called allele (complete intersection — the three branch site
-//! sets stay symmetric over the same sites). This differs from scikit-allel's
-//! `pbs()`, which runs each pairwise `hudson_fst` independently (per-pair site
-//! sets): under missing data, `fst_ab` here can differ from a standalone
-//! `fst(A, B)` call on the same window (documented divergence; an
-//! Intersection/PerPair switch is a v0.3 question — DESIGN §11).
+//! Site set: each pair's Hudson sums accumulate **independently per pair**
+//! (scikit-allel `pbs` semantics): a site enters the A/B branch whenever A
+//! and B each have ≥1 called allele, regardless of group C — `fst_ab` equals
+//! a standalone `fst(A, B)` call on the same window, and a fully-uncalled
+//! group only flags the site `n_skipped` while the two pairs not involving
+//! it keep accumulating (04-algorithms.md §1; doc_v15 D15-12). An earlier
+//! revision of this doc claimed a three-way intersection over the sites;
+//! the code has been per-pair since it was written — doc corrected, no
+//! behavior change (doc_v20 S79; the contract test
+//! `s79_pbs_accumulates_per_pair_not_intersection` pins the rule).
 //!
 //! The pooled `PairCounts` audit trail covers **every** site, skipped ones
 //! included, with missing pairs fully accounted (fst.rs-aligned; §12.3-1).
@@ -80,9 +83,11 @@ pub struct PbsResult {
     pub contig: ContigId,
     pub start: u64,
     pub end: u64,
-    /// Sites where all three groups have at least one called allele.
+    /// Every site in the window (the census; per-pair site sets, so a site
+    /// where one group is uncalled still feeds the other two pairs).
     pub n_sites: u64,
-    /// Sites skipped for lack of coverage in at least one group.
+    /// Sites where at least one group is fully uncalled (flag only — the
+    /// pairs not involving that group still accumulate; doc_v20 S79).
     pub n_skipped: u64,
     /// Window Hudson Fst per pair, clipped to `[0, 0.99999]`.
     pub fst_ab: Option<f64>,

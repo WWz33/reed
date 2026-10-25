@@ -180,13 +180,15 @@ impl EmitJob {
             &mut scratch.edit_buf,
         );
         // Byte-boundary cutting, records may span blocks (as in
-        // FilterJob::push_line).
+        // FilterJob::push_line). (doc_v20 S42) the indexed span follows
+        // INFO/END for symbolic ALTs, so `-r` queries on the filtered
+        // output find spanning deletions.
         let key = IndexKey {
             contig: site
                 .contig
                 .expect("invariant: parse_declared resolved the contig"),
             start1: pos1,
-            ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
+            ref_len: u32::try_from(site.indexed_span_len()).unwrap_or(1).max(1),
         };
         scratch
             .writer

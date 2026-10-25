@@ -11,6 +11,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use reed_io::IoError;
 use reed_io::chunk::plain::PlainChunkSource;
@@ -192,6 +193,55 @@ pub struct StdinSpill {
     path: PathBuf,
 }
 
+/// Process-wide spill-name counter (doc_v20 SEC-1): one sequence per
+/// process, starting at 0, so spill names are predictable for operators.
+static SPILL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// The candidate spill path `counter` generations on in `dir`
+/// (`reed-stdin-{pid}-{counter}.vcf`, doc_v20 SEC-1).
+fn spill_path(dir: &Path, counter: u64) -> PathBuf {
+    dir.join(format!(
+        "reed-stdin-{}-{}.vcf",
+        std::process::id(),
+        counter
+    ))
+}
+
+/// How many candidate names one spill may burn through before giving up
+/// (doc_v20 SEC-1).
+const SPILL_ATTEMPTS: usize = 16;
+
+/// Creates the next spill file in `dir`, exclusively (doc_v20 SEC-1).
+///
+/// The name stays predictable (`pid` + process counter) so operators can
+/// recognise spill files, but creation uses O_EXCL (`create_new`), which
+/// fails on an existing file *and* on a symlink — no follow, no truncate.
+/// Exclusivity alone defeats a pre-planted name on a shared host; random
+/// names are not needed. On `AlreadyExists` the counter is bumped and the
+/// next candidate tried, up to [`SPILL_ATTEMPTS`] names in all.
+fn create_spill_file(dir: &Path) -> std::io::Result<(std::fs::File, PathBuf)> {
+    for _ in 0..SPILL_ATTEMPTS {
+        let path = spill_path(dir, SPILL_COUNTER.fetch_add(1, Ordering::Relaxed));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((file, path)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!(
+            "cannot create a spill file in {}: all {} candidate names are taken",
+            dir.display(),
+            SPILL_ATTEMPTS
+        ),
+    ))
+}
+
 impl StdinSpill {
     /// Spills stdin into `tmp_dir` (default: the platform temp directory).
     ///
@@ -199,15 +249,8 @@ impl StdinSpill {
     ///
     /// I/O failures creating or filling the temporary file.
     pub fn new(tmp_dir: Option<&Path>) -> Result<Self, IoError> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let dir = tmp_dir.map_or_else(std::env::temp_dir, Path::to_path_buf);
-        let path = dir.join(format!(
-            "reed-stdin-{}-{}.vcf",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut out = std::fs::File::create(&path)?;
+        let (mut out, path) = create_spill_file(&dir)?;
         std::io::copy(&mut std::io::stdin(), &mut out)?;
         out.sync_all()?;
         Ok(Self { path })
@@ -222,6 +265,10 @@ impl StdinSpill {
 
 impl Drop for StdinSpill {
     fn drop(&mut self) {
+        // doc_v20 SEC-1: `self.path` is the name `create_new` made ours.
+        // `remove_file` is unlink(2), which never follows symlinks — even if
+        // the name were swapped for a link after creation, this removes the
+        // link entry, not a victim target.
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -346,4 +393,91 @@ fn warn_serial_gzip() {
         "the input is plain gzip, not BGZF; decompression is serial \
          (repack with `bgzip` for parallel reads)"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SPILL_COUNTER, create_spill_file, spill_path};
+    use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
+
+    /// The sec1 tests predict the next [`SPILL_COUNTER`] value, so they must
+    /// not allocate concurrently (cargo test runs tests on parallel threads).
+    static SEC1_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A private scratch dir, mirroring the stdin_streaming.rs tests' style.
+    fn sec1_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("reed-sec1-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: scratch dir");
+        dir
+    }
+
+    /// doc_v20 SEC-1: the spill name is predictable (`temp_dir` + pid +
+    /// process counter), so on a shared host another user can pre-create a
+    /// file at the exact path the spill will use. The spill must refuse the
+    /// name and leave the victim's bytes untouched (it used to truncate).
+    #[test]
+    fn sec1_precreated_file_is_not_truncated() {
+        let _serialized = SEC1_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = sec1_dir("file");
+        let victim = spill_path(&dir, SPILL_COUNTER.load(Ordering::Relaxed));
+        std::fs::write(&victim, b"victim bytes").expect("invariant: plant victim");
+        let (_spill, path) = create_spill_file(&dir).expect("invariant: create spill");
+        assert_eq!(
+            std::fs::read(&victim).expect("invariant: re-read victim"),
+            b"victim bytes".as_slice(),
+            "the pre-created victim must be untouched"
+        );
+        assert_ne!(
+            path, victim,
+            "the spill must refuse the pre-created name and pick another"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// doc_v20 SEC-1: same attack with a symlink planted at the predicted
+    /// path, pointing at a victim file elsewhere in the dir. The spill must
+    /// not follow the link; the victim's bytes must survive.
+    #[cfg(unix)]
+    #[test]
+    fn sec1_precreated_symlink_is_not_followed() {
+        let _serialized = SEC1_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = sec1_dir("symlink");
+        let victim = dir.join("victim.vcf");
+        std::fs::write(&victim, b"victim bytes").expect("invariant: plant victim");
+        let predicted = spill_path(&dir, SPILL_COUNTER.load(Ordering::Relaxed));
+        std::os::unix::fs::symlink(&victim, &predicted).expect("invariant: plant symlink");
+        let (_spill, path) = create_spill_file(&dir).expect("invariant: create spill");
+        assert_eq!(
+            std::fs::read(&victim).expect("invariant: re-read victim"),
+            b"victim bytes".as_slice(),
+            "the symlink's target must be untouched"
+        );
+        assert_ne!(path, predicted, "the spill must not write through the link");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// doc_v20 SEC-1: refusals retry with bumped counters, bounded — when
+    /// every candidate name is taken the spill is an error, not a clobber,
+    /// and none of the planted files was touched.
+    #[test]
+    fn sec1_exhausted_candidates_error_without_clobbering() {
+        let _serialized = SEC1_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = sec1_dir("exhausted");
+        let first = SPILL_COUNTER.load(Ordering::Relaxed);
+        for n in first..first + super::SPILL_ATTEMPTS as u64 {
+            std::fs::write(spill_path(&dir, n), b"victim").expect("invariant: plant candidate");
+        }
+        let err = create_spill_file(&dir).expect_err("every candidate name is taken");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        for n in first..first + super::SPILL_ATTEMPTS as u64 {
+            assert_eq!(
+                std::fs::read(spill_path(&dir, n)).expect("invariant: re-read candidate"),
+                b"victim".as_slice(),
+                "candidate {n} must not have been touched"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

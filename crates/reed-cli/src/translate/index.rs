@@ -42,6 +42,10 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
         Some(p) => p.to_path_buf(),
         None => WriteIndex::path_for(flavor, Path::new(&input)),
     };
+    // (doc_v20 R5) refuse `-o` == input: with `-f` the index write used to
+    // replace the VCF it indexed, reporting success. Checked before the
+    // exists gate so `-f` is never offered as the way past it.
+    super::common::refuse_output_eq_input(Some(Path::new(&input)), Some(index_path.as_path()))?;
     if index_path.exists() && !force {
         return Err(reed::Error::usage(format!(
             "{}: index exists (use -f/--force to overwrite)",

@@ -84,12 +84,18 @@ mod rename;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).
+mod dapc;
 mod genotype;
 mod pca;
 
 pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
 pub use crate::pca::{read_genotype_matrix, run_pca, run_pca_opened, PcaReport, PcaRequest};
+pub use crate::dapc::{
+    run_dapc, run_dapc_opened, DapcReport, DapcRequest, XvalOutcome, XvalRequest,
+};
+/// Dense row-major matrix, shared with `reed-reduce` and `reed-graph`.
+pub use reed_core::linalg::Mat;
 pub use crate::index::{IndexOutcome, run_index};
 pub use crate::input::OpenedInput;
 pub use crate::stats::{

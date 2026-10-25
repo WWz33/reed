@@ -54,7 +54,8 @@ impl Stand {
 #[derive(Clone, Debug)]
 pub struct Standardized {
     /// n samples x m sites; missing entries are 0 (the column mean after
-    /// centring), i.e. mean imputation.
+    /// centring), i.e. mean imputation. Monomorphic columns are 0 too (the
+    /// centred value of a constant column, doc_v20 R9).
     pub w: Mat,
     /// Per-site mean dosage (`2p`).
     pub mean: Vec<f64>,
@@ -99,9 +100,13 @@ impl Standardized {
 
 /// Standardizes `x` (samples x sites, dosages in {0,1,2}, `NaN` missing).
 ///
-/// Degenerate columns (`sd <= 1e-9`, i.e. monomorphic) get the column mean as
-/// their value, matching flashpca's matrix path. GCTA and plink2 write 0
-/// there instead; doc_v16 §3.1 records that divergence.
+/// Degenerate columns (`sd <= 1e-9`, i.e. monomorphic REF or ALT) get 0, the
+/// centred value — the GCTA/plink2 convention (doc_v20 R9). flashpca's
+/// matrix path fills the raw column mean instead; for a fixed-ALT column
+/// (mean dosage 2) that puts 2 in every cell and adds `4k/m` to every GRM
+/// entry plus a rank-1 constant direction to PCA, so reed diverges from
+/// flashpca there and follows plink2. For fixed-REF columns the two coincide
+/// (the mean is already 0); doc_v16 §3.1 records the history.
 pub fn standardize(x: &Mat, stand: Stand) -> Standardized {
     let n = x.rows;
     let m = x.cols;
@@ -139,7 +144,10 @@ pub fn standardize(x: &Mat, stand: Stand) -> Standardized {
             } else if s > 1e-9 {
                 (v - mu) / s
             } else {
-                mu
+                // Degenerate column: every called dosage equals `mu`, so the
+                // centred value is exactly 0 (doc_v20 R9). Writing `mu` here
+                // instead inflated the GRM by `4k/m` per fixed-ALT column.
+                0.0
             };
             w.set(i, j, z);
         }

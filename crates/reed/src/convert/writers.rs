@@ -328,14 +328,50 @@ pub(crate) fn write_msa(
 
             let mut cursor = start0;
             let mut pending: Option<u64> = None;
+            let mut last_pos: Option<u64> = None;
             for blob in &blobs {
                 let mut reader = MsaFrameReader::open(blob, names.len())?;
                 while let Some(pos0) = reader.next_frame_for_sample(sample, &mut frame)? {
+                    // doc_v20 review of R12: the sortedness check must see
+                    // every frame of the contig, including those outside the
+                    // emitted window — otherwise a regression before
+                    // `start0` passes and the contract depends on which
+                    // region was requested.
+                    if let Some(prev) = last_pos
+                        && pos0 < prev
+                    {
+                        return Err(EngineError::job(format!(
+                            "contig {} site {} follows {}: input is not contig-sorted",
+                            String::from_utf8_lossy(&output.contig),
+                            pos0 + 1,
+                            prev + 1
+                        )));
+                    }
+                    last_pos = Some(pos0);
                     if pos0 < start0 {
                         continue;
                     }
                     if pos0 >= end0 {
                         break;
+                    }
+                    // doc_v20 R12: frames must strictly ascend per contig
+                    // across blobs (a revisited contig — chr1…, chr2…, chr1…
+                    // — arrives as a later blob with lower positions). The
+                    // old walk clamped the cursor and re-emitted the region,
+                    // silently misaligning the FASTA. Only an exact duplicate
+                    // of the pending site keeps the last-record-wins rule;
+                    // a position below the newest seen site — pending or
+                    // already flushed — is unsorted input and refuses the
+                    // run, the same contract as the stats sink.
+                    if let Some(prev) = pending
+                        && pos0 < prev
+                    {
+                        return Err(EngineError::job(format!(
+                            "contig {} site {} follows {}: input is not contig-sorted",
+                            String::from_utf8_lossy(&output.contig),
+                            pos0 + 1,
+                            prev + 1
+                        )));
                     }
                     if pending == Some(pos0) {
                         // Duplicate positions: the last record wins
@@ -370,12 +406,139 @@ fn flush_msa_site(
     chosen: &mut Vec<u8>,
 ) -> Result<(), EngineError> {
     if let Some(pos0) = pending {
-        let from = (*cursor).min(pos0);
-        out.write_all(&sequence[from as usize..pos0 as usize])
+        // doc_v20 review of R12: the regressing-frame guard makes
+        // `cursor <= pos0` an invariant, so the old `min` clamp was dead
+        // code that would hide a future violation.
+        debug_assert!(*cursor <= pos0, "MSA cursor {cursor} ran past site {pos0}");
+        out.write_all(&sequence[*cursor as usize..pos0 as usize])
             .map_err(EngineError::Io)?;
         out.write_all(chosen).map_err(EngineError::Io)?;
         *cursor = pos0 + 1;
         chosen.clear();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use super::super::job::{MsaOutput, RowsBlob, SpilledMsa};
+
+    /// One frame for a single sample, one byte wide (the on-disk layout the
+    /// sink writes: `pos0: u64 LE || width: u32 LE || vals`).
+    fn frame(pos0: u64, val: u8) -> RowsBlob {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pos0.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.push(val);
+        RowsBlob::Memory(bytes)
+    }
+
+    /// The `write_msa` arguments for one c1 output over a 20 bp reference.
+    struct MsaCase {
+        reference: HashMap<Vec<u8>, Arc<[u8]>>,
+        outputs: Vec<MsaOutput>,
+        names: Vec<String>,
+        partial: SpilledMsa,
+    }
+
+    fn msa_case(runs: Vec<(Vec<u8>, RowsBlob)>) -> MsaCase {
+        let mut reference = HashMap::new();
+        reference.insert(b"c1".to_vec(), Arc::from(&b"AAAAAAAAAAAAAAAAAAAA"[..]));
+        MsaCase {
+            reference,
+            outputs: vec![MsaOutput {
+                contig: b"c1".to_vec(),
+                start1: 1,
+                end1: 20,
+                explicit: false,
+            }],
+            names: vec!["s0".to_string()],
+            partial: SpilledMsa { runs },
+        }
+    }
+
+    /// doc_v20 R12: a revisited contig (chr1…, chr2…, chr1…) arrives as a
+    /// second run blob with regressing positions. The walk used to clamp the
+    /// cursor (`from = cursor.min(pos0)`) and re-emit the region, silently
+    /// writing a misaligned FASTA; it must refuse the frames instead — the
+    /// same "input is not contig-sorted" contract the stats sink enforces.
+    #[test]
+    fn r12_write_msa_refuses_regressing_frames() {
+        let d = std::env::temp_dir().join(format!("reed-r12-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("invariant: temp dir");
+        let case = msa_case(vec![
+            (b"c1".to_vec(), frame(5, b'G')),
+            (b"c1".to_vec(), frame(10, b'G')),
+            (b"c1".to_vec(), frame(3, b'T')), // revisited contig
+        ]);
+        let err = write_msa(
+            &d.join("msa"),
+            &case.reference,
+            &case.outputs,
+            &case.names,
+            Some(&case.partial),
+        )
+        .expect_err("regressing frames must be refused");
+        assert!(err.to_string().contains("not contig-sorted"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// doc_v20 review of R12: a regression that happens before the emitted
+    /// window must still refuse — the contract is "unsorted input is an
+    /// error", not "unsorted inside the requested region".
+    #[test]
+    fn r12_regression_outside_the_window_is_still_refused() {
+        let d = std::env::temp_dir().join(format!("reed-r12-win-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("invariant: temp dir");
+        let mut case = msa_case(vec![
+            (b"c1".to_vec(), frame(5, b'G')),
+            (b"c1".to_vec(), frame(15, b'G')),
+            (b"c1".to_vec(), frame(7, b'T')), // regression below start0
+        ]);
+        // Emit only 11..20, so both 5 and 7 sit outside the window and the
+        // regression is invisible to the old in-window check.
+        case.outputs[0].start1 = 11;
+        let err = write_msa(
+            &d.join("msa"),
+            &case.reference,
+            &case.outputs,
+            &case.names,
+            Some(&case.partial),
+        )
+        .expect_err("a regression outside the window must still be refused");
+        assert!(err.to_string().contains("not contig-sorted"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The legal seam: a duplicate position across blob boundaries keeps the
+    /// last-record-wins rule, and strictly ascending frames across blobs are
+    /// fine (sorted multi-chunk input produces one blob per chunk).
+    #[test]
+    fn r12_write_msa_keeps_seam_duplicates_and_ascending_blobs() {
+        let d = std::env::temp_dir().join(format!("reed-r12-legal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("invariant: temp dir");
+        let case = msa_case(vec![
+            (b"c1".to_vec(), frame(5, b'G')),
+            (b"c1".to_vec(), frame(10, b'G')),
+            (b"c1".to_vec(), frame(10, b'C')), // seam duplicate: last wins
+            (b"c1".to_vec(), frame(15, b'T')),
+        ]);
+        let files = write_msa(
+            &d.join("msa"),
+            &case.reference,
+            &case.outputs,
+            &case.names,
+            Some(&case.partial),
+        )
+        .expect("sorted frames across blobs are legal");
+        let text = std::fs::read_to_string(&files[0]).expect("invariant: fasta");
+        let seq: Vec<&str> = text.lines().filter(|l| !l.starts_with('>')).collect();
+        assert_eq!(seq, ["AAAAAGAAAACAAAATAAAA"], "one base per site: {text}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

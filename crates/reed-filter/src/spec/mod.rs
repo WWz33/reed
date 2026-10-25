@@ -164,7 +164,9 @@ pub struct SiteRules {
     /// `filters_set_nalt`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_alt_alleles: Option<u32>,
-    /// FILTER membership (`.` never passes).
+    /// FILTER membership: a record passes when any `;`-separated value of
+    /// its FILTER column equals any listed entry. A listed `.` matches only
+    /// an unfiltered (`.`-only) column, as bcftools `-f` does (doc_v20 R1).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub require_filter: Vec<String>,
     /// QUAL lower bound.

@@ -570,6 +570,24 @@ mod tests {
     }
 
     #[test]
+    fn r2_empty_format_column_does_not_panic() {
+        // doc_v20 R2: a fresh layout cache seeds its last-hit entry with
+        // `(empty, usize::MAX)`, so a record with an *empty* FORMAT column
+        // matched the sentinel and `get(usize::MAX)` panicked the scanner.
+        // The empty FORMAT interns like any GT-less layout: every sample
+        // decodes as missing, `has_gt` is false, and the cached index stays
+        // valid on a repeat of the same (empty) FORMAT.
+        let mut scanner = GenotypeScanner::new(1, &[b"DP"], &[], permissive());
+        let text = b"c\t1\t.\tA\tG\t.\tPASS\t.\t\t0/0\n";
+        let (out, _) = scan(&mut scanner, text);
+        assert!(!out.has_gt);
+        assert!(out.codes.iter().all(|c| c.is_fully_missing()));
+        assert_eq!(out.int_columns[0], vec![INT_MISSING]);
+        let (out, _) = scan(&mut scanner, text);
+        assert!(!out.has_gt && out.codes[0].is_fully_missing());
+    }
+
+    #[test]
     fn column_count_mismatch_is_an_error() {
         let mut scanner = GenotypeScanner::new(3, &[], &[], permissive());
         let lr = line(b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t0/0\n");

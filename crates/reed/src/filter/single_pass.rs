@@ -357,7 +357,11 @@ impl FilterJob {
                 .contig
                 .expect("invariant: parse_declared resolved the contig"),
             start1: pos1,
-            ref_len: u32::try_from(site.reference.len()).unwrap_or(1).max(1),
+            // doc_v20 review of S42: the ordinary single-pass writer was the
+            // one path still using the REF length, so `reed filter -W`
+            // without --mind wrote rlen=1 for symbolic deletions while the
+            // sketch writer and `reed index` used END.
+            ref_len: u32::try_from(site.indexed_span_len()).unwrap_or(1).max(1),
         };
         // Native BCF output: encode from the source record with the edit
         // applied in the same walk (no edited-text round-trip).

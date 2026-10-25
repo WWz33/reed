@@ -73,7 +73,17 @@ pub fn render_site_part(
     let contig_name = dict
         .contig(chrom)
         .ok_or_else(|| malformed("BCF contig index is not in the header dictionary"))?;
-    let pos1 = u64::try_from(pos0).unwrap_or(0) + 1;
+    // (doc_v20 S43, corrected in review) pos0 == -1 is htslib's telomere
+    // sentinel and renders as POS 0 (vcf.c:1649-1650); below -1 is malformed.
+    // The first version turned both into an error, rejecting BCFs bcftools
+    // writes.
+    let pos1 = if pos0 == -1 {
+        0
+    } else {
+        u64::try_from(pos0)
+            .map_err(|_| bad((contig_name, 0), "BCF position is below the telomere sentinel (-1)"))?
+            + 1
+    };
     // The error locus stays borrowed (A6-11): the tuple's `LocusSource` impl
     // builds a `Locus` only when an error actually carries it.
     let locus = (contig_name, pos1);
@@ -566,6 +576,42 @@ fn push_i64(out: &mut Vec<u8>, v: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bcf::BcfDict;
+
+    /// doc_v20 S43: BCF POS is a signed 32-bit 0-based field, so a negative
+    /// pos0 in malformed file bytes must error instead of rendering POS=1
+    /// (the `unwrap_or(0) + 1` used to swallow the sign; htslib rejects the
+    /// record).
+    #[test]
+    fn s43_render_rejects_negative_pos0() {
+        let header_text = "##fileformat=VCFv4.2\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header: noodles::vcf::Header = header_text.parse().expect("invariant: header");
+        let dict_text = crate::bcf::bcf_header_text(&header).expect("invariant: bcf header text");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom = Chr01 (tid 0)
+        shared.extend_from_slice(&(-5_i32).to_le_bytes()); // below the telomere sentinel
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&FLOAT_MISSING.to_le_bytes()); // qual = .
+        shared.extend_from_slice(&(1_u32 << 16).to_le_bytes()); // 1 allele, 0 INFO
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // 0 FORMAT, 0 samples
+        shared.extend_from_slice(&[0x07]); // ID: empty char vector
+        shared.extend_from_slice(&[0x17, b'A']); // REF "A"
+        shared.extend_from_slice(&[0x01]); // FILTER: count 0 (".")
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &[],
+        };
+        let mut out = Vec::new();
+        let err = render_site_part(&rec, &dict, &mut out)
+            .expect_err("a pos0 below -1 must be an error");
+        assert!(
+            err.to_string().contains("telomere sentinel"),
+            "{err}"
+        );
+    }
 
     /// htslib `bcf_format_gt_v2` (vcf.c:6457-6518): the first allele's phasing
     /// renders as a prefix only when inference would otherwise get it wrong

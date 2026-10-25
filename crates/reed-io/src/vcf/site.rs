@@ -171,6 +171,46 @@ impl<'a> SiteView<'a> {
             .and_then(|(_, value)| value)
     }
 
+    /// The record's indexed span length ([`indexed_span_len`], doc_v20 S42).
+    #[must_use]
+    pub fn indexed_span_len(&self) -> u64 {
+        indexed_span_len(self.pos1, self.reference, self.alts, self.info)
+    }
+}
+
+/// The length a record's indexed span covers (doc_v20 S42): `END − POS + 1`
+/// when INFO/END is an integer beyond POS, else the REF length.
+///
+/// This is htslib's rule (`get_rlen` in vcf.c applies END regardless of the
+/// ALT shape: `if (endinfo && endinfo->vptr) end = endinfo->v1.i; ... if
+/// ((!svleninfo || !len) && end) len = end - v->pos - 1`). Verified against
+/// bcftools 1.24: a plain `A G ... END=30000` record and a gVCF reference
+/// block (`ALT=.`) are both indexed out to END, and a multi-ALT list whose
+/// later ALT is symbolic extends too. The first version of this fix gated on
+/// a `<`-prefixed first ALT, which was narrower than htslib and missed gVCF
+/// reference blocks (v20 review).
+///
+/// Records without a usable END keep the REF length, which is what bcftools
+/// does for ordinary SNPs and indels.
+#[must_use]
+pub fn indexed_span_len(pos1: u64, reference: &[u8], _alts: &[u8], info: &[u8]) -> u64 {
+    let ref_len = u64::try_from(reference.len()).unwrap_or(u64::MAX);
+    if let Some(end1) = info_end_pos1(info)
+        && end1 > pos1
+    {
+        return end1 - pos1 + 1;
+    }
+    ref_len
+}
+
+/// INFO/END as a 1-based position, when the column carries one that parses
+/// as a positive integer.
+fn info_end_pos1(info: &[u8]) -> Option<u64> {
+    let end = info_fragments(info)
+        .find(|(key, _)| *key == b"END")
+        .and_then(|(_, value)| value)
+        .and_then(crate::vcf::info::parse_info_int)?;
+    u64::try_from(end).ok()
 }
 
 #[cfg(test)]
@@ -226,5 +266,131 @@ mod tests {
     fn bad_pos_is_an_error() {
         let lr = line(b"chr1\tX\t.\tC\tT\t.\t.\t.\tGT\t0/0\n");
         assert!(SiteView::parse(&lr).is_err());
+    }
+
+    /// doc_v20 S42: the indexed span is the REF length, except for a
+    /// symbolic ALT with an integer INFO/END beyond POS (END − POS + 1,
+    /// htslib's r_len for symbolic records).
+    #[test]
+    fn s42_indexed_span_len_uses_end_for_symbolic_alts() {
+        struct Case {
+            pos1: u64,
+            reference: &'static [u8],
+            alts: &'static [u8],
+            info: &'static [u8],
+            want: u64,
+        }
+        let cases = [
+            // Symbolic with END: the span runs to END.
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b"END=500",
+                want: 401,
+            },
+            Case {
+                pos1: 1,
+                reference: b"A",
+                alts: b"<DUP>",
+                info: b"DP=9;END=500",
+                want: 500,
+            },
+            // htslib applies END regardless of the ALT shape (v20 review):
+            // a plain SNV carrying END, a gVCF reference block (ALT=.), and
+            // a multi-ALT list whose later ALT is symbolic all extend.
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"G",
+                info: b"END=500",
+                want: 401,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b".",
+                info: b"END=500",
+                want: 401,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"G,<DEL>",
+                info: b"END=500",
+                want: 401,
+            },
+            // Without END the REF length is used.
+            Case {
+                pos1: 100,
+                reference: b"ACGT",
+                alts: b"G",
+                info: b".",
+                want: 4,
+            },
+            // END ≤ POS, absent, `.`, or non-integer falls back.
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b"END=100",
+                want: 1,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b"END=50",
+                want: 1,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b".",
+                want: 1,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b"END=.",
+                want: 1,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b"END=x",
+                want: 1,
+            },
+            Case {
+                pos1: 100,
+                reference: b"A",
+                alts: b"<DEL>",
+                info: b"SOME",
+                want: 1,
+            },
+        ];
+        for Case {
+            pos1,
+            reference,
+            alts,
+            info,
+            want,
+        } in cases
+        {
+            assert_eq!(
+                indexed_span_len(pos1, reference, alts, info),
+                want,
+                "alts {} info {}",
+                String::from_utf8_lossy(alts),
+                String::from_utf8_lossy(info)
+            );
+        }
+        // The SiteView method agrees with the free function.
+        let lr = line(b"chr1\t100\t.\tA\t<DEL>\t50\tPASS\tEND=500\tGT\t0/1\n");
+        let site = SiteView::parse(&lr).expect("invariant: well-formed");
+        assert_eq!(site.indexed_span_len(), 401);
     }
 }

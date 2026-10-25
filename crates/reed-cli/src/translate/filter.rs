@@ -362,7 +362,10 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     let (output, compress_level, output_compressed) = match output_type.as_deref() {
         None => (out.as_deref().and_then(crate::units::output_path), *compress_level, None),
         Some(spec) => {
-            let (kind, level) = spec.split_at(1);
+            let (kind, level) = super::common::split_output_type(
+                spec,
+                "v, z, b or u with an optional 1-9 level, e.g. z6",
+            )?;
             let level = if level.is_empty() {
                 *compress_level
             } else {
@@ -386,6 +389,10 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
             }
         }
     };
+    let input_file = input_path(input);
+    // (doc_v20 R5) refuse `-o` == input before the writer opens: the output
+    // is `File::create`d after the input is open, truncating it mid-read.
+    super::common::refuse_output_eq_input(input_file.as_deref(), output.as_deref())?;
     let mut regions = Vec::new();
     let indexed_list = match (&cli.regions_args.regions, &cli.regions_args.regions_file) {
         (Some(list), _) => Some(list.clone()),
@@ -428,7 +435,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         no_command: cli.no_command,
     };
     tracing::debug!(threads, strategy = ?strategy, "reed filter starting");
-    let report = reed::run_filter(input_path(input).as_deref(), &spec, &opts)?;
+    let report = reed::run_filter(input_file.as_deref(), &spec, &opts)?;
     if verbosity.shows_summary() {
         eprint_report(&report);
     }
@@ -687,6 +694,17 @@ mod tests {
                 "{err}"
             );
         }
+    }
+
+    /// doc_v20 R4: `-O ''` (clap accepts the empty value) is a usage error
+    /// naming the accepted spellings — the parser used to `split_at(1)` the
+    /// empty string and abort with exit 101.
+    #[test]
+    fn r4_empty_output_type_is_a_usage_error() {
+        let err = run_filter_cli(cli_from(&["-O".to_string(), String::new()]))
+            .expect_err("the empty -O must be refused");
+        assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+        assert!(err.to_string().contains("invalid -O ''"), "{err}");
     }
 
     /// The rendered flags are also what `##reed_filterCommand` reports, so

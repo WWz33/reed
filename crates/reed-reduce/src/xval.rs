@@ -195,6 +195,12 @@ pub fn run(
     // Group sizes, and the fraction the smallest group can support.
     let mut counts = vec![0usize; ng];
     for &g in groups {
+        // Validate before indexing: an out-of-range id used to panic with
+        // index-out-of-bounds here, while `lda::fit` reports the same
+        // condition with a typed error. Map to that error (doc_v20 S32).
+        if g as usize >= ng {
+            return Err(XvalError::Lda(LdaError::GroupIndexOutOfRange { index: g, ng }));
+        }
         counts[g as usize] += 1;
     }
     let popmin = counts.iter().copied().filter(|&c| c >= 2).min();
@@ -684,6 +690,21 @@ mod tests {
         // Perfectly separable, so both results are 1.0; the point is that the
         // group-mean path runs and reports a probability.
         assert!(report.candidates[0].mean_success() > 0.9);
+    }
+
+    #[test]
+    fn s32_group_id_out_of_range_is_a_typed_error_not_a_panic() {
+        // doc_v20 S32: `counts[g as usize] += 1` ran before any validation,
+        // so a group id >= ng panicked with index-out-of-bounds instead of
+        // surfacing the typed error `lda::fit` already defines for exactly
+        // this condition.
+        let x = Mat::from_fn(3, 2, |i, c| i as f64 + c as f64 * 0.5);
+        let cfg = XvalConfig { n_rep: 2, ..Default::default() };
+        let err = run(&x, &[0, 0, 2], &levels(2), &[1], &cfg).unwrap_err();
+        assert_eq!(
+            err,
+            XvalError::Lda(LdaError::GroupIndexOutOfRange { index: 2, ng: 2 })
+        );
     }
 
     #[test]

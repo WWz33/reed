@@ -53,7 +53,10 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
             (compressed, 6_u8)
         }
         Some(text) => {
-            let (kind, level) = text.split_at(1);
+            let (kind, level) = super::common::split_output_type(
+                text,
+                "v or z with an optional 1-9 level, e.g. z6",
+            )?;
             let level = if level.is_empty() {
                 6
             } else {
@@ -103,6 +106,8 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
         write_index: (write_index != reed::WriteIndex::None).then_some(write_index),
     };
     let input_file = input_path(&args.input);
+    // (doc_v20 R5) refuse `-o` == input before the writer opens.
+    super::common::refuse_output_eq_input(input_file.as_deref(), output.path.as_deref())?;
     let report = reed::run_rename(input_file.as_deref(), &spec, &output, &budget)?;
     if let Some(stale) = &report.stale_index {
         eprintln!(
@@ -142,4 +147,39 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Parses a flag vector through the real clap definitions (the filter
+    /// module's `cli_from` shape).
+    fn cli_from(args: &[String]) -> RenameCli {
+        let mut argv = vec![
+            "reed".to_string(),
+            "rename".to_string(),
+            "in.vcf".to_string(),
+        ];
+        argv.extend_from_slice(args);
+        match crate::cli::Cli::try_parse_from(argv)
+            .expect("invariant: flags parse")
+            .command
+        {
+            crate::cli::Command::Rename(cli) => cli,
+            _ => unreachable!("invariant: the rename subcommand was given"),
+        }
+    }
+
+    /// doc_v20 R4: `-O ''` (clap accepts the empty value) is a usage error
+    /// naming the accepted spellings — the parser used to `split_at(1)` the
+    /// empty string and abort with exit 101.
+    #[test]
+    fn r4_empty_output_type_is_a_usage_error() {
+        let err = run_rename_cli(cli_from(&["-O".to_string(), String::new()]))
+            .expect_err("the empty -O must be refused");
+        assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+        assert!(err.to_string().contains("invalid -O ''"), "{err}");
+    }
 }

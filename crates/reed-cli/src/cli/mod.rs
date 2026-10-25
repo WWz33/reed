@@ -81,7 +81,7 @@ pub(crate) enum Command {
     /// Principal components of the sample relationship matrix
     Pca(PcaCli),
     /// Individual-by-individual matrices: distance, IBS, GRM, KING, PI_HAT,
-    /// relatedness, discordance
+    /// relatedness, discordance (and --tree upgma|nj)
     Distance(DistanceCli),
 }
 
@@ -164,6 +164,51 @@ pub(crate) struct PcaCli {
     /// full spectrum, stream is matrix-free block Lanczos
     #[arg(long, value_name = "auto|dense|stream", default_value = "auto")]
     pub solver: String,
+    /// Run a discriminant analysis of the principal components (DAPC)
+    /// instead of writing the PCA files: needs --pop; writes
+    /// PREFIX.dapc.ind, PREFIX.dapc.eig and PREFIX.dapc.var
+    #[arg(long)]
+    pub dapc: bool,
+    /// Populations file for --dapc: `sample<TAB>population`, no header
+    #[arg(
+        long = "pop",
+        visible_alias = "populations",
+        alias = "groups",
+        value_name = "FILE",
+        requires = "dapc"
+    )]
+    pub pop: Option<String>,
+    /// Discriminant axes to retain with --dapc (default: every axis)
+    #[arg(long = "n-da", value_name = "INT", requires = "dapc")]
+    pub n_da: Option<usize>,
+    /// Skip --pop rows naming samples absent from the header
+    #[arg(long, requires = "dapc")]
+    pub force_samples: bool,
+    /// Cross-validate --dapc: split each group into training and validation
+    /// sets, try several component counts, and select the best. Writes
+    /// PREFIX.dapc.xval
+    #[arg(long, requires = "dapc")]
+    pub xval: bool,
+    /// Repetitions per candidate with --xval (default 30)
+    #[arg(long = "xval-rep", value_name = "INT", default_value_t = 30,
+          requires = "xval")]
+    pub xval_rep: usize,
+    /// Training fraction with --xval (default 0.9; reduced for small groups)
+    #[arg(long = "xval-training", value_name = "FLOAT", default_value_t = 0.9,
+          requires = "xval")]
+    pub xval_training: f64,
+    /// Accuracy reported by --xval: overall (default) or group-mean
+    #[arg(long = "xval-result", value_name = "overall|group-mean",
+          default_value = "overall", requires = "xval")]
+    pub xval_result: String,
+    /// Seed for --xval's per-repetition sub-streams (default 42)
+    #[arg(long = "xval-seed", value_name = "INT", default_value_t = 42,
+          requires = "xval")]
+    pub xval_seed: u64,
+    /// Comma-separated candidate component counts for --xval (default: the
+    /// adegenet rule)
+    #[arg(long = "xval-pca", value_name = "LIST", requires = "xval")]
+    pub xval_pca: Option<String>,
     /// Output prefix: writes PREFIX.eigenvec, PREFIX.eigenval and PREFIX.pve
     #[arg(short = 'o', long = "out", value_name = "PREFIX")]
     pub output: Option<String>,
@@ -213,6 +258,24 @@ pub(crate) struct DistanceCli {
     /// For discordance: phred-scaled genotyping error probability
     #[arg(long, value_name = "INT", default_value_t = 40)]
     pub error_probability: u32,
+    /// Build a tree instead of writing the matrix: `upgma` (average
+    /// linkage, matching `stats::hclust(method="average")` and
+    /// `poppr::upgma`) or `nj` (matching `ape::nj`). Writes PREFIX.nwk.
+    #[arg(long, value_name = "METHOD")]
+    pub tree: Option<String>,
+    /// Decimal digits in the newick output (default 10)
+    #[arg(long, value_name = "INT", default_value_t = 10)]
+    pub digits: usize,
+    /// Bootstrap the tree: resample loci with replacement this many times and
+    /// write the branch support as node labels (ape::boot.phylo semantics)
+    #[arg(long, value_name = "INT", requires = "tree")]
+    pub bootstrap: Option<usize>,
+    /// Seed for the bootstrap replicates (default 42)
+    #[arg(long, value_name = "INT", default_value_t = 42, requires = "bootstrap")]
+    pub bootstrap_seed: u64,
+    /// Drop support labels below this percentage (default 0 = keep all)
+    #[arg(long, value_name = "FLOAT", default_value_t = 0.0, requires = "bootstrap")]
+    pub bootstrap_cutoff: f64,
     /// Output prefix: writes PREFIX.<suffix>
     #[arg(short = 'o', long = "out", value_name = "PREFIX")]
     pub output: Option<String>,

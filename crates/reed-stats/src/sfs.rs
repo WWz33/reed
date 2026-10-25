@@ -102,10 +102,14 @@ impl SfsAcc {
 /// Hypergeometric projection weights for one site: `P(k | n, m, alt) =
 /// C(alt,k)·C(m−alt, n−k) / C(m, n)` (Marth 2004; dadi `project`), built
 /// with the ratio recursion `P(k+1)/P(k) = (alt−k)(n−k) /
-/// ((k+1)(m−alt−n+k+1))`, normalized, and truncated at a relative weight
-/// of 1e−15 (§9.4). Returns `(k, weight)` pairs over the **full** support
-/// `k ∈ 0..=n`: the non-segregating mass at k = 0/n is part of the
-/// distribution and is what the dadi/fastsimcoal2 writers report
+/// ((k+1)(m−alt−n+k+1))` anchored at the distribution's mode and run
+/// outward in both directions, normalized, and truncated at a relative
+/// weight of 1e−15 (§9.4). The mode anchor keeps every running weight ≤ 1
+/// (doc_v20 R7: the old left-edge anchor multiplied up-hill and hit inf
+/// for n ≳ 1024 at mid p, silently dropping the site's mass). Returns
+/// `(k, weight)` pairs over the **full** support `k ∈ 0..=n`: the
+/// non-segregating mass at k = 0/n is part of the distribution and is what
+/// the dadi/fastsimcoal2 writers report
 /// (docs/rounds/v5/05-algorithms.md §3.1).
 #[must_use]
 pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
@@ -119,13 +123,40 @@ pub fn projection_weights(m: u32, alt: u32, n: u32) -> Vec<(u32, f64)> {
         return Vec::new();
     }
     let mut out = Vec::with_capacity((k_hi - k_lo + 1) as usize);
+    // Anchor the recursion at the mode k* = ⌊(alt+1)(n+1)/(m+2)⌋, clamped
+    // into the support (doc_v20 R7): every ratio stepping away from the
+    // mode is ≤ 1, so the running weights never exceed 1, where the old
+    // left-edge anchor climbed up-hill through a peak that grows like
+    // e^{n·ln 2} and hit inf for --proj ≳ 1024 at mid p. The quotient is
+    // evaluated in u128 — (alt+1)(n+1) overflows u64 at large m.
+    let k_star = u64::try_from(
+        ((alt + 1) as u128 * (n + 1) as u128 / (m as u128 + 2)).clamp(k_lo as u128, k_hi as u128),
+    )
+    .unwrap_or(k_hi);
+    // Downward from the mode: P(k−1)/P(k) = k(m−alt−n+k) / ((alt−k+1)(n−k+1))
+    // — the factored inverse of the upward ratio below, so it is one small
+    // quotient per step, never a quotient of two accumulated weights.
+    let mut down = Vec::new();
     let mut w = 1.0_f64;
-    out.push((u32::try_from(k_lo).unwrap_or(u32::MAX), w));
-    let mut k = k_lo;
-    while k < k_hi {
-        // P(k+1)/P(k) = (alt−k)(n−k) / ((k+1)(m−alt−n+k+1)); the
-        // denominator's inner difference goes through i64 — the u64
+    let mut k = k_star;
+    while k > k_lo {
+        // The denominator's inner difference goes through i64 — the u64
         // intermediate (m−alt)−n can be negative before k is added.
+        let num = k as f64 * (m as i64 - alt as i64 - n as i64 + k as i64) as f64;
+        let den = (alt - k + 1) as f64 * (n - k + 1) as f64;
+        w *= num / den;
+        k -= 1;
+        down.push((u32::try_from(k).unwrap_or(u32::MAX), w));
+    }
+    down.reverse();
+    out.append(&mut down);
+    out.push((u32::try_from(k_star).unwrap_or(u32::MAX), 1.0));
+    // Upward from the mode: P(k+1)/P(k) = (alt−k)(n−k) / ((k+1)(m−alt−n+k+1)).
+    let mut w = 1.0_f64;
+    let mut k = k_star;
+    while k < k_hi {
+        // Same i64 note as the downward loop: the denominator's inner
+        // difference can be negative in u64 before k is added.
         let num = (alt - k) as f64 * (n - k) as f64;
         let den = (k + 1) as f64 * (m as i64 - alt as i64 - n as i64 + k as i64 + 1) as f64;
         w *= num / den;

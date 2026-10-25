@@ -60,6 +60,20 @@ reed pca clean.vcf.gz --pcs 20 --missing pairwise -o pcs
 # Individual-by-individual matrices
 reed distance clean.vcf.gz --type grm -o rel      # .rel + .rel.id
 reed distance clean.vcf.gz --type phi -o kin      # vcftools-compatible .relatedness2
+
+# A tree from a distance matrix (ape/poppr-compatible newick)
+reed distance clean.vcf.gz --type 1-ibs --tree nj -o tree    # tree.nwk
+# --tree needs a distance matrix: the similarity types (grm, king, phi,
+# ibs, pihat) are rejected because their diagonal is not zero.
+
+# Bootstrap the tree: resample loci, write branch support as node labels
+reed distance clean.vcf.gz --type 1-ibs --tree nj --bootstrap 100 -o tree
+
+# Discriminant analysis of principal components (adegenet::dapc semantics)
+reed pca clean.vcf.gz --dapc --pop pops.txt --pcs 20 -o dapc
+
+# Cross-validate it: picks n_pca, writes PREFIX.dapc.xval
+reed pca clean.vcf.gz --dapc --pop pops.txt --xval --xval-rep 100 -o dapc
 ```
 
 ## Commands
@@ -67,8 +81,8 @@ reed distance clean.vcf.gz --type phi -o kin      # vcftools-compatible .related
 - `filter` .. selection, genotype masking, QC thresholds, LD pruning
 - `stats` .. per-site and per-sample QC: freq, hardy, het, missing, depth, summary
 - `popg` .. windowed statistics: pi, dxy, Fst, PBS, SFS, f-stats, LD decay
-- `pca` .. principal components of the sample relationship matrix
-- `distance` .. individual-by-individual matrices: distance, IBS, GRM, KING, relatedness, discordance
+- `pca` .. principal components of the sample relationship matrix (`--dapc` adds a discriminant analysis; `--xval` cross-validates it)
+- `distance` .. individual-by-individual matrices: distance, IBS, GRM, KING, relatedness, discordance; `--tree upgma|nj` builds a newick tree, `--bootstrap N` adds branch support
 - `convert` .. phylogenetic matrices, genotype matrices, hapmap, MSA, SFS
 - `rename` .. identifier edits: samples, contigs, variant IDs, header lines
 - `index` .. build a CSI/TBI index

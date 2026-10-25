@@ -195,11 +195,13 @@ pub struct SitesWindow {
 }
 
 /// A set of 0-based half-open intervals, kept in input order for window
-/// identity plus a sorted merged copy for lookups.
+/// identity plus a sorted merged copy — each merged span carrying the
+/// input indices of its members — for probes.
 #[derive(Clone, Debug, Default)]
 pub struct RegionSet {
     intervals: Vec<Interval0>,
     merged: Vec<Interval0>,
+    members: Vec<Vec<usize>>,
 }
 
 impl RegionSet {
@@ -213,20 +215,32 @@ impl RegionSet {
                 });
             }
         }
-        let mut merged = intervals.clone();
-        merged.sort_by_key(|i| (i.start, i.end));
-        let mut combined: Vec<Interval0> = Vec::with_capacity(merged.len());
-        for interval in merged {
-            match combined.last_mut() {
-                Some(last) if interval.start <= last.end => {
+        let mut sorted: Vec<(usize, Interval0)> =
+            intervals.iter().copied().enumerate().collect();
+        sorted.sort_by_key(|(_, interval)| (interval.start, interval.end));
+        let mut merged: Vec<Interval0> = Vec::with_capacity(sorted.len());
+        let mut members: Vec<Vec<usize>> = Vec::with_capacity(sorted.len());
+        for (idx, interval) in sorted {
+            match (merged.last_mut(), members.last_mut()) {
+                (Some(last), Some(member)) if interval.start <= last.end => {
                     last.end = Pos0(last.end.0.max(interval.end.0));
+                    member.push(idx);
                 }
-                _ => combined.push(interval),
+                _ => {
+                    merged.push(interval);
+                    members.push(vec![idx]);
+                }
             }
+        }
+        // Members arrive in (start, end) order; stab promises input order,
+        // so sort each span's list once here instead of on every probe.
+        for member in &mut members {
+            member.sort_unstable();
         }
         Ok(Self {
             intervals,
-            merged: combined,
+            merged,
+            members,
         })
     }
 
@@ -244,21 +258,35 @@ impl RegionSet {
         &self.intervals
     }
 
-    /// Indices of the regions covering `pos0`, in input order. Regions are
-    /// kept in input order and a sorted merged copy backs the probe: walk
-    /// the merged spans whose end is past `pos0` and collect their members.
-    /// Overlapping regions each match (the BED-window convention).
+    /// Indices of the regions covering `pos0`, in input order. The merged
+    /// spans are disjoint and sorted, so a binary search finds the single
+    /// span that can contain `pos0`; only its members are then checked
+    /// with the exact coverage predicate (a member of a span need not
+    /// cover the whole span — nested regions only cover their own
+    /// subrange). O(log spans + members of the span) per probe instead of
+    /// a per-site linear scan over every region (doc_v20 R14). Overlapping
+    /// regions each match (the BED-window convention).
     #[must_use]
     pub fn stab(&self, pos0: u64) -> Vec<usize> {
-        // Candidate spans: merged spans that contain or start after pos0
-        // are not enough for overlaps (a long span can start before pos0).
-        // The intervals are few (a BED line each); a linear pass is exact
-        // and simple. TODO(#1): O(n) per site; index by span if BEDs grow.
-        self.intervals
+        // Number of spans starting at or before pos0; the last of them is
+        // the only candidate, earlier spans end before it starts.
+        let candidate = self.merged.partition_point(|span| span.start.0 <= pos0);
+        let Some(span) = candidate
+            .checked_sub(1)
+            .filter(|&span| pos0 < self.merged[span].end.0)
+        else {
+            return Vec::new();
+        };
+        // Regions live in exactly one span and each is contained in it, so
+        // regions of every other span are already excluded; members arrive
+        // input-sorted, hence the filtered answer is too.
+        self.members[span]
             .iter()
-            .enumerate()
-            .filter(|(_, iv)| iv.start.0 <= pos0 && pos0 < iv.end.0)
-            .map(|(idx, _)| idx)
+            .filter(|&&idx| {
+                let interval = &self.intervals[idx];
+                interval.start.0 <= pos0 && pos0 < interval.end.0
+            })
+            .copied()
             .collect()
     }
 
@@ -371,6 +399,113 @@ mod tests {
         assert_eq!(set.accessible_bp(Interval0::new(Pos0(0), Pos0(1000))), 250);
         assert_eq!(set.accessible_bp(Interval0::new(Pos0(0), Pos0(150))), 50);
         assert!(RegionSet::new(vec![Interval0::new(Pos0(5), Pos0(5))]).is_err());
+    }
+
+    /// Linear-scan `stab` reference (doc_v20 R14): the pre-fix
+    /// implementation, kept verbatim as the oracle for the binary-search
+    /// rewrite. The bug was complexity, not wrong answers — O(intervals)
+    /// per site made an exome BED over WGS ~10^12 comparisons — and
+    /// complexity is not observable from a result, so the executable proof
+    /// is this exact-equivalence sweep over every boundary (plus
+    /// `r14_stab_large_bed_fast`, which is intractable for the scan) and
+    /// the removed `TODO(#1)`.
+    fn stab_linear_reference(set: &RegionSet, pos0: u64) -> Vec<usize> {
+        set.windows()
+            .iter()
+            .enumerate()
+            .filter(|(_, iv)| iv.start.0 <= pos0 && pos0 < iv.end.0)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    #[test]
+    fn r14_stab_matches_linear_reference() {
+        let sets: Vec<Vec<Interval0>> = vec![
+            // Empty set: every probe is empty, no panic.
+            vec![],
+            // Single interval.
+            vec![Interval0::new(Pos0(100), Pos0(200))],
+            // Overlapping pair, unsorted input.
+            vec![
+                Interval0::new(Pos0(50), Pos0(150)),
+                Interval0::new(Pos0(100), Pos0(120)),
+            ],
+            // Nested + duplicated spans + shared boundaries, unsorted.
+            vec![
+                Interval0::new(Pos0(10), Pos0(30)),
+                Interval0::new(Pos0(15), Pos0(25)),
+                Interval0::new(Pos0(10), Pos0(30)),
+                Interval0::new(Pos0(0), Pos0(10)),
+            ],
+            // Adjacent (touching) intervals coalesce into one merged span;
+            // a probe at the seam must hit only the right-hand region.
+            vec![
+                Interval0::new(Pos0(10), Pos0(20)),
+                Interval0::new(Pos0(20), Pos0(30)),
+                Interval0::new(Pos0(30), Pos0(40)),
+            ],
+            // One long span overlapping many short ones: a single merged
+            // span with several members.
+            (0..8)
+                .map(|i| Interval0::new(Pos0(100 + i * 10), Pos0(105 + i * 10)))
+                .chain([Interval0::new(Pos0(90), Pos0(200))])
+                .collect(),
+        ];
+        for intervals in sets {
+            let set = RegionSet::new(intervals).unwrap();
+            // Sweep before-first, after-last and around every boundary
+            // (start-1, start, end-1, end, end+1).
+            let mut probes: Vec<u64> = vec![0, u64::MAX];
+            for iv in set.windows() {
+                probes.extend_from_slice(&[
+                    iv.start.0.saturating_sub(1),
+                    iv.start.0,
+                    iv.end.0 - 1,
+                    iv.end.0,
+                    iv.end.0.saturating_add(1),
+                ]);
+            }
+            probes.sort_unstable();
+            probes.dedup();
+            for pos0 in probes {
+                assert_eq!(
+                    set.stab(pos0),
+                    stab_linear_reference(&set, pos0),
+                    "intervals {:?}, pos0 {pos0}",
+                    set.windows()
+                );
+            }
+        }
+    }
+
+    /// doc_v20 R14 smoke: an exome-scale BED (200k spans) probed 2k times
+    /// must finish in milliseconds; the linear scan cost ~4×10^8
+    /// comparisons (minutes in a debug build). The 10 s ceiling is
+    /// generous so slow CI cannot flake — the scan overshoots it by an
+    /// order of magnitude, the binary search sits far below it.
+    #[test]
+    fn r14_stab_large_bed_fast() {
+        let intervals: Vec<Interval0> = (0..200_000_u64)
+            .map(|i| Interval0::new(Pos0(i * 10), Pos0(i * 10 + 5)))
+            .collect();
+        let set = RegionSet::new(intervals).unwrap();
+        // One exact probe pins the binary search mid-array: span i covers
+        // [10i, 10i+5), so 1_000_003 lands in input interval 100_000.
+        assert_eq!(set.stab(1_000_003), vec![100_000]);
+        let start = std::time::Instant::now();
+        let mut hits = 0_usize;
+        for q in 0..2_000_u64 {
+            let pos0 = q * 1_000;
+            if !set.stab(pos0).is_empty() {
+                hits += 1;
+            }
+        }
+        let elapsed = start.elapsed();
+        assert!(hits > 0, "the probe sweep must land inside some spans");
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "stab sweep took {elapsed:?} (linear scan: ~4×10^8 comparisons)"
+        );
     }
 
     #[test]

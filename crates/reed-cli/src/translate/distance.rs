@@ -10,6 +10,7 @@ use reed_distance::matrices::{
 };
 use reed_distance::output::{is_matrix_kind, write_ids, write_matrix};
 use reed_distance::{standardize, MatrixFormat, Stand};
+use reed_graph as graph;
 
 use crate::cli::DistanceCli;
 
@@ -75,13 +76,39 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
             }),
     };
 
+    // doc_v20 S37: R13's reed-distance estimators join whatever rayon pool
+    // is ambient, so `--threads` takes effect only through a scoped pool
+    // installed around the estimator and bootstrap calls — the same
+    // throwaway-pool pattern the stats/filter stages use via
+    // `run_auxiliary`; unlike those, the estimators are unconditionally
+    // parallel, so the pool is installed even for a single thread.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .map_err(|e| reed::Error::usage(format!("--threads {threads}: {e}")))?;
+
     let (x, ids) = reed::read_genotype_matrix(opened, keep.as_deref(), &budget)?;
     if x.rows == 0 || x.cols == 0 {
         return Err(reed::Error::usage("no biallelic sites with a diploid GT"));
     }
     let st = standardize(&x, stand);
 
-    let (mut result, aux) = match kind {
+    // doc_v20 S37: built once from the user's flags so the primary matrix
+    // and every bootstrap replicate below score the same metric — the
+    // replicate closure used to pass `DiscordanceOptions::default()`
+    // (probability mode, error 40), silently ignoring
+    // `--mismatch-count`/`--error-probability` and reporting support for a
+    // different metric than the tree.
+    let discordance_opts = DiscordanceOptions {
+        mode: if args.mismatch_count {
+            DiscordanceMode::Count
+        } else {
+            DiscordanceMode::Probability
+        },
+        error_probability: args.error_probability,
+    };
+
+    let (mut result, aux) = pool.install(|| match kind {
         MatrixKind::AlleleCountDistance => {
             (allele_ct_distance(&st, &DistanceOptions::default()), None)
         }
@@ -110,23 +137,133 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         }
         MatrixKind::Ajk => (ajk(&st, &AjkOptions::default()), None),
         MatrixKind::Discordance => {
-            let opts = DiscordanceOptions {
-                mode: if args.mismatch_count {
-                    DiscordanceMode::Count
-                } else {
-                    DiscordanceMode::Probability
-                },
-                error_probability: args.error_probability,
-            };
-            let (m, a) = discordance(&st, &opts);
+            let (m, a) = discordance(&st, &discordance_opts);
             (m, Some(a))
         }
-    };
+    });
     result.ids.clone_from(&ids);
     // `pi_hat` fills its own aux (the Z triplet); only overwrite when the
     // estimator returned one explicitly.
     if aux.is_some() {
         result.aux = aux;
+    }
+
+    // `--tree` builds a tree from the matrix and writes PREFIX.nwk instead
+    // of the matrix file itself.
+    if let Some(method) = args.tree.as_deref() {
+        // A tree needs a distance matrix: d(i,i) = 0 and d(i,j) >= 0. Several
+        // `--type` values are *similarities* instead (GRM, KING, IBS, phi,
+        // pihat), whose diagonal is the self-relatedness rather than zero.
+        // Building a tree from those without a conversion would silently
+        // produce a tree over meaningless edge weights, so refuse instead of
+        // guessing which transform the user meant.
+        for i in 0..result.n {
+            let d = result.values[i * result.n + i];
+            if d.abs() > 1e-9 {
+                return Err(reed::Error::usage(format!(
+                    "--type {} is a similarity, not a distance (d({i},{i}) = {d:.6}); \
+                     --tree needs a zero diagonal. Use --type 1-ibs, allele-ct, \
+                     ajk or discordance",
+                    args.matrix_type
+                )));
+            }
+        }
+        if args.digits == 0 {
+            return Err(reed::Error::usage(
+                "--digits must be at least 1; 0 rounds every branch length to zero",
+            ));
+        }
+        let mut d = reed::Mat::zeros(result.n, result.n);
+        for i in 0..result.n {
+            for j in 0..result.n {
+                d.set(i, j, result.values[i * result.n + j]);
+            }
+        }
+        let built = match method {
+            "upgma" => graph::upgma(&d),
+            "nj" => graph::nj(&d),
+            other => {
+                return Err(reed::Error::usage(format!(
+                    "unknown --tree {other:?} (upgma|nj)"
+                )));
+            }
+        };
+        let tree = built.map_err(|e| reed::Error::usage(e.to_string()))?;
+        let mut tree = tree;
+        tree.tip_labels.clone_from(&ids);
+
+        if let Some(reps) = args.bootstrap {
+            if reps == 0 {
+                return Err(reed::Error::usage("--bootstrap must be at least 1"));
+            }
+            let tree_method = graph::TreeMethod::parse(method)
+                .map_err(reed::Error::usage)?;
+            // The bootstrap rebuilds the matrix from resampled loci, so it
+            // needs the same matrix kind the tree used. Capture the kind and
+            // the options; the closure re-runs the estimator on each
+            // replicate. doc_v20 S37: `discordance_opts` is the very struct
+            // the primary matrix above was built from, so the replicates
+            // score the user's metric, not the defaults.
+            let opts = DistanceOptions::default();
+            let dist_fn = |m: &reed::Mat| -> reed::Mat {
+                let st = standardize(m, stand);
+                let r = match kind {
+                    MatrixKind::OneMinusIbs => one_minus_ibs(&st, &opts),
+                    MatrixKind::Ajk => ajk(&st, &AjkOptions::default()),
+                    MatrixKind::Discordance => discordance(&st, &discordance_opts).0,
+                    // `allele-ct`, plus every kind the zero-diagonal gate
+                    // above already rejected, falls back to allele counts.
+                    _ => allele_ct_distance(&st, &opts),
+                };
+                let n = r.n;
+                let mut out = reed::Mat::zeros(n, n);
+                for i in 0..n {
+                    for j in 0..n {
+                        out.set(i, j, r.values[i * n + j]);
+                    }
+                }
+                out
+            };
+            let cfg = graph::BootstrapConfig {
+                replicates: reps,
+                seed: args.bootstrap_seed,
+                cutoff: args.bootstrap_cutoff,
+            };
+            // doc_v20 S37: the replicates' estimator calls join the scoped
+            // pool too, so `--threads` bounds the bootstrap as well.
+            let report = pool
+                .install(|| graph::support(&tree, &x, tree_method, dist_fn, &cfg))
+                .map_err(|e| reed::Error::usage(e.to_string()))?;
+            // Support is per internal node, ascending id; `to_newick` writes
+            // node labels in that order.
+            tree.node_labels = Some(
+                report
+                    .support
+                    .iter()
+                    .map(|v| {
+                        if v.is_nan() {
+                            String::new()
+                        } else {
+                            format!("{v:.0}")
+                        }
+                    })
+                    .collect(),
+            );
+            eprintln!(
+                "reed distance --tree --bootstrap: {} replicates, {} internal nodes",
+                report.replicates,
+                report.support.len()
+            );
+        }
+
+        let nwk = graph::to_newick(&tree, args.digits)
+            .map_err(|e| reed::Error::usage(e.to_string()))?;
+        std::fs::write(format!("{prefix}.nwk"), nwk).map_err(reed::Error::from)?;
+        eprintln!(
+            "reed distance --tree: {} samples, {} sites, method={method}",
+            x.rows, x.cols
+        );
+        return Ok(());
     }
 
     let suffix = kind.suffix();

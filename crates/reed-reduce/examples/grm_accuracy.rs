@@ -251,8 +251,8 @@ fn main() {
             ),
             (
                 "tsne",
-                tsne_from_sq_distances(&d_raw2, &tsne_cfg),
-                tsne_from_sq_distances(&d_grm2, &tsne_cfg),
+                tsne_from_sq_distances(&d_raw2, &tsne_cfg).expect("tsne (raw)"),
+                tsne_from_sq_distances(&d_grm2, &tsne_cfg).expect("tsne (grm)"),
             ),
             (
                 "umap",

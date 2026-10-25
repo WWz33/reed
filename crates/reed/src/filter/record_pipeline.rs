@@ -145,6 +145,9 @@ impl RecordPipeline {
     /// Runs head → decode → mask → count → tail for one record and calls
     /// `body` when the strategy gets the record.
     ///
+    /// `keep` must be the FULL-LENGTH sample mask — one entry per sample
+    /// column; a short mask is a programming error (doc_v20 S68).
+    ///
     /// # Errors
     ///
     /// [`EngineError::Job`] for malformed records, policy rejections and
@@ -239,7 +242,8 @@ impl RecordPipeline {
     /// Like [`Self::process`], but the record's genotype and FORMAT values
     /// arrive decoded ([`NativeScan`]) instead of being scanned from text.
     /// The head rules and expressions still run on `line` — the BCF decoder
-    /// renders only the site columns for them.
+    /// renders only the site columns for them. `keep` obeys the same
+    /// full-length contract as [`Self::process`] (doc_v20 S68).
     ///
     /// # Errors
     ///
@@ -416,6 +420,11 @@ impl NativeScratch {
 /// text path ([`RecordPipeline::process`]) and the native path
 /// ([`RecordPipeline::process_scanned`], doc_v4 O-4). The parameters are the
 /// pipeline's fields, borrowed disjointly so the scan can hold the decoder.
+///
+/// `keep` must be the FULL-LENGTH sample mask — one entry per sample
+/// column, `keep.len() == scan.codes.len()` (doc_v20 S68). A short mask is
+/// a programming error: caught by the debug assertion below, and by the
+/// direct indexing on the first out-of-range sample in release builds.
 #[allow(clippy::too_many_arguments)]
 fn run_stages<'a, F>(
     lr: &LineRef<'a>,
@@ -441,6 +450,18 @@ fn run_stages<'a, F>(
 where
     F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
 {
+    // doc_v20 S68: the sketch path's mid stage packs the same mask into
+    // bitmap words sized by the header's sample count; tolerating a short
+    // mask here (`keep.get(i).copied().unwrap_or(true)`) kept the tail
+    // samples while the mid stage dropped them, so the two strategies
+    // counted different sample sets. Full length is the contract.
+    debug_assert_eq!(
+        keep.len(),
+        scan.codes.len(),
+        "keep mask must be full length (doc_v20 S68): {} entries for {} samples",
+        keep.len(),
+        scan.codes.len(),
+    );
     // ---- mask + count stage (A6-17: field rules run columnar — one
     // contiguous pass per rule over the scanned columns; the `--set-gts .`
     // expression path reuses the pipeline's FORMAT table in place, with no
@@ -449,19 +470,21 @@ where
     mask_rule.fill(u16::MAX);
     *counts = SiteCounts::default();
     counts.has_gt = scan.has_gt;
-    let evaluated = |i: usize| opts.mask_all_samples || keep.get(i).copied().unwrap_or(true);
+    let evaluated = |i: usize| opts.mask_all_samples || keep[i];
     // Site context for the `--set-gts .` expressions (no genotype-derived
     // fields: the plan rejects those, so the counts are not needed).
-    let mut expr_site = expr::SiteValues::from_line(lr, pos1, None);
+    let mut expr_site = expr::SiteValues::from_line(lr, pos1, None, info_trusted);
     expr_site.info_index = info_index;
-    expr_site.info_trusted = info_trusted;
     expr_site.tags = Some(plan.tags.as_ref());
 
     // Expression rules first (declaration order among themselves), one
     // sample at a time: the FORMAT slots update in place and the
     // evaluation borrows the table.
     if !fmt_storage.is_empty() {
-        for i in 0..scan.codes.len() {
+        // doc_v20 S68: iterate the decoded samples (`enumerate`), not a
+        // range — `keep[i]` below must meet every sample, never a
+        // truncated view of either slice.
+        for (i, _) in scan.codes.iter().enumerate() {
             if !evaluated(i) {
                 continue;
             }
@@ -480,7 +503,7 @@ where
                     attribute_hit(
                         i,
                         rule_index,
-                        keep.get(i).copied().unwrap_or(true),
+                        keep[i],
                         opts.counts,
                         masked,
                         mask_rule,
@@ -514,7 +537,7 @@ where
                 attribute_hit(
                     i,
                     rule_index,
-                    keep.get(i).copied().unwrap_or(true),
+                    keep[i],
                     opts.counts,
                     masked,
                     mask_rule,
@@ -542,7 +565,7 @@ where
                         attribute_hit(
                             i,
                             rule_index,
-                            keep.get(i).copied().unwrap_or(true),
+                            keep[i],
                             opts.counts,
                             masked,
                             mask_rule,
@@ -562,7 +585,7 @@ where
                         attribute_hit(
                             i,
                             rule_index,
-                            keep.get(i).copied().unwrap_or(true),
+                            keep[i],
                             opts.counts,
                             masked,
                             mask_rule,
@@ -578,7 +601,7 @@ where
     // missing (the attribution the single pass reports).
     if opts.counts {
         for (i, &code) in scan.codes.iter().enumerate() {
-            if !keep.get(i).copied().unwrap_or(true) {
+            if !keep[i] {
                 continue;
             }
             if !code.is_called_any() {
@@ -617,9 +640,9 @@ where
                 n_missing: counts.n_missing,
                 n_samples: n_out,
             }),
+            info_trusted,
         );
         values.info_index = info_index;
-        values.info_trusted = info_trusted;
         values.tags = Some(plan.tags.as_ref());
         if !eval_tail(
             &values,
@@ -716,11 +739,62 @@ pub(super) fn gt_subfield_index(format_text: &[u8]) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(debug_assertions)]
+    use reed_core::tag_table::{TagNumber, TagTable, TagType};
 
     #[test]
     fn gt_index_found_or_none() {
         assert_eq!(gt_subfield_index(b"GT:DP:GQ"), Some(0));
         assert_eq!(gt_subfield_index(b"DP:GT"), Some(1));
         assert_eq!(gt_subfield_index(b"DP:GQ"), None);
+    }
+
+    /// The empty plan (no head/mask/tail rules, GT declared) — the
+    /// construction pattern from `filtered.rs`'s tests. Only the
+    /// debug-only test uses it, so release would see it as dead code.
+    #[cfg(debug_assertions)]
+    fn empty_plan() -> reed_filter::plan::FilterPlan {
+        let mut tags = TagTable::new();
+        tags.add_format("GT", TagType::Character, TagNumber::Count(1));
+        let spec = reed_filter::spec::FilterSpec::default();
+        reed_filter::plan::compile(&spec, &tags, "", false)
+            .expect("invariant: the empty spec compiles")
+    }
+
+    /// doc_v20 S68: `keep` must be FULL LENGTH — one entry per sample
+    /// column. A short mask used to be silently tolerated as "keep the
+    /// tail samples" here (`keep.get(i).copied().unwrap_or(true)`) while
+    /// the sketch path's mid stage DROPPED them, so the two strategies
+    /// counted different sample sets; the pinned contract is that a short
+    /// keep is a programming error, caught in debug builds by the length
+    /// assertion (release builds panic on the first out-of-range index).
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "keep mask must be full length")]
+    fn s68_short_keep_mask_is_a_programming_error() {
+        let plan = empty_plan();
+        let mut pipeline = RecordPipeline::new(
+            2,
+            &[],
+            &[],
+            GenotypePolicies::default(),
+            &[],
+        );
+        pipeline.resize_for(&plan);
+        let mut funnel = FunnelPartial::default();
+        let _ = pipeline.process(
+            b"1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1",
+            &plan,
+            // One entry for a two-sample record: short by one.
+            &[true],
+            PipelineOptions {
+                mask_all_samples: false,
+                require_contig: false,
+                tail_n_samples: None,
+                counts: true,
+            },
+            &mut funnel,
+            |_view| Ok(()),
+        );
     }
 }

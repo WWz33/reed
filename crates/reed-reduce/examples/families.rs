@@ -177,7 +177,7 @@ fn main() {
     report("grm_diffusion", &reed_reduce::grm_diffusion(&g, 2, 10, 1.0).coords, n_per, t.elapsed().as_secs_f64());
     let t = Instant::now();
     let grm_tsne_cfg = TsneConfig { perplexity: 10.0, n_iter: 300, seed: 3, ..Default::default() };
-    report("grm_tsne", &reed_reduce::grm_tsne(&g, &grm_tsne_cfg), n_per, t.elapsed().as_secs_f64());
+    report("grm_tsne", &reed_reduce::grm_tsne(&g, &grm_tsne_cfg).expect("grm tsne"), n_per, t.elapsed().as_secs_f64());
     let t = Instant::now();
     let grm_umap_cfg = UmapConfig { n_neighbors: 10, n_epochs: 200, seed: 7, ..Default::default() };
     report("grm_umap", &reed_reduce::grm_umap(&g, &grm_umap_cfg), n_per, t.elapsed().as_secs_f64());
@@ -217,5 +217,5 @@ fn main() {
     let perplexity = (x.rows as f64 / 8.0).clamp(5.0, 50.0);
     let tc = TsneConfig { perplexity, n_iter: 500, seed: 3, ..Default::default() };
     let t = Instant::now();
-    report("tsne", &tsne(&x, &tc), n_per, t.elapsed().as_secs_f64());
+    report("tsne", &tsne(&x, &tc).expect("tsne"), n_per, t.elapsed().as_secs_f64());
 }

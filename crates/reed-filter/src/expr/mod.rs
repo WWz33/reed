@@ -88,12 +88,16 @@ pub struct SiteValues<'a> {
 
 impl<'a> SiteValues<'a> {
     /// Builds the context from a record line; `gt` carries the
-    /// genotype-derived counts when they are known (after the mask stage).
+    /// genotype-derived counts when they are known (after the mask stage),
+    /// and `info_trusted` whether the record's INFO still describes the
+    /// cohort the rules decide on — callers that subset samples or masked
+    /// genotypes pass false (doc_v20 S58; see [`Self::info_trusted`]).
     #[must_use]
     pub fn from_line(
         line: &'a reed_io::vcf::line::LineRef<'a>,
         pos1: u64,
         gt: Option<GtCounts>,
+        info_trusted: bool,
     ) -> Self {
         use reed_core::site::{VariantClass, classify_variant};
         let reference = line.reference();
@@ -124,7 +128,7 @@ impl<'a> SiteValues<'a> {
             n_alt: reed_io::vcf::site::count_alts(alts),
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
-            info_trusted: true,
+            info_trusted,
             info_index: None,
             gt,
             fmt: None,
@@ -416,13 +420,21 @@ fn field_value<'a>(field: Field, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
 }
 
 /// INFO value when the tag is present, else the genotype-derived fallback
-/// (bcftools' rule for AC/AN/AF/MAC/MAF).
+/// (bcftools' rule for AC/AN/AF/MAC/MAF). The INFO preference holds only
+/// while [`SiteValues::info_trusted`]: once the cohort changed (subset,
+/// `--mind`, genotype mask) the INFO numbers describe the input cohort
+/// while the genotypes describe the kept one, so the lookup is skipped and
+/// the genotype computation decides — the same gate `af_of` applies to
+/// `-q/-Q` (`vcfview.c:341-350`, `filter.c:1471`; doc_v12 D12-6,
+/// doc_v20 S58).
 fn info_or_gt<'a>(
     site: &'a SiteValues<'a>,
     tag: &[u8],
     from_gt: impl Fn(&GtCounts) -> f64,
 ) -> Option<Val<'a>> {
-    if let Some(Val::Num(_) | Val::Str(_)) = info_value(site.info, tag, site.info_index) {
+    if site.info_trusted
+        && let Some(Val::Num(_) | Val::Str(_)) = info_value(site.info, tag, site.info_index)
+    {
         return info_value(site.info, tag, site.info_index);
     }
     site.gt
@@ -846,6 +858,55 @@ mod tests {
         assert!(!ev("CHROM~\"nope\"", &s, &tags));
         assert!(ev("FILTER~\"ASS\"", &s, &tags));
         assert!(!ev("FILTER~\"^ASS\"", &s, &tags));
+    }
+
+    /// doc_v20 S58: once the cohort changed (`info_trusted == false`), the
+    /// AC/AN/AF/MAC/MAF built-ins must recompute from the genotypes even
+    /// when the header declares the tag and the record carries a full-
+    /// cohort INFO value — the INFO numbers describe the input cohort
+    /// (bcftools recomputes from the subset GT, `vcfview.c:341-350`, and
+    /// gates its INFO preference on `!sample_mask_set`, `filter.c:1471`),
+    /// the same gate `af_of` applies to `-q/-Q` (doc_v12 D12-6).
+    #[test]
+    fn s58_untrusted_info_recomputes_from_genotypes() {
+        // Full cohort: AC=80, AN=160, MAF=0.5. The kept subset: 3 of 100
+        // called alleles are ALT → AF=MAF=0.03, MAC=3.
+        let text = b"chr1\t100\t.\tA\tG\t50.0\tPASS\tAC=80;AN=160;MAF=0.5;DP=40\tGT\t0/0\t0/0";
+        let line = reed_io::vcf::line::LineRef::parse(text).expect("invariant: 10 columns");
+        let gt = GtCounts {
+            ac: 3,
+            an: 100,
+            n_missing: 1,
+            n_samples: 2,
+        };
+        let t = table(&["AC", "AN", "MAF", "DP"]);
+        let tags = ["AC", "AN", "MAF", "DP"];
+        // The tail context record_pipeline builds after a subset/mask
+        // (`from_line` with `info_trusted = false`, doc_v20 S58).
+        let mut s = SiteValues::from_line(&line, 100, Some(gt), false);
+        s.tags = Some(&t);
+        assert!(
+            !ev("MAF>=0.05", &s, &tags),
+            "subset MAF is 0.03, not the stale full-cohort 0.5"
+        );
+        assert!(ev("MAF==0.03", &s, &tags));
+        assert!(ev("AC==3", &s, &tags), "stale INFO/AC=80 must be ignored");
+        assert!(ev("AN==100", &s, &tags));
+        assert!(ev("AF==0.03", &s, &tags));
+        assert!(ev("MAC==3", &s, &tags));
+        // The built-in is gated regardless of spelling: `INFO/AC` resolves
+        // to the same Field::Ac node as the bare `AC`.
+        assert!(ev("INFO/AC==3", &s, &tags));
+        // Direct INFO/TAG reads are NOT gated — only the derived-statistic
+        // built-ins switch source (exactly like `af_of`).
+        assert!(ev("DP==40", &s, &tags));
+        // The same record pre-mask (`info_trusted == true`, the head
+        // context) still prefers the INFO values.
+        let mut head = SiteValues::from_line(&line, 100, Some(gt), true);
+        head.tags = Some(&t);
+        assert!(ev("MAF==0.5", &head, &tags));
+        assert!(ev("AC==80", &head, &tags));
+        assert!(ev("INFO/AC==80", &head, &tags));
     }
 
     #[test]

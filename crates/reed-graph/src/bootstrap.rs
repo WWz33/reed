@@ -45,7 +45,14 @@ impl Default for BootstrapConfig {
 #[derive(Clone, Debug)]
 pub struct BootstrapReport {
     /// Support percentage per internal node, in the same order as
-    /// [`Tree::node_labels`] would be filled: ascending node id.
+    /// [`Tree::node_labels`] would be filled: ascending node id. The root is
+    /// **included** — its clade is the whole tip set, so it scores 100% by
+    /// construction, exactly as ape's `prop.clades` reports it (measured with
+    /// ape 5.8.1: `prop.clades` returns one value per internal node, root
+    /// first; `boot.phylo` and `write.tree` label the root too). Keeping the
+    /// entry preserves node-id alignment for consumers (doc_v20 review of
+    /// S36: an earlier version dropped the root and claimed ape did the
+    /// same, which is false).
     pub support: Vec<f64>,
     /// Replicates actually built.
     pub replicates: usize,
@@ -173,7 +180,10 @@ pub fn support(
 /// Maps each internal node of `tree` to its branch key.
 ///
 /// The returned map is key -> node id, so the caller can order the support
-/// values by node.
+/// values by node. The whole-tree clade (the root, whose key is every tip)
+/// is **not** a key: it exists in every replicate by construction, so
+/// counting it would report the root's support as a constant 100%. ape's
+/// `prop.clades` drops the same entry (doc_v20 S36).
 fn branch_keys(tree: &Tree, rooted: bool) -> HashMap<Vec<u64>, u32> {
     let n = tree.n_tips();
     let words = n.div_ceil(64);
@@ -225,6 +235,14 @@ fn branch_keys(tree: &Tree, rooted: bool) -> HashMap<Vec<u64>, u32> {
                 }
             }
         }
+        // The root's clade is the whole tip set. It is KEPT: ape's
+        // `prop.clades` returns one value per internal node *including* the
+        // whole-tree clade (measured with ape 5.8.1: n=6 -> 5 values, first
+        // is the root), and `boot.phylo`/`write.tree` label the root too.
+        // The first version of this fix dropped it, which made reed's
+        // support vector one shorter than the reference it claims to match
+        // and shifted every label for consumers indexing by node id
+        // (doc_v20 review of S36).
         out.insert(key, id as u32);
     }
     out
@@ -292,6 +310,8 @@ mod tests {
             ..Default::default()
         };
         let report = support(&tree, &x, TreeMethod::Upgma, euclid, &cfg).unwrap();
+        // One value per internal node, root included — ape's layout
+        // (doc_v20 review of S36).
         assert_eq!(report.support.len(), tree.n_internal());
         // The two-block split is the root's child branch; it must be near 100.
         let best = report
@@ -335,6 +355,8 @@ mod tests {
         let a = support(&tree, &x, TreeMethod::Nj, euclid, &cfg).unwrap();
         let cfg2 = BootstrapConfig { seed: 99, ..cfg };
         let b = support(&tree, &x, TreeMethod::Nj, euclid, &cfg2).unwrap();
+        // One value per internal node, central (root) node included —
+        // ape's layout (doc_v20 review of S36).
         assert_eq!(a.support.len(), tree.n_internal());
         assert_eq!(b.support.len(), tree.n_internal());
         let best_a = a.support.iter().copied().fold(0.0f64, f64::max);
@@ -404,7 +426,8 @@ mod tests {
     /// prop.clades : 3 3 3 2 1
     /// ```
     ///
-    /// `123456` is the whole tree (the root, which has no support value), so
+    /// `123456` is the whole tree (the root, which has no support value).
+    /// Since doc_v20 S36, `branch_keys` itself drops the whole-tree key, so
     /// the four interior branches are `456`, `123`, `12`, `45` with support
     /// `3, 3, 2, 1` out of 3 replicates.
     #[test]
@@ -453,12 +476,16 @@ mod tests {
         }
 
         // Match ape's order, not node-id order. `prop.part` walks the tree
-        // depth-first and emits `[whole tree, 456, 123, 12, 45]`; `prop.clades`
-        // drops the whole-tree entry, so the reported order is
-        // `456, 123, 12, 45`.
+        // depth-first and emits `[whole tree, 456, 123, 12, 45]`; ape's
+        // `prop.clades` returns one value per internal node, the whole-tree
+        // entry FIRST (measured with ape 5.8.1), so the reported order is
+        // `whole, 456, 123, 12, 45`.
         //
         // reed's node ids for this fixture are 7={1,2}, 8={4,5}, 9={4,5,6},
-        // 10={1,2,3}, 11=all, so ape's order is ids [9, 10, 7, 8].
+        // 10={1,2,3}, 11=all. The root (11) is a key again (doc_v20 review of
+        // S36: ape keeps it); ids [9, 10, 7, 8] carry the interior branches.
+        assert!(target.contains_key(&vec![0b0011_1111u64]), "root clade must be keyed");
+        assert_eq!(target.len(), 5, "ape reports five clades, got {}", target.len());
         let by_id: HashMap<u32, &Vec<u64>> = target.iter().map(|(k, &v)| (v, k)).collect();
         let got: Vec<usize> = [9u32, 10, 7, 8]
             .iter()
@@ -466,6 +493,57 @@ mod tests {
             .collect();
 
         assert_eq!(got, vec![3, 3, 2, 1], "clade counts differ from ape");
+    }
+
+    #[test]
+    fn s36_root_clade_is_a_branch_key() {
+        // doc_v20 review of S36: ape's `prop.clades` reports one value per
+        // internal node INCLUDING the whole-tree clade (measured with ape
+        // 5.8.1), so `branch_keys` must keep it. The earlier version dropped
+        // it and claimed ape did the same.
+        let x = structured(8, 30);
+        for method in [TreeMethod::Upgma, TreeMethod::Nj] {
+            let tree = tree_of(&x, method);
+            let keys = branch_keys(&tree, method.rooted());
+            let words = 8usize.div_ceil(64);
+            let whole_tree = vec![0b1111_1111u64; words];
+            assert!(
+                keys.contains_key(&whole_tree),
+                "{method:?}: the whole-tree (root) key must be a branch key"
+            );
+            assert_eq!(keys.len(), tree.n_internal(), "{method:?}");
+        }
+    }
+
+    #[test]
+    fn s36_bootstrap_newick_labels_the_root() {
+        // doc_v20 review of S36: the root clade is in every replicate, so
+        // its support is 100% — and ape labels it (`write.tree` emits the
+        // root node label; measured with ape 5.8.1). reed must match.
+        let x = structured(8, 30);
+        for method in [TreeMethod::Upgma, TreeMethod::Nj] {
+            let mut tree = tree_of(&x, method);
+            let cfg = BootstrapConfig {
+                replicates: 25,
+                seed: 3,
+                ..Default::default()
+            };
+            let report = support(&tree, &x, method, euclid, &cfg).unwrap();
+            tree.node_labels = Some(
+                report
+                    .support
+                    .iter()
+                    .map(|v| if v.is_nan() { String::new() } else { format!("{v:.0}") })
+                    .collect(),
+            );
+            let nwk = crate::to_newick(&tree, 6).unwrap();
+            // The root is the last internal node; its support is 100.
+            assert!(
+                nwk.ends_with(")100;"),
+                "{method:?}: root must carry its 100% support like ape: {nwk}"
+            );
+            assert_eq!(report.support.len(), tree.n_internal(), "{method:?}: {nwk}");
+        }
     }
 
     #[test]
@@ -494,7 +572,10 @@ mod tests {
     }
 
     #[test]
-    fn support_length_matches_internal_node_count() {
+    fn support_length_matches_ape_clade_count() {
+        // doc_v20 review of S36: ape's `prop.clades` returns one value per
+        // internal node, root included (measured with ape 5.8.1: n=6 ->
+        // Nnode=5 values). reed must report the same length.
         for n in [4usize, 5, 8, 12] {
             let x = structured(n, 24);
             let tree = tree_of(&x, TreeMethod::Upgma);
@@ -503,13 +584,29 @@ mod tests {
                 ..Default::default()
             };
             let report = support(&tree, &x, TreeMethod::Upgma, euclid, &cfg).unwrap();
-            assert_eq!(
-                report.support.len(),
-                tree.n_internal(),
-                "n={n}: {} vs {}",
-                report.support.len(),
-                tree.n_internal()
-            );
+            assert_eq!(report.support.len(), tree.n_internal(), "upgma n={n}");
+            let tree = tree_of(&x, TreeMethod::Nj);
+            let report = support(&tree, &x, TreeMethod::Nj, euclid, &cfg).unwrap();
+            assert_eq!(report.support.len(), tree.n_internal(), "nj n={n}");
         }
+    }
+
+    #[test]
+    fn s36_supports_are_the_ape_vectors() {
+        // doc_v20 review of S36: with the root kept, the support vector is
+        // the pre-fix one (which matched ape) — root last at 100.
+        let x = structured(8, 30);
+        let cfg = BootstrapConfig {
+            replicates: 25,
+            seed: 3,
+            ..Default::default()
+        };
+        let upgma_tree = tree_of(&x, TreeMethod::Upgma);
+        let report = support(&upgma_tree, &x, TreeMethod::Upgma, euclid, &cfg).unwrap();
+        assert_eq!(report.support, vec![100.0, 100.0, 44.0, 96.0, 36.0, 96.0, 100.0]);
+
+        let nj_tree = tree_of(&x, TreeMethod::Nj);
+        let report = support(&nj_tree, &x, TreeMethod::Nj, euclid, &cfg).unwrap();
+        assert_eq!(report.support, vec![100.0, 100.0, 40.0, 96.0, 40.0, 100.0]);
     }
 }
