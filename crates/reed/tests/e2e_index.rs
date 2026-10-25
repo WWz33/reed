@@ -212,6 +212,57 @@ fn open_regions_consumes_its_own_index() {
     let _ = outcome;
 }
 
+/// doc_v20 S42: htslib derives a record's indexed span (rlen) from INFO/END
+/// when ALT is symbolic (`<DEL>`), not from the REF length. `reed index`
+/// (and the BCF encoder, and the filter's emit) all used the REF length, so
+/// a spanning deletion recorded rlen=1 and region queries missed it. The
+/// DEL here spans 100..30000 — across the CSI leaf-bin boundary at 16384 —
+/// and the query at 20000 sits inside the span but outside the record's
+/// first leaf bin, so it finds the DEL only when the index knows the span.
+#[test]
+fn s42_region_query_finds_spanning_symbolic_del() {
+    let mut text = String::from(
+        "##fileformat=VCFv4.3\n\
+         ##contig=<ID=chr1,length=100000>\n\
+         ##INFO=<ID=END,Number=1,Type=Integer,Description=\"end\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n",
+    );
+    text.push_str("chr1\t100\t.\tA\t<DEL>\t50\tPASS\tEND=30000\tGT\t0/1\n");
+    text.push_str("chr1\t20000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
+    let (dir, vcf) = write_fixture("s42-del", &text);
+    let outcome = run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
+    assert_eq!(outcome.n_records, 2);
+
+    // The records a chr1:20000-20000 region query covers.
+    use noodles::csi::BinningIndex as _;
+    let index = noodles::csi::fs::read(&outcome.path).expect("invariant: index reads");
+    let start = noodles::core::Position::try_from(20_000_usize).expect("invariant: position");
+    let interval = noodles::core::region::Interval::from(start..=start);
+    let chunks = index.query(0, interval).expect("invariant: query");
+    let mut reader =
+        noodles::bgzf::io::Reader::new(std::fs::File::open(&vcf).expect("invariant: vcf"));
+    use std::io::BufRead as _;
+    let query = noodles::csi::io::Query::new(&mut reader, chunks);
+    let lines: Vec<String> = query
+        .split(b'\n')
+        .map(|l| l.expect("invariant: query read"))
+        .filter(|l| l.starts_with(b"chr1\t"))
+        .map(|l| String::from_utf8_lossy(&l).into_owned())
+        .collect();
+    assert!(
+        lines.iter().any(|l| l.contains("<DEL>")),
+        "the spanning DEL must be found by a region query inside its span: {lines:?}"
+    );
+    // Control: the SNP at 20000 is found either way.
+    assert!(
+        lines.iter().any(|l| l.starts_with("chr1\t20000\t")),
+        "the SNP inside the query is always found: {lines:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Regular gzip (no BGZF `BC` block) of the same text.
 fn gzip(text: &str) -> Vec<u8> {
     use flate2::Compression;

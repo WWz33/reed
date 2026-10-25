@@ -969,6 +969,28 @@ fn format_expressions_need_set_gts() {
     let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
         .expect_err("subscripts are not supported yet");
     assert!(err.to_string().contains("subscripts"), "{err}");
+
+    // doc_v20 review of S58: `INFO/AC` spelled with the prefix is the same
+    // genotype-derived built-in, and a `--set-gts` mask stage has no genotype
+    // values to fall back to. It used to compile and silently evaluate to
+    // Missing (masking nothing); it must be rejected instead.
+    let spec = FilterSpec {
+        genotype: reed_filter::spec::GenotypeRules {
+            set_gts: Some(".".to_string()),
+            ..reed_filter::spec::GenotypeRules::default()
+        },
+        site_after_mask: reed_filter::spec::TailRules {
+            include: vec!["FMT/DP<5 && INFO/AC>0".to_string()],
+            ..reed_filter::spec::TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
+        .expect_err("INFO/AC in a --set-gts mask expression must be rejected");
+    assert!(
+        err.to_string().contains("genotype-derived"),
+        "the error must name the genotype-derived field: {err}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1475,4 +1497,76 @@ fn min_af_recomputes_after_a_mask_changes_the_cohort() {
         records.is_empty(),
         "post-mask AF = 1/6 < 0.2 must drop the site: {records:?}"
     );
+}
+
+/// doc_v20 review of S42: the ordinary single-pass writer (no `--mind`, so
+/// no sketch/`EmitJob`) must index a symbolic deletion out to INFO/END. The
+/// first version of the fix only touched the sketch writer, so `reed filter
+/// -W` still wrote rlen = 1 and region queries missed the record.
+#[test]
+fn s42_filter_write_index_extends_symbolic_deletions_to_end() {
+    let dir = std::env::temp_dir().join(format!("reed-filter-s42-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let mut text = String::from(
+        "##fileformat=VCFv4.3\n\
+         ##contig=<ID=chr1,length=100000>\n\
+         ##INFO=<ID=END,Number=1,Type=Integer,Description=\"end\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n",
+    );
+    // 100..30000 crosses the CSI leaf bin boundary that a query at 20000
+    // needs; a same-bin fixture would not discriminate.
+    text.push_str("chr1\t100\t.\tA\t<DEL>\t50\tPASS\tEND=30000\tGT\t0/1\n");
+    text.push_str("chr1\t20000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
+    let input = dir.join("s42.vcf.gz");
+    std::fs::write(&input, bgzf(&text, 4_096)).expect("invariant: write");
+    let out = dir.join("s42.out.vcf.gz");
+
+    run_filter(
+        Some(input.as_path()),
+        &FilterSpec::default(),
+        &FilterOptions {
+            threads: 2,
+            output: Some(out.clone()),
+            write_index: reed::WriteIndex::Csi,
+            compress_level: 6,
+            strategy: None,
+            command_line: "test".into(),
+            timing: None,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: None,
+            output_bcf: None,
+            mem_bytes: None,
+            no_version: false,
+            no_command: false,
+        },
+    )
+    .expect("invariant: filter runs");
+
+    use noodles::csi::BinningIndex as _;
+    let index = noodles::csi::fs::read(out.with_extension("vcf.gz.csi"))
+        .or_else(|_| noodles::csi::fs::read(format!("{}.csi", out.display())))
+        .expect("invariant: csi written");
+    let start = noodles::core::Position::try_from(20_000_usize).expect("invariant: position");
+    let interval = noodles::core::region::Interval::from(start..=start);
+    let chunks = index.query(0, interval).expect("invariant: query");
+    let mut reader =
+        noodles::bgzf::io::Reader::new(std::fs::File::open(&out).expect("invariant: open"));
+    use std::io::BufRead as _;
+    let query = noodles::csi::io::Query::new(&mut reader, chunks);
+    let lines: Vec<String> = query
+        .split(b'\n')
+        .map(|l| l.expect("invariant: query read"))
+        .filter(|l| l.starts_with(b"chr1\t"))
+        .map(|l| String::from_utf8_lossy(&l).into_owned())
+        .collect();
+    assert!(
+        lines.iter().any(|l| l.contains("<DEL>")),
+        "the filter-written index must find the spanning DEL at 20000: {lines:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

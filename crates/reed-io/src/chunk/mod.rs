@@ -181,7 +181,7 @@ pub fn inflate_chunk<'a>(
         // Uncompressed input: the "compressed" bytes are the text itself.
         scratch.extend_from_slice(&chunk.compressed);
         let text: &'a [u8] = scratch.as_slice();
-        return Ok(split_text(chunk, text));
+        return split_text(chunk, text);
     }
     let total_inflated: usize = chunk.blocks.iter().map(|&(_, ilen)| ilen as usize).sum();
     let total_compressed: usize = chunk.blocks.iter().map(|&(clen, _)| clen as usize).sum();
@@ -205,41 +205,55 @@ pub fn inflate_chunk<'a>(
         pos += inflater.inflate_window(block, &mut scratch[pos..pos + ilen as usize])?;
     }
     let text: &'a [u8] = &scratch[..pos];
-    Ok(split_text(chunk, text))
+    split_text(chunk, text)
 }
 
 /// Splits already-inflated text into head/body/tail line ownership.
-fn split_text<'a>(chunk: &ChunkBytes, text: &'a [u8]) -> InflatedChunk<'a> {
+///
+/// # Errors
+///
+/// [`IoError::MalformedBgzf`] when the chunk's start offset — an index
+/// virtual offset's low 16 bits (region.rs) — is beyond the inflated text:
+/// a corrupt or hand-edited .csi/.tbi can name one, and the slice used to
+/// panic instead of surfacing the error. A within-bounds offset keeps the
+/// documented behavior (records before it are dropped) (doc_v20 S40).
+fn split_text<'a>(chunk: &ChunkBytes, text: &'a [u8]) -> Result<InflatedChunk<'a>, IoError> {
     let scan_start = if chunk.first_in_block_offset > 0 {
         usize::try_from(chunk.first_in_block_offset).unwrap_or(0)
     } else {
         0
     };
+    if scan_start > text.len() {
+        return Err(IoError::MalformedBgzf {
+            locus: None,
+            reason: "chunk start offset is beyond the inflated text (corrupt index virtual offset)",
+        });
+    }
 
     if scan_start > 0 || chunk.id.get() == 0 {
-        return InflatedChunk {
+        return Ok(InflatedChunk {
             text,
             body: owned_body_range(text, scan_start),
             head: None,
             tail: tail_range(text),
-        };
+        });
     }
 
     let Some(first_nl) = memchr::memchr(b'\n', &text[scan_start..]) else {
-        return InflatedChunk {
+        return Ok(InflatedChunk {
             text,
             body: scan_start..scan_start,
             head: Some(scan_start..text.len()),
             tail: None,
-        };
+        });
     };
     let head_end = scan_start + first_nl + 1;
-    InflatedChunk {
+    Ok(InflatedChunk {
         text,
         body: owned_body_range(text, head_end),
         head: Some(scan_start..head_end),
         tail: tail_range(text),
-    }
+    })
 }
 
 /// Range of complete lines: from `from` to one past the last `\n`.
@@ -292,5 +306,51 @@ impl<R: std::io::Read + Send> BgzfChunkSource<R> {
 impl<R: std::io::Read + Send> ChunkSource for BgzfChunkSource<R> {
     fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, IoError> {
         self.reader.next_chunk()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(first_in_block_offset: u64, id: u64) -> ChunkBytes {
+        ChunkBytes {
+            id: ChunkId(id),
+            compressed: ChunkPayload::from(Vec::new()),
+            first_in_block_offset,
+            plain: true,
+            compressed_start: 0,
+            blocks: Vec::new(),
+        }
+    }
+
+    /// doc_v20 S40: `first_in_block_offset` comes straight from an index
+    /// file's chunk-start virtual offset (the low 16 bits, region.rs), so a
+    /// corrupt or hand-edited .csi/.tbi can name an offset past the end of
+    /// the inflated block. That used to panic in the `&text[scan_start..]`
+    /// slice ("range start index 64 out of range for slice of length 5")
+    /// instead of surfacing as a typed error.
+    #[test]
+    fn s40_start_offset_beyond_the_text_is_a_typed_error() {
+        let text = b"ab\ncd";
+        for (offset, id) in [(6, 0), (64, 0), (6, 1), (64, 1)] {
+            let err = split_text(&chunk(offset, id), text)
+                .expect_err("an offset beyond the inflated text must be MalformedBgzf");
+            assert!(
+                matches!(err, IoError::MalformedBgzf { .. }),
+                "offset {offset} id {id}: {err:?}"
+            );
+        }
+    }
+
+    /// Control (doc_v20 S40): a within-bounds offset keeps the documented
+    /// behavior — the bytes before it are dropped, the rest is split by line
+    /// ownership.
+    #[test]
+    fn s40_start_offset_within_the_text_still_splits() {
+        let view = split_text(&chunk(3, 0), b"ab\ncd").expect("invariant: within bounds");
+        assert_eq!(view.body, 3..3);
+        assert_eq!(&view.text[view.tail.expect("invariant: tail")], b"cd");
+        assert!(view.head.is_none());
     }
 }

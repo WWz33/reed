@@ -5,6 +5,228 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v20 全库评审 must-fix 修复（2026-10-24）
+
+11 个只读评审覆盖全部 crate（报告在仓库外 `../reed-rs-review.md`），14 个
+must-fix 全部先写失败测试复现、再修复（测试名 `r1_*` … `r14_*`）。明细与
+验证记录：`docs/rounds/v20/README.md`。
+
+### Fixed
+
+- **filter**：`-f/--apply-filters` 之前匹配整个 FILTER 列，`LowQual;LowMQ`
+  被 `-f LowQual` 静默丢弃；现在按 `;` 拆分逐值匹配（bcftools 语义，R1）。
+- **io**：空 FORMAT 列命中格式缓存哨兵 `(空, usize::MAX)` 导致 scanner
+  越界 panic、整跑中止；现在按无 GT 布局处理（R2）。
+- **index**：BCF 记录的 contig id 越界直接索引 `contig_names` panic（顺序
+  路径无 catch_unwind）；现在报 job 错误（R3）。
+- **cli**：`-O ''` 在 filter/rename/convert 三处 `split_at(1)` panic
+  （exit 101）；现在报 usage 错误（R4）。
+- **cli**：`-o` 与输入同路径时先读后截断，四个子命令（filter/rename/
+  convert/index）实测 exit 0 并毁掉输入；现在拒绝并保持输入不动（R5）。
+- **pca/distance**：畸形记录（列数不符、不可解析）被静默 `continue`，
+  截断文件产出错误矩阵零提示；现在按 scanner 同款 `MalformedRecord` 报错，
+  顺带把每位点死内存 `sites: Vec<(Vec<u8>,u64)>` 收成计数器（R6）。
+- **stats**：投影 SFS 权重递推从左端锚定，`--proj ≳ 1024`（p≈0.5）时
+  溢出为 inf 并静默丢弃位点质量；改为众数锚定双向递推，任意 n 不溢出，
+  小 n 数值逐位不变（R7）。
+- **reduce**：t-SNE 梯度用了未归一核（整体大 `sum_q≈O(n²)` 倍，输出不是
+  t-SNE）；改为归一 `q_ij`（R8）。
+- **distance**：单态（fixed-ALT）列把均值而非 0 写进标准化矩阵，给每个
+  GRM 元素加 `4k/m` 并给 PCA 加秩一常数方向；改为中心化 0（plink2/GCTA
+  约定，与 flashpca 的均值填充在 fixed-ALT 上有意分歧）（R9）。
+- **pca**：stream 求解器静默忽略 `--missing pairwise`（auto 在大 N 时必然
+  走到）；现在拒绝该组合并给出三个出路，模块文档中"已对 plink2 做 e2e
+  校验"的不实陈述已删（R10）。
+- **rename**：`--set-id` 早返回静默禁用 `--update-name`；现在互斥拒绝
+  （`--set-missing-var-ids` 与 `--update-name` 本就兼容，保持可用）（R11）。
+- **convert**：`--msa` 对重访 contig（乱序输入）游标倒退、位点重复发射，
+  静默产出错位 FASTA；现在报 "input is not contig-sorted"，接缝处同位点
+  last-wins 语义保留（R12）。
+- **distance**：估计量族全程串行 O(n²·m) 且矩阵驻留 2–4 份、
+  `--threads/--memory` 被忽略；现在按行 rayon 并行 + dosage 行预计算，
+  任意线程数结果逐位一致（1 vs 4 线程 `to_bits()` 相等锁定）。流式分块
+  与 `--threads` 全链路接入留作 backlog（R13）。
+- **core**：`RegionSet::stab` 每位点线性扫描全部 BED 区间（自带 TODO），
+  外显子 BED × WGS 实际跑不完；改为合并区间二分 + 成员精确过滤，
+  等价性由旧线性实现做 oracle 的穷举测试锁定，200k 区间 × 2000 查询
+  从分钟级降到毫秒级（R14）。
+
+### Fixed（第二批：should-fix 中的 bug 类 16 条，同轮追加）
+
+- **filter**：cohort 变化后（`--keep`/`--mind`/掩码），表达式
+  AC/AN/AF/MAC/MAF 仍读全群体陈旧 INFO，与同 run 的 `--maf` 口径分裂；
+  现按 `info_trusted` 门控从基因型重算（S58）。
+- **reduce**：UMAP 学习率去掉 1/4 下限，照 umap-learn 线性衰减到 0（S28）；
+  t-SNE 困惑度搜索非收敛行不再静默清零，`perplexity <1 或 ≥ n−1` 报
+  类型化错误（`tsne` 变 `Result`）（S29）；三处 kNN 排序改
+  `f64::total_cmp`，NaN 基因型不再 panic（S31）；`xval` 组 id 越界
+  返回类型化 LDA 错误而非 panic（S32）。
+- **graph/cli**：bootstrap 根节点不再恒标 100% 支持（跳过全 1 键，
+  support 数量对齐 ape 的 n−2/n−3）（S36）；`--tree --bootstrap` 的
+  discordance 重复矩阵改用用户的 `--mismatch-count/--error-probability`
+  （修前恒默认参——Count 树配 Probability(40) 的 support）（S37）；
+  同批把 `--threads` 经 scoped pool 接通 distance 估计量与 bootstrap
+  （R13 收尾，1 vs 4 线程输出逐字节一致锁定）。
+- **pca**：剂量矩阵分配前对照 `--memory`，超限报 usage 并指向
+  `reed filter --indep-pairwise`（修前 5000×3M 直接 OOM）；`run_pca_opened`
+  收敛进 `read_genotype_matrix`（S76）。
+- **filter**：keep-mask 长度契约统一——record_pipeline 五处短掩码容忍
+  改直接索引 + debug 断言，与 sketch 位平面路径口径一致（S68）。
+- **stats**：WC84 单群 an∈{0,1}（如单个半调用）时 pair 与 multi 两条
+  路径统一走 keep-c 分支（修前 pair 整位点丢弃，`--fst wc84` 与
+  `--fst-global` 在该角落分歧；评审"multi 保留"的说法在 r=2 也不成立，
+  一并修正）（S46）。
+- **io**：FORMAT 整数越界由钳制改 missing 哨兵（对齐 INFO 路径与
+  htslib）（S39）；损坏索引虚拟偏移越界报 `MalformedBgzf` 而非切片
+  panic（S40）；POS 超出 BCF i32 范围与负 pos0 报 `MalformedRecord`
+  而非静默钳制（S43）；符号等位 + INFO/END 的索引跨度改用 END（三处
+  span 站点收敛为共享 `indexed_span_len`，区域查询不再漏跨 bin 的
+  符号缺失）（S42）。
+- **oracle**：PBS 模块文档改为与代码一致的 per-pair 规则（"三群交集"
+  的说法不实；代码零改动，契约测试钉死）（S79）。
+### Fixed（第三批：对前两批的复审修复）
+
+- **reduce**：**撤回 R8 的梯度"修正"**——末因子应为原始核 `w` 而非归一
+  `q`（对 KL 代价做中心差分验证：原始核误差 1e-10，归一核 0.58），前一版
+  让梯度小了 `sum_q≈n²` 倍、几百样本时嵌入停在初始化量级；测试改为对代价
+  函数做有限差分（旧测试是梯度自身的复写，恒真）。同批：困惑度搜索的
+  beta 从 `1/mean(d²)` 起步（真实剂量距离下 `exp(-d²)` 下溢导致整行清零）。
+- **io**：符号跨度改为 htslib 的 `get_rlen` 规则——INFO/END 与 ALT 形状
+  无关（`ALT=.` 的 gVCF 块、多等位同样延伸），并补上默认单遍写入器与
+  `rename -W` 两条漏掉的路径（此前只有 sketch 写入器正确）；BCF 的
+  `pos0 = −1` 恢复为 htslib 的端粒哨兵（渲染 POS 0、原样传递），只有
+  < −1 报错；FORMAT 越界警告不再自称 "INFO"。
+- **graph**：**撤回 S36**——本机 ape 5.8.1 实测 `prop.clades`/`write.tree`
+  保留根节点（Nnode 个值），前一版丢弃根并声称 ape 也丢弃是事实错误；
+  支持向量恢复为每个内部节点一项，根恒 100%。
+- **pca/filter**：`--memory` 上限移入逐块收集（超限即中止扫描，不再先攒
+  满）；`stream + pairwise` 与 `--set-id`×`--update-name` 的拒绝移到读输入
+  之前；`INFO/AC` 等带前缀的内置字段在 `--set-gts` 掩码表达式中编译期
+  拒绝（此前静默求值为 Missing）。
+- **filter/distance/convert**：`-f .` 只匹配整列为 `.`（对齐 bcftools 的
+  filter id −1 语义）；dosage 提升缓存由 f64 改 i8（省 16 GB @ 2000×1M，
+  数值逐位不变）；MSA 乱序检查覆盖窗口外帧；keep-mask 断言在 release 也生效。
+- **安全**：stdin 落盘临时文件改 `create_new`（O_EXCL）+ 有界重试——
+  修前共享主机上可预测路径可被预置文件/符号链接劫持并截断受害者文件
+  （实测复现）（SEC-1）。
+
+## [Unreleased] — doc_v18 随机数基础设施（2026-10-21）
+
+`xvalDapc` 与 `aboot` 的共同前置，加上两个消费者本身。没有可分割的 RNG，
+任何并行重抽样的结果都会依赖线程调度，违反 `architecture.md` §7.6 的
+确定性契约。
+
+### Added
+
+- **`reed-core::rng::Rng`**：PCG32（O'Neill 2014），可分割。
+  - `from_seed` / `from_seed_stream` / **`derive(index)`**：按**重复序号**
+    派生独立子流，因此第 `i` 次重复在 1 线程与 64 线程下取到同一批随机数。
+  - `below` 用**拒绝采样**而非 `% n`：模偏在置换检验里是系统性误差。
+  - `shuffle`（Fisher–Yates）、`sample_n`（Floyd 算法，代价
+    `O(min(k, n-k))`，`poppr::genotype_curve` 用的就是它）、`resample_n`
+    （有放回）、`multinomial`（`poppr` 参数化 bootstrap 用的；负权重直接
+    拒绝，否则会静默偏置）。
+  - 与独立的 PCG32 参考实现逐位对拍，参考序列锁进测试。
+
+### Changed
+
+- `reed-reduce` 里两处私有 xorshift（`umap.rs`、`extra.rs`）迁到共享的
+  `Rng`。UMAP/t-SNE/NMF/PPCA 的随机序列因此改变；它们的测试只断言结构性
+  质（分离度、对称性、重构误差），没有锁死数值，所以全部通过。
+
+### Added — `xvalDapc`（RNG 的第一个消费者）
+
+- **`reed-core::math::r_compat`**：R 的 `round()`（银行家舍入）与
+  `pretty()` 步长表。`xvalDapc` 的候选 PC 列表与训练集大小都依赖这两者，
+  而 Rust 的 `f64::round` 是 half-away-from-zero，不等价。
+- **`reed-reduce::xval`**：按群体分层抽样、每档 `n_rep` 次重复、以
+  `sqrt(mean((success-1)^2))` 选最优（照抄 adegenet 的非标准 RMSE），
+  并列取最大 `n_pca`。PCA 在全数据上算一次、不随重复重算——重算会把验证
+  样本泄漏进主成分。
+  - 每组训练集大小是 `round(training.set * n_g)`，**不夹取到 `n_g-1`**，
+    与参照一致（该情形在 `training.set` 被压到 `(popmin-1)/popmin` 后不可达，
+    但去掉夹取让算术与参照逐项相同）。
+  - 随机基线是 **`1/ng`**，即 `adegenet` 标签置换基线的期望值；不是
+    `Σ p_g²`（后者是按先验猜的准确率，在不等组数据上高估 17%）。
+- **`reed pca --dapc --xval`**：`--xval-rep`、`--xval-training`、
+  `--xval-result`、`--xval-seed`、`--xval-pca`；写 `PREFIX.dapc.xval`。
+
+### Added — `aboot`（bootstrap 树支持率）
+
+- **`reed-graph::bootstrap`**：按**位点**（列）有放回重采样、每次重算距离
+  与树、统计每个分支在重复中出现的比例。有根树按 clade 计，无根树按
+  bipartition 计（规范化到含 tip 0 的一侧，避免同一划分记两次）。
+- **`reed distance --tree upgma|nj --bootstrap N`**：`--bootstrap-seed`、
+  `--bootstrap-cutoff`；支持率写进 `PREFIX.nwk` 的节点标签。
+- 与 `ape::prop.clades` 的确定性对拍：固定三个重采样索引，计数
+  `3 3 3 2 1` 逐项一致。
+
+### Verified
+
+| 检查 | 结果 |
+|---|---|
+| PCG32 参考序列（seed=42，前 5 个 u32） | 与独立实现逐位一致 |
+| bootstrap clade 计数 vs `ape::prop.clades` | 逐项一致（3/3/3/2/1） |
+| 候选 n.pca 列表 vs `pretty()` | 7 个范围逐项一致 |
+| `round(0.9*n)` 银行家舍入 vs R | 一致 |
+| 弱信号夹具成功率 vs adegenet | 同为"PC 越多越差"，量级一致 |
+| 串行 vs 4 线程分片（256 次重复） | 逐元素相同 |
+| 重复 `i` 是否受其它重复影响 | 不受（烧掉 1000 次抽样后仍相同） |
+| `below` 均匀性（70k 次，7 桶） | 每桶偏差 < 5% |
+| `sample_n` 位置均匀性（30k 次，10 选 3） | 每位偏差 < 5% |
+| `sample_n` 抽样预算（20 选 5） | 恰好 5 次，不是 20 次 |
+| `derive` 流间相关（2 万条流） | 相邻流 r = -0.0005 |
+| `multinomial` 权重跟随（50k 次） | 每类偏差 < 5% |
+
+## [Unreleased] — doc_v17b 判别分析与距离树（2026-10-21）
+
+面向自然群体的一轮：收**有监督判别**（DAPC）与**由距离矩阵建树**
+（UPGMA/NJ/newick）两族。
+
+### Added
+
+- **`reed-reduce::lda`**：Fisher 线性判别分析，照 `MASS:::lda.default` 的
+  `method="moment"` 分支（`adegenet::dapc` 调的就是它）。
+  - `fit(x, groups, levels, tol)` / `Lda::project(x, dimen)` →
+    `LdaProjection { coords, posterior, assign }`。
+  - 单边 Jacobi SVD（工作区原本没有 SVD）；不形成 `A^T A`，精度更好。
+  - 与 `MASS::lda` 对拍：`means` 2.2e-15、`posterior` 4.9e-16、`assign`
+    逐样本一致；`scaling` 按 `|dot|` 归符号后 1.0e-15。
+- **`crates/reed-graph`**：新 crate，只依赖 `reed-core`（L3 纪律）。
+  - `Tree`（ape `phylo` 形状）、`to_newick`（`ape::write.tree` 格式，
+    显式栈，深度上限 10 000）。
+  - `upgma`：`hclust(method="average")` 的 Lance–Williams 递推，含并列
+    扫描序与存活槽（取较新簇）规则——两者都是逐位一致的必要条件。
+  - `nj`：`ape::nj` 的 `C_nj` 语义（`Q=(n−2)d−S_i−S_j`，边数 `2n−3`，
+    负枝长原样保留）。
+  - 与 `hclust` 对拍：合并高度 4.9e-13；与 `ape::nj` 对拍：RF=0、
+    13 条枝长逐位相同。
+- **`reed pca --dapc --pop FILE [--n-da N]`**：PCA → LDA，写
+  `PREFIX.dapc.ind`（`#IID POP ASSIGN LD1..LDk`）、`PREFIX.dapc.eig`、
+  `PREFIX.dapc.var`。`--n-da` 默认 `#{svd² > 1e-10}`，照 adegenet 的
+  `lda.dim`。assign 与 `adegenet::dapc` 逐样本一致。
+- **`reed distance --tree upgma|nj [--digits N]`**：由已算好的矩阵建树，
+  写 `PREFIX.nwk`（不写矩阵文件）。
+  - `--tree` 只接受**距离**矩阵：对角线非零的相似度/亲缘矩阵（`grm` 默认值、
+    `cov`、`king`、`pihat`、`phi`、`ibs`）被拒绝并提示改用 `1-ibs`。
+  - `--digits` 是 **R `format()` 语义的有效数字**（默认 10），不是小数位；
+    `0` 被拒绝（会把所有枝长舍成 0）。
+  - UPGMA 的枝长按 `ape::as.phylo.hclust` 的口径折半：`hclust$height` 是
+    合并距离（节点高度的 2 倍），不折半会让每条枝长变成正确值的 2 倍。
+    超度量输入下树的 patristic 距离与输入矩阵逐对相等，有性质测试锁死。
+- 门面：`reed::run_dapc` / `run_dapc_opened` / `DapcRequest` /
+  `DapcReport`；`reed::Mat` 转出（`reed-graph` 与 CLI 共用）。
+
+### Notes
+
+- `docs/rounds/v17b/`（README / 01-research / 02-spec / 06-roadmap /
+  STATUS）。核心决定：DAPC 的 PCA 沿用 reed 口径而非 `ade4::dudi.pca`
+  的 `li = U·d`；两者每轴差一个常数因子，而 LDA 对特征空间整体缩放不变，
+  故 `posterior`/`assign` 一致、`ind.coord` 仅尺度不同（01 §1.5 有推导）。
+- 明确不做：`find.clusters`、`snapclust`、`dist.genpop` 的五种距离、
+  全部绘图层、Bruvo/SSR/GenAlEx。（`xvalDapc` 与 `aboot` 后来在 doc_v18
+  完成。）
+
 ## [Unreleased] — doc_v17 个体间距离矩阵族（2026-10-20）
 
 新增 `reed-distance` crate 与 `reed distance` 命令；PCA 的 GRM 构建迁入

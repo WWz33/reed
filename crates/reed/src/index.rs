@@ -24,7 +24,7 @@ use reed_io::chunk::framing::RecordFraming;
 use reed_io::chunk::{ChunkBytes, inflate_chunk};
 use reed_io::vcf::fixed::parse_pos1;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::site::ContigTable;
+use reed_io::vcf::site::{ContigTable, indexed_span_len};
 use reed_io::write::index::Indexer;
 
 pub use reed_io::write::index::WriteIndex;
@@ -137,7 +137,17 @@ fn decode_record(
         )));
     };
     let pos1 = parse_pos1(lr.pos_text(), lr.chrom()).map_err(EngineError::from)?;
-    let ref_len = u32::try_from(lr.reference().len()).unwrap_or(1).max(1);
+    // (doc_v20 S42) the indexed span follows INFO/END for symbolic ALTs
+    // (htslib's r_len), so `-r` queries find spanning deletions; the BCF
+    // index path reads rlen from the file bytes instead (record_site).
+    let ref_len = u32::try_from(indexed_span_len(
+        pos1,
+        lr.reference(),
+        lr.alts(),
+        lr.info_text(),
+    ))
+    .unwrap_or(1)
+    .max(1);
     Ok(RecordStart {
         tid,
         pos1,
@@ -425,6 +435,16 @@ struct IndexSink {
 
 impl IndexSink {
     fn push(&mut self, entry: RecordStart) -> Result<(), EngineError> {
+        // The tid comes from BCF file bytes (`record_site`), so it is not
+        // bounded by construction: reject one that is not declared in the
+        // header before the slice indexes below use it (doc_v20 R3) — the
+        // panic used to escape `run_index` on the sequential path.
+        if entry.tid.get() as usize >= self.contig_names.len() {
+            return Err(EngineError::job(format!(
+                "record references contig id {} not declared in the header",
+                entry.tid.get()
+            )));
+        }
         if let Some((tid, pos1)) = self.last_pos1
             && tid == entry.tid
             && entry.pos1 < pos1
@@ -747,5 +767,53 @@ mod tests {
             "the parallel and sequential indexes must be byte-identical"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// doc_v20 R3: a BCF record's tid comes straight from the file bytes;
+    /// one that is not declared in the header must come back as a job
+    /// error, not panic the `contig_names` slice index (the panic escapes
+    /// `run_index` on the sequential path, which has no catch_unwind).
+    #[test]
+    fn r3_sink_rejects_tid_beyond_the_header_contigs() {
+        let contig_names: Arc<[Vec<u8>]> = Arc::from(vec![b"chr1".to_vec()].into_boxed_slice());
+        let indexer = Indexer::new(WriteIndex::Csi, &contig_names).expect("invariant: csi");
+        let out: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+        let mut sink = IndexSink {
+            indexer,
+            // Never written: the bad record errors before `finish`.
+            path: PathBuf::from("r3-unused.csi"),
+            contigs: ContigTable::new(contig_names.iter().cloned()),
+            contig_names: Arc::clone(&contig_names),
+            pending: None,
+            carry: None,
+            last_pos1: None,
+            n_records: 0,
+            eof_voff: 1 << 20,
+            out: Arc::clone(&out),
+        };
+        // tid 7 against one declared contig: the first push parks the
+        // record, the second feeds it to `add`, whose
+        // `contig_names[tid as usize]` used to panic (doc_v20 R3).
+        let bad = RecordStart {
+            tid: ContigId(7),
+            pos1: 1,
+            ref_len: 1,
+            voff: 0,
+        };
+        let next = RecordStart {
+            tid: ContigId(0),
+            pos1: 10,
+            ref_len: 1,
+            voff: 9,
+        };
+        let err = sink
+            .push(bad)
+            .and_then(|()| sink.push(next))
+            .expect_err("an out-of-range tid must be a job error, not a panic");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("contig id 7"),
+            "error must name the tid: {msg}"
+        );
     }
 }

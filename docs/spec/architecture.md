@@ -581,6 +581,46 @@ pub enum Availability { Available, Biased(BiasCode), Unavailable(RefusalCode) }
 - `BiasCode`/`RefusalCode` 各有 `fn message(&self) -> &'static str`。机器可读的 code 写进输出
   JSON sidecar（修复 A23）。
 
+### 5.8b 随机数（`reed-core::rng`）
+
+重抽样族（交叉验证、bootstrap、置换检验）需要随机数，而 §7.6 要求**输出与
+线程数无关**。两者只有在生成器**可分割**时才同时成立：不能有一个共享的
+可变状态，否则某个 worker 看到哪一段序列取决于调度。
+
+```rust
+pub struct Rng { /* PCG32 的 state + inc */ }
+impl Rng {
+    fn from_seed(seed: u64) -> Self;
+    fn from_seed_stream(seed: u64, stream: u64) -> Self;
+    fn derive(&self, index: u64) -> Self;   // 第 index 次重复的独立子流
+    fn next_u32(&mut self) -> u32;
+    fn next_u64(&mut self) -> u64;
+    fn next_f64(&mut self) -> f64;          // [0,1)，53 位
+    fn below(&mut self, n: usize) -> usize; // [0,n)，拒绝采样，无模偏
+    fn shuffle<T>(&mut self, items: &mut [T]);
+    fn sample_n(&mut self, n: usize, k: usize) -> Vec<usize>;   // Floyd，O(min(k,n-k))，不放回
+    fn resample_n(&mut self, n: usize, k: usize) -> Vec<usize>; // 有放回
+    fn multinomial(&mut self, k: usize, weights: &[f64]) -> Vec<usize>;
+}
+```
+
+**规矩**：
+
+1. **按重复序号派生，不按 worker 派生**。调用方传的是"第几次重复"，不是
+   线程号；这是并行结果可复现的唯一方式。
+2. **`below` 必须拒绝采样**。`% n` 的模偏在置换检验里是系统性误差，不是
+   噪声。
+3. **生成器是 PCG32**（O'Neill 2014）。输出与状态非线性，适合成千上万次
+   同数据置换；参考序列已锁进测试，防止重构静默改变所有下游数值。
+4. **`sample_n` 的代价是 `O(min(k, n-k))` 而非 `O(n)`**。抽 10 个位点不该
+   消耗 n 个随机数：`poppr::genotype_curve` 每次重复都要抽一次，千次重复就是
+   千倍的浪费。小 k 用 Floyd 算法，大 k 抽补集再取反。
+5. **`multinomial` 拒绝负权重**。负权重会让累积扫描往回走，该类别永远抽不到、
+   其余类别被放大——实测 `[5,-1,5]` 得到 55.6/44.4 而不是 50/50，且无任何
+   报错。宁可 panic 也不要静默算错。
+6. 放在 L0 是因为 L3 策略 crate 只能依赖 `reed-core`（§14.6）——置换检验
+   在 `reed-stats`、bootstrap 在 `reed-graph`，都够不着别处。
+
 ### 5.9 窗口网格
 
 ```rust
@@ -1172,7 +1212,7 @@ exclude = []
 [site]
 variant_class = ["snv"]            # snv | mnv | indel | symbolic | ref
 max_alt_alleles = 1
-require_filter = ["PASS"]          # FILTER ∈ 集合；"." 不算通过
+require_filter = ["PASS"]          # FILTER 的任一 `;` 分量 ∈ 集合；列出的 "." 只匹配整列为 "."（doc_v20 R1）
 min_qual = 30.0
 
 [[site.info]]                      # 任意数值 INFO；按 header 校验存在性、Type、Number

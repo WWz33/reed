@@ -611,6 +611,17 @@ pub fn run_rename_opened(
             "--set-id and --set-missing-var-ids are mutually exclusive",
         ));
     }
+    // doc_v20 R11: the ID plane returns the `--set-id` render before the
+    // `--update-name` lookup (and the end-of-run typo check is skipped for
+    // `--set-id`), so this pair silently dropped the mapping file.
+    // `--set-missing-var-ids` is different: it rewrites only `.` IDs, the map
+    // stays reachable for named IDs and the typo check stays armed.
+    if plan.set_id.is_some() && !plan.update_name.is_empty() {
+        return Err(crate::Error::usage(
+            "--set-id cannot be combined with --update-name (the template rewrites every ID, \
+             so the mapping would never be applied)",
+        ));
+    }
     if plan.clear_ids
         && (plan.set_id.is_some()
             || !plan.update_name.is_empty()
@@ -783,6 +794,16 @@ fn validate(spec: &RenameSpec) -> Result<(), crate::Error> {
             "no rename requested: pass one of -h/-f/--add-meta/--remove-meta/--rename-chrs/\
              --chr-style/--set-id/--set-missing-var-ids/--update-name/--idspace-to/\
              --rm-dup-ids/--clear-ids/-s/-N/--replace-sample-name",
+        ));
+    }
+    // doc_v20 review of R11: flag conflicts belong here, before any file is
+    // opened — the same check is repeated on the compiled plan for library
+    // callers that build one directly, but this is the copy the CLI hits
+    // first, so a missing input file cannot mask the conflict.
+    if spec.set_id.is_some() && spec.update_name.is_some() {
+        return Err(crate::Error::usage(
+            "--set-id cannot be combined with --update-name (the template rewrites every ID, \
+             so the mapping would never be applied)",
         ));
     }
     Ok(())
@@ -1247,7 +1268,8 @@ fn index_key(
     Ok(reed_io::write::block_writer::IndexKey {
         contig,
         start1: site.pos1,
-        ref_len: u32::try_from(lr.reference().len()).unwrap_or(u32::MAX),
+        // doc_v20 review of S42: same span rule as filter and `reed index`.
+        ref_len: u32::try_from(site.indexed_span_len()).unwrap_or(u32::MAX),
     })
 }
 

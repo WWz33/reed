@@ -47,6 +47,74 @@ fn crate_lgamma(x: f64) -> f64 {
     }
 }
 
+// doc_v20 R7: the recursion must anchor at the mode, not the left edge —
+// the left-edge anchor overflows for large n.
+#[test]
+fn r7_projection_weights_do_not_overflow_at_large_n() {
+    // p = 0.5, n = 1024+ : the old left-to-right recursion grew the running
+    // weight like e^{n·ln 2} (peak ln w ≈ 765 ≫ ln f64::MAX ≈ 709.8), drove
+    // the sum to inf, and returned an empty Vec — the site was still counted
+    // but contributed no mass, silently low-biasing the projected SFS at
+    // exactly the large --proj values the feature exists for.
+    let w = projection_weights(10_000, 5_000, 1_024);
+    assert!(!w.is_empty(), "weights dropped at large n");
+    assert!(w.iter().all(|(_, w)| w.is_finite()), "non-finite weight");
+    let total: f64 = w.iter().map(|(_, w)| w).sum();
+    assert!((total - 1.0).abs() < 1e-12, "sum={total}");
+    // Ascending k, inside the true support (the 1e−15-of-peak retain may
+    // legitimately trim the deep tails, so only check monotonicity + range).
+    let (k_lo, k_hi) = (0_u32, 1_024_u32); // 1024−(10−5)·10³ saturates; min(1024, 5000)
+    for pair in w.windows(2) {
+        assert!(pair[0].0 < pair[1].0, "ks not ascending: {w:?}");
+    }
+    assert!(w.iter().all(|&(k, _)| k >= k_lo && k <= k_hi));
+    // Second overflowing shape: n approaching m (k_hi = n), p = 0.25.
+    let w2 = projection_weights(3_000, 1_500, 1_500);
+    assert!(!w2.is_empty(), "weights dropped at n = m");
+    let total2: f64 = w2.iter().map(|(_, w)| w).sum();
+    assert!((total2 - 1.0).abs() < 1e-12, "sum={total2}");
+}
+
+// doc_v20 R7: mode anchoring changes no mathematics — the weights still
+// match the exact hypergeometric pmf term by term (u128 binomials, small m).
+#[test]
+fn r7_weights_match_exact_hypergeometric() {
+    fn choose(nn: u128, kk: u128) -> u128 {
+        let kk = kk.min(nn - kk);
+        let mut r = 1_u128;
+        for i in 0..kk {
+            r = r * (nn - i) / (i + 1);
+        }
+        r
+    }
+    for (m, alt, n) in [
+        (10_u32, 3_u32, 6_u32),
+        (10, 5, 8),
+        (12, 1, 10),
+        (20, 10, 2),
+        (30, 15, 20),
+        (30, 29, 10),
+        (30, 7, 25),
+        (18, 9, 18), // m == n: identity
+    ] {
+        let w = projection_weights(m, alt, n);
+        let total: f64 = w.iter().map(|(_, w)| w).sum();
+        assert!(
+            (total - 1.0).abs() < 1e-12,
+            "m={m} alt={alt} n={n}: {total}"
+        );
+        for &(k, weight) in &w {
+            let expected = choose(u128::from(alt), u128::from(k)) as f64
+                * choose(u128::from(m - alt), u128::from(n - k)) as f64
+                / choose(u128::from(m), u128::from(n)) as f64;
+            assert!(
+                (weight - expected).abs() <= 1e-12,
+                "m={m} alt={alt} n={n} k={k}: {weight} vs {expected}"
+            );
+        }
+    }
+}
+
 #[test]
 fn ratio_recursion_matches_exact_binomials() {
     for (m, alt, n) in [

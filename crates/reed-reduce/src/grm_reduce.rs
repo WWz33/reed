@@ -104,7 +104,14 @@ pub fn grm_knn_weights(grm: &Grm, n_neighbors: usize) -> Mat {
 }
 
 /// t-SNE on GRM distances.
-pub fn grm_tsne(grm: &Grm, cfg: &crate::extra::TsneConfig) -> reed_core::linalg::Mat {
+///
+/// # Errors
+///
+/// [`crate::extra::TsneError`]; see [`crate::extra::tsne`].
+pub fn grm_tsne(
+    grm: &Grm,
+    cfg: &crate::extra::TsneConfig,
+) -> Result<reed_core::linalg::Mat, crate::extra::TsneError> {
     let d = grm_distances(grm);
     let mut d2 = reed_core::linalg::Mat::zeros(d.rows, d.cols);
     for i in 0..d.rows {
@@ -424,7 +431,7 @@ mod tests {
         // not degenerate. The exact ratio depends on the SGD trajectory, which
         // legitimately differs between backends (different summation order).
         let stoch: Vec<(&str, Mat)> = vec![
-            ("tsne", grm_tsne(&g, &tsne_cfg)),
+            ("tsne", grm_tsne(&g, &tsne_cfg).expect("grm tsne fixture")),
             ("umap", grm_umap(&g, &umap_cfg)),
         ];
         for (name, m) in stoch {

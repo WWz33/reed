@@ -5,6 +5,18 @@
 //! and, through it, at the exact source line. Do not "simplify" a formula
 //! without re-checking it against the reference: the whole point of this
 //! module is bit-comparable output.
+//!
+//! Parallelism (doc_v20 R13): each estimator fans its outer sample loop out
+//! over rayon — one task per matrix row, rows collected in index order and
+//! scattered serially. No float is ever reduced across threads and every
+//! `(i,j)` entry keeps exactly its serial arithmetic, so the output is
+//! bit-identical at any pool size (locked by
+//! `r13_estimator_results_thread_invariant`). The estimators run on
+//! whatever pool is ambient: the rayon global pool by default, or the
+//! caller's scoped pool when invoked inside one (e.g. a budget-sized
+//! `rayon::ThreadPool::install`).
+
+use rayon::prelude::*;
 
 use crate::standard::Standardized;
 
@@ -143,31 +155,67 @@ pub fn allele_ct_distance(
         }
     }
 
-    for i in 0..n {
-        for j in 0..i {
-            let mut raw = 0.0f64;
-            let mut miss_both = 0.0f64;
-            for s in 0..m {
-                let ci = st.is_called(i, s);
-                let cj = st.is_called(j, s);
-                match (ci, cj) {
-                    (true, true) => {
-                        // The numerator is the *unweighted* allele-count
-                        // difference; plink's HWE weights enter only through
-                        // the missing-correction denominator
-                        // (1.9/plink_calc.c:8169-8199 vs incr_dists_i at
-                        // :973-1024, which popcounts without weighting).
-                        raw += (st.w.get(i, s) * st.sd[s] + st.mean[s]
-                            - (st.w.get(j, s) * st.sd[s] + st.mean[s]))
-                            .abs();
-                    }
-                    (false, false) => miss_both += weights[s],
-                    _ => {}
-                }
+    // Per-sample dosages, hoisted out of the pair loop (doc_v20 R13): the
+    // loop used to recompute `w*sd + mean` for both members of every pair
+    // at every site — O(n²·m) extra multiplications. The hoisted value is
+    // that same expression on the same operands, so each entry below stays
+    // bit-identical to the serial recomputation. (Entries for missing
+    // calls are computed but never read, exactly as before.)
+    // doc_v20 review of R13: stored as i8 (the value is 0/1/2) instead of
+    // f64. At 2,000 samples x 1M sites the f64 copy alone was 16 GB on top
+    // of `w` and `called`; widening back to f64 in the loop is exact, so
+    // every entry stays bit-identical.
+    let dose: Vec<i8> = (0..n * m)
+        .map(|k| {
+            let (i, s) = (k / m, k % m);
+            let v = st.w.get(i, s) * st.sd[s] + st.mean[s];
+            if v.is_nan() {
+                0
+            } else {
+                v.round().clamp(-128.0, 127.0) as i8
             }
-            let denom = weight_sum - miss[i] - miss[j] + miss_both;
-            let val = if denom > 0.0 { raw * weight_sum / denom } else { 0.0 };
-            out.set(i, j, val);
+        })
+        .collect();
+
+    // One strict-lower-triangle row per task (doc_v20 R13): task `i`
+    // produces row `i` only, rows are collected in index order and
+    // scattered serially, so the result never depends on the pool size.
+    let rows: Vec<Vec<f64>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            (0..i)
+                .map(|j| {
+                    let mut raw = 0.0f64;
+                    let mut miss_both = 0.0f64;
+                    for s in 0..m {
+                        let ci = st.is_called(i, s);
+                        let cj = st.is_called(j, s);
+                        match (ci, cj) {
+                            (true, true) => {
+                                // The numerator is the *unweighted* allele-count
+                                // difference; plink's HWE weights enter only through
+                                // the missing-correction denominator
+                                // (1.9/plink_calc.c:8169-8199 vs incr_dists_i at
+                                // :973-1024, which popcounts without weighting).
+                                raw += f64::from(dose[i * m + s] - dose[j * m + s]).abs();
+                            }
+                            (false, false) => miss_both += weights[s],
+                            _ => {}
+                        }
+                    }
+                    let denom = weight_sum - miss[i] - miss[j] + miss_both;
+                    if denom > 0.0 {
+                        raw * weight_sum / denom
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    for (i, row) in rows.iter().enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            out.set(i, j, v);
         }
     }
     out
@@ -266,23 +314,32 @@ pub fn grm(
         }
     }
 
-    let miss: Vec<usize> = (0..n).map(|i| m - st.called_count(i)).collect();
-    for i in 0..n {
-        for j in 0..=i {
-            let mut acc = 0.0f64;
-            for s in 0..m {
-                acc += x[i * m + s] * x[j * m + s];
-            }
-            let denom = match missing {
-                MissingPolicy::MeanImpute => m as f64,
-                MissingPolicy::Pairwise => {
-                    let both = st.called_both(i, j);
-                    let _ = (miss[i], miss[j]);
-                    both as f64
-                }
-            };
-            let val = if denom > 0.0 { acc / denom } else { 0.0 };
-            out.set(i, j, val);
+    // One triangle row (diagonal included) per task (doc_v20 R13); the
+    // O(m) `called_both` second pass per pair keeps its math intact. The
+    // per-sample `miss` counts the serial loop kept only to silence
+    // unused warnings are gone with it: both denominators below read
+    // `called_both`/`m` directly.
+    let rows: Vec<Vec<f64>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            (0..=i)
+                .map(|j| {
+                    let mut acc = 0.0f64;
+                    for s in 0..m {
+                        acc += x[i * m + s] * x[j * m + s];
+                    }
+                    let denom = match missing {
+                        MissingPolicy::MeanImpute => m as f64,
+                        MissingPolicy::Pairwise => st.called_both(i, j) as f64,
+                    };
+                    if denom > 0.0 { acc / denom } else { 0.0 }
+                })
+                .collect()
+        })
+        .collect();
+    for (i, row) in rows.iter().enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            out.set(i, j, v);
         }
     }
     out
@@ -335,24 +392,37 @@ pub fn king(st: &Standardized) -> (MatrixResult, Vec<KingCounts>) {
         }
     }
 
-    for i in 0..n {
-        for j in 0..=i {
-            let mut c = KingCounts::default();
-            for s in 0..m {
-                let a = dose[i * m + s];
-                let b = dose[j * m + s];
-                if a < 0 || b < 0 {
-                    continue;
+    // One triangle row of values plus its counts per task (doc_v20 R13).
+    let rows: Vec<(Vec<f64>, Vec<KingCounts>)> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let mut vals = Vec::with_capacity(i + 1);
+            let mut cs = Vec::with_capacity(i + 1);
+            for j in 0..=i {
+                let mut c = KingCounts::default();
+                for s in 0..m {
+                    let a = dose[i * m + s];
+                    let b = dose[j * m + s];
+                    if a < 0 || b < 0 {
+                        continue;
+                    }
+                    match (a, b) {
+                        (1, 1) => c.hethet += 1,
+                        (0, 2) | (2, 0) => c.ibs0 += 1,
+                        (1, 0) | (1, 2) => c.het1hom2 += 1,
+                        (0, 1) | (2, 1) => c.het2hom1 += 1,
+                        _ => {}
+                    }
                 }
-                match (a, b) {
-                    (1, 1) => c.hethet += 1,
-                    (0, 2) | (2, 0) => c.ibs0 += 1,
-                    (1, 0) | (1, 2) => c.het1hom2 += 1,
-                    (0, 1) | (2, 1) => c.het2hom1 += 1,
-                    _ => {}
-                }
+                vals.push(c.kinship());
+                cs.push(c);
             }
-            out.set(i, j, c.kinship());
+            (vals, cs)
+        })
+        .collect();
+    for (i, (vals, cs)) in rows.iter().enumerate() {
+        for (j, (&v, &c)) in vals.iter().zip(cs.iter()).enumerate() {
+            out.set(i, j, v);
             counts[i * n + j] = c;
             counts[j * n + i] = c;
         }
@@ -417,47 +487,58 @@ pub fn pi_hat(st: &Standardized, opts: &PiHatOptions) -> (MatrixResult, Vec<PiHa
     // and the coefficients are the sums over sites, later normalized.
     let (e00, e01, e02, e11, e12) = expected_ibs_coefficients(st);
 
-    for i in 0..n {
-        for j in 0..=i {
-            let mut n_valid = 0u64;
-            let mut ibs0 = 0u64;
-            let mut ibs1 = 0u64;
-            for s in 0..m {
-                let a = dose[i * m + s];
-                let b = dose[j * m + s];
-                if a < 0 || b < 0 {
-                    continue;
-                }
-                n_valid += 1;
-                let d = (a - b).unsigned_abs();
-                match d {
-                    0 => {}
-                    1 => ibs1 += 1,
-                    _ => ibs0 += 1,
-                }
-            }
-            let nn = n_valid as f64;
-            let oo = nn - ibs1 as f64 - ibs0 as f64;
-            let (mut z0, mut z1, mut z2) = if nn > 0.0 {
-                let z0 = ibs0 as f64 / (e00 * nn);
-                let z1 = (ibs1 as f64 - z0 * e01 * nn) / (e11 * nn);
-                let z2 = (oo - nn * (z0 * e02 + z1 * e12)) / nn;
-                (z0, z1, z2)
-            } else {
-                (0.0, 0.0, 0.0)
-            };
-            if !opts.unbounded {
-                (z0, z1, z2) = clip_ibd(z0, z1, z2);
-            }
-            let mut pi = z1 * 0.5 + z2;
-            if opts.nudge && pi * pi < z2 {
-                z0 = (1.0 - pi) * (1.0 - pi);
-                z1 = 2.0 * pi * (1.0 - pi);
-                z2 = pi * pi;
-                pi = z1 * 0.5 + z2;
-            }
-            out.set(i, j, pi);
-            let r = PiHatResult { z0, z1, z2, pi_hat: pi, n_valid, ibs1, ibs0 };
+    // One triangle row of (PI_HAT, triplet) per task (doc_v20 R13).
+    let rows: Vec<Vec<(f64, PiHatResult)>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            (0..=i)
+                .map(|j| {
+                    let mut n_valid = 0u64;
+                    let mut ibs0 = 0u64;
+                    let mut ibs1 = 0u64;
+                    for s in 0..m {
+                        let a = dose[i * m + s];
+                        let b = dose[j * m + s];
+                        if a < 0 || b < 0 {
+                            continue;
+                        }
+                        n_valid += 1;
+                        let d = (a - b).unsigned_abs();
+                        match d {
+                            0 => {}
+                            1 => ibs1 += 1,
+                            _ => ibs0 += 1,
+                        }
+                    }
+                    let nn = n_valid as f64;
+                    let oo = nn - ibs1 as f64 - ibs0 as f64;
+                    let (mut z0, mut z1, mut z2) = if nn > 0.0 {
+                        let z0 = ibs0 as f64 / (e00 * nn);
+                        let z1 = (ibs1 as f64 - z0 * e01 * nn) / (e11 * nn);
+                        let z2 = (oo - nn * (z0 * e02 + z1 * e12)) / nn;
+                        (z0, z1, z2)
+                    } else {
+                        (0.0, 0.0, 0.0)
+                    };
+                    if !opts.unbounded {
+                        (z0, z1, z2) = clip_ibd(z0, z1, z2);
+                    }
+                    let mut pi = z1 * 0.5 + z2;
+                    if opts.nudge && pi * pi < z2 {
+                        z0 = (1.0 - pi) * (1.0 - pi);
+                        z1 = 2.0 * pi * (1.0 - pi);
+                        z2 = pi * pi;
+                        pi = z1 * 0.5 + z2;
+                    }
+                    let r = PiHatResult { z0, z1, z2, pi_hat: pi, n_valid, ibs1, ibs0 };
+                    (pi, r)
+                })
+                .collect()
+        })
+        .collect();
+    for (i, row) in rows.iter().enumerate() {
+        for (j, &(v, r)) in row.iter().enumerate() {
+            out.set(i, j, v);
             results[i * n + j] = r;
             results[j * n + i] = r;
         }
@@ -553,30 +634,42 @@ pub fn phi(st: &Standardized) -> (MatrixResult, AuxCounts) {
         .collect();
     aux.n_het = n_het.clone();
 
-    for i in 0..n {
-        for j in 0..n {
-            let mut hethet = 0u64;
-            let mut opposite = 0u64;
-            for s in 0..m {
-                let a = dose[i * m + s];
-                let b = dose[j * m + s];
-                if a < 0 || b < 0 {
-                    continue;
-                }
-                if a == 1 && b == 1 {
-                    hethet += 1;
-                } else if a == b {
-                    // Both homozygous and equal: nothing.
-                } else if a != 1 && b != 1 {
-                    opposite += 1;
-                }
-            }
-            let denom = (n_het[i] + n_het[j]) as f64;
-            let val = if denom > 0.0 {
-                (hethet as f64 - 2.0 * opposite as f64) / denom
-            } else {
-                f64::NAN
-            };
+    // One full row of (phi, hethet, opposite) per task (doc_v20 R13); phi
+    // walks the complete ordered matrix, so no mirror writes are needed.
+    let rows: Vec<Vec<(f64, u64, u64)>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            (0..n)
+                .map(|j| {
+                    let mut hethet = 0u64;
+                    let mut opposite = 0u64;
+                    for s in 0..m {
+                        let a = dose[i * m + s];
+                        let b = dose[j * m + s];
+                        if a < 0 || b < 0 {
+                            continue;
+                        }
+                        if a == 1 && b == 1 {
+                            hethet += 1;
+                        } else if a == b {
+                            // Both homozygous and equal: nothing.
+                        } else if a != 1 && b != 1 {
+                            opposite += 1;
+                        }
+                    }
+                    let denom = (n_het[i] + n_het[j]) as f64;
+                    let val = if denom > 0.0 {
+                        (hethet as f64 - 2.0 * opposite as f64) / denom
+                    } else {
+                        f64::NAN
+                    };
+                    (val, hethet, opposite)
+                })
+                .collect()
+        })
+        .collect();
+    for (i, row) in rows.iter().enumerate() {
+        for (j, &(val, hethet, opposite)) in row.iter().enumerate() {
             out.set(i, j, val);
             aux.n_hethet[i * n + j] = hethet;
             aux.n_opposite_hom[i * n + j] = opposite;
@@ -618,39 +711,49 @@ pub fn ajk(st: &Standardized, opts: &AjkOptions) -> MatrixResult {
         .map(|&p| p > f64::EPSILON && p < 1.0 - f64::EPSILON)
         .collect();
 
-    for i in 0..n {
-        for j in 0..=i {
-            let mut acc = 0.0f64;
-            let mut sites = 0u64;
-            for s in 0..m {
-                if !usable[s] {
-                    continue;
-                }
-                let a = dose[i * m + s];
-                let b = dose[j * m + s];
-                if a < 0 || b < 0 {
-                    continue;
-                }
-                let p = st.freq[s];
-                let div = 1.0 / (2.0 * p * (1.0 - p));
-                if i == j {
-                    if opts.diagonal {
-                        let x = a as f64;
-                        acc += (x * x - (1.0 + 2.0 * p) * x + 2.0 * p * p) * div;
+    // One triangle row per task (doc_v20 R13).
+    let rows: Vec<Vec<f64>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            (0..=i)
+                .map(|j| {
+                    let mut acc = 0.0f64;
+                    let mut sites = 0u64;
+                    for s in 0..m {
+                        if !usable[s] {
+                            continue;
+                        }
+                        let a = dose[i * m + s];
+                        let b = dose[j * m + s];
+                        if a < 0 || b < 0 {
+                            continue;
+                        }
+                        let p = st.freq[s];
+                        let div = 1.0 / (2.0 * p * (1.0 - p));
+                        if i == j {
+                            if opts.diagonal {
+                                let x = a as f64;
+                                acc += (x * x - (1.0 + 2.0 * p) * x + 2.0 * p * p) * div;
+                            }
+                        } else {
+                            acc += (a as f64 - 2.0 * p) * (b as f64 - 2.0 * p) * div;
+                        }
+                        sites += 1;
                     }
-                } else {
-                    acc += (a as f64 - 2.0 * p) * (b as f64 - 2.0 * p) * div;
-                }
-                sites += 1;
-            }
-            let val = if sites == 0 {
-                f64::NAN
-            } else if i == j && opts.diagonal {
-                1.0 + acc / sites as f64
-            } else {
-                acc / sites as f64
-            };
-            out.set(i, j, val);
+                    if sites == 0 {
+                        f64::NAN
+                    } else if i == j && opts.diagonal {
+                        1.0 + acc / sites as f64
+                    } else {
+                        acc / sites as f64
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    for (i, row) in rows.iter().enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            out.set(i, j, v);
         }
     }
     out
@@ -720,40 +823,52 @@ pub fn discordance(
         }
     };
 
-    for i in 0..n {
-        for j in 0..=i {
-            let mut count_mismatch = 0u64;
-            let mut compared = 0u64;
-            let mut matching = 0u64;
-            let mut prob_sum = 0.0f64;
-            for s in 0..m {
-                let a = dose[i * m + s];
-                let b = dose[j * m + s];
-                if a < 0 || b < 0 {
-                    continue;
-                }
-                compared += 1;
-                if a == b {
-                    matching += 1;
-                } else {
-                    count_mismatch += 1;
-                }
-                if opts.mode == DiscordanceMode::Probability {
-                    // min over the true genotype G of the summed costs.
-                    let mut best = f64::INFINITY;
-                    for g in 0..3i8 {
-                        let cost = gt_cost(a, g) + gt_cost(b, g);
-                        if cost < best {
-                            best = cost;
+    // One triangle row of (score, compared, matching) per task (doc_v20
+    // R13).
+    let rows: Vec<Vec<(f64, u64, u64)>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            (0..=i)
+                .map(|j| {
+                    let mut count_mismatch = 0u64;
+                    let mut compared = 0u64;
+                    let mut matching = 0u64;
+                    let mut prob_sum = 0.0f64;
+                    for s in 0..m {
+                        let a = dose[i * m + s];
+                        let b = dose[j * m + s];
+                        if a < 0 || b < 0 {
+                            continue;
+                        }
+                        compared += 1;
+                        if a == b {
+                            matching += 1;
+                        } else {
+                            count_mismatch += 1;
+                        }
+                        if opts.mode == DiscordanceMode::Probability {
+                            // min over the true genotype G of the summed costs.
+                            let mut best = f64::INFINITY;
+                            for g in 0..3i8 {
+                                let cost = gt_cost(a, g) + gt_cost(b, g);
+                                if cost < best {
+                                    best = cost;
+                                }
+                            }
+                            prob_sum += best;
                         }
                     }
-                    prob_sum += best;
-                }
-            }
-            let val = match opts.mode {
-                DiscordanceMode::Count => count_mismatch as f64,
-                DiscordanceMode::Probability => prob_sum,
-            };
+                    let val = match opts.mode {
+                        DiscordanceMode::Count => count_mismatch as f64,
+                        DiscordanceMode::Probability => prob_sum,
+                    };
+                    (val, compared, matching)
+                })
+                .collect()
+        })
+        .collect();
+    for (i, row) in rows.iter().enumerate() {
+        for (j, &(val, compared, matching)) in row.iter().enumerate() {
             out.set(i, j, val);
             aux.n_compared[i * n + j] = compared;
             aux.n_matching[i * n + j] = matching;
@@ -852,11 +967,55 @@ mod tests {
     }
 
     #[test]
-    fn monomorphic_columns_use_the_mean_like_flashpca() {
-        // A dedicated matrix with one all-0 column: p = 0 so sd = 0, and the
-        // flashpca matrix path writes the column mean (0.0 here) rather than
-        // the GCTA/plink2 convention. With a non-zero mean the two differ;
-        // this test pins which one reed implements.
+    fn r9_fixed_alt_column_standardizes_to_zero_not_the_mean() {
+        // doc_v20 R9: an all-ALT column (every sample 1/1, dosage 2, p = 1)
+        // has theoretical sd 0. The old code wrote the raw mean dosage (2.0)
+        // into `w` there — 2 in every cell — which added `4k/m` to every
+        // GRM entry (off-diagonals included) and a rank-1 constant direction
+        // to PCA. GCTA and plink2 write the centred value 0. An all-REF
+        // column cannot tell the two conventions apart (its mean is 0), which
+        // is why the all-REF pinning test below never caught this.
+        let with_alt = Mat::from_fn(6, 5, |i, j| {
+            let table = [
+                [0.0, 2.0, 1.0, 2.0, 0.0],
+                [1.0, 2.0, 0.0, 2.0, 1.0],
+                [2.0, 2.0, 1.0, 0.0, 2.0],
+                [0.0, 2.0, 2.0, 1.0, 0.0],
+                [2.0, 2.0, 0.0, 0.0, 1.0],
+                [1.0, 2.0, 2.0, 2.0, 2.0],
+            ];
+            table[i][j]
+        });
+        let st = standardize_binom2(&with_alt);
+        assert_eq!(st.sd[1], 0.0, "column 1 is all-ALT, so sd must be 0");
+        for i in 0..6 {
+            assert_eq!(
+                st.w.get(i, 1),
+                0.0,
+                "fixed-ALT column must hold the centred 0, got {}",
+                st.w.get(i, 1)
+            );
+        }
+        // A fixed-ALT column must hit the GRM exactly like a fixed-REF
+        // column (both contribute 0 to every numerator) instead of
+        // inflating it; the two matrices are bit-identical.
+        let with_ref = Mat::from_fn(6, 5, |i, j| {
+            let v = with_alt.get(i, j);
+            if j == 1 { 0.0 } else { v }
+        });
+        let a = grm(&standardize_binom2(&with_alt), MissingPolicy::Pairwise, true);
+        let b = grm(&standardize_binom2(&with_ref), MissingPolicy::Pairwise, true);
+        assert_eq!(a.values, b.values, "fixed-ALT column must not inflate the GRM");
+    }
+
+    #[test]
+    fn monomorphic_all_ref_column_standardizes_to_zero() {
+        // A dedicated matrix with one all-0 column: p = 0 so sd = 0. Since
+        // doc_v20 R9 the degenerate branch writes the centred 0 (the
+        // GCTA/plink2 convention); for an all-REF column that coincides with
+        // the column mean, which is why the pre-R9 mean-fill never showed
+        // here. The fixed-ALT case, where the two conventions differ, is
+        // pinned by `r9_fixed_alt_column_standardizes_to_zero_not_the_mean`.
         let mono = Mat::from_fn(6, 5, |i, j| {
             // Column 1 is monomorphic at REF (all 0): p = 0, so the
             // theoretical sd sqrt(2p(1-p)) is 0. (An all-1 column has p = 0.5
@@ -874,7 +1033,7 @@ mod tests {
         });
         let st = standardize_binom2(&mono);
         assert_eq!(st.sd[1], 0.0, "column 1 should be monomorphic");
-        assert_eq!(st.w.get(0, 1), 0.0, "monomorphic column holds its mean");
+        assert_eq!(st.w.get(0, 1), 0.0, "monomorphic column is centred to 0");
         let g = grm(&st, MissingPolicy::Pairwise, true);
         // The monomorphic column contributes mean^2/m to the diagonal.
         let expected = (0..st.n_sites)
@@ -1029,6 +1188,45 @@ mod tests {
         for i in 0..6 {
             assert!(d.get(i, i).abs() < 1e-12, "self discordance {}", d.get(i, i));
         }
+    }
+
+    #[test]
+    fn r13_estimator_results_thread_invariant() {
+        // doc_v20 R13: the estimator pair loops are row-parallel. Every
+        // (i,j) entry keeps exactly its serial arithmetic and no float is
+        // ever summed across threads, so the matrices must be bit-identical
+        // under any pool size. Exercise the hard inputs together: missing
+        // data, a degenerate all-ALT column (R9) and plink's HWE missing
+        // correction.
+        let mut x = fixture();
+        x.set(0, 0, f64::NAN);
+        x.set(4, 6, f64::NAN);
+        for i in 0..6 {
+            x.set(i, 5, 2.0); // all-ALT: degenerate column
+        }
+        let st = standardize_binom2(&x);
+        let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let four = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+
+        let bits = |a: &[f64], b: &[f64], what: &str| {
+            assert_eq!(a.len(), b.len(), "{what} length");
+            for (x, y) in a.iter().zip(b) {
+                assert_eq!(x.to_bits(), y.to_bits(), "{what}: {x} vs {y}");
+            }
+        };
+
+        let g1 = one.install(|| grm(&st, MissingPolicy::Pairwise, true));
+        let g4 = four.install(|| grm(&st, MissingPolicy::Pairwise, true));
+        bits(&g1.values, &g4.values, "grm");
+
+        let d1 = one.install(|| allele_ct_distance(&st, &DistanceOptions::default()));
+        let d4 = four.install(|| allele_ct_distance(&st, &DistanceOptions::default()));
+        bits(&d1.values, &d4.values, "allele_ct_distance");
+
+        let (k1, c1) = one.install(|| king(&st));
+        let (k4, c4) = four.install(|| king(&st));
+        bits(&k1.values, &k4.values, "king");
+        assert_eq!(c1, c4, "king counts");
     }
 
     #[test]

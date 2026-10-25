@@ -41,7 +41,9 @@ pub enum HeadRule {
     /// [`FilterSpec::multiallelics_allowed`]). Pushed by `compile` when
     /// `biallelic_gate` is set and no explicit `max_alt_alleles` covers it.
     BiallelicGate,
-    /// The FILTER column must be one of these (`.` never passes).
+    /// The FILTER column must contain one of these as a `;`-separated
+    /// value (bcftools `-f`; the unannotated `.` column passes only when
+    /// `.` is listed).
     RequireFilter(Vec<Vec<u8>>),
     /// QUAL lower bound (missing QUAL fails, bcftools semantics).
     MinQual(f32),
@@ -190,7 +192,13 @@ fn expr_reads_gt_fields(expr: &crate::expr::Expr) -> bool {
     use crate::expr::Expr;
     match expr {
         Expr::Field(f) => f.is_genotype_derived(),
-        Expr::Bare(name) => {
+        // doc_v20 review of S58: `INFO/AC` (and the other built-ins spelled
+        // with the `INFO/` prefix) resolve through the same INFO-or-genotype
+        // helper as the bare names, so with an untrusted cohort they need the
+        // genotype values — which a `--set-gts` mask stage does not have.
+        // Treat them as genotype-derived so the compiler rejects them instead
+        // of silently evaluating to Missing.
+        Expr::Bare(name) | Expr::Info(name) => {
             crate::expr::Field::from_name(name).is_some_and(crate::expr::Field::is_genotype_derived)
         }
         Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {

@@ -240,6 +240,78 @@ fn pbs_pairs_are_independent_under_missing_data() {
     assert!(f_ab.is_some() && f_ac.is_none() && f_bc.is_none());
 }
 
+// ----------------------------------------------------------- doc_v20 S46
+
+/// The S46 finding's fixture: group A is a single `./1` half-call (an = 1,
+/// alt = 1 — a half call is not a heterozygote), group B has 3 typed
+/// diploids with 1 het (an = 6).
+fn s46_half_call_row() -> Vec<SiteGroupCounts> {
+    vec![
+        SiteGroupCounts {
+            n_ref_alleles: 0,
+            n_alt_alleles: 1,
+            n_half_called: 1,
+            ..SiteGroupCounts::default()
+        },
+        SiteGroupCounts {
+            n_ref_alleles: 4,
+            n_alt_alleles: 2,
+            n_het: 1,
+            ..SiteGroupCounts::default()
+        },
+    ]
+}
+
+#[test]
+fn s46_wc84_pair_keeps_c_for_lone_half_call_site() {
+    // doc_v20 S46: an = 1 floors n = an // 2 to 0, which degenerates the
+    // a/b components through n_C = 2·n1·n2/(n1+n2) = 0 exactly like the
+    // an = 0 case the keep-c branch already handles (doc_v7 D7-20), so the
+    // site must keep its finite c = h̄ = (0+1)/3 over the typed group and
+    // Fst = 0/(0+0+c) = 0 instead of being dropped whole. Pre-fix the pair
+    // path skipped the site (n1 == 0 guard) — dropping its c too.
+    let mut pair = FstAcc::new(0, 1);
+    pair.push(&s46_half_call_row());
+    assert_eq!(pair.wc_tally(), (1, 0), "the site contributes its c");
+    assert_eq!(pair.value_wc84(), Some(0.0));
+
+    // The multi path (r = 2) makes the same decision on the same site.
+    let mut multi = WcMultiAcc::new(vec![0, 1]);
+    multi.push(&s46_half_call_row());
+    assert_eq!(multi.site_tally(), (1, 0));
+    assert_eq!(multi.value(), Some(0.0));
+}
+
+#[test]
+fn s46_wc84_pair_equals_multi_at_r2() {
+    // doc_v20 S46: `--fst wc84` (pair path) and `--fst-global` (multi path,
+    // r = 2) must agree numerically on the same sites, including mixed
+    // missingness: a fully-missing group (an = 0, D7-20 keep-c), a lone
+    // half-call (an = 1, the S46 corner), odd-but-diploid groups (an = 3
+    // and an = 5 keep n = 1 and 2 in the full path), and typed sites. The
+    // pair path holds every component at 2× the multi scale, which cancels
+    // in the Σa/(Σa+Σb+Σc) ratio.
+    let sites = vec![
+        row(&[1, 6], &[1, 2], &[0, 1]), // A: lone `./1` half-call (S46)
+        row(&[0, 6], &[0, 2], &[0, 1]), // A fully missing (keep-c)
+        row(&[6, 6], &[3, 2], &[1, 2]), // typed
+        row(&[6, 5], &[2, 1], &[2, 0]), // B: diploid + half-call (an = 5, n = 2)
+        row(&[3, 6], &[1, 3], &[1, 3]), // A: diploid + half-call (an = 3, n = 1)
+    ];
+    let mut pair = FstAcc::new(0, 1);
+    let mut multi = WcMultiAcc::new(vec![0, 1]);
+    for site in &sites {
+        pair.push(site);
+        multi.push(site);
+    }
+    assert_eq!(pair.wc_tally(), multi.site_tally());
+    let (p, m) = (
+        pair.value_wc84().expect("typed sites contribute"),
+        multi.value().expect("typed sites contribute"),
+    );
+    assert!((p - m).abs() < 1e-12, "pair {p} vs multi {m}");
+}
+
 #[test]
 fn hudson_zero_numerator_is_zero_not_na() {
     use reed_stats::pbs::{PbsAcc, PbsKind};

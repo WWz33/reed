@@ -77,7 +77,9 @@ impl FormatLayoutCache {
     /// The index is valid until the next call that interns a *new* FORMAT
     /// string at [`CACHE_LIMIT`] (which clears the table).
     pub fn intern(&mut self, format: &[u8]) -> usize {
-        if self.last.0 == format {
+        // The seed sentinel is `(empty, usize::MAX)`: an empty FORMAT column
+        // must not match it (doc_v20 R2) — it interns as a GT-less layout.
+        if self.last.1 != usize::MAX && self.last.0 == format {
             return self.last.1;
         }
         if let Some(&ix) = self.index.get(format) {

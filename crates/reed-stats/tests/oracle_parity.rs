@@ -400,7 +400,36 @@ fn accumulators_match_oracle_on_random_windows() {
             );
             assert_eq!(within_b.comparable, oracle.within_b.comparable);
             assert_eq!(between.comparable, oracle.between.comparable);
-            assert_close(fst_acc.value(kind), oracle.value(), estimator.id());
+            // doc_v20 S46: the accumulator routes an = 1 sites (a lone
+            // half-call: n = an // 2 floors to 0) through the keep-c
+            // branch — the same finite-c rule the frozen v0.2 oracle
+            // applies to an = 0 (doc_v7 D7-20, oracle fst.rs) — while the
+            // oracle itself still drops those sites (its `n1 == 0` skip).
+            // The intentional divergence: expected value = the oracle's
+            // components with each corner site's keep-c term added back
+            // (h̄ = Σhet / Σ(an // 2); the corner group contributes 0 —
+            // it has 0 typed diploids and a half call is not a het), so
+            // these windows stay under the parity gate.
+            let expected = if estimator == FstEstimator::WeirCockerham84 {
+                let wc = oracle.wc.expect("WC84 estimator fills wc");
+                let an_of = |row: &[SiteGroupCounts], g: usize| {
+                    u64::from(row[g].n_ref_alleles) + u64::from(row[g].n_alt_alleles)
+                };
+                let (mut corner_c, mut n_kept) = (0.0_f64, 0_u64);
+                for row in &rows {
+                    let (na, nb) = (an_of(row, a), an_of(row, b));
+                    if (na == 1 || nb == 1) && na / 2 + nb / 2 > 0 {
+                        corner_c += f64::from(row[a].n_het + row[b].n_het)
+                            / (na / 2 + nb / 2) as f64;
+                        n_kept += 1;
+                    }
+                }
+                let total = wc.a + wc.b + wc.c + corner_c;
+                ((wc.n_sites + n_kept > 0) && total != 0.0).then(|| wc.a / total)
+            } else {
+                oracle.value()
+            };
+            assert_close(fst_acc.value(kind), expected, estimator.id());
         }
 
         for kind in [PbsKind::Yi2010, PbsKind::PbsN1] {

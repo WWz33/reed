@@ -323,6 +323,72 @@ pub(crate) fn prelude(
     })
 }
 
+/// Splits an `-O OUTPUT_TYPE` spec into the type letter and the optional
+/// level suffix, refusing the empty spec before `split_at(1)` would panic
+/// (doc_v20 R4: `-O ''` — which clap accepts — used to abort the process
+/// with exit 101; filter, rename and convert share this spelling check).
+///
+/// # Errors
+///
+/// A usage error naming the accepted `spellings` when the spec is empty.
+pub(crate) fn split_output_type<'a>(
+    spec: &'a str,
+    spellings: &str,
+) -> Result<(&'a str, &'a str), reed::Error> {
+    if spec.is_empty() {
+        return Err(reed::Error::usage(format!(
+            "invalid -O '': expected {spellings}"
+        )));
+    }
+    let (kind, level) = spec.split_at(1);
+    Ok((kind, level))
+}
+
+/// Refuses an output path that is the input itself (doc_v20 R5): the
+/// writers open the output with `File::create` after the input is already
+/// open, which truncated the input mid-read — unrecoverable data loss that
+/// reported success (filter, rename, convert `--vcf`, index `-f -o`).
+///
+/// The comparison is exact-path equality, never case-insensitive. The
+/// input is canonicalized (it is about to be read); an output that does
+/// not exist yet is compared through [`std::path::absolute`], which
+/// normalizes `.`/`..` lexically but keeps symlinks unresolved — an output
+/// reaching the input through a symlinked directory aliases past this
+/// first guard (residual gap; closing it needs a realpath walk over every
+/// component, deliberately not built here). `None` on either side means
+/// stdin/stdout (`-`, or no `-o`) and never clobbers a file; an input that
+/// cannot be canonicalized is let through so opening it reports the real
+/// error.
+///
+/// # Errors
+///
+/// A usage error naming the output when it would overwrite the input.
+pub(crate) fn refuse_output_eq_input(
+    input: Option<&Path>,
+    out: Option<&Path>,
+) -> Result<(), reed::Error> {
+    let (Some(input), Some(out)) = (input, out) else {
+        return Ok(());
+    };
+    let Ok(input) = std::fs::canonicalize(input) else {
+        return Ok(());
+    };
+    let target = match std::fs::canonicalize(out) {
+        Ok(path) => path,
+        // Not written yet: compare lexically (see the doc comment for the
+        // symlink gap).
+        Err(_) => std::path::absolute(out)
+            .map_err(|e| reed::Error::usage(format!("invalid -o {}: {e}", out.display())))?,
+    };
+    if input == target {
+        return Err(reed::Error::usage(format!(
+            "-o {} would overwrite the input itself; give a different output path",
+            out.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Parses a sites file (`CHROM<TAB>POS`, 1-based) into per-site targets.
 ///
 /// # Errors

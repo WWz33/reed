@@ -115,6 +115,53 @@ fn pbs_audit_trail_covers_skipped_and_partial_sites() {
 }
 
 #[test]
+fn s79_pbs_accumulates_per_pair_not_intersection() {
+    // doc_v20 S79: pin the site rule the code actually implements — each
+    // pair's Hudson sums accumulate independently (scikit-allel `pbs`
+    // semantics). Site 1 has group C fully uncalled while A and B are
+    // called: the A/B terms must still accumulate there (den_ab ≠ 0 ⇒
+    // fst_ab defined), proving the three-way intersection the module doc
+    // used to claim is NOT implemented (doc rewritten; no behavior change).
+    let w = build(
+        SiteCompleteness::WithInvariants,
+        6,
+        &[
+            // C fully missing; A: 3 ref/1 alt (1 het), B: 2 ref/2 alt.
+            (0, vec![[0, 0], [0, 1], [1, 1], [0, 0], [-1, -1], [-1, -1]]),
+            // All three called; A: 1 ref/3 alt, B: 3 ref/1 alt, C: 2/2.
+            (4, vec![[0, 1], [1, 1], [0, 0], [0, 1], [0, 0], [1, 1]]),
+        ],
+    );
+    let pops = PopulationView::from_assignment(6, &[0, 0, 1, 1, 2, 2], 3).unwrap();
+    let r = pbs(&w, &pops, 0, 1, 2, PbsEstimator::Yi2010).unwrap();
+    assert_eq!((r.n_sites, r.n_skipped), (2, 1));
+
+    // Per-pair: fst_ab used BOTH sites — num = −1/12 + 1/8 = 1/24 over
+    // den = 1/2 + 5/8 = 9/8 ⇒ 1/27 — and equals the standalone
+    // fst(A, B) call on the same window (the very equality the old doc
+    // denied). Under the claimed intersection, fst_ab would see site 2
+    // only: 1/5.
+    let fst_ab = r.fst_ab.expect("per-pair: C's coverage cannot gate A/B");
+    assert!((fst_ab - 1.0 / 27.0).abs() < EPS, "fst_ab {fst_ab}");
+    assert!((fst_ab - 1.0 / 5.0).abs() >= EPS, "intersection value must not appear");
+    let f_ab = fst(&w, &pops, 0, 1, FstEstimator::Hudson).unwrap();
+    assert!(
+        (f_ab.value().expect("standalone is defined") - 1.0 / 27.0).abs() < EPS,
+        "standalone fst(A, B) {:?}",
+        f_ab.value()
+    );
+
+    // A C-involving pair sees site 2 only (C is empty at site 1), still
+    // per-pair: raw fst_ac = (1/2 − (1/2 + 2/3)/2)/(1/2) = −1/6, clipped
+    // to allel's [0, 0.99999] window in PBS but unclipped standalone.
+    let clip = |v: f64| v.clamp(0.0, 0.99999);
+    let f_ac = fst(&w, &pops, 0, 2, FstEstimator::Hudson).unwrap();
+    let raw_ac = f_ac.value().expect("site 2 defines the A/C pair");
+    assert!((raw_ac - -1.0 / 6.0).abs() < EPS, "raw fst_ac {raw_ac}");
+    assert!((r.fst_ac.expect("defined from site 2") - clip(raw_ac)).abs() < EPS);
+}
+
+#[test]
 fn watterson_reports_no_value_for_empty_or_all_missing_windows() {
     let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
 

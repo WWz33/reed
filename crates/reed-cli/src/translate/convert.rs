@@ -53,7 +53,8 @@ fn parse_msa_region(text: &str) -> Result<MsaRegion, reed::Error> {
 ///
 /// An unsupported type letter or an out-of-range level.
 fn parse_vcf_output_type(spec: &str) -> Result<(bool, u8), reed::Error> {
-    let (kind, rest) = spec.split_at(1);
+    let (kind, rest) =
+        super::common::split_output_type(spec, "v or z with an optional 1-9 level, e.g. z6")?;
     match kind {
         "v" if rest.is_empty() => Ok((false, 6)),
         "z" => {
@@ -216,6 +217,16 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     args.verbosity.init_tracing();
     let started = std::time::Instant::now();
 
+    // (doc_v20 R5) refuse `-o` == input before any writer opens: the
+    // `--vcf` route writes `-o` verbatim (truncating the input mid-read),
+    // and a prefix naming the input is the same operator error. Guarding
+    // here covers both routes with one check.
+    let input_file = crate::units::input_path(&args.input);
+    super::common::refuse_output_eq_input(
+        input_file.as_deref(),
+        args.out.as_deref().map(Path::new),
+    )?;
+
     // ---- The hapmap→VCF reverse target (doc_v13 §3.12) -------------------
     if args.to_vcf {
         return run_vcf_cli(args);
@@ -286,7 +297,6 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     }
 
     // ---- Open once (stdin streams) ---------------------------------------
-    let input_file = crate::units::input_path(&args.input);
     let prefix = match &args.out {
         Some(p) => PathBuf::from(p),
         None => input_file
@@ -467,4 +477,19 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     }
     let _ = started;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v20 R4: `-O ''` (clap accepts the empty value) is a usage error
+    /// naming the accepted spellings — the parser used to `split_at(1)` the
+    /// empty string and abort with exit 101.
+    #[test]
+    fn r4_empty_output_type_is_a_usage_error() {
+        let err = parse_vcf_output_type("").expect_err("the empty -O must be refused");
+        assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+        assert!(err.to_string().contains("invalid -O ''"), "{err}");
+    }
 }

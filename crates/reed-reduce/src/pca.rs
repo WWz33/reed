@@ -181,13 +181,24 @@ mod tests {
 
     #[test]
     fn grm_diagonal_is_one_when_complete() {
-        let x = Mat::from_fn(5, 6, |i, j| ((i * 3 + j) % 3) as f64);
+        // doc_v20 R9: the old fixture `(i * 3 + j) % 3` was constant in
+        // every column (3i mod 3 = 0), two of them fixed-ALT; its diagonal
+        // 8/6 came entirely from the mean-fill bug writing 2 into those
+        // columns (2 columns x 2^2). A fully constant matrix now centres to
+        // a zero GRM, so vary the dosages per row to keep testing the
+        // intended property: a complete, varying matrix has a diagonal
+        // near m/m = 1. With n = 6 the period-3 pattern balances every
+        // column to {0,1,2} x 2 (p = 0.5), so every row's w^2 sum is
+        // exactly 8 and the diagonal 8/6 for all of them.
+        let x = Mat::from_fn(6, 6, |i, j| ((i + j) % 3) as f64);
         let st = standardize_binom2(&x);
         let g = Grm::mean_impute(&st.w);
-        for i in 0..5 {
-            // With mean imputation and no missing data the diagonal is m/m = 1
-            // only if each row is exactly standardized; check it is close.
-            assert!((g.a.get(i, i) - 1.0).abs() < 0.6);
+        for i in 0..6 {
+            // Exact value, not a band: each row's w^2 sum is exactly 8 over
+            // m = 6. The old 0.6 tolerance accepted both 8/6 and the
+            // R9-inflated value, so it could not guard anything (doc_v20
+            // review of R9).
+            assert!((g.a.get(i, i) - 8.0 / 6.0).abs() < 1e-12);
         }
     }
 

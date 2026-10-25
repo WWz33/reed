@@ -246,8 +246,21 @@ impl NativeEncoder {
             .get(chrom)
             .copied()
             .ok_or_else(|| Self::undeclared("contig", chrom))?;
+        // (doc_v20 S43) BCF POS is a signed 32-bit 0-based field, so a VCF
+        // position beyond i32::MAX + 1 cannot be encoded; it used to clamp to
+        // `pos0 = i32::MAX` and silently write POS 2147483648. htslib rejects
+        // the record instead.
+        if site.pos1 > (i32::MAX as u64) + 1 {
+            return Err(IoError::MalformedRecord {
+                locus: site.locus(),
+                reason: "position exceeds the BCF i32 range",
+            });
+        }
         let pos0 = i32::try_from(site.pos1.saturating_sub(1)).unwrap_or(i32::MAX);
-        let rlen = i32::try_from(site.reference.len()).unwrap_or(1).max(1);
+        // (doc_v20 S42) rlen: the REF length, except that a symbolic ALT
+        // with INFO/END extends to END − POS + 1 (htslib's r_len), so
+        // regional queries find spanning deletions in reed-written BCFs.
+        let rlen = i32::try_from(site.indexed_span_len()).unwrap_or(1).max(1);
         // The site header, ID, alleles and FILTER: a scoped borrow of the
         // shared block (the INFO section below calls `&mut self` helpers).
         {
@@ -588,8 +601,16 @@ impl NativeEncoder {
                     continue;
                 }
                 let v = parse_i64(part).ok_or_else(|| bad("non-integer FORMAT value"))?;
-                min = min.min(v);
-                max = max.max(v);
+                // (doc_v20 S39) the INFO path's range gate: an out-of-range
+                // value becomes missing, so it must not widen the column
+                // either (htslib stores the sentinel and `bcf_enc_vint`
+                // skips sentinels when choosing the width).
+                if (INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(&v) {
+                    min = min.min(v);
+                    max = max.max(v);
+                } else {
+                    warn_once_out_of_range(part, "FORMAT");
+                }
             }
             max_len = max_len.max(len);
         }
@@ -610,7 +631,16 @@ impl NativeEncoder {
                         missing
                     } else {
                         let v = parse_i64(part).ok_or_else(|| bad("non-integer FORMAT value"))?;
-                        i32::try_from(v.clamp(INT32_MIN_VALUE, INT32_MAX_VALUE)).unwrap_or(missing)
+                        // (doc_v20 S39) the same gate the INFO path applies
+                        // (htslib vcf.c:4004-4013): an integer outside the
+                        // BCF-legal band is the missing sentinel, not clamped
+                        // — `FMT/DP=3000000000` must not become 2147483647.
+                        if (INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(&v) {
+                            v as i32
+                        } else {
+                            warn_once_out_of_range(part, "FORMAT");
+                            missing
+                        }
                     };
                     push_int(&mut self.indiv, v, width);
                     written += 1;
@@ -734,6 +764,20 @@ impl NativeEncoder {
             .get(contig)
             .copied()
             .ok_or_else(|| Self::undeclared("contig", contig))?;
+        // (doc_v20 S43, corrected in review) pos0 == -1 is htslib's telomere
+        // sentinel (`v->pos == UINT32_MAX` -> POS 0, "e.g. MT:0",
+        // vcf.c:1649-1650) and must copy through; only values below -1 are
+        // malformed. The first version rejected -1 and broke BCF->BCF passes
+        // on files bcftools itself writes.
+        if pos0 < -1 {
+            return Err(IoError::MalformedRecord {
+                locus: Locus {
+                    contig_name: String::from_utf8_lossy(contig).into_owned(),
+                    pos1: 0,
+                },
+                reason: "BCF position is below the telomere sentinel (-1)",
+            });
+        }
         {
             let s = &mut self.shared;
             s.extend_from_slice(&out_contig.to_le_bytes());
@@ -1187,7 +1231,7 @@ fn parse_int_vector(value: &[u8], out: &mut Vec<i64>) {
         let parsed = parse_i64(part).filter(|v| {
             let ok = (INT32_MIN_VALUE..=INT32_MAX_VALUE).contains(v);
             if !ok {
-                warn_once_out_of_range(part);
+                warn_once_out_of_range(part, "INFO");
             }
             ok
         });
@@ -1197,12 +1241,15 @@ fn parse_int_vector(value: &[u8], out: &mut Vec<i64>) {
 
 /// htslib warns once per run about an out-of-range integer and then stays
 /// quiet (`extreme_int_warned`, vcf.c:4008-4012).
-fn warn_once_out_of_range(value: &[u8]) {
+/// One-shot warning for an out-of-range integer, naming the column family it
+/// came from (doc_v20 review of S39: the shared helper used to say "INFO" for
+/// FORMAT values, sending the operator to the wrong column).
+fn warn_once_out_of_range(value: &[u8], kind: &str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
         tracing::warn!(
-            "Integer INFO value {:?} is outside the BCF range and was set to missing \
+            "Integer {kind} value {:?} is outside the BCF range and was set to missing \
              (further occurrences are not reported)",
             String::from_utf8_lossy(value)
         );
@@ -1495,6 +1542,224 @@ mod tests {
             gt_codes_into(text, &mut codes);
             assert_eq!(codes, *want, "GT {}", String::from_utf8_lossy(text));
         }
+    }
+
+    /// doc_v20 S39: a FORMAT integer outside the BCF-legal band becomes the
+    /// missing sentinel — the same gate the INFO path applies in
+    /// [`parse_int_vector`] (htslib vcf.c:4004-4013) — instead of being
+    /// clamped into range: `FMT/DP=3000000000` used to write the silently
+    /// wrong `DP=2147483647` while the same value in INFO already was
+    /// missing.
+    #[test]
+    fn s39_out_of_range_format_int_is_missing_not_clamped() {
+        const S39_HEADER: &[u8] = b"##fileformat=VCFv4.2\n\
+            ##FILTER=<ID=PASS,Description=\"All\">\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##INFO=<ID=DP,Number=1,Type=Integer,Description=\"dp\">\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+            ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"dp\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\ts2\n";
+        let header: vcf::Header = std::str::from_utf8(S39_HEADER)
+            .expect("invariant: utf-8")
+            .parse()
+            .expect("invariant: header");
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\tDP=3000000000\tGT:DP\t0/1:3000000000\t0/0:7\n";
+        let lr = LineRef::parse(line).expect("invariant: line");
+        let site = SiteView::parse(&lr).expect("invariant: site");
+        let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+        let mut out = Vec::new();
+        enc.encode_text(&lr, &site, 2, &EditPlan::default(), &mut out)
+            .expect("invariant: encode");
+        let dict_text = bcf_header_text(&header).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let rec = record_ref(&out).expect("invariant: framed record");
+        let mut rendered = Vec::new();
+        crate::bcf::render_record(&rec, &dict, &mut rendered).expect("invariant: render");
+        // INFO/DP was already the missing path's `.`; FORMAT/DP must match it
+        // (the in-range 7 in the other sample survives).
+        assert_eq!(
+            String::from_utf8_lossy(&rendered),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\tDP=.\tGT:DP\t0/1:.\t0/0:7\n"
+        );
+        // And the dropped value must not widen the column: htslib writes the
+        // int32 sentinel, and bcf_enc_vint skips sentinels when choosing the
+        // width, so DP stays INT8 (7 fits) rather than INT32.
+        let mut c = Cursor::new(rec.indiv);
+        let mut dp_is_int8 = false;
+        for _ in 0..2 {
+            let key = u32::try_from(c.typed_int().expect("invariant: key")).expect("invariant");
+            let (ty, count) = c.typed().expect("invariant: descriptor");
+            c.take(field_bytes(ty, count, 2).expect("invariant: payload"))
+                .expect("invariant: take");
+            if dict.tag(key) == Some(b"DP".as_slice()) {
+                dp_is_int8 = ty == value_type::INT8 && count == 1;
+            }
+        }
+        assert!(dp_is_int8, "the out-of-range value must not widen DP");
+    }
+
+    /// doc_v20 S43: BCF POS is a signed 32-bit 0-based field, so a VCF
+    /// position beyond `i32::MAX + 1` cannot be encoded — it used to clamp
+    /// to `pos0 = i32::MAX` and silently write POS 2147483648 (htslib
+    /// rejects the record instead). The last representable position
+    /// (2^31) must still encode.
+    #[test]
+    fn s43_text_pos_beyond_bcf_i32_range_is_an_error() {
+        let header = header();
+        let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+        // The boundary itself is fine: pos0 = i32::MAX.
+        let line = b"Chr01\t2147483648\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let lr = LineRef::parse(line).expect("invariant: line");
+        let site = SiteView::parse(&lr).expect("invariant: site");
+        enc.encode_text(&lr, &site, 4, &EditPlan::default(), &mut Vec::new())
+            .expect("invariant: the last representable POS encodes");
+
+        let line = b"Chr01\t3000000000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let lr = LineRef::parse(line).expect("invariant: line");
+        let site = SiteView::parse(&lr).expect("invariant: site");
+        let err = enc
+            .encode_text(&lr, &site, 4, &EditPlan::default(), &mut Vec::new())
+            .expect_err("POS beyond the BCF i32 range must be an error");
+        assert!(
+            matches!(
+                &err,
+                IoError::MalformedRecord { locus, reason }
+                    if locus.contig_name == "Chr01"
+                        && locus.pos1 == 3_000_000_000
+                        && reason.contains("position exceeds the BCF i32 range")
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// doc_v20 S43, BCF→BCF direction: a framed source record whose pos0 is
+    /// below -1 (malformed file bytes) must error instead of copying it
+    /// through. -1 is htslib's telomere sentinel and is copied (see the
+    /// sibling test).
+    #[test]
+    fn s43_bcf_source_negative_pos0_is_an_error() {
+        let header = header();
+        let dict_text = bcf_header_text(&header).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut framed = Vec::new();
+        {
+            let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+            let lr = LineRef::parse(LINE).expect("invariant: line");
+            let site = SiteView::parse(&lr).expect("invariant: site");
+            enc.encode_text(&lr, &site, 4, &EditPlan::default(), &mut framed)
+                .expect("invariant: encode");
+        }
+        // pos0 sits at record offset 8 (length prefix) + 4 (chrom).
+        framed[12..16].copy_from_slice(&(-5_i32).to_le_bytes());
+        let rec = record_ref(&framed).expect("invariant: framed");
+        let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+        let err = enc
+            .encode_bcf(&rec, &dict, &EditPlan::default(), &mut Vec::new())
+            .expect_err("a BCF pos0 below -1 must be an error");
+        assert!(
+            err.to_string().contains("telomere sentinel"),
+            "{err}"
+        );
+    }
+
+    /// doc_v20 S43 corrected in review: pos0 = -1 is htslib's telomere
+    /// sentinel (`v->pos == UINT32_MAX` -> POS 0) and must copy through —
+    /// bcftools itself writes such records.
+    #[test]
+    fn s43_telomere_pos0_is_copied_through() {
+        let header = header();
+        let dict_text = bcf_header_text(&header).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut framed = Vec::new();
+        {
+            let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+            let lr = LineRef::parse(LINE).expect("invariant: line");
+            let site = SiteView::parse(&lr).expect("invariant: site");
+            enc.encode_text(&lr, &site, 4, &EditPlan::default(), &mut framed)
+                .expect("invariant: encode");
+        }
+        framed[12..16].copy_from_slice(&(-1_i32).to_le_bytes());
+        let rec = record_ref(&framed).expect("invariant: framed");
+        let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+        let mut out = Vec::new();
+        enc.encode_bcf(&rec, &dict, &EditPlan::default(), &mut out)
+            .expect("the telomere sentinel must encode");
+        let out_rec = record_ref(&out).expect("invariant: framed output");
+        assert_eq!(
+            i32::from_le_bytes(out_rec.shared[4..8].try_into().expect("invariant: pos bytes")),
+            -1
+        );
+    }
+
+    /// doc_v20 S42: an integer INFO/END beyond POS extends the BCF rlen to
+    /// END − POS + 1 — htslib's `get_rlen` rule, which applies END
+    /// regardless of the ALT shape (a 401 bp `<DEL>` used to carry rlen = 1,
+    /// so regional queries missed it). Records without a usable END keep the
+    /// REF length, as bcftools does for ordinary SNPs and indels. The v20
+    /// review widened the original `<`-only gate to htslib's rule after
+    /// measuring bcftools 1.24 on `ALT=.` gVCF blocks and multi-ALT records.
+    #[test]
+    fn s42_symbolic_end_extends_bcf_rlen() {
+        const S42_HEADER: &[u8] = b"##fileformat=VCFv4.2\n\
+            ##FILTER=<ID=PASS,Description=\"All\">\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##INFO=<ID=END,Number=1,Type=Integer,Description=\"end\">\n\
+            ##INFO=<ID=DP,Number=1,Type=Integer,Description=\"dp\">\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n";
+        let header: vcf::Header = std::str::from_utf8(S42_HEADER)
+            .expect("invariant: utf-8")
+            .parse()
+            .expect("invariant: header");
+        let rlen_of = |line: &[u8]| {
+            let lr = LineRef::parse(line).expect("invariant: line");
+            let site = SiteView::parse(&lr).expect("invariant: site");
+            let mut enc = NativeEncoder::new(&header).expect("invariant: encoder");
+            let mut out = Vec::new();
+            enc.encode_text(&lr, &site, 1, &EditPlan::default(), &mut out)
+                .expect("invariant: encode");
+            let rec = record_ref(&out).expect("invariant: framed record");
+            i32::from_le_bytes(rec.shared[8..12].try_into().expect("invariant: rlen bytes"))
+        };
+        // A symbolic deletion spanning 100..500: rlen = END − POS + 1.
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\t<DEL>\t50\tPASS\tEND=500\tGT\t0/1\n"),
+            401
+        );
+        // END inside a longer INFO column is still found.
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\t<DEL>\t50\tPASS\tDP=9;END=500\tGT\t0/1\n"),
+            401
+        );
+        // END applies regardless of the ALT shape (htslib get_rlen): a plain
+        // SNV carrying END, a gVCF reference block, and a multi-ALT list
+        // whose later ALT is symbolic all extend to END.
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tACGT\tG\t50\tPASS\tEND=500\tGT\t0/1\n"),
+            401
+        );
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\t.\t50\tPASS\tEND=500\tGT\t0/1\n"),
+            401
+        );
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\tG,<DEL>\t50\tPASS\tEND=500\tGT\t0/1\n"),
+            401
+        );
+        // A symbolic ALT without END, with END ≤ POS, or with a non-integer
+        // END falls back to the REF length.
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\t<DEL>\t50\tPASS\t.\tGT\t0/1\n"),
+            1
+        );
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\t<DEL>\t50\tPASS\tEND=100\tGT\t0/1\n"),
+            1
+        );
+        assert_eq!(
+            rlen_of(b"Chr01\t100\t.\tA\t<DEL>\t50\tPASS\tEND=x\tGT\t0/1\n"),
+            1
+        );
     }
 
     #[test]

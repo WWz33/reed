@@ -137,7 +137,7 @@ fn main() {
 
     // --- others -----------------------------------------------------------
     let tc = TsneConfig { perplexity: 10.0, n_iter: 300, seed: 3, ..Default::default() };
-    report("tsne", &tsne(&x, &tc), n_per);
+    report("tsne", &tsne(&x, &tc).expect("tsne"), n_per);
     report("lle", &lle(&x, 8, 2), n_per);
     let (w, h) = nmf(&x, 3, 200, 1);
     let recon = w.matmul(&h);

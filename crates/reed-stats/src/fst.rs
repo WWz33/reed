@@ -141,13 +141,17 @@ between_comps,
         }
 
         // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
-        // A group with no called alleles leaves a, b undefined (NaN in
-        // allel) while c = h̄/2 stays finite over the typed group; allel's
-        // `nansum` keeps c, and so do we (doc_v7 D7-20). vcftools/plink2
+        // A group whose called-diploid count floors to 0 — no called allele
+        // (an = 0) or a lone half-call (an = 1, e.g. one `./1`) — leaves
+        // a, b undefined (NaN in allel; n_C = 2·n1·n2/(n1+n2) = 0) while
+        // c = h̄/2 stays finite over the typed group; allel's `nansum`
+        // keeps c, and so do we (doc_v7 D7-20; the an = 1 case routes here
+        // since doc_v20 S46 — it degenerates exactly like an = 0, and the
+        // old dedicated skip dropped the site's c with it). vcftools/plink2
         // drop the site instead — documented divergence (masked Chr01:
         // 0.0086203 vs vcftools 0.0086449). Both groups empty → c is NaN
         // too, the site contributes nothing.
-        if n_a == 0 || n_b == 0 {
+        if n_a < 2 || n_b < 2 {
             let n_total = (n_a / 2 + n_b / 2) as f64;
             if n_total == 0.0 {
                 self.wc.n_skipped += 1;
@@ -161,7 +165,9 @@ between_comps,
             let n_total = n1 + n2;
             let n_bar = n_total / 2.0;
             let n_c = (n_total - (n1 * n1 + n2 * n2) / n_total) / (2.0 - 1.0);
-            if n1 == 0.0 || n2 == 0.0 || n_bar <= 1.0 || n_c <= 0.0 {
+            // n1, n2 ≥ 1 here (an < 2 routed above), so the degenerate
+            // n_i = 0 case cannot reach this guard.
+            if n_bar <= 1.0 || n_c <= 0.0 {
                 self.wc.n_skipped += 1;
             } else {
                 let p_ref_1 = u64::from(a.n_ref_alleles) as f64 / n_a as f64;
@@ -241,6 +247,13 @@ between_comps,
     pub const fn n_sites(&self) -> u64 {
         self.n_sites
     }
+
+    /// WC84 site tally (contributing, skipped) — the pair-path counterpart
+    /// of [`WcMultiAcc::site_tally`].
+    #[must_use]
+    pub const fn wc_tally(&self) -> (u64, u64) {
+        (self.wc.n_sites, self.wc.n_skipped)
+    }
 }
 
 // ---------------------------------------------------- multi-population WC84
@@ -251,9 +264,12 @@ between_comps,
 /// floor semantics and h̄ from the count table's n_het).
 ///
 /// Sums (a, b, c) are per-site NeumaierSums over the contributing sites.
-/// A site where some (not all) groups have `an_i = 0` contributes only
-/// the finite c component (allel `nansum` semantics, doc_v7 D7-20); the
-/// `n̄ ≤ 1` / `n_C ≤ 0` guards still skip.
+/// A site where some (not all) groups have a called-diploid count of 0 —
+/// `an_i = 0` (allel `nansum` semantics, doc_v7 D7-20) or a lone half-call
+/// whose `n_i = an_i // 2` floor leaves `n_C = 0` (doc_v20 S46) —
+/// contributes only the finite c component; at `r ≥ 3` such a site keeps
+/// its full a/b/c contribution while `n_C > 0` (allel parity). The
+/// `n̄ ≤ 1` / `n_C ≤ 0` guards still skip otherwise.
 #[derive(Clone, Debug)]
 pub struct WcMultiAcc {
     groups: Vec<usize>,
@@ -291,27 +307,31 @@ impl WcMultiAcc {
             .iter()
             .map(|c| u64::from(c.n_ref_alleles + c.n_alt_alleles))
             .collect();
-        if an.contains(&0) {
-            // Same keep-c rule as the pair path (doc_v7 D7-20): with a
-            // typed remainder the site contributes only c = h̄/2 over the
-            // typed groups (allel `nansum` parity; vcftools drops the
-            // site, hierfstat recomputes with r′ groups — masked Chr01
-            // r=3: allel 0.003237 vs vcftools 0.0032631). Every group
-            // empty → the site contributes nothing.
-            let n_typed: f64 = an.iter().map(|&a| (a / 2) as f64).sum();
-            if n_typed == 0.0 {
+        let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
+        let n_total: f64 = n.iter().sum();
+        let n_bar = n_total / r as f64;
+        let n_c = (n_total - n.iter().map(|x| x * x).sum::<f64>() / n_total) / (r as f64 - 1.0);
+        // Same keep-c rule as the pair path (doc_v7 D7-20): with a typed
+        // remainder the site contributes only c = h̄/2 over the typed
+        // groups when a group's called-diploid count floors to 0 — fully
+        // uncalled, an_i = 0 (allel `nansum` parity; vcftools drops the
+        // site, hierfstat recomputes with r′ groups — masked Chr01 r=3:
+        // allel 0.003237 vs vcftools 0.0032631), or a lone half-call
+        // (an_i = 1) when that floor degenerates n_c to 0 and a/b with it
+        // (doc_v20 S46). At r ≥ 3 n_c can stay positive over the other
+        // groups, and the full contribution below is kept — allel keeps
+        // those sites too. Every group empty → the site contributes
+        // nothing.
+        if an.contains(&0) || (n.contains(&0.0) && n_c <= 0.0) {
+            if n_total == 0.0 {
                 self.n_skipped += 1;
             } else {
-                let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_typed;
+                let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
                 self.c.add(h_bar / 2.0);
                 self.n_sites += 1;
             }
             return;
         }
-        let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
-        let n_total: f64 = n.iter().sum();
-        let n_bar = n_total / r as f64;
-        let n_c = (n_total - n.iter().map(|x| x * x).sum::<f64>() / n_total) / (r as f64 - 1.0);
         if n_bar <= 1.0 || n_c <= 0.0 {
             self.n_skipped += 1;
             return;

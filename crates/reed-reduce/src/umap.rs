@@ -187,7 +187,9 @@ pub fn fuzzy_simplicial_set_from_distances(d: &Mat, cfg: &UmapConfig) -> FuzzyGr
             .filter(|&j| j != i)
             .map(|j| (d.get(i, j), j))
             .collect();
-        order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // total_cmp: a NaN distance (missing genotype on the direct dosage
+        // path) sorts last instead of panicking (doc_v20 S31).
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
         knn_indices[i][0] = i;
         knn_dists.set(i, 0, 0.0);
         for (slot, &(d, j)) in order.iter().take(k).enumerate() {
@@ -357,6 +359,16 @@ fn spectral_init(g: &Mat, dim: usize, rng: &mut Rng) -> Mat {
     coords
 }
 
+/// The SGD learning rate at `epoch` of `n_epochs`: umap-learn's linear decay
+/// `initial_alpha * (1.0 - n / n_epochs)`, which reaches exactly zero when
+/// the epochs are exhausted (`umap/layouts.py`, `optimize_layout_euclidean`).
+// doc_v20 S28: a `.max(0.25)` floor here contradicted both umap-learn (which
+// decays to zero) and this module's own comment, and froze the late-epoch
+// refinement steps at a quarter of the requested rate.
+fn sgd_alpha(initial_alpha: f64, epoch: usize, n_epochs: usize) -> f64 {
+    initial_alpha * (1.0 - epoch as f64 / n_epochs as f64)
+}
+
 /// UMAP embedding.
 pub fn umap(x: &Mat, cfg: &UmapConfig) -> Mat {
     let n = x.rows;
@@ -411,9 +423,7 @@ pub fn umap_from_distances(d: &Mat, cfg: &UmapConfig) -> Mat {
     let mut next_neg = epochs_per_negative_sample.clone();
 
     for epoch in 0..cfg.n_epochs {
-        // umap decays alpha linearly to 1/4 of its initial value.
-        let progress = epoch as f64 / cfg.n_epochs as f64;
-        let alpha = cfg.learning_rate * (1.0 - progress).max(0.25);
+        let alpha = sgd_alpha(cfg.learning_rate, epoch, cfg.n_epochs);
 
         for e in 0..n_edges {
             if next_sample[e] > epoch as f64 {
@@ -483,6 +493,28 @@ mod tests {
     }
 
     #[test]
+    fn s28_alpha_schedule_decays_linearly_to_zero() {
+        // umap-learn 0.5.x `umap/layouts.py` (`optimize_layout_euclidean`):
+        //   alpha = initial_alpha * (1.0 - n / n_epochs)
+        // a linear decay that reaches exactly zero when the epochs are
+        // exhausted. The `.max(0.25)` floor contradicted both the reference
+        // and this module's own comment (doc_v20 S28).
+        let initial = 1.0f64;
+        let n_epochs = 200usize;
+        // First epoch: the full rate.
+        assert!((sgd_alpha(initial, 0, n_epochs) - initial).abs() < 1e-12);
+        // Mid schedule: exactly half.
+        assert!((sgd_alpha(initial, 100, n_epochs) - 0.5 * initial).abs() < 1e-12);
+        // Past 3/4 progress the rate must keep decaying (the old floor froze
+        // it at 0.25 here).
+        assert!((sgd_alpha(initial, 190, n_epochs) - 0.05).abs() < 1e-12);
+        // The last executed epoch is initial/n_epochs, and the schedule's
+        // endpoint is exactly zero.
+        assert!((sgd_alpha(initial, 199, n_epochs) - initial / n_epochs as f64).abs() < 1e-12);
+        assert!(sgd_alpha(initial, n_epochs, n_epochs) == 0.0);
+    }
+
+    #[test]
     fn ab_params_are_in_the_expected_range() {
         let (a, b) = find_ab_params(1.0, 0.1);
         // umap-learn gives a ~= 1.5769, b ~= 0.8951 for (spread, min_dist) =
@@ -548,6 +580,31 @@ mod tests {
             }
         }
         assert!(min_sep > 2.0 * within, "min separation {min_sep} vs spread {within}");
+    }
+
+    #[test]
+    fn s31_umap_knn_sort_tolerates_nan_distances() {
+        // One missing genotype makes one pairwise distance NaN. The exact-kNN
+        // sort used partial_cmp().unwrap(), which panicked on such a row
+        // instead of treating the NaN partner as "last" (doc_v20 S31).
+        let base = [
+            [0.0, 1.0, 5.0, 9.0],
+            [1.0, 0.0, 4.0, 8.0],
+            [5.0, 4.0, 0.0, 4.0],
+            [9.0, 8.0, 4.0, 0.0],
+        ];
+        let mut d = Mat::from_fn(4, 4, |i, j| base[i][j]);
+        d.set(0, 3, f64::NAN);
+        d.set(3, 0, f64::NAN);
+        let cfg = UmapConfig { n_neighbors: 2, ..Default::default() };
+        let g = fuzzy_simplicial_set_from_distances(&d, &cfg);
+        // Finite neighbours come first, in distance order; the NaN partner
+        // sorts last and never enters the k = 2 window of row 0.
+        assert_eq!(g.knn_indices[0][1], 1);
+        assert_eq!(g.knn_indices[0][2], 2);
+        for v in g.weights.data.iter() {
+            assert!(v.is_finite(), "weight {v} not finite");
+        }
     }
 
     #[test]

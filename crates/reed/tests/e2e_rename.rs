@@ -700,3 +700,105 @@ fn update_name_validates_its_keys() {
     assert!(err.to_string().contains("nosuchid"), "{err}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// doc_v20 R11: `--set-id` + `--update-name` must be a usage error. The ID
+/// plane returned the `--set-id` render before the `--update-name` lookup
+/// (and the end-of-run typo check is skipped when `--set-id` is set), so the
+/// mapping file was silently ignored and the run exited 0.
+#[test]
+fn r11_set_id_conflicts_with_update_name() {
+    let d = dir("r11-set-id");
+    let input = d.join("in.vcf");
+    write(&input, VCF);
+    let map = d.join("map.txt");
+    write(&map, "rs1\tnew1\n");
+    let out = d.join("out.vcf");
+    let spec = RenameSpec {
+        set_id: Some("%CHROM:%POS".into()),
+        update_name: Some(map),
+        ..RenameSpec::default()
+    };
+    let err = run_rename(
+        Some(&input),
+        &spec,
+        &RenameOutput {
+            path: Some(out),
+            compressed: false,
+            level: 6,
+            command_line: String::new(),
+            no_version: true,
+            no_command: false,
+            write_index: None,
+        },
+        &budget(1),
+    )
+    .expect_err("--set-id must refuse --update-name instead of dropping it");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+    let text = err.to_string();
+    assert!(text.contains("--set-id"), "names the flag: {text}");
+    assert!(text.contains("--update-name"), "names the conflict: {text}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// doc_v20 R11, the verified neighbor: `--set-missing-var-ids` only rewrites
+/// `.` IDs, so `--update-name` stays reachable for named IDs and its typo
+/// check stays armed — the combination is legal and must keep both effects.
+#[test]
+fn r11_set_missing_var_ids_keeps_update_name_reachable() {
+    let d = dir("r11-set-missing");
+    let input = d.join("in.vcf");
+    write(&input, VCF);
+    let map = d.join("map.txt");
+    write(&map, "rs1\tnew1\n");
+    let out = d.join("out.vcf");
+    let spec = RenameSpec {
+        set_missing_var_ids: Some("v%POS".into()),
+        update_name: Some(map),
+        ..RenameSpec::default()
+    };
+    run_rename(
+        Some(&input),
+        &spec,
+        &RenameOutput {
+            path: Some(out.clone()),
+            compressed: false,
+            level: 6,
+            command_line: String::new(),
+            no_version: true,
+            no_command: false,
+            write_index: None,
+        },
+        &budget(1),
+    )
+    .expect("the combination fills dots and renames named IDs");
+    let text = read(&out);
+    assert!(text.contains("\t1\tnew1\t"), "update-name applies: {text}");
+    assert!(text.contains("\t3\tv3\t"), "the dot is filled: {text}");
+
+    // A misspelt key still fails the run (the typo check is not skipped).
+    let bad = d.join("bad.txt");
+    write(&bad, "nosuchid\tX\n");
+    let spec = RenameSpec {
+        set_missing_var_ids: Some("v%POS".into()),
+        update_name: Some(bad),
+        ..RenameSpec::default()
+    };
+    let err = run_rename(
+        Some(&input),
+        &spec,
+        &RenameOutput {
+            path: Some(d.join("out2.vcf")),
+            compressed: false,
+            level: 6,
+            command_line: String::new(),
+            no_version: true,
+            no_command: false,
+            write_index: None,
+        },
+        &budget(1),
+    )
+    .expect_err("the typo check must stay armed");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage);
+    assert!(err.to_string().contains("nosuchid"), "{err}");
+    let _ = std::fs::remove_dir_all(&d);
+}

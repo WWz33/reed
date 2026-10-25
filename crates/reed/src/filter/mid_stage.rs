@@ -178,6 +178,12 @@ struct MidPartial {
     n_output: u64,
 }
 
+/// The mid stage over every chunk (module doc), returning each chunk's
+/// decision keyed by chunk id.
+///
+/// `keep` must be the FULL-LENGTH sample mask — one entry per sample
+/// column (doc_v20 S68). A short mask is a programming error, caught in
+/// debug builds by the width assertion below.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn mid_stage(
     chunks: &[ChunkSites],
@@ -191,6 +197,24 @@ pub(super) fn mid_stage(
 ) -> std::collections::HashMap<u64, Arc<ChunkDecision>> {
     // Clean-padded keep words (the count math anchors on this).
     let w = keep.len().div_ceil(64);
+    // doc_v20 S68: full length means the packed width equals the
+    // matrices' (`run_matrix_pass` builds both from the same header).
+    // A short mask used to zero-pad the missing words and silently DROP
+    // the tail samples here, while the single-pass pipeline
+    // (`record_pipeline.rs`) kept them; the mismatch is now caught
+    // instead of tolerated.
+    // An `assert!`, not `debug_assert!`: in release the zero-padded words
+    // silently dropped the tail samples while the single-pass pipeline
+    // panicked on the same mask, so the two strategies disagreed
+    // (doc_v20 review of S68).
+    assert!(
+        matrices.iter().all(|m| m.w == w),
+        "keep mask must be full length (doc_v20 S68): {} entries pack into \
+         {} word(s) but the matrices hold {}",
+        keep.len(),
+        w,
+        matrices.first().map_or(0, |m| m.w)
+    );
     let mut keep_words = vec![0_u64; w];
     for (i, &k) in keep.iter().enumerate() {
         if k {
@@ -457,5 +481,63 @@ mod tests {
         let rule_refs: Vec<&[u64]> = rules.iter().map(Vec::as_slice).collect();
         let keep = [0b1111_u64];
         assert_eq!(rule_hits_of(&rule_refs, &keep), vec![1, 1]);
+    }
+
+    /// The empty plan (no head/mask/tail rules) — the construction
+    /// pattern from `filtered.rs`'s tests. Only the debug-only tests use
+    /// it, so the release profile would see it as dead code.
+    #[cfg(debug_assertions)]
+    fn empty_plan() -> reed_filter::plan::FilterPlan {
+        let mut tags = reed_core::tag_table::TagTable::new();
+        tags.add_format(
+            "GT",
+            reed_core::tag_table::TagType::Character,
+            reed_core::tag_table::TagNumber::Count(1),
+        );
+        let spec = reed_filter::spec::FilterSpec::default();
+        reed_filter::plan::compile(&spec, &tags, "", false)
+            .expect("invariant: the empty spec compiles")
+    }
+
+    /// doc_v20 S68: `keep` must be FULL LENGTH — one entry per sample
+    /// column, matching the matrices' bitmap width. A short mask used to
+    /// zero-pad the missing bitmap words and silently DROP the tail
+    /// samples here, while the single-pass pipeline KEPT them; the pinned
+    /// contract is that a short keep is a programming error, caught in
+    /// debug builds by the width assertion.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "keep mask must be full length")]
+    fn s68_short_keep_mask_is_a_programming_error() {
+        // 65+ samples' worth of matrix words (w = 2) against a three-entry
+        // keep (one word): the second word is what a short mask drops.
+        let mut matrix = SiteMatrix::new(b"1".to_vec(), 2, 0, false);
+        matrix.push_block(vec![0_u64; 4 * 2], vec![99], vec![true]);
+        let chunks = [ChunkSites {
+            id: 0,
+            head_bits: vec![1],
+            n_records: 1,
+            start: 0,
+            n_sites: 1,
+            seam_site: None,
+        }];
+        let matrices = [matrix];
+        let plan = empty_plan();
+        let mut funnel = FunnelPartial::default();
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX),
+        };
+        let _ = mid_stage(
+            &chunks,
+            &matrices,
+            &[0],
+            // Three entries for a 65+-sample matrix: short.
+            &[true, true, true],
+            &plan,
+            3,
+            &mut funnel,
+            &budget,
+        );
     }
 }

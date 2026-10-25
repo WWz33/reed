@@ -186,7 +186,9 @@ pub fn knn_graph(x: &Mat, k: usize, gamma: f64) -> Mat {
             .filter(|&j| j != i)
             .map(|j| (dist2(x.row(i), x.row(j)), j))
             .collect();
-        d.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // total_cmp: NaN squared distances (missing genotypes) sort last
+        // instead of panicking (doc_v20 S31).
+        d.sort_by(|a, b| a.0.total_cmp(&b.0));
         for &(d2, j) in d.iter().take(k) {
             let val = (-gamma * d2).exp();
             w.set(i, j, val.max(w.get(i, j)));
@@ -499,6 +501,25 @@ mod tests {
             }
         }
         ok
+    }
+
+    #[test]
+    fn s31_knn_graph_sort_tolerates_nan_genotypes() {
+        // A NaN genotype row (ordinary missing data) yields NaN squared
+        // distances; partial_cmp().unwrap() in the kNN sort panicked on them
+        // (doc_v20 S31).
+        let pts = [[0.0, 0.0], [1.0, 0.0], [5.0, 0.0], [f64::NAN, f64::NAN]];
+        let x = Mat::from_fn(4, 2, |i, j| pts[i][j]);
+        let w = knn_graph(&x, 2, 0.0);
+        for v in w.data.iter() {
+            assert!(v.is_finite(), "weight {v} not finite");
+        }
+        // Ordered correctly: the nearer finite neighbour (d^2 = 1) gets a
+        // larger weight than the farther one (d^2 = 25), and the NaN point
+        // sorts last, outside the k = 2 window.
+        assert!(w.get(0, 1) > w.get(0, 2));
+        assert!(w.get(0, 2) > 0.0);
+        assert_eq!(w.get(0, 3), 0.0);
     }
 
     #[test]

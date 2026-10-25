@@ -914,3 +914,97 @@ fn dash_output_streams_to_stdout() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v20 R5: `-o` equal to the input is refused before the output is
+/// opened — the writers `File::create` the output after the input is
+/// already open, which truncated the input mid-read (unrecoverable loss).
+/// Every gate also proves the input file is byte-identical afterwards.
+#[test]
+fn r5_filter_refuses_output_equal_to_input() {
+    let dir = temp_dir("r5-filter");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let before = std::fs::read(&input).expect("invariant: read");
+    let inp = input.to_str().expect("invariant: utf8");
+    let out = run(&["filter", inp, "-o", inp, "-Oz", "--verbosity", "0"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "output == input is a usage error: {stderr}"
+    );
+    assert!(stderr.contains("would overwrite the input"), "{stderr}");
+    let after = std::fs::read(&input).expect("invariant: read");
+    assert_eq!(after, before, "the input must survive the refused run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v20 R5 (rename flavor): same gate for `reed rename -o INPUT` — the
+/// plain-VCF rewrite used to truncate the input it was still reading.
+#[test]
+fn r5_rename_refuses_output_equal_to_input() {
+    let dir = temp_dir("r5-rename");
+    let input = dir.join("in.vcf");
+    let mut text = String::from(HEADER);
+    for i in 0..10_u32 {
+        let _ = writeln!(text, "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0", i + 1);
+    }
+    std::fs::write(&input, text).expect("invariant: fixture");
+    let before = std::fs::read(&input).expect("invariant: read");
+    let inp = input.to_str().expect("invariant: utf8");
+    let out = run(&["rename", inp, "-o", inp, "--clear-ids", "--verbosity", "0"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "output == input is a usage error: {stderr}"
+    );
+    assert!(stderr.contains("would overwrite the input"), "{stderr}");
+    let after = std::fs::read(&input).expect("invariant: read");
+    assert_eq!(after, before, "the input must survive the refused run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v20 R5 (convert flavor): `convert --vcf` writes `-o` verbatim, so
+/// `-o HAPMAP` truncated the hapmap being converted.
+#[test]
+fn r5_convert_refuses_output_equal_to_input() {
+    let dir = temp_dir("r5-convert");
+    let input = dir.join("in.hmp.txt");
+    std::fs::write(&input, HAPMAP).expect("invariant: fixture");
+    let before = std::fs::read(&input).expect("invariant: read");
+    let inp = input.to_str().expect("invariant: utf8");
+    let out = run(&["convert", inp, "--vcf", "-o", inp, "--verbosity", "0"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "output == input is a usage error: {stderr}"
+    );
+    assert!(stderr.contains("would overwrite the input"), "{stderr}");
+    let after = std::fs::read(&input).expect("invariant: read");
+    assert_eq!(after, before, "the input must survive the refused run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v20 R5 (index flavor): `index -f -o INPUT` overwrote the VCF with
+/// its own index — `-f` was the destructive flavor.
+#[test]
+fn r5_index_refuses_output_equal_to_input() {
+    let dir = temp_dir("r5-index");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let before = std::fs::read(&input).expect("invariant: read");
+    let inp = input.to_str().expect("invariant: utf8");
+    let out = run(&["index", inp, "-f", "-o", inp]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "output == input is a usage error: {stderr}"
+    );
+    assert!(stderr.contains("would overwrite the input"), "{stderr}");
+    let after = std::fs::read(&input).expect("invariant: read");
+    assert_eq!(after, before, "the input must survive the refused run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
