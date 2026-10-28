@@ -21,9 +21,12 @@
 /.claude/
 /.agents/
 /.zedcode
-/crates/*/tests/
 /skills-lock.json
 /CHANGELOG.md
+# NOTE: `crates/*/tests/` used to be ignored here. Every crate's integration
+# tests are tracked (most were added with `git add -f`), so the rule only
+# served to silently drop NEW test files — it hid e2e_pca.rs, e2e_ordination.rs
+# and rng_determinism.rs from the doc_v20 commit (v20 review).
 # Graphify analysis output (tool artefact, never tracked)
 /graphify-out/
 /crates/graphify-out/

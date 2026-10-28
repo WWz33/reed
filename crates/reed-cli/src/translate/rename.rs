@@ -60,9 +60,17 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
             let level = if level.is_empty() {
                 6
             } else {
-                level.parse::<u8>().map_err(|_| {
+                let parsed = level.parse::<u8>().map_err(|_| {
                     reed::Error::usage(format!("invalid -O level in {text:?} (want 1-9)"))
-                })?
+                })?;
+                // doc_v21 S15: an out-of-range level is a usage error, not a
+                // writer-time "invalid compression level" (exit 1).
+                if !(1..=9).contains(&parsed) {
+                    return Err(reed::Error::usage(format!(
+                        "invalid -O level in {text:?} (want 1-9)"
+                    )));
+                }
+                parsed
             };
             match kind {
                 "v" => (false, level),
@@ -96,6 +104,21 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
     };
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
     let write_index = reed::WriteIndex::parse(args.write_index.as_deref())?;
+    // doc_v21 S16: `-W` with no possible index target used to be a silent
+    // no-op. Checked here, not in the library, so library callers are
+    // unaffected.
+    if write_index != reed::WriteIndex::None {
+        if args.out.is_none() {
+            return Err(reed::Error::usage(
+                "-W needs -o FILE: an index is written next to the output file, not stdout",
+            ));
+        }
+        if !compressed {
+            return Err(reed::Error::usage(
+                "-W needs a BGZF output (-Oz): a plain VCF cannot be indexed",
+            ));
+        }
+    }
     let output = RenameOutput {
         path: args.out.as_deref().and_then(crate::units::output_path),
         compressed,

@@ -58,7 +58,11 @@ impl ContigTable {
 
     /// The contig's id, or `None` when the header does not declare it.
     pub fn id_of(&mut self, chrom: &[u8]) -> Option<ContigId> {
-        if self.last.0 == chrom {
+        // doc_v21 M6: the cache is seeded with `(Vec::new(), ContigId(u32::MAX))`
+        // as a sentinel; an empty CHROM would otherwise match the seed and hand
+        // the sentinel id downstream (`-W`'s indexer then resizes to 2^32
+        // contigs — a 790 GB allocation abort). The sentinel is never a hit.
+        if self.last.0 == chrom && self.last.1 != ContigId(u32::MAX) {
             return Some(self.last.1);
         }
         let id = self.ids.get(chrom).copied()?;
@@ -260,6 +264,19 @@ mod tests {
         let lr = line(b"chrX\t1\t.\tC\tT\t.\t.\t.\tGT\t0/0\n");
         let err = SiteView::parse_declared(&lr, &mut contigs).unwrap_err();
         assert!(matches!(err, IoError::MalformedRecord { .. }));
+    }
+
+    #[test]
+    fn m6_empty_chrom_never_hits_the_last_hit_sentinel() {
+        // doc_v21 M6: the cache is seeded with `(Vec::new(), ContigId(u32::MAX))`.
+        // An empty CHROM — the first data line of a malformed file — used to
+        // match that seed and return `Some(ContigId(u32::MAX))`, which `-W`
+        // then fed to the indexer (a 2^32-entry resize; 790 GB abort).
+        let mut contigs = ContigTable::new(vec![b"chr1".to_vec()]);
+        assert_eq!(contigs.id_of(b""), None);
+        // And the sentinel is not resurrected after a real hit.
+        assert_eq!(contigs.id_of(b"chr1"), Some(ContigId(0)));
+        assert_eq!(contigs.id_of(b""), None);
     }
 
     #[test]

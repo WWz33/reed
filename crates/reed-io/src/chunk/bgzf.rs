@@ -342,6 +342,7 @@ impl<R: Read> BgzfChunkReader<R> {
             plain: false,
             compressed_start,
             blocks,
+            truncate_to: None,
         }))
     }
 }
@@ -485,6 +486,7 @@ impl crate::chunk::ChunkSource for MmapChunkSource {
             plain: false,
             compressed_start: start as u64,
             blocks,
+            truncate_to: None,
         }))
     }
 }

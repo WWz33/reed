@@ -113,9 +113,10 @@ pub(crate) struct SiteFilterArgs {
     /// Variant types to drop (bcftools `-V/--exclude-types`)
     #[arg(short = 'V', long = "exclude-types", value_name = "LIST")]
     pub exclude_types: Option<String>,
-    /// Keep only SNP sites (`=just-acgt` restricts ALT to A/C/G/T)
+    /// Keep only SNP sites; `=just-acgt` restricts every REF/ALT to A/C/G/T
+    /// (doc_v21 S29: the bare flag means any 1-bp substitution, as bcftools)
     #[arg(long, value_name = "just-acgt", num_args = 0..=1,
-          default_missing_value = "just-acgt")]
+          default_missing_value = "")]
     pub snps_only: Option<String>,
     /// Minimum allele count, REF+ALT (bcftools `-m`)
     #[arg(short = 'm', long = "min-alleles", value_name = "INT")]

@@ -175,6 +175,16 @@ pub fn run_dapc_opened(
             "--solver {solver:?} is not supported (auto|dense|stream)"
         )));
     }
+    // doc_v21 M11: charge the resolved solver's real peak (dense GRM
+    // included) before the matrix is built.
+    let n_kept = match &request.keep_samples {
+        Some(mask) => mask.iter().filter(|&&k| k).count(),
+        None => opened.facts().sample_names.len(),
+    };
+    let matrix_use = crate::pca::matrix_use(
+        crate::pca::chosen_solver(solver, n_kept, budget),
+        missing,
+    );
     if request.populations.is_empty() {
         return Err(crate::Error::usage("--pop is required"));
     }
@@ -195,7 +205,7 @@ pub fn run_dapc_opened(
     )?;
 
     let keep = request.keep_samples.clone();
-    let (x, ids) = read_genotype_matrix(opened, keep.as_deref(), budget)?;
+    let (x, ids) = read_genotype_matrix(opened, keep.as_deref(), budget, matrix_use)?;
     let n_samples = x.rows;
     let n_sites = x.cols;
     if n_samples < 3 {

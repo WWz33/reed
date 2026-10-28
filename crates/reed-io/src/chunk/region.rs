@@ -32,6 +32,11 @@ pub struct Region {
 pub struct RegionChunkSource<R: Read + Seek> {
     inner: R,
     end_coffset: u64,
+    /// In-block offset of the range end (low 16 bits of the index's end
+    /// virtual offset): a record boundary. The block read at `end_coffset`
+    /// may extend past it, so the chunk carrying that block truncates its
+    /// inflated text here (doc_v21 M3).
+    end_uoffset: u64,
     chunk_target: u64,
     next_chunk_id: u64,
     pending_block: Option<Vec<u8>>,
@@ -64,6 +69,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         Ok(Self {
             inner,
             end_coffset: end >> 16,
+            end_uoffset: end & 0xFFFF,
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             pending_block: None,
@@ -80,7 +86,9 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             return Ok(None);
         }
         let position = self.inner.stream_position()?;
-        if position > self.end_coffset {
+        // doc_v21 M3: a range whose end offset sits exactly on a block
+        // boundary needs nothing from the block starting there.
+        if position > self.end_coffset || (position == self.end_coffset && self.end_uoffset == 0) {
             self.done = true;
             return Ok(None);
         }
@@ -129,15 +137,29 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         };
         let mut blocks = vec![block_pair(&first)];
         let mut compressed = first;
+        let mut last_block_offset = compressed_start;
         while (compressed.len() as u64) < self.chunk_target {
             match self.read_block()? {
-                Some((block, _offset)) => {
+                Some((block, offset)) => {
+                    last_block_offset = offset;
                     blocks.push(block_pair(&block));
                     compressed.extend_from_slice(&block);
                 }
                 None => break,
             }
         }
+        // doc_v21 M3: when this chunk ends on the block the index range ends
+        // in, that block's inflated text runs past the range (BGZF blocks are
+        // cut at 64 KB, not at record boundaries). Keep only the prefix up to
+        // the end virtual offset's in-block position — a record boundary — so
+        // the engine never sees an unterminated trailing record.
+                let truncate_to = (last_block_offset == self.end_coffset).then(|| {
+            let prior: u64 = blocks[..blocks.len() - 1]
+                .iter()
+                .map(|&(_, ilen)| u64::from(ilen))
+                .sum();
+            prior + self.end_uoffset
+        });
         let id = ChunkId(self.next_chunk_id);
         self.next_chunk_id += 1;
         Ok(Some(ChunkBytes {
@@ -147,6 +169,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             plain: false,
             compressed_start,
             blocks,
+            truncate_to,
         }))
     }
 }
@@ -164,6 +187,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         Self {
             inner,
             end_coffset: 0,
+            end_uoffset: 0,
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             pending_block: None,
@@ -198,6 +222,21 @@ pub trait IndexQuery {
         end1: Option<u64>,
     ) -> Result<Vec<(u64, u64)>, IoError>;
 
+    /// Whether the index carries a reference-sequence name table. A TBI
+    /// always does (first-record-appearance order); a CSI does when htslib
+    /// wrote one. When present, [`Self::tid_of`] is authoritative — an id
+    /// resolved from the VCF header order would be wrong (doc_v21 M2).
+    fn has_reference_names(&self) -> bool {
+        false
+    }
+
+    /// The index's own id for `name`, or `None` when the index has no name
+    /// table or does not name it.
+    fn tid_of(&self, name: &str) -> Option<usize> {
+        let _ = name;
+        None
+    }
+
     /// The virtual-offset range covering every region, or `None` when no
     /// chunk matches.
     ///
@@ -209,18 +248,34 @@ pub trait IndexQuery {
         regions: &[Region],
         contig_names: &[String],
     ) -> Result<Option<(u64, u64)>, IoError> {
+        let unknown = |name: &str| {
+            IoError::Header(format!("region contig {name:?} is not in the header"))
+        };
         let mut start = u64::MAX;
         let mut end = 0_u64;
         for region in regions {
-            let tid = contig_names
-                .iter()
-                .position(|name| name == &region.contig)
-                .ok_or_else(|| {
-                    IoError::Header(format!(
-                        "region contig {:?} is not in the header",
-                        region.contig
-                    ))
-                })?;
+            // doc_v21 M2: the id must be the index's own. A TBI's reference
+            // table (and an htslib CSI's) is first-record-appearance order,
+            // not the VCF header order, so a header position would pick the
+            // wrong bins — or, when the index has fewer refs than the header,
+            // fail with "invalid reference sequence ID". Fall back to the
+            // header position only for a CSI that names nothing (contig-id
+            // keyed: there the header position *is* the id).
+            let tid = match self.tid_of(&region.contig) {
+                Some(tid) => tid,
+                None if self.has_reference_names() => {
+                    // Named contigs and no match: the contig has no records.
+                    // Still reject one the header never declared.
+                    if contig_names.iter().any(|name| name == &region.contig) {
+                        continue;
+                    }
+                    return Err(unknown(&region.contig));
+                }
+                None => contig_names
+                    .iter()
+                    .position(|name| name == &region.contig)
+                    .ok_or_else(|| unknown(&region.contig))?,
+            };
             for (s, e) in self.query(tid, region.start1, region.end1)? {
                 start = start.min(s);
                 end = end.max(e);
@@ -265,7 +320,30 @@ impl FileIndex {
     }
 }
 
+impl FileIndex {
+    /// The index's reference-sequence name table, when it has one.
+    fn reference_names(
+        &self,
+    ) -> Option<&noodles::csi::binning_index::index::header::ReferenceSequenceNames> {
+        use noodles::csi::BinningIndex as _;
+        match self {
+            Self::Csi(index) => index.header().map(|h| h.reference_sequence_names()),
+            Self::Tbi(index) => index.header().map(|h| h.reference_sequence_names()),
+        }
+    }
+}
+
 impl IndexQuery for FileIndex {
+    fn has_reference_names(&self) -> bool {
+        self.reference_names().is_some_and(|names| !names.is_empty())
+    }
+
+    fn tid_of(&self, name: &str) -> Option<usize> {
+        self.reference_names()?
+            .iter()
+            .position(|entry| <bstr::BString as AsRef<[u8]>>::as_ref(entry) == name.as_bytes())
+    }
+
     fn query(
         &self,
         tid: usize,
@@ -295,5 +373,211 @@ impl IndexQuery for FileIndex {
             .iter()
             .map(|c| (c.start().into(), c.end().into()))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A one-region index whose single chunk spans `[start_voff, end_voff)`.
+    /// The region source only consumes the virtual offsets, so a stub is
+    /// enough to drive the end-of-range logic exactly.
+    struct StubIndex {
+        start: u64,
+        end: u64,
+        names: Vec<&'static str>,
+    }
+
+    impl IndexQuery for StubIndex {
+        fn query(
+            &self,
+            tid: usize,
+            _start1: Option<u64>,
+            _end1: Option<u64>,
+        ) -> Result<Vec<(u64, u64)>, IoError> {
+            Ok(if tid == 0 {
+                vec![(self.start, self.end)]
+            } else {
+                Vec::new()
+            })
+        }
+
+        fn has_reference_names(&self) -> bool {
+            !self.names.is_empty()
+        }
+
+        fn tid_of(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|n| *n == name)
+        }
+    }
+
+    fn bgzf(blocks: &[&[u8]]) -> Vec<u8> {
+        let mut deflater =
+            crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
+        let mut out = Vec::new();
+        for block in blocks {
+            deflater
+                .deflate_block(block, &mut out)
+                .expect("invariant: block fits");
+        }
+        out.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+        out
+    }
+
+    fn voff(coffset: u64, uoffset: u64) -> u64 {
+        (coffset << 16) | uoffset
+    }
+
+    /// doc_v21 M3: the index's end virtual offset is a record boundary inside
+    /// a block; everything after it in that block belongs to later records and
+    /// must be dropped. The region source used to hand on the whole block, and
+    /// the engine then reported an unterminated trailing record.
+    #[test]
+    fn m3_chunk_truncates_to_the_range_end_inside_the_last_block() {
+        // Block 1: three records; the range ends after the first one.
+        let b1: &[u8] = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\nchr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\nchr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let b2: &[u8] = b"chr1\t4\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let bytes = bgzf(&[b1, b2]);
+        let block1_len = {
+            let mut deflater =
+                crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+            let mut one = Vec::new();
+            deflater.deflate_block(b1, &mut one).expect("invariant: fits");
+            one.len() as u64
+        };
+        let end_uoffset = b1
+            .iter()
+            .position(|&c| c == b'\n')
+            .expect("invariant: first record ends")
+            as u64
+            + 1;
+        // The chunk starts at block 0 and ends inside block 0, after record 1.
+        let index = StubIndex {
+            start: voff(0, 0),
+            end: voff(0, end_uoffset),
+            names: vec!["chr1"],
+        };
+        let mut source = RegionChunkSource::open(
+            std::io::Cursor::new(bytes),
+            &index,
+            &[Region {
+                contig: "chr1".into(),
+                start1: Some(1),
+                end1: Some(1),
+            }],
+            &["chr1".to_string()],
+        )
+        .expect("invariant: source opens");
+
+        let chunk = source
+            .next_chunk()
+            .expect("invariant: read")
+            .expect("invariant: one chunk");
+        // The end offset lies inside block 0, so the chunk must carry a
+        // truncation point (just past record 1), not the whole blocks.
+        assert_eq!(
+            chunk.truncate_to,
+            Some(end_uoffset),
+            "the range end must cut the inflated text at a record boundary"
+        );
+        assert_eq!(block1_len, chunk.blocks[0].0 as u64);
+        // Inflating with the truncation applied drops records 2 and 3.
+        let mut inflater = crate::bgzf::inflate::Inflater::new();
+        let mut scratch = Vec::new();
+        let view = crate::chunk::inflate_chunk(&chunk, &mut inflater, &mut scratch)
+            .expect("invariant: inflates");
+        assert_eq!(view.text, b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
+        assert!(view.tail.is_none(), "truncation lands on a record boundary");
+    }
+
+    /// The control: when the range ends exactly on a block boundary there is
+    /// nothing to truncate, and the chunk ends at a record boundary anyway.
+    #[test]
+    fn m3_block_aligned_range_end_needs_no_truncation() {
+        let b1: &[u8] = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let b2: &[u8] = b"chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let bytes = bgzf(&[b1, b2]);
+        let block1_len = {
+            let mut deflater =
+                crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+            let mut one = Vec::new();
+            deflater.deflate_block(b1, &mut one).expect("invariant: fits");
+            one.len() as u64
+        };
+        let index = StubIndex {
+            start: voff(0, 0),
+            end: voff(block1_len, 0),
+            names: vec!["chr1"],
+        };
+        let mut source = RegionChunkSource::open(
+            std::io::Cursor::new(bytes),
+            &index,
+            &[Region {
+                contig: "chr1".into(),
+                start1: Some(1),
+                end1: Some(1),
+            }],
+            &["chr1".to_string()],
+        )
+        .expect("invariant: source opens");
+        let chunk = source
+            .next_chunk()
+            .expect("invariant: read")
+            .expect("invariant: one chunk");
+        assert_eq!(chunk.truncate_to, None, "block-aligned end needs no cut");
+    }
+
+    /// doc_v21 M2: the contig id must come from the index's own name table.
+    /// A TBI's order is first-record-appearance, not header order, so the
+    /// header position picked the wrong bins (or failed with "invalid
+    /// reference sequence ID" when the index had fewer refs).
+    #[test]
+    fn m2_query_range_resolves_tids_through_the_index_names() {
+        // Index lists only chr2 at tid 0; the header declares chr1, chr2, chr3.
+        let index = StubIndex {
+            start: voff(0, 0),
+            end: voff(0, 10),
+            names: vec!["chr2"],
+        };
+        let header = ["chr1".to_string(), "chr2".to_string(), "chr3".to_string()];
+        let got = index
+            .query_range(
+                &[Region {
+                    contig: "chr2".into(),
+                    start1: None,
+                    end1: None,
+                }],
+                &header,
+            )
+            .expect("chr2 must resolve through the index");
+        assert_eq!(got, Some((voff(0, 0), voff(0, 10))));
+
+        // A header contig the index never saw has no records — not an error
+        // (routine after `bcftools view -r`).
+        let empty = index
+            .query_range(
+                &[Region {
+                    contig: "chr1".into(),
+                    start1: None,
+                    end1: None,
+                }],
+                &header,
+            )
+            .expect("a declared contig with no records is empty, not an error");
+        assert_eq!(empty, None);
+
+        // A contig the header never declared is still a usage error.
+        let err = index
+            .query_range(
+                &[Region {
+                    contig: "chrZ".into(),
+                    start1: None,
+                    end1: None,
+                }],
+                &header,
+            )
+            .expect_err("unknown contig");
+        assert!(err.to_string().contains("not in the header"), "{err}");
     }
 }

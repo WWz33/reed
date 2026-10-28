@@ -595,6 +595,11 @@ mod tests {
     fn s36_supports_are_the_ape_vectors() {
         // doc_v20 review of S36: with the root kept, the support vector is
         // the pre-fix one (which matched ape) — root last at 100.
+        //
+        // doc_v21 M9: UPGMA now merges into the lower-index slot (hclust's
+        // tie order, see `tree::upgma`), so the UPGMA tree shape — and hence
+        // its clade supports — changed on this tied fixture: the two middle
+        // values moved 44→40 and 36→44. NJ is unaffected (no ties here).
         let x = structured(8, 30);
         let cfg = BootstrapConfig {
             replicates: 25,
@@ -603,7 +608,7 @@ mod tests {
         };
         let upgma_tree = tree_of(&x, TreeMethod::Upgma);
         let report = support(&upgma_tree, &x, TreeMethod::Upgma, euclid, &cfg).unwrap();
-        assert_eq!(report.support, vec![100.0, 100.0, 44.0, 96.0, 36.0, 96.0, 100.0]);
+        assert_eq!(report.support, vec![100.0, 100.0, 40.0, 96.0, 44.0, 96.0, 100.0]);
 
         let nj_tree = tree_of(&x, TreeMethod::Nj);
         let report = support(&nj_tree, &x, TreeMethod::Nj, euclid, &cfg).unwrap();

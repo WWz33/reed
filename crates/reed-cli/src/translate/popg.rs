@@ -35,6 +35,29 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             && args.f4_ratio.is_empty());
     let writes_files =
         windowed_route || args.sfs.is_some() || args.ld_decay.is_some() || args.ld_pairs;
+    // doc_v21 S17: four flags were silently dropped when their companion was
+    // missing; `convert` already rejects the same shapes. Check before any
+    // input is read.
+    if args.proj.is_some() && args.sfs.is_none() {
+        return Err(reed::Error::usage("--proj needs --sfs"));
+    }
+    if args.sfs_int && args.sfs.is_none() {
+        return Err(reed::Error::usage("--sfs-int needs --sfs"));
+    }
+    if args.block_size.is_some()
+        && args.f2.is_empty()
+        && args.f3.is_empty()
+        && args.f4.is_empty()
+        && args.dstat.is_empty()
+        && args.f4_ratio.is_empty()
+    {
+        return Err(reed::Error::usage(
+            "--block-size needs an f-statistic (--f2/--f3/--f4/--dstat/--f4-ratio)",
+        ));
+    }
+    if args.pbs_normed && args.pbs.is_empty() {
+        return Err(reed::Error::usage("--pbs-normed needs --pbs"));
+    }
     if writes_files && args.out.is_none() {
         return Err(reed::Error::usage(
             "window-layout mode writes files: pass -o PREFIX",
@@ -71,9 +94,10 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         Some(groups) => Populations::File(PathBuf::from(groups)),
         None => Populations::All,
     };
-    // The names for kinds/fstats/sfs construction; the assignment against
-    // the header happens inside `run_popgen_opened` (08 §6.2).
-    let group_names = populations.group_names()?;
+    // The names for kinds/fstats/sfs construction; resolved with the header
+    // by the run's own parser so `--force-samples` cannot shift the list
+    // (doc_v21 M10).
+    let group_names = populations.group_names(&sample_names, args.force_samples)?;
     if args.verbosity.shows_summary() {
         eprintln!(
             "{} samples, {} groups: {}",
@@ -108,6 +132,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             keep_samples,
             site,
             populations: populations.clone(),
+            sample_names: sample_names.clone(),
             force_samples: args.force_samples,
             contig_lengths,
             grid,
@@ -311,6 +336,9 @@ pub(crate) struct WindowedContext {
     pub keep_samples: Option<Vec<bool>>,
     pub site: Option<reed::spec::FilterSpec>,
     pub populations: reed::Populations,
+    /// Header sample names (doc_v21 M10: group names are resolved by the same
+    /// parser the run uses, which needs the header).
+    pub sample_names: Vec<String>,
     pub force_samples: bool,
     pub contig_lengths: HashMap<Vec<u8>, u64>,
     pub grid: reed::WindowGrid,
@@ -355,7 +383,9 @@ pub(crate) fn build_windowed_request(
             "a windowed statistic needs --pop FILE (sample<TAB>population, no header)",
         ));
     }
-    let group_names = ctx.populations.group_names()?;
+    let group_names = ctx
+        .populations
+        .group_names(&ctx.sample_names, ctx.force_samples)?;
     let pbs_triples = parse_pbs_triples(&args.pbs, &group_names).map_err(reed::Error::usage)?;
     // A bare `--sfs` has no window denominators, so the all-sites check
     // does not apply (05 §3.1 accepts variant-only input).
@@ -767,6 +797,7 @@ mod tests {
             keep_samples: None,
             site: None,
             populations: reed::Populations::File(pops),
+            sample_names: vec!["s0".to_string(), "s1".to_string(), "s2".to_string()],
             force_samples: false,
             contig_lengths: std::collections::HashMap::new(),
             grid: reed::WindowGrid::Bp {

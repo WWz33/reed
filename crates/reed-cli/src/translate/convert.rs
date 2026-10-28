@@ -297,6 +297,12 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     }
 
     // ---- Open once (stdin streams) ---------------------------------------
+    // doc_v21 S19: an empty prefix wrote hidden files in CWD and exited 0.
+    if args.out.as_deref().is_some_and(|p| p.trim().is_empty()) {
+        return Err(reed::Error::usage(
+            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
+        ));
+    }
     let prefix = match &args.out {
         Some(p) => PathBuf::from(p),
         None => input_file
@@ -319,7 +325,9 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         Some(groups) => Populations::File(PathBuf::from(groups)),
         None => Populations::All,
     };
-    let group_names = populations.group_names()?;
+    // doc_v21 M10: resolve group names with the run's own parser (header
+    // aware), so `--force-samples` cannot renumber them.
+    let group_names = populations.group_names(&sample_names, args.force_samples)?;
     let mut targets = Vec::new();
     if let Some(sfs_request) =
         super::build_sfs_request(args.sfs.as_deref(), args.proj.as_deref(), &group_names)?

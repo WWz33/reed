@@ -136,12 +136,13 @@ pub fn upgma(d: &Mat) -> Result<Tree, GraphError> {
 
         let parent = next_node;
         next_node += 1;
-        // `hclust` stores the newer cluster in column 1 and the older in
-        // column 2 of its merge matrix, and the new cluster takes the slot of
-        // the *newer* of the two. That choice decides which slot survives and
-        // therefore how later ties resolve, so it is part of the algorithm,
-        // not an implementation detail.
-        let (newer, older) = if bi > bj { (bi, bj) } else { (bj, bi) };
+        // `hclust` merges the pair into the *lower-index* slot: the older
+        // cluster survives and the newer slot is freed. That choice decides
+        // which slots persist and therefore how later ties resolve, so it is
+        // part of the algorithm, not an implementation detail. Keeping the
+        // newer slot instead disagreed with ape/poppr on tied matrices
+        // (doc_v21 M9; the previous comment claimed the opposite).
+        let (older, newer) = if bi < bj { (bi, bj) } else { (bj, bi) };
         edges.push((parent, node_of[bi]));
         // `clusters[..]` holds hclust-style *merge distances*, which are twice
         // the dendrogram node height; a tree's branch lengths are node-height
@@ -152,9 +153,9 @@ pub fn upgma(d: &Mat) -> Result<Tree, GraphError> {
         edges.push((parent, node_of[bj]));
         lengths.push((best - height[bj]) / 2.0);
 
-        // Merge the older cluster into the newer one's slot, so the surviving
-        // slot index is `max(bi, bj)` — matching `hclust`.
-        let (survivor, gone) = (newer, older);
+        // Merge the newer cluster into the older one's slot, so the surviving
+        // slot index is `min(bi, bj)` — matching `hclust`.
+        let (survivor, gone) = (older, newer);
         let ns = size[survivor] as f64;
         let ng = size[gone] as f64;
         for k in 0..n {
@@ -464,6 +465,41 @@ mod tests {
         assert!((heights[0] - 2.0).abs() < 1e-12, "{heights:?}");
         assert!((heights[1] - 4.0).abs() < 1e-12, "{heights:?}");
         assert!((heights[2] - 4.0).abs() < 1e-12, "{heights:?}");
+    }
+
+    #[test]
+    fn upgma_tied_distances_follow_hclust_slot_order() {
+        // doc_v21 M9. Every pair here but (1,2) is distance 2, so the merge
+        // sequence is decided entirely by tie-breaking. `hclust(as.dist(d),
+        // "average")` reports merge heights 2, 2, 2.6667 (merge matrix
+        // (-1,-3), (-4,1), (-2,2)): after joining 1 and 3 it keeps the lower
+        // slot, so the next tie ties 4 against slot 1 and the final merge
+        // averages (4+2+2)/3 = 8/3. Keeping the newer slot instead ties 2
+        // against 4 and ends at 2.5 — a different tree on tied input.
+        let d = mat(&[
+            &[0.0, 4.0, 2.0, 2.0],
+            &[4.0, 0.0, 2.0, 2.0],
+            &[2.0, 2.0, 0.0, 2.0],
+            &[2.0, 2.0, 2.0, 0.0],
+        ]);
+        let t = upgma(&d).unwrap();
+        let mut merge_h = vec![0.0f64; 2 * t.n_tips()];
+        for (&(p, c), &len) in t.edges.iter().zip(&t.lengths) {
+            let child_h = if (c as usize) <= t.n_tips() {
+                0.0
+            } else {
+                merge_h[c as usize]
+            };
+            merge_h[p as usize] = merge_h[p as usize].max(child_h + len);
+        }
+        let mut heights: Vec<f64> = ((t.n_tips() + 1)..(2 * t.n_tips()))
+            .map(|i| merge_h[i])
+            .collect();
+        heights.sort_by(f64::total_cmp);
+        // Halved hclust heights: 1, 1, 4/3 — not 1, 1, 1.25.
+        assert!((heights[0] - 1.0).abs() < 1e-12, "{heights:?}");
+        assert!((heights[1] - 1.0).abs() < 1e-12, "{heights:?}");
+        assert!((heights[2] - 4.0 / 3.0).abs() < 1e-12, "{heights:?}");
     }
 
     #[test]

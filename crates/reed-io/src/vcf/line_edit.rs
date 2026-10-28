@@ -93,8 +93,17 @@ pub fn edit_vcf_line(
     } else {
         edit_info(info, plan, out);
     }
-    out.push(b'\t');
 
+    // doc_v21 M7: when the sample subset selects nothing, the record loses its
+    // FORMAT and sample columns entirely, matching the 8-column header
+    // (bcftools writes legal 8-column records and warns once). `keep_samples`
+    // is `Some` only when a sample edit was requested.
+    if plan.keep_samples.is_some_and(|k| k.n_selected() == 0) {
+        out.push(b'\n');
+        return;
+    }
+
+    out.push(b'\t');
     // FORMAT verbatim.
     out.extend_from_slice(line.format_text());
     out.push(b'\t');
@@ -505,6 +514,32 @@ mod tests {
         };
         let got = edit(short, &plan, Some(0));
         assert!(got.contains("\t./.\t.\t"), "{got}");
+    }
+
+    #[test]
+    fn m7_zero_selected_samples_drops_format_and_samples() {
+        // doc_v21 M7: `keep_samples` selecting nothing used to emit the FORMAT
+        // column plus an empty sample field while the header was 8-column —
+        // an invalid VCF (8-column header, 10-column records).
+        let mask = SampleMask::none(4);
+        let plan = EditPlan {
+            keep_samples: Some(&mask),
+            ..EditPlan::default()
+        };
+        let got = edit(LINE, &plan, Some(0));
+        assert_eq!(got.split('\t').count(), 8, "{got}");
+        assert_eq!(
+            got,
+            "Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9;QD=4.5;AF=0.5;DP=150"
+        );
+        // The control: keeping one sample still writes FORMAT + that column.
+        let mask = SampleMask::from_ids(4, [SampleId(1)]).expect("invariant: id in range");
+        let plan = EditPlan {
+            keep_samples: Some(&mask),
+            ..EditPlan::default()
+        };
+        let got = edit(LINE, &plan, Some(0));
+        assert_eq!(got.split('\t').count(), 10, "{got}");
     }
 
     #[test]

@@ -18,6 +18,9 @@ fn parse_optional_size(text: &str) -> Result<String, String> {
 /// (01 F4-13). `index` states its file-only restriction separately.
 const INPUT_HELP: &str = "Input VCF/VCF.gz/BCF, or `-` for stdin";
 
+// doc_v21 M1: `pca`/`distance`/`dapc` now reach the record parser through
+// `InputJob`, so `INPUT_HELP` is again accurate for every subcommand.
+
 pub(crate) mod filter_flags;
 pub(crate) mod verbosity;
 
@@ -221,6 +224,10 @@ pub(crate) struct PcaCli {
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
     pub memory: Option<u64>,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
 }
 
 #[derive(Args)]
@@ -288,6 +295,10 @@ pub(crate) struct DistanceCli {
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
     pub memory: Option<u64>,
+    /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
+    #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
+          value_parser = Verbosity::parse)]
+    pub verbosity: Verbosity,
 }
 
 #[derive(Args)]

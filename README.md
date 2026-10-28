@@ -191,22 +191,22 @@ Subset, filter and mask VCF/BCF; prune by LD; write VCF or BCF.
 
 | Option | Description |
 |---|---|
-| `-r LIST` / `-R FILE` | Regions; needs a `.csi`/`.tbi` next to the input, built with `reed index` |
-| `-t LIST` / `-T FILE` | Target positions; streamed, no index needed |
+| `-r LIST` / `-R FILE` | Regions; needs a `.csi`/`.tbi` next to the input, built with `reed index`. Files may be a plain region list or a **BED** (0-based half-open) |
+| `-t LIST` / `-T FILE` | Target positions; streamed, no index needed. Same region spellings; `CHROM:POS` selects one site, files may be BED or `CHROM<TAB>POS` |
 | `-s/-S`, `--keep`, `--remove` | Sample subsets; `--force-samples` downgrades unknown names to warnings |
 | `-v/-V`, `--snps-only` | Select by variant type; `--snps-only` keeps SNPs only |
 | `-m/-M INT` | Min/max alleles per record; default `-M 2`, multiallelic records rejected |
 | `-f LIST` | Keep sites whose FILTER column contains a value from LIST |
 | `-i/-e EXPR` | Include/exclude expressions |
-| `-q/-Q/--min-af/--max-af FLOAT[:type]`, `--geno`, `--maf`, `--max-maf`, `--mac`, `--max-mac`, `--hwe <P [midp]>` | Site filters, applied after masking: allele-frequency bounds (`:type` is `nref\|alt1\|minor\|major\|nonmajor`), missing rate, MAC, HWE |
+| `-q/-Q/--min-af/--max-af FLOAT[:type]`, `--geno`, `--maf`, `--max-maf`, `--mac`, `--max-mac`, `--hwe <P>` (the mid-p variant is not implemented in this version) | Site filters, applied after masking: allele-frequency bounds (`:type` is `nref\|alt1\|minor\|major\|nonmajor`), missing rate, MAC (`--max-mac 0` is refused — `0` is the internal "off" value), HWE |
 | `--min-dp`, `--max-dp`, `--min-gq` | Mask genotypes from FMT/DP and FMT/GQ; masked genotypes count as missing for the site filters |
 | `--set-gts .` | With `-i/-e`, set matching FORMAT genotypes to `.` |
 | `--mind FLOAT` | Drop samples whose missing rate exceeds FLOAT |
-| `--indep-pairwise W[kb] [S] R2` | LD pruning, writes the kept sites: `W` is a variant count as a bare number, an interval with a `kb` suffix (step fixed at 1); `S` defaults to 1; `R2` is the r² ceiling |
+| `--indep-pairwise W[kb] [S] R2` | LD pruning, writes the kept sites: `W` is a variant count as a bare number, an interval with a `kb` suffix (step fixed at 1); `S` defaults to 1; `R2` is the r² ceiling and must be a finite number in 0–1 |
 | `-I/--no-update` | Do not update `INFO/AC` and `INFO/AN` (updated with the sample set by default; records without a GT keep their input values) |
 | `-x/--remove-info LIST` | Drop INFO tags; default `AC,AN,AF,MLEAC,MLEAF,ExcessHet,InbreedingCoeff,DP`, `-x ''` keeps every tag |
 | `--fill-tags LIST` | Recompute AC, AN, NS, MAF or HWE (case-insensitive) |
-| `-O v\|z\|b\|u[0-9]`, `-o FILE`, `-W[=csi\|tbi]` | Output type (optional compression level), output file (stdout by default), write an index |
+| `-O v\|z\|b\|u[0-9]`, `-o FILE`, `-W[=csi\|tbi]` | Output type (optional compression level), output file (stdout by default), write an index (`-W` needs a BGZF output and `-o FILE`; anything else is a usage error) |
 | `--report`, `--timing`, `--no-version`, `--no-command` | JSON run report, per-phase timings, suppress the `##reed_*` lines |
 
 ## reed index [OPTIONS] FILE

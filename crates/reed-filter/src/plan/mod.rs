@@ -32,6 +32,9 @@ pub enum HeadRule {
     VariantClass(Vec<String>),
     /// The variant class must not be any of these (bcftools `-V`).
     ExcludeVariantClass(Vec<String>),
+    /// Every REF/ALT allele must be one of A/C/G/T (plink2
+    /// `--snps-only just-acgt`; doc_v21 S29). Applied after `VariantClass(snv)`.
+    JustAcgt,
     /// The record's ALT count must be at least this.
     MinAltAlleles(u32),
     /// The record's ALT count must not exceed this.
@@ -75,6 +78,7 @@ impl HeadRule {
             Self::Regions { .. } => "site.regions".to_string(),
             Self::VariantClass(_) => "site.variant_class".to_string(),
             Self::ExcludeVariantClass(_) => "site.exclude_variant_class".to_string(),
+            Self::JustAcgt => "site.just_acgt".to_string(),
             Self::MinAltAlleles(_) => "site.min_alt_alleles".to_string(),
             Self::MaxAltAlleles(_) => "site.max_alt_alleles".to_string(),
             Self::BiallelicGate => "site.biallelic_gate".to_string(),
@@ -428,6 +432,9 @@ pub fn compile(
     if !spec.site.variant_class.is_empty() {
         head.push(HeadRule::VariantClass(spec.site.variant_class.clone()));
     }
+    if spec.site.just_acgt {
+        head.push(HeadRule::JustAcgt);
+    }
     if !spec.site.exclude_variant_class.is_empty() {
         head.push(HeadRule::ExcludeVariantClass(
             spec.site.exclude_variant_class.clone(),
@@ -681,16 +688,39 @@ pub fn compile(
         }
         tail.push(TailRule::MaxMaf(m));
     }
+    // doc_v21 S13: `--maf 0.4 --max-maf 0.2` (and the MAC pair) is an empty
+    // intersection — bcftools/plink2 reject it; reed silently emitted an
+    // empty file.
+    if let (Some(min), Some(max)) = (
+        spec.site_after_mask.min_maf,
+        spec.site_after_mask.max_maf,
+    ) && min > max
+    {
+        return Err(FilterError::Spec(format!(
+            "--maf {min} exceeds --max-maf {max} (empty intersection)"
+        )));
+    }
     if spec.site_after_mask.min_mac > 0 {
         tail.push(TailRule::MinMac(spec.site_after_mask.min_mac));
     }
     if spec.site_after_mask.max_mac > 0 {
         tail.push(TailRule::MaxMac(spec.site_after_mask.max_mac));
     }
+    if spec.site_after_mask.max_mac > 0 && spec.site_after_mask.min_mac > spec.site_after_mask.max_mac
+    {
+        return Err(FilterError::Spec(format!(
+            "--mac {} exceeds --max-mac {} (empty intersection)",
+            spec.site_after_mask.min_mac, spec.site_after_mask.max_mac
+        )));
+    }
     if let Some(p) = spec.site_after_mask.min_hwe_p {
         if spec.site_after_mask.hwe_mode == crate::spec::HweMode::MidP {
+            // doc_v21 S12: no internal milestone code; the exact test is the
+            // only implemented mode and the message says so.
             return Err(FilterError::Spec(
-                "hwe_mode = midp arrives with M7 (exact only in this version)".into(),
+                "--hwe midp is not implemented yet: only the exact test is available; \
+                 drop the `midp` token"
+                    .into(),
             ));
         }
         if !(0.0..=1.0).contains(&p) {

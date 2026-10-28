@@ -39,6 +39,81 @@ type ParsedRegions = (
     Vec<reed::spec::region::RegionTriple>,
 );
 
+/// Canonicalizes one line of a region/target file (`-r/-R/-t/-T`, bcftools
+/// accepts a plain region list *or* a BED) into region spellings the spec
+/// parser understands. A line with ≥3 whitespace-separated columns is BED
+/// (0-based half-open → 1-based closed); two columns are `CHROM POS`; one
+/// column passes through. A leading `^` (target exclude) is preserved; blank
+/// and `#` lines are skipped (doc_v21 M4).
+///
+/// # Errors
+///
+/// A non-numeric BED/position column, or a BED line whose end precedes its
+/// start.
+pub(crate) fn canonical_region_line(line: &str) -> Result<Option<String>, String> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(None);
+    }
+    let (prefix, body) = match line.strip_prefix('^') {
+        Some(rest) => ("^", rest.trim_start()),
+        None => ("", line),
+    };
+    let cols: Vec<&str> = body.split_whitespace().collect();
+    let canon = match cols.as_slice() {
+        [] => return Ok(None),
+        [single] => (*single).to_string(),
+        [chrom, pos] => {
+            let pos: u64 = pos
+                .parse()
+                .map_err(|_| format!("invalid position {pos:?} in line {line:?}"))?;
+            format!("{chrom}:{pos}")
+        }
+        [chrom, start0, end0, ..] => {
+            let start0: u64 = start0
+                .parse()
+                .map_err(|_| format!("invalid BED start {start0:?} in line {line:?}"))?;
+            let end0: u64 = end0
+                .parse()
+                .map_err(|_| format!("invalid BED end {end0:?} in line {line:?}"))?;
+            if end0 < start0 {
+                return Err(format!("BED end < start in line {line:?}"));
+            }
+            // 0-based half-open → 1-based closed; an empty span selects nothing.
+            if end0 == start0 {
+                return Ok(None);
+            }
+            format!("{chrom}:{}-{end0}", start0 + 1)
+        }
+    };
+    Ok(Some(format!("{prefix}{canon}")))
+}
+
+/// Region spellings from a flag value: a file is read line by line (BED
+/// aware, [`canonical_region_line`]); an inline value is a comma list.
+///
+/// # Errors
+///
+/// A malformed line (see [`canonical_region_line`]).
+pub(crate) fn region_tokens(text: &str, from_file: bool) -> Result<Vec<String>, String> {
+    if from_file {
+        let mut out = Vec::new();
+        for line in text.lines() {
+            if let Some(token) = canonical_region_line(line)? {
+                out.push(token);
+            }
+        }
+        Ok(out)
+    } else {
+        Ok(text
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+}
+
 /// Parses the shared region flags: indexed regions (`-r/-R`, needing a
 /// seekable input) and streamed targets (`-t/-T`, `^` = exclude).
 ///
@@ -54,8 +129,8 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
             } else {
                 value.clone()
             };
-            for token in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-                let parsed = reed::spec::Region::parse(token)
+            for token in region_tokens(&text, from_file)? {
+                let parsed = reed::spec::Region::parse(&token)
                     .map_err(|e| format!("invalid region {token:?}: {e}"))?;
                 regions.push(reed::chunk::region::Region {
                     contig: parsed.contig.clone(),
@@ -74,10 +149,10 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
             } else {
                 value.clone()
             };
-            for raw in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            for raw in region_tokens(&text, from_file)? {
                 let (token, include_it) = match raw.strip_prefix('^') {
                     Some(rest) => (rest, false),
-                    None => (raw, true),
+                    None => (raw.as_str(), true),
                 };
                 let parsed = reed::spec::Region::parse(token)
                     .map_err(|e| format!("invalid region {token:?}: {e}"))?;
@@ -139,6 +214,11 @@ pub(crate) fn parse_sample_keep(
             return Err(format!("repeated -s list of the same polarity ({list:?})"));
         }
         *slot = Some(names);
+    }
+    // doc_v21 S32: `-S k1 --keep k2` silently read only `-S`; the sibling
+    // `-s`/`-S` pair already refuses two sources.
+    if args.samples_file.is_some() && args.keep.is_some() {
+        return Err("-S and --keep are the same flag twice: give one sample file".into());
     }
     let file_keep = args.samples_file.as_ref().or(args.keep.as_ref());
     if inline_keep.is_some() && file_keep.is_some() {
@@ -422,3 +502,55 @@ fn parse_sites(path: &str) -> Result<Vec<(String, u64)>, String> {
     Ok(sites)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m4_bed_lines_become_one_based_closed_regions() {
+        // doc_v21 M4: `-T/-R` handed the whole line to `Region::parse`, so a
+        // BED line became a contig literally named "chr1\t150\t300" and the
+        // run silently selected nothing.
+        assert_eq!(
+            canonical_region_line("chr1\t150\t300").unwrap(),
+            Some("chr1:151-300".to_string())
+        );
+        assert_eq!(
+            canonical_region_line("chr1 150 300 extra\tcols").unwrap(),
+            Some("chr1:151-300".to_string())
+        );
+        // Two columns: CHROM POS (1-based, already a single site).
+        assert_eq!(
+            canonical_region_line("chr1\t20000").unwrap(),
+            Some("chr1:20000".to_string())
+        );
+        // One column passes through; `^` excludes survive; blanks/comments skip.
+        assert_eq!(
+            canonical_region_line("chr1:100-200").unwrap(),
+            Some("chr1:100-200".to_string())
+        );
+        assert_eq!(
+            canonical_region_line("^chr1\t150\t300").unwrap(),
+            Some("^chr1:151-300".to_string())
+        );
+        assert_eq!(canonical_region_line("").unwrap(), None);
+        assert_eq!(canonical_region_line("   ").unwrap(), None);
+        assert_eq!(canonical_region_line("# comment").unwrap(), None);
+        // An empty BED interval selects nothing rather than 1-0.
+        assert_eq!(canonical_region_line("chr1\t100\t100").unwrap(), None);
+        // Malformed columns are usage errors, not silent skips.
+        assert!(canonical_region_line("chr1\tx\t300").is_err());
+        assert!(canonical_region_line("chr1\t300\t150").is_err());
+        assert!(canonical_region_line("chr1\tnotapos").is_err());
+    }
+
+    #[test]
+    fn m4_inline_lists_are_still_comma_separated() {
+        let toks = region_tokens("chr1:1-10,chr2,^chr3:5-6", false).unwrap();
+        assert_eq!(toks, vec!["chr1:1-10", "chr2", "^chr3:5-6"]);
+        // A file is line based, so a comma inside a line stays part of it.
+        let toks = region_tokens("chr1\t1\t10\nchr2\n", true).unwrap();
+        assert_eq!(toks, vec!["chr1:2-10", "chr2"]);
+    }
+}
