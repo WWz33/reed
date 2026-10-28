@@ -275,37 +275,33 @@ pub enum Populations {
 }
 
 impl Populations {
-    /// The group names in assignment (first-appearance) order, without
-    /// opening the input: kinds/fstats/sfs building resolves names to
-    /// indices before the run. The run re-reads the file in
-    /// [`assign_groups`]; both readers share `reed-core`'s line rules, so a
-    /// successful run sees the same names in the same order.
+    /// The group names in assignment (first-appearance) order, resolved by
+    /// the *same* parser the run uses (doc_v21 M10). Earlier this front-end
+    /// reader only counted names (a second parser), so a `--force-samples`
+    /// run that dropped a whole group inside the driver produced a different
+    /// list than `--pbs`/kinds were resolved against — shifting group ids
+    /// (wrong PBS labels) and, with `--pbs`, panicking. Both sides now build
+    /// the table against the header.
     ///
     /// # Errors
     ///
-    /// An unreadable or malformed populations file (a `--pop` argument
-    /// error, cli.md §9 → usage).
-    pub fn group_names(&self) -> Result<Vec<String>, crate::error::Error> {
+    /// An unreadable or malformed populations file, or an unknown sample
+    /// without `force_samples` (a `--pop` argument error, cli.md §9 → usage).
+    pub fn group_names(
+        &self,
+        sample_names: &[String],
+        force_samples: bool,
+    ) -> Result<Vec<String>, crate::error::Error> {
         match self {
             Self::All => Ok(vec!["all".to_string()]),
-            Self::File(path) => reed_core::group::GroupTable::names_from_tsv(path)
-                .map_err(crate::error::Error::from),
-            Self::Assignment(pairs) => Ok(first_appearance_names(
-                pairs.iter().map(|(_, group)| group.as_str()),
-            )),
+            Self::File(path) => {
+                assign_groups(path, sample_names, force_samples).map(|(_, names)| names)
+            }
+            Self::Assignment(pairs) => {
+                assign_groups_in_memory(pairs, sample_names, force_samples).map(|(_, names)| names)
+            }
         }
     }
-}
-
-/// The distinct names in first-appearance order (the assignment order).
-fn first_appearance_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for name in names {
-        if !out.iter().any(|n| n == name) {
-            out.push(name.to_string());
-        }
-    }
-    out
 }
 
 /// One `run_popgen` request: statistics, group assignment, window grid.
@@ -656,7 +652,9 @@ impl FStatAcc {
         self.jk.merge(&other.jk);
     }
 
-    pub(super) fn row(&self) -> Option<FStatRow> {
+    /// The test's row. Always present (doc_v21 S22: a zero denominator
+    /// prints NA rather than dropping the requested test).
+    pub(super) fn row(&self) -> FStatRow {
         // Additive statistics (f2/f3/f4) report Σnum with a sum-scale
         // delete-one-block SE — admixtools reports f2 as a (weighted) sum
         // over sites, so estimate and se share the sum scale (doc_v7 D7-9).
@@ -664,8 +662,18 @@ impl FStatAcc {
         let (estimate, se, n_blocks) = match self.test {
             FStatTest::Dstat { .. } | FStatTest::F4Ratio { .. } => {
                 let den = self.den.value();
+                // doc_v21 S22: a zero denominator used to drop the row
+                // entirely; the report contract is one row per request and
+                // the writer already prints NA for non-finite values.
                 if den == 0.0 {
-                    return None;
+                    return FStatRow {
+                        test: self.test.clone(),
+                        estimate: f64::NAN,
+                        se: f64::NAN,
+                        z: f64::NAN,
+                        n_blocks: 0,
+                        n_sites: self.n_sites,
+                    };
                 }
                 let (_, se, nb) =
                     self.jk
@@ -686,14 +694,14 @@ impl FStatAcc {
         } else {
             f64::NAN
         };
-        Some(FStatRow {
+        FStatRow {
             test: self.test.clone(),
             estimate,
             se,
             z,
             n_blocks,
             n_sites: self.n_sites,
-        })
+        }
     }
 }
 

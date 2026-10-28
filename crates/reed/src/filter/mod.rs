@@ -387,6 +387,11 @@ pub fn run_filter(
     }
     let (keep, keep_mask) = build_keep(keep_vec, &header)?;
     let n_samples_out = keep.iter().filter(|&&k| k).count();
+    // doc_v21 M7: a subset that keeps no sample is legal (bcftools writes
+    // 8-column records), but it is almost always a mistake — say so once.
+    if n_samples_out == 0 && n_samples_in > 0 {
+        tracing::warn!("subsetting has removed all samples");
+    }
     let subset = n_samples_out < n_samples_in;
     // bcftools `view` updates INFO/AC,INFO/AN when samples are dropped; only
     // masking leaves them stale, like `bcftools filter -S .`

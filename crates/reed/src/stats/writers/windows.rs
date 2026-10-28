@@ -193,9 +193,16 @@ pub fn write(
                         continue;
                     };
                     let name = group_names.get(*group).map_or("?", String::as_str);
-                    let avg = match value_of(acc, kind, row.bp, variant_only) {
-                        Some(v) => format!("{v}"),
-                        None => "NA".to_string(),
+                    // doc_v21 S21: an empty window printed `0` here while
+                    // pi/dxy printed `NA`; the reference layout and the pi
+                    // branch both say NA.
+                    let avg = if no_sites == 0 {
+                        "NA".to_string()
+                    } else {
+                        match value_of(acc, kind, row.bp, variant_only) {
+                            Some(v) => format!("{v}"),
+                            None => "NA".to_string(),
+                        }
                     };
                     let _ = writeln!(
                         theta_rows,

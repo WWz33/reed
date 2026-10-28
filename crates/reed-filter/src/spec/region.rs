@@ -72,7 +72,12 @@ pub fn region_allows(
 }
 
 impl Region {
-    /// Parses `Chr01` / `Chr01:100-200` / `Chr01:100-` / `Chr01:-200`.
+    /// Parses `Chr01` / `Chr01:100` / `Chr01:100-200` / `Chr01:100-` /
+    /// `Chr01:-200`.
+    ///
+    /// A bare `Chr01:100` is a single position (`start == end`), matching
+    /// bcftools `-t/-r` (doc_v21 M5); such positions are what a two-column
+    /// `-t`/`-T` file carries.
     pub fn parse(s: &str) -> Result<Self, FilterError> {
         let s = s.trim();
         let (contig, interval) = match s.split_once(':') {
@@ -84,20 +89,26 @@ impl Region {
         }
         let (start, end) = match interval {
             None => (None, None),
-            Some(iv) => {
-                let (a, b) = iv
-                    .split_once('-')
-                    .ok_or_else(|| FilterError::Spec(format!("region is missing '-': {s:?}")))?;
-                let p = |x: &str, what: &str| -> Result<Option<u64>, FilterError> {
-                    if x.is_empty() {
-                        return Ok(None);
-                    }
-                    x.parse::<u64>().map(Some).map_err(|_| {
-                        FilterError::Spec(format!("region {what} is not a number: {s:?}"))
-                    })
-                };
-                (p(a, "start")?, p(b, "end")?)
-            }
+            Some(iv) => match iv.split_once('-') {
+                Some((a, b)) => {
+                    let p = |x: &str, what: &str| -> Result<Option<u64>, FilterError> {
+                        if x.is_empty() {
+                            return Ok(None);
+                        }
+                        x.parse::<u64>().map(Some).map_err(|_| {
+                            FilterError::Spec(format!("region {what} is not a number: {s:?}"))
+                        })
+                    };
+                    (p(a, "start")?, p(b, "end")?)
+                }
+                // A single 1-based position: `start == end`.
+                None => {
+                    let pos = iv.parse::<u64>().map_err(|_| {
+                        FilterError::Spec(format!("region position is not a number: {s:?}"))
+                    })?;
+                    (Some(pos), Some(pos))
+                }
+            },
         };
         Ok(Self {
             contig: contig.to_string(),
@@ -112,5 +123,37 @@ impl Region {
         self.contig == contig
             && self.start.is_none_or(|s| pos >= s)
             && self.end.is_none_or(|e| pos <= e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m5_bare_position_is_a_single_site() {
+        // doc_v21 M5: bcftools accepts `-t CHROM:POS`; reed rejected it, so
+        // every two-column target file and every single-position script failed.
+        let r = Region::parse("chr1:200").expect("bare position");
+        assert_eq!((r.contig.as_str(), r.start, r.end), ("chr1", Some(200), Some(200)));
+        assert!(r.contains("chr1", 200));
+        assert!(!r.contains("chr1", 199));
+        assert!(!r.contains("chr1", 201));
+        // Ranges and open ends keep their meaning.
+        let r = Region::parse("chr1:100-200").expect("range");
+        assert_eq!((r.start, r.end), (Some(100), Some(200)));
+        let r = Region::parse("chr1:100-").expect("open end");
+        assert_eq!((r.start, r.end), (Some(100), None));
+        let r = Region::parse("chr1:-200").expect("open start");
+        assert_eq!((r.start, r.end), (None, Some(200)));
+        let r = Region::parse("chr1").expect("contig");
+        assert_eq!((r.start, r.end), (None, None));
+    }
+
+    #[test]
+    fn m5_non_numeric_position_is_rejected() {
+        assert!(Region::parse("chr1:abc").is_err());
+        assert!(Region::parse("chr1:10-x").is_err());
+        assert!(Region::parse(":100").is_err());
     }
 }

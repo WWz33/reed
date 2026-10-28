@@ -5,6 +5,54 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v21 真实数据复审 + 修复（2026-10-28）
+
+在仓库**真实**数据上复核了评审 `reed-rs-review-2026-10-27.md`（HEAD fa8131f）：
+`subvcf.vcf.gz` / `clean.vcf.gz` / `clean.bcf`，本机构建重现每一条。评审的 10 条
+must-fix 全部属实，另翻出一条评审判为"误报"的真 bug（M3）。11 条 must-fix +
+12 条 bug 类 should-fix 全部先写失败测试再修。明细：`docs/rounds/v21/`。
+
+### Fixed
+- **io/region（M3，评审漏判）**：区域读（`-r/-R`）读到索引范围末端的整块，块跨行
+  时留半条记录，引擎报 `input ends inside a record (truncated file)`。真实
+  `subvcf.vcf.gz` 上 40 个区间 36 个失败（`clean.vcf.gz` 因块块行对齐 0 个，
+  故评审测不出）。`ChunkBytes.truncate_to` 在索引结束虚拟偏移（记录边界）截断；
+  范围终点恰在块边界时不再读该块。
+- **io/region（M2）**：区域 tid 改从**索引自身名字表**解析（`.tbi` 与部分 `.csi`
+  的 ref 顺序是首现顺序，非头顺序），仅在索引无名字表时退回头顺序。修正评审
+  "CSI unaffected" 的说法：两种索引都会因 tid 错位失败。
+- **pca/dapc/distance（M1）**：BCF 输入未过 `InputJob`，二进制被按 `\n` 切分而报
+  `malformed record`。改与其余入口一致地包装。
+- **pca/dapc（M11）**：`--memory` 门控未计 dense 的 `n×n` GRM（pairwise 两个），
+  显式 `--solver dense` 会通过门控后 OOM；按路径分别计峰值（`2nm+n²` / `2nm+2n²`）。
+- **filter（M4/M5/M7）**：`-r/-R/-t/-T` 的文件按行解析 BED（0-based 半开）/`CHROM
+  POS`；裸位置 `CHROM:POS` 接受；选中零样本时记录去掉 FORMAT+样本列（8 列，对齐
+  8 列头）并 warn 一次。
+- **io/vcf（M6）**：空 CHROM 命中 `ContigTable` 的 last-hit 哨兵，`-W` 触发 790 GB
+  分配中止；快路径加哨兵守卫。
+- **rename（M8/S20/S33）**：`--clear-ids` 与 `--set-missing-var-ids` 互斥（原来
+  静默覆盖）；空 `--set-id` 模板报错；空 `--add-meta`/`-s` 报错。
+- **graph（M9）**：UPGMA 合并进较低槽位，对齐 R `hclust` 的 tie 处理（整数矩阵
+  穷举 25/25 vs 旧规则 19/25）；更正错误注释。
+- **core/stats（M10）**：`--pbs` 的组名与运行期用**同一解析器**（`--force-samples`
+  丢组时不再错标或 panic）；删除第二个解析器 `names_from_tsv`。
+- **cli/stats（S11–S22、S29、S30、S32–S34）**：`--hwe` 第二 token 校验、`midp`
+  去掉内部码、`--maf/--mac` 越界、`--indep-pairwise` r² 范围、`-O` 级别、`-W`
+  无有效目标、popg 四个静默丢弃的 flag、`--xval-rep 0`、空 `-o` 前缀、空窗 θ 打
+  NA、零分母 D/f4-ratio 出 NA 行、`--snps-only=just-acgt` 真正排除非 ACGT、`--max-mac
+  0`、`-S`+`--keep`、空值 no-op、`pca/distance` 补 `--verbosity`。
+
+### Docs
+- 更正偏差：`docs/spec/cli.md`（`--hwe midp`、`-W`）、`README.md`（`--hwe`、
+  BED 区域、`-W`、`--max-mac 0`、`--indep-pairwise` r² 范围）；仓库外评审报告
+  顶部加"Corrections"块（#2 的 CSI 说法、末端"不可复现"判定）；新增
+  `docs/rounds/v21/`（README/01-review/STATUS/06-roadmap）。
+
+### 验收
+- `cargo test --workspace`：exit 0，839 个测试通过、0 失败。
+- `cargo clippy --workspace --all-targets`：0 告警。
+- 数值锚点仅 `reed-graph` s36 支持向量随 M9 变化（旧值即旧 tie 规则产物，测试内注明）。
+
 ## [Unreleased] — doc_v20 全库评审 must-fix 修复（2026-10-24）
 
 11 个只读评审覆盖全部 crate（报告在仓库外 `../reed-rs-review.md`），14 个

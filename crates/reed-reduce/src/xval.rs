@@ -37,6 +37,9 @@ pub enum XvalError {
     NoSplittableGroup,
     /// `training_set` was not strictly between 0 and 1.
     BadTrainingFraction,
+    /// `n_rep` was zero, which would average over no repetitions (every
+    /// candidate then scores 0 and "best" is fabricated). doc_v21 S18.
+    NoRepetitions,
     /// The LDA failed on one of the splits.
     Lda(LdaError),
 }
@@ -51,6 +54,7 @@ impl std::fmt::Display for XvalError {
             Self::BadTrainingFraction => {
                 write!(f, "the training fraction must be strictly between 0 and 1")
             }
+            Self::NoRepetitions => write!(f, "cross-validation needs at least one repetition"),
             Self::Lda(e) => write!(f, "discriminant analysis failed: {e}"),
         }
     }
@@ -187,6 +191,11 @@ pub fn run(
     }
     if !(config.training_set > 0.0 && config.training_set < 1.0) {
         return Err(XvalError::BadTrainingFraction);
+    }
+    // doc_v21 S18: `n_rep = 0` averaged over nothing; every candidate scored
+    // 0.0 and `best_n_pca` was chosen among zeros.
+    if config.n_rep == 0 {
+        return Err(XvalError::NoRepetitions);
     }
     if groups.len() != n {
         return Err(XvalError::TooFewSamples);

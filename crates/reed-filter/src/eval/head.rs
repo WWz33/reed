@@ -80,6 +80,17 @@ pub fn eval_head(
                 let class = classify_variant(reference, primary);
                 !classes.iter().any(|c| class_matches(class, c))
             }
+            // doc_v21 S29: plink2's `just-acgt` excludes N and any other
+            // non-ACGT allele, on REF and every ALT.
+            HeadRule::JustAcgt => {
+                let acgt = |allele: &[u8]| {
+                    !allele.is_empty()
+                        && allele
+                            .iter()
+                            .all(|b| matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
+                };
+                acgt(reference) && alts.split(|&b| b == b',').all(acgt)
+            }
             HeadRule::MinAltAlleles(min) => reed_io::vcf::site::count_alts(alts) >= *min,
             HeadRule::MaxAltAlleles(max) => reed_io::vcf::site::count_alts(alts) <= *max,
             HeadRule::BiallelicGate => !alts.contains(&b','),

@@ -43,12 +43,27 @@ fn parse_indep_pairwise(args: &[String]) -> Result<Option<reed::spec::LdPruneSpe
     let r2: f64 = r2_token
         .parse()
         .map_err(|_| "--indep-pairwise r² must be a number".to_string())?;
+    // doc_v21 S14: `2.5` pruned nothing, `nan` made every comparison false
+    // (also nothing), a negative value would prune everything — all silent.
+    // plink2 rejects all three; so does reed now.
+    if !r2.is_finite() || !(0.0..=1.0).contains(&r2) {
+        return Err(format!(
+            "--indep-pairwise r² must be a finite number in 0..=1, got {r2_token:?}"
+        ));
+    }
+    if step == 0 {
+        return Err("--indep-pairwise step must be at least 1".to_string());
+    }
     // `parse_size` scales the full token itself (`50kb` → 50,000); stripping
     // the suffix first would silently read the window as bare bp. A suffixed
     // token is a bp window (plink2's `kb` form, extended to reed's other
     // length suffixes); a bare number is a variant count.
     let kb = !window_token.bytes().all(|b| b.is_ascii_digit());
     let window = crate::units::parse_size(&window_token)?;
+    // doc_v21 S14: a zero window is meaningless and used to be accepted.
+    if window == 0 {
+        return Err("--indep-pairwise window must be at least 1".into());
+    }
     if kb && step != 1 {
         return Err("--indep-pairwise with a kb window requires step 1".into());
     }
@@ -95,8 +110,13 @@ pub(crate) fn site_spec(
         }
     }
     if let Some(modifier) = &cli.snps_only {
-        if !matches!(modifier.as_str(), "just-acgt") {
-            return Err(format!("unknown --snps-only modifier {modifier:?}"));
+        match modifier.as_str() {
+            // Bare `--snps-only`: any 1-bp substitution (bcftools).
+            "" => {}
+            // doc_v21 S29: the modifier used to be parsed and discarded, so
+            // `ALT=N` (a 1-bp SNV by length) passed. plink2 excludes it.
+            "just-acgt" => spec.site.just_acgt = true,
+            other => return Err(format!("unknown --snps-only modifier {other:?}")),
         }
         if !spec.site.variant_class.iter().any(|c| c == "snv") {
             spec.site.variant_class.push("snv".to_string());
@@ -181,6 +201,17 @@ pub(crate) fn site_spec(
         spec.site_after_mask.min_mac = m;
     }
     if let Some(m) = cli.max_mac {
+        // doc_v21 S30: `0` is the struct's "off" sentinel, so `--max-mac 0`
+        // (plink2: keep only monomorphic sites) silently kept everything.
+        // Refuse it rather than change the on-disk spec's encoding.
+        if m == 0 {
+            return Err(
+                "--max-mac 0 would keep only monomorphic sites, but 0 is the internal \
+                 `off` sentinel; use --max-mac 1 for MAC <= 1, or ask for monomorphic \
+                 sites with -M 1"
+                    .to_string(),
+            );
+        }
         spec.site_after_mask.max_mac = m;
     }
     if !cli.hwe.is_empty() {
@@ -188,7 +219,14 @@ pub(crate) fn site_spec(
             .parse()
             .map_err(|_| format!("invalid --hwe p-value {:?}", cli.hwe[0]))?;
         spec.site_after_mask.min_hwe_p = Some(p);
-        if cli.hwe.get(1).is_some_and(|m| m == "midp") {
+        // doc_v21 S11: a second token that is not `midp` used to be ignored
+        // silently (`--hwe 0.05 MidP` looked like mid-p but ran exact).
+        if let Some(mode) = cli.hwe.get(1) {
+            if mode != "midp" {
+                return Err(format!(
+                    "invalid --hwe mode {mode:?} (the only accepted second token is `midp`)"
+                ));
+            }
             spec.site_after_mask.hwe_mode = reed::spec::HweMode::MidP;
         }
     }
@@ -245,6 +283,10 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
         }
         *slot = Some(names);
     }
+    // doc_v21 S32: `-S k1 --keep k2` silently read only `-S`.
+    if cli.sample_args.samples_file.is_some() && cli.sample_args.keep.is_some() {
+        return Err("-S and --keep are the same flag twice: give one sample file".into());
+    }
     let file_keep = cli
         .sample_args
         .samples_file
@@ -269,12 +311,13 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     spec.ld_prune = parse_indep_pairwise(&cli.site_args.indep_pairwise)?;
 
     // ---- regions (02-cli.md §2): the spec predicate, validated here.
-    // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes ----
-    let mut add_regions = |list: &str, include: bool| -> Result<(), String> {
-        for raw in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+    // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes.
+    // Files may be BED or a plain region list (doc_v21 M4).
+    let mut add_regions = |tokens: Vec<String>, include: bool| -> Result<(), String> {
+        for raw in tokens {
             let (token, include) = match raw.strip_prefix('^') {
                 Some(rest) => (rest, false),
-                None => (raw, include),
+                None => (raw.as_str(), include),
             };
             reed::spec::Region::parse(token)
                 .map_err(|e| format!("invalid region {token:?}: {e}"))?;
@@ -286,19 +329,20 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
         }
         Ok(())
     };
-    if let Some(list) = &cli.regions_args.regions {
-        add_regions(list, true)?;
-    }
-    if let Some(path) = &cli.regions_args.regions_file {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
-    }
-    if let Some(list) = &cli.regions_args.targets {
-        add_regions(list, true)?;
-    }
-    if let Some(path) = &cli.regions_args.targets_file {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        add_regions(&text.lines().collect::<Vec<_>>().join(","), true)?;
+    for (value, from_file) in [
+        (&cli.regions_args.regions, false),
+        (&cli.regions_args.regions_file, true),
+        (&cli.regions_args.targets, false),
+        (&cli.regions_args.targets_file, true),
+    ] {
+        if let Some(value) = value {
+            let text = if from_file {
+                std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
+            } else {
+                value.clone()
+            };
+            add_regions(super::common::region_tokens(&text, from_file)?, true)?;
+        }
     }
 
     // ---- INFO (filter-only: `-x`, `--fill-tags`, `-I`) ----
@@ -313,6 +357,10 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
             .collect();
     }
     if let Some(list) = &cli.fill_tags {
+        // doc_v21 S33: `--fill-tags ''` recomputed nothing and exited 0.
+        if list.trim().is_empty() {
+            return Err("--fill-tags needs at least one tag (e.g. AC,AN,AF)".to_string());
+        }
         spec.recompute.tags = list
             .split(',')
             .map(str::trim)
@@ -366,12 +414,22 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
                 spec,
                 "v, z, b or u with an optional 1-9 level, e.g. z6",
             )?;
+            // doc_v21 S15: an out-of-range level must be a usage error here,
+            // not a runtime "invalid compression level" from the writer (exit
+            // 1 with a doubled `io error:` prefix); `convert` already
+            // validated 1-9.
             let level = if level.is_empty() {
                 *compress_level
             } else {
-                level
+                let parsed = level
                     .parse::<u8>()
-                    .map_err(|_| reed::Error::usage(format!("invalid -O level in {spec:?}")))?
+                    .map_err(|_| reed::Error::usage(format!("invalid -O level in {spec:?}")))?;
+                if !(1..=9).contains(&parsed) {
+                    return Err(reed::Error::usage(format!(
+                        "invalid -O level in {spec:?}: the level must be 1-9"
+                    )));
+                }
+                parsed
             };
             match kind {
                 "v" => (out.as_deref().and_then(crate::units::output_path), level, Some(false)),
@@ -395,18 +453,18 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     super::common::refuse_output_eq_input(input_file.as_deref(), output.as_deref())?;
     let mut regions = Vec::new();
     let indexed_list = match (&cli.regions_args.regions, &cli.regions_args.regions_file) {
-        (Some(list), _) => Some(list.clone()),
-        (None, Some(path)) => Some(
-            std::fs::read_to_string(path)
-                .map_err(|e| reed::Error::usage(format!("{path}: {e}")))?
-                .lines()
-                .collect::<Vec<_>>()
-                .join(","),
+        (Some(list), _) => Some(
+            super::common::region_tokens(list, false).map_err(reed::Error::usage)?,
         ),
+        (None, Some(path)) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| reed::Error::usage(format!("{path}: {e}")))?;
+            Some(super::common::region_tokens(&text, true).map_err(reed::Error::usage)?)
+        }
         (None, None) => None,
     };
-    if let Some(list) = &indexed_list {
-        for token in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(tokens) = &indexed_list {
+        for token in tokens {
             let parsed = reed::spec::Region::parse(token)
                 .map_err(|e| reed::Error::usage(format!("invalid region {token:?}: {e}")))?;
             regions.push(reed::chunk::region::Region {
@@ -414,6 +472,34 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
                 start1: parsed.start,
                 end1: parsed.end,
             });
+        }
+    }
+    // doc_v21 S16: `-W` used to be a silent no-op when the output cannot
+    // carry an index (stdout, or a plain VCF). bcftools errors; so do we.
+    // Checked here rather than in the library so library callers that set
+    // `WriteIndex` through `FilterOptions` keep working.
+    if write_index.is_some() {
+        let Some(path) = output.as_deref() else {
+            return Err(reed::Error::usage(
+                "-W needs -o FILE: an index is written next to the output file, not stdout",
+            ));
+        };
+        // Mirror the writer's rule: BCF is always compressed; otherwise the
+        // `-O` letter decides, and with no `-O` the file extension does.
+        let bgzf = match output_bcf {
+            Some(_) => true,
+            None => match output_compressed {
+                Some(compressed) => compressed,
+                None => matches!(
+                    std::path::Path::new(path).extension().and_then(|e| e.to_str()),
+                    Some("gz") | Some("bgz")
+                ),
+            },
+        };
+        if !bgzf {
+            return Err(reed::Error::usage(
+                "-W needs a BGZF output (-Oz, -Ob, or a .gz suffix): a plain VCF cannot be indexed",
+            ));
         }
     }
     let opts = reed::FilterOptions {

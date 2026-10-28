@@ -414,7 +414,7 @@ pub fn run_popgen_opened(
             )
         }),
         fstats: output.fstats.as_ref().map(|partial| FStatsReport {
-            rows: partial.per_test.iter().filter_map(FStatAcc::row).collect(),
+            rows: partial.per_test.iter().map(FStatAcc::row).collect(),
         }),
         n_invariant_sites: output.n_invariant_sites,
         n_no_alt_records: output.n_no_alt_records,

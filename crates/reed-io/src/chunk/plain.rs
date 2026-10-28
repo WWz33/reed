@@ -108,6 +108,7 @@ impl crate::chunk::ChunkSource for PlainChunkSource {
             plain: true,
             compressed_start: 0,
             blocks: Vec::new(),
+            truncate_to: None,
         }))
     }
 }

@@ -143,43 +143,6 @@ impl GroupTable {
         Ok(table)
     }
 
-    /// The group names of a `sample<TAB>population` TSV in first-appearance
-    /// order, without a sample table: the front end resolves names to
-    /// indices while building a typed request, before the header is known
-    /// (the assignment itself is [`Self::from_tsv`], run inside the driver).
-    /// Line rules are `from_tsv`'s.
-    ///
-    /// # Errors
-    ///
-    /// An unreadable file or a row without the `sample<TAB>population` shape
-    /// (same failures as `from_tsv`, minus the header lookups).
-    pub fn names_from_tsv(path: &Path) -> Result<Vec<String>, CoreError> {
-        let file = std::fs::File::open(path).map_err(|err| CoreError::GroupFile {
-            message: format!("cannot open {}: {err}", path.display()),
-        })?;
-        let mut names: Vec<String> = Vec::new();
-        for line in std::io::BufReader::new(file).lines() {
-            let line = line.map_err(|err| CoreError::GroupFile {
-                message: format!("read error in {}: {err}", path.display()),
-            })?;
-            let line = line.trim_end_matches(['\r', '\n']);
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let (_, group_name) = line.split_once('\t').ok_or_else(|| CoreError::GroupFile {
-                message: format!(
-                    "{}: expected `sample<TAB>population`, got {line:?}",
-                    path.display()
-                ),
-            })?;
-            let group_name = group_name.trim().to_string();
-            if !names.contains(&group_name) {
-                names.push(group_name);
-            }
-        }
-        Ok(names)
-    }
-
     /// Builds a table from `(sample name, group name)` pairs.
     pub fn from_assignment(
         samples: &SampleTable,

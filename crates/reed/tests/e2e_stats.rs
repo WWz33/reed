@@ -358,6 +358,36 @@ fn assign_groups_rejects_unknown_samples() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v21 M10: the front end's group-name list and the driver's assignment
+/// must come from the same parser. They did not: `names_from_tsv` kept every
+/// name while `from_tsv(ignore_missing_samples=true)` dropped a group whose
+/// samples were all absent, so `--pbs` resolved its indices against a longer
+/// list than the run used — mislabelled PBS values, or a panic.
+#[test]
+fn m10_group_names_match_the_runs_forced_assignment() {
+    let dir = std::env::temp_dir().join(format!("reed-groups-m10-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("groups.tsv");
+    // pop2's only sample is absent from the header.
+    std::fs::write(&path, "s0\tpop1\nghost\tpop2\ns1\tpop3\n").expect("invariant: write");
+    let header = ["s0".to_string(), "s1".to_string()];
+
+    let populations = Populations::File(path.clone());
+    let names = populations
+        .group_names(&header, true)
+        .expect("invariant: forced parse");
+    let (masks, run_names) =
+        assign_groups(&path, &header, true).expect("invariant: driver assignment");
+    assert_eq!(names, run_names, "front end and driver must agree");
+    assert_eq!(names, ["pop1", "pop3"], "pop2 has no samples left");
+    // Every name resolves to an in-range group id.
+    for m in masks.iter().flatten() {
+        assert!((*m as usize) < names.len(), "{m} vs {names:?}");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn default_kinds_covers_every_family() {
     let kinds = default_kinds(3);

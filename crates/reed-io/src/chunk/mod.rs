@@ -117,6 +117,13 @@ pub struct ChunkBytes {
     /// (empty for plain chunks). Walks the chunk's inflated text back to
     /// `(compressed offset, in-block offset)` without inflating twice.
     pub blocks: Vec<(u32, u32)>,
+    /// Inflated-text prefix length to keep. Set only by the region source on
+    /// the chunk that carries an index range's end: the index's end virtual
+    /// offset may fall mid-block, so the last block read can hold records
+    /// past the region, and the engine must drop them (they otherwise look
+    /// like an unterminated final record — doc_v21 M3). `None` everywhere
+    /// else, where the stream ends at a real record boundary.
+    pub truncate_to: Option<u64>,
 }
 
 /// The inflated content of one chunk, split by line ownership.
@@ -180,7 +187,7 @@ pub fn inflate_chunk<'a>(
         scratch.clear();
         // Uncompressed input: the "compressed" bytes are the text itself.
         scratch.extend_from_slice(&chunk.compressed);
-        let text: &'a [u8] = scratch.as_slice();
+        let text: &'a [u8] = truncate(chunk, scratch.as_slice());
         return split_text(chunk, text);
     }
     let total_inflated: usize = chunk.blocks.iter().map(|&(_, ilen)| ilen as usize).sum();
@@ -204,8 +211,21 @@ pub fn inflate_chunk<'a>(
         }
         pos += inflater.inflate_window(block, &mut scratch[pos..pos + ilen as usize])?;
     }
-    let text: &'a [u8] = &scratch[..pos];
+    let text: &'a [u8] = truncate(chunk, &scratch[..pos]);
     split_text(chunk, text)
+}
+
+/// The chunk's inflated text, cut to `truncate_to` when the region source set
+/// it. The cut lands on a record boundary (the index's end virtual offset), so
+/// the shortened text never ends mid-record (doc_v21 M3).
+fn truncate<'a>(chunk: &ChunkBytes, text: &'a [u8]) -> &'a [u8] {
+    match chunk.truncate_to {
+        Some(limit) => {
+            let len = usize::try_from(limit).unwrap_or(usize::MAX).min(text.len());
+            &text[..len]
+        }
+        None => text,
+    }
 }
 
 /// Splits already-inflated text into head/body/tail line ownership.
@@ -321,6 +341,7 @@ mod tests {
             plain: true,
             compressed_start: 0,
             blocks: Vec::new(),
+            truncate_to: None,
         }
     }
 

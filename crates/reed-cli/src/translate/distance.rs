@@ -42,6 +42,8 @@ fn parse_kind(s: &str) -> Result<MatrixKind, String> {
 ///
 /// Usage errors for bad flags, and I/O or engine failures.
 pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
+    // doc_v21 S34: distance had no --verbosity, so scripts could not silence it.
+    args.verbosity.init_tracing();
     let kind = parse_kind(&args.matrix_type).map_err(reed::Error::usage)?;
     let format = MatrixFormat::parse(&args.format).map_err(reed::Error::usage)?;
     let stand = Stand::parse(&args.stand).map_err(reed::Error::usage)?;
@@ -87,7 +89,12 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         .build()
         .map_err(|e| reed::Error::usage(format!("--threads {threads}: {e}")))?;
 
-    let (x, ids) = reed::read_genotype_matrix(opened, keep.as_deref(), &budget)?;
+    let (x, ids) = reed::read_genotype_matrix(
+        opened,
+        keep.as_deref(),
+        &budget,
+        reed::MatrixUse::Plain,
+    )?;
     if x.rows == 0 || x.cols == 0 {
         return Err(reed::Error::usage("no biallelic sites with a diploid GT"));
     }
@@ -249,20 +256,24 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
                     })
                     .collect(),
             );
-            eprintln!(
-                "reed distance --tree --bootstrap: {} replicates, {} internal nodes",
-                report.replicates,
-                report.support.len()
-            );
+            if args.verbosity.shows_summary() {
+                eprintln!(
+                    "reed distance --tree --bootstrap: {} replicates, {} internal nodes",
+                    report.replicates,
+                    report.support.len()
+                );
+            }
         }
 
         let nwk = graph::to_newick(&tree, args.digits)
             .map_err(|e| reed::Error::usage(e.to_string()))?;
         std::fs::write(format!("{prefix}.nwk"), nwk).map_err(reed::Error::from)?;
-        eprintln!(
-            "reed distance --tree: {} samples, {} sites, method={method}",
-            x.rows, x.cols
-        );
+        if args.verbosity.shows_summary() {
+            eprintln!(
+                "reed distance --tree: {} samples, {} sites, method={method}",
+                x.rows, x.cols
+            );
+        }
         return Ok(());
     }
 
@@ -280,13 +291,15 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         write_table(&out_path, &result)?;
     }
 
-    eprintln!(
-        "reed distance: {} samples, {} sites, type={}, format={}",
-        x.rows,
-        x.cols,
-        args.matrix_type,
-        format.name()
-    );
+    if args.verbosity.shows_summary() {
+        eprintln!(
+            "reed distance: {} samples, {} sites, type={}, format={}",
+            x.rows,
+            x.cols,
+            args.matrix_type,
+            format.name()
+        );
+    }
     Ok(())
 }
 

@@ -14,11 +14,20 @@ use super::common::parse_sample_keep;
 ///
 /// Usage errors from the flag parsers, and whatever the driver reports.
 pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
+    // doc_v21 S34: pca had no --verbosity, so scripts could not silence it.
+    args.verbosity.init_tracing();
     let Some(prefix) = args.output.as_deref() else {
         return Err(reed::Error::usage(
             "-o PREFIX is required: PCA writes PREFIX.eigenvec, PREFIX.eigenval and PREFIX.pve",
         ));
     };
+    // doc_v21 S19: an empty prefix wrote hidden files (`.eigenvec`) in CWD
+    // and exited 0.
+    if prefix.trim().is_empty() {
+        return Err(reed::Error::usage(
+            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
+        ));
+    }
     if args.pcs == 0 {
         return Err(reed::Error::usage("--pcs must be at least 1"));
     }
@@ -64,6 +73,12 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
                 ),
                 None => None,
             };
+            // doc_v21 S18: `--xval-rep 0` used to emit an all-zero table and a
+            // fabricated best n_pca. The library rejects it too; this is the
+            // usage-class message.
+            if args.xval_rep == 0 {
+                return Err(reed::Error::usage("--xval-rep must be at least 1"));
+            }
             Some(reed::XvalRequest {
                 n_rep: args.xval_rep,
                 training_set: args.xval_training,
@@ -89,7 +104,8 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             xval,
         };
         let report = reed::run_dapc_opened(opened, &request, &budget)?;
-        eprintln!(
+        if args.verbosity.shows_summary() {
+            eprintln!(
             "reed pca --dapc: {} samples, {} sites, {} groups, \
              n_pca={}, n_da={}, var={:.4} ({:.2}s)",
             report.n_samples,
@@ -99,8 +115,9 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             report.n_da,
             report.var,
             report.elapsed.as_secs_f64()
-        );
-        if let Some(xv) = &report.xval {
+            );
+        }
+        if let Some(xv) = &report.xval && args.verbosity.shows_summary() {
             eprintln!(
                 "reed pca --dapc --xval: best n_pca={} (mean success {:.4}), \
                  highest mean success at n_pca={}, random chance {:.4}",
@@ -136,13 +153,15 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
     };
 
     let report = reed::run_pca_opened(opened, &request, &budget)?;
-    eprintln!(
-        "reed pca: {} samples, {} sites, {} PCs, solver={} ({:.2}s)",
-        report.n_samples,
-        report.n_sites,
-        report.n_pcs,
-        report.solver,
-        report.elapsed.as_secs_f64()
-    );
+    if args.verbosity.shows_summary() {
+        eprintln!(
+            "reed pca: {} samples, {} sites, {} PCs, solver={} ({:.2}s)",
+            report.n_samples,
+            report.n_sites,
+            report.n_pcs,
+            report.solver,
+            report.elapsed.as_secs_f64()
+        );
+    }
     Ok(())
 }

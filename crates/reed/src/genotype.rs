@@ -314,7 +314,7 @@ impl OrderedSink<GenotypeBlock> for CollectSink {
 
 pub(crate) fn collect_via_engine(
     opened: &mut crate::OpenedInput,
-    job: &PcaJob,
+    job: PcaJob,
     sink: CollectSink,
     budget: &ThreadBudget,
     abort: &Abort,
@@ -344,7 +344,15 @@ pub(crate) fn collect_via_engine(
     }
 
     let stash = StashSink { inner: sink, slot: Arc::clone(&slot) };
-    reed_engine::pipeline::run(opened.source_mut(), job, stash, budget, abort)
+    // doc_v21 M1: every other entry point wraps its job in `InputJob`, which
+    // renders BCF records to text; a bare `PcaJob` has `RecordFraming::Newline`
+    // and splits raw BCF bytes on '\n' (documented-input command failure). Wrap
+    // unconditionally — on text input `InputJob` is a transparent passthrough.
+    let wrapped = crate::bcf_input::InputJob::new(job, opened, abort);
+    let report = reed_engine::pipeline::run(opened.source_mut(), &wrapped, stash, budget, abort)
+        .map_err(crate::Error::from)?;
+    wrapped
+        .finish(report.n_chunks, true)
         .map_err(crate::Error::from)?;
     let block = slot
         .lock()
@@ -377,6 +385,7 @@ mod tests {
             plain: true,
             compressed_start: 0,
             blocks: Vec::new(),
+            truncate_to: None,
         }
     }
 

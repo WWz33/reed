@@ -147,6 +147,10 @@ pub struct SiteRules {
     /// Drop these variant classes (bcftools `-V/--exclude-types`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_variant_class: Vec<String>,
+    /// `--snps-only just-acgt`: every REF/ALT allele must be A/C/G/T
+    /// (plink2 semantics; `ALT=N` is not an SNV for this flag — doc_v21 S29).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub just_acgt: bool,
     /// `-i` expressions that do not read genotype-derived quantities
     /// (02-cli.md §4): the record must satisfy every one of them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

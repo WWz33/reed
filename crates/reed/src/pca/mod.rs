@@ -24,6 +24,72 @@ use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
 
 
 
+/// How the caller will consume the dosage matrix, for the `--memory` gate
+/// (doc_v21 M11).
+///
+/// The old gate counted only `2 x n x m` (the collected block plus the
+/// matrix), but the dense PCA paths then allocate an `n x n` GRM — and the
+/// pairwise path a second `n x n` count matrix — which `--memory` never saw.
+/// The gate now charges each path its real peak.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatrixUse {
+    /// Matrix only (`distance` and other matrix consumers).
+    Plain,
+    /// Dense PCA, mean-imputed GRM: one `n x n` matrix.
+    DenseMeanImpute,
+    /// Dense PCA, pairwise GRM: the GRM plus its pair-count matrix.
+    DensePairwise,
+    /// Streamed PCA: the matrix plus its standardized copy.
+    Stream,
+}
+
+impl MatrixUse {
+    /// Peak residency in bytes for an `n_kept x n_sites` matrix.
+    fn peak_bytes(self, n_kept: u64, n_sites: u64) -> u64 {
+        let nm = n_kept.saturating_mul(n_sites).saturating_mul(8);
+        let n2 = n_kept.saturating_mul(n_kept).saturating_mul(8);
+        match self {
+            Self::Plain => nm.saturating_mul(2),
+            Self::Stream => nm.saturating_mul(3),
+            Self::DenseMeanImpute => nm.saturating_mul(2).saturating_add(n2),
+            Self::DensePairwise => nm
+                .saturating_mul(2)
+                .saturating_add(n2.saturating_mul(2)),
+        }
+    }
+}
+
+/// The solver a request resolves to (doc_v21 M11): one rule shared by the
+/// pre-read gate, `solve`, and dapc. `auto` picks dense when the `n x n`
+/// GRM fits the budget, stream otherwise.
+pub(crate) fn chosen_solver(solver: &str, n_kept: usize, budget: &ThreadBudget) -> &'static str {
+    match solver {
+        "dense" => "dense",
+        "stream" => "stream",
+        _ => {
+            let n_bytes = (n_kept as u64)
+                .saturating_mul(n_kept as u64)
+                .saturating_mul(8);
+            if n_bytes <= budget.mem.bytes {
+                "dense"
+            } else {
+                "stream"
+            }
+        }
+    }
+}
+
+/// The gate class for a resolved PCA solver.
+pub(crate) fn matrix_use(solver: &str, missing: &str) -> MatrixUse {
+    if solver == "stream" {
+        MatrixUse::Stream
+    } else if missing == "pairwise" {
+        MatrixUse::DensePairwise
+    } else {
+        MatrixUse::DenseMeanImpute
+    }
+}
+
 /// Reads the input into a samples x sites dosage matrix (doc_v17).
 ///
 /// Shared by `reed pca` and `reed distance`: one parser, one set of site
@@ -36,6 +102,7 @@ pub fn read_genotype_matrix(
     mut opened: crate::OpenedInput,
     keep: Option<&[bool]>,
     budget: &ThreadBudget,
+    matrix_use: MatrixUse,
 ) -> Result<(Mat, Vec<String>), crate::Error> {
     let sample_names = opened.facts().sample_names.clone();
     if sample_names.is_empty() {
@@ -71,7 +138,7 @@ pub fn read_genotype_matrix(
         n_samples: n_kept_hint,
         exceeded: std::sync::Arc::clone(&exceeded),
     };
-    let collected = collect_via_engine(&mut opened, &job, sink, budget, &abort);
+    let collected = collect_via_engine(&mut opened, job, sink, budget, &abort);
     if exceeded.load(std::sync::atomic::Ordering::Acquire) {
         // doc_v20 review of S76: the cap fires during collection, so this
         // is the actionable refusal (usage class), not the engine's abort.
@@ -91,27 +158,19 @@ pub fn read_genotype_matrix(
     let kept_indices: Vec<usize> = (0..n_samples).filter(|&i| keep[i]).collect();
     let n_kept = kept_indices.len();
     let n_sites = block.n_sites;
-    // doc_v20 S76: the dense samples x sites matrix is the command's
-    // dominant allocation and must answer to `--memory` — 5,000 samples x
-    // 3M unpruned WGS sites is ~120 GB, which used to be attempted anyway
-    // (an OOM kill, not a usage error). LD pruning is an upstream step per
-    // the README, so a refusal points there.
-    let matrix_bytes = (n_kept as u64)
-        .saturating_mul(n_sites as u64)
-        .saturating_mul(8);
-    // Peak residency is the collected block plus the matrix (and the dense
-    // path adds the standardized copy), so the gate is on the peak, not on
-    // the matrix alone (doc_v20 review of S76).
-    let peak_bytes = matrix_bytes.saturating_mul(2);
+    // Peak residency depends on the consumer (doc_v21 M11): the dense PCA
+    // paths allocate an n x n GRM on top of the n x m matrix, which the old
+    // `2 x n x m` gate never charged; an explicit `--solver dense` could pass
+    // the gate and then abort inside the eigensolve.
+    let peak_bytes = matrix_use.peak_bytes(n_kept as u64, n_sites as u64);
     if peak_bytes > budget.mem.bytes {
         const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
         return Err(crate::Error::usage(format!(
-            "the dosage matrix needs {} bytes ({:.1} GiB) for {n_kept} samples \
-             x {n_sites} sites, over the memory budget of {} bytes \
-             ({:.1} GiB); LD-prune the input first \
+            "the {matrix_use:?} path needs {peak_bytes} bytes ({:.1} GiB) for \
+             {n_kept} samples x {n_sites} sites, over the memory budget of {} \
+             bytes ({:.1} GiB); LD-prune the input first \
              (`reed filter --indep-pairwise`) or raise --memory",
-            matrix_bytes,
-            matrix_bytes as f64 / GIB,
+            peak_bytes as f64 / GIB,
             budget.mem.bytes,
             budget.mem.bytes as f64 / GIB,
         )));
@@ -234,14 +293,7 @@ pub fn run_pca_opened(
             Some(mask) => mask.iter().filter(|&&k| k).count(),
             None => n_samples,
         };
-        let n_bytes = (n_kept as u64)
-            .saturating_mul(n_kept as u64)
-            .saturating_mul(8);
-        let will_stream = match solver {
-            "stream" => true,
-            "dense" => false,
-            _ => n_bytes > budget.mem.bytes,
-        };
+        let will_stream = chosen_solver(solver, n_kept, budget) == "stream";
         if will_stream && missing == "pairwise" {
             return Err(crate::Error::usage(
                 "--missing pairwise needs the dense solver; \
@@ -254,9 +306,16 @@ pub fn run_pca_opened(
     // dosage-matrix memory check live in [`read_genotype_matrix`] — the
     // v20 review found this copy and that reader near-duplicates, and the
     // second `Mat::zeros` is exactly where the budget check would be
-    // forgotten again.
+    // forgotten again. doc_v21 M11: the gate is charged the resolved
+    // solver's real peak (the dense GRM included).
+    let n_kept = match &request.keep_samples {
+        Some(mask) => mask.iter().filter(|&&k| k).count(),
+        None => opened.facts().sample_names.len(),
+    };
+    let matrix_use = matrix_use(chosen_solver(solver, n_kept, budget), missing);
     let sample_names = opened.facts().sample_names.clone();
-    let (x, _kept_names) = read_genotype_matrix(opened, request.keep_samples.as_deref(), budget)?;
+    let (x, _kept_names) =
+        read_genotype_matrix(opened, request.keep_samples.as_deref(), budget, matrix_use)?;
     // The reader above validated the mask's length against the header, so
     // the per-sample indexing here is in-bounds by construction.
     let n_samples = sample_names.len();
@@ -327,18 +386,8 @@ pub(crate) fn solve(
     budget: &ThreadBudget,
 ) -> Result<Components, crate::Error> {
     let n = x.rows;
-    let n_bytes = (n as u64).saturating_mul(n as u64).saturating_mul(8);
-    let chosen = match solver {
-        "dense" => "dense",
-        "stream" => "stream",
-        _ => {
-            if n_bytes <= budget.mem.bytes {
-                "dense"
-            } else {
-                "stream"
-            }
-        }
-    };
+    // One rule for the pre-read gate, this solve, and dapc (doc_v21 M11).
+    let chosen = chosen_solver(solver, n, budget);
     // The stream solver has no pairwise-complete estimator: it mean-imputes
     // through `standardize`. Refuse the combination instead of downgrading
     // the policy silently (doc_v20 R10).
@@ -638,6 +687,36 @@ mod tests {
 
     /// doc_v20 S76: the check must not fire inside the budget — the same
     /// entry point with a comfortable budget still produces a report.
+    #[test]
+    fn m11_dense_paths_charge_the_grm_against_the_budget() {
+        // doc_v21 M11: the old gate charged `2 x n x m` only, so an explicit
+        // `--solver dense` passed it and then allocated an n x n GRM (two of
+        // them for pairwise) that the budget never saw — measured 400 MiB
+        // under a 2 MB budget on 2000 samples.
+        let (n, m) = (2000_u64, 50_u64);
+        let nm = n * m * 8;
+        let n2 = n * n * 8;
+        assert_eq!(MatrixUse::Plain.peak_bytes(n, m), 2 * nm);
+        assert_eq!(MatrixUse::Stream.peak_bytes(n, m), 3 * nm);
+        assert_eq!(MatrixUse::DenseMeanImpute.peak_bytes(n, m), 2 * nm + n2);
+        assert_eq!(MatrixUse::DensePairwise.peak_bytes(n, m), 2 * nm + 2 * n2);
+        // The dense classes must be strictly larger than the old gate.
+        for class in [MatrixUse::DenseMeanImpute, MatrixUse::DensePairwise] {
+            assert!(class.peak_bytes(n, m) > 2 * nm);
+        }
+        // Solver/missing resolve to the right class.
+        let budget = ThreadBudget {
+            threads: 1,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let n_kept = usize::try_from(n).expect("invariant: fits");
+        assert_eq!(chosen_solver("dense", n_kept, &budget), "dense");
+        assert_eq!(chosen_solver("stream", n_kept, &budget), "stream");
+        assert_eq!(matrix_use("dense", "meanimpute"), MatrixUse::DenseMeanImpute);
+        assert_eq!(matrix_use("dense", "pairwise"), MatrixUse::DensePairwise);
+        assert_eq!(matrix_use("stream", "meanimpute"), MatrixUse::Stream);
+    }
+
     #[test]
     fn s76_comfortable_budget_still_succeeds() {
         let dir = temp_dir("s76-ok");

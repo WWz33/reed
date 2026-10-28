@@ -779,3 +779,25 @@ fn bcf_contig_idx_wins_over_line_order() {
     assert_eq!(chroms(&control), ["chr1", "chr1", "chr2", "chr2"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v21 M1: `pca`, `dapc` and `distance` read BCF as raw text (they did
+/// not wrap their job in `InputJob`, so BCF bytes were split on '\\n'), while
+/// every other command accepted the same file. The matrix reader must give
+/// the same samples and dosages for both formats.
+#[test]
+fn m1_genotype_matrix_is_format_independent() {
+    let vcf = fixture("fix.vcf.gz");
+    let bcf = fixture("fix.bcf");
+    let budget = budget();
+    let (from_vcf, ids_vcf) =
+        reed::read_genotype_matrix(reed::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"), None, &budget, reed::MatrixUse::Plain)
+            .expect("VCF input");
+    let (from_bcf, ids_bcf) =
+        reed::read_genotype_matrix(reed::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"), None, &budget, reed::MatrixUse::Plain)
+            .expect("BCF input must parse like VCF (doc_v21 M1)");
+    assert_eq!(ids_vcf, ids_bcf);
+    assert_eq!(from_vcf.rows, from_bcf.rows);
+    assert_eq!(from_vcf.cols, from_bcf.cols);
+    let bits = |m: &reed::Mat| -> Vec<u64> { m.data.iter().map(|v| v.to_bits()).collect() };
+    assert_eq!(bits(&from_vcf), bits(&from_bcf), "dosages must match bit for bit");
+}

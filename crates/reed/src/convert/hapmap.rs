@@ -174,6 +174,7 @@ impl ChunkSource for HapmapSource {
             plain: true,
             compressed_start: 0,
             blocks: Vec::new(),
+            truncate_to: None,
         }))
     }
 }

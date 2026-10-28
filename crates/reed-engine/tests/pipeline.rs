@@ -149,6 +149,7 @@ fn make_chunks(text: &[u8], chunk_bytes: usize) -> Vec<ChunkBytes> {
             plain: false,
             compressed_start: 0,
             blocks,
+            truncate_to: None,
         });
     }
     chunks

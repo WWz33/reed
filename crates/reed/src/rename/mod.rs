@@ -200,6 +200,14 @@ impl IdTemplate {
     ///
     /// A usage message for an unknown placeholder.
     fn parse(text: &str) -> Result<Self, String> {
+        // doc_v21 S20: an empty template rendered an empty ID column, which is
+        // not legal VCF (the ID field must be `.` or non-empty).
+        if text.is_empty() {
+            return Err(
+                "--set-id/--set-missing-var-ids needs a template (%CHROM %POS %REF %ALT, %%)."
+                    .to_string(),
+            );
+        }
         let bytes = text.as_bytes();
         let mut parts = Vec::new();
         let mut literal = Vec::new();
@@ -622,8 +630,12 @@ pub fn run_rename_opened(
              so the mapping would never be applied)",
         ));
     }
+    // doc_v21 M8: `--clear-ids` returns "." before `--set-missing-var-ids` is
+    // consulted (see `new_id`), silently disabling the template; the two are
+    // mutually exclusive, as `docs/spec/cli.md` §11b already states.
     if plan.clear_ids
         && (plan.set_id.is_some()
+            || plan.set_missing_var_ids.is_some()
             || !plan.update_name.is_empty()
             || plan.idspace_to.is_some()
             || plan.rm_dup_ids)
@@ -804,6 +816,30 @@ fn validate(spec: &RenameSpec) -> Result<(), crate::Error> {
         return Err(crate::Error::usage(
             "--set-id cannot be combined with --update-name (the template rewrites every ID, \
              so the mapping would never be applied)",
+        ));
+    }
+    // doc_v21 M8: mirror the compiled-plan check so the CLI reports the
+    // conflict before it opens anything.
+    if spec.clear_ids
+        && (spec.set_id.is_some()
+            || spec.set_missing_var_ids.is_some()
+            || spec.update_name.is_some()
+            || spec.idspace_to.is_some()
+            || spec.rm_dup_ids)
+    {
+        return Err(crate::Error::usage(
+            "--clear-ids cannot be combined with the other ID flags",
+        ));
+    }
+    // doc_v21 S33: empty flag values that silently did nothing.
+    if spec.add_meta.iter().any(String::is_empty) {
+        return Err(crate::Error::usage(
+            "--add-meta needs a header line (e.g. '##source=reed')",
+        ));
+    }
+    if spec.samples.as_deref() == Some("") {
+        return Err(crate::Error::usage(
+            "-s needs 'old new' pairs; an empty value renames nothing",
         ));
     }
     Ok(())

@@ -90,7 +90,9 @@ mod pca;
 
 pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
-pub use crate::pca::{read_genotype_matrix, run_pca, run_pca_opened, PcaReport, PcaRequest};
+pub use crate::pca::{
+    MatrixUse, PcaReport, PcaRequest, read_genotype_matrix, run_pca, run_pca_opened,
+};
 pub use crate::dapc::{
     run_dapc, run_dapc_opened, DapcReport, DapcRequest, XvalOutcome, XvalRequest,
 };
