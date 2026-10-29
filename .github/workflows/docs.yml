@@ -1,0 +1,41 @@
+# Publish the docsify site (docsify_doc/) to GitHub Pages.
+#
+# One-time setup: Settings → Pages → Build and deployment → Source:
+# "GitHub Actions". The site is uploaded as the `docsify_doc/` directory
+# verbatim (index.html + .nojekyll + markdown, zh-CN at the root with an
+# `en/` mirror).
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docsify_doc/**
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never publish two revisions at once; let an in-flight deploy finish so the
+# live site is never left half-updated.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docsify_doc
+      - id: deployment
+        uses: actions/deploy-pages@v4
