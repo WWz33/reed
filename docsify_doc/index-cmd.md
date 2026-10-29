@@ -1,39 +1,42 @@
 # index
 
-## 用法
+## Usage
 
 ```
 reed index [OPTIONS] <FILE>
 ```
 
-给 VCF/BCF 建 CSI 或 TBI 索引，默认写 CSI。`filter -r/-R` 的区域查询、以及任何按区域随机访问的下游工具都依赖输入旁边的索引。
+Build a CSI or TBI index for a VCF/BCF, CSI by default. `filter -r/-R` region queries and any downstream tool doing random access by region rely on an index next to the input.
 
-## 参数
+## Options
 
 ```
-<FILE>                      输入文件，必须是 BGZF 压缩的 VCF 或 BCF。stdin 被拒绝：
-                            索引要记录文件的字节末偏移并回读
--c, --csi                   写 CSI 索引（默认；与 -t 互斥）
--t, --tbi                   写 TBI 索引
--o, --output FILE           索引写到别处（默认写在输入旁，加 .csi/.tbi 后缀）
--f, --force                 覆盖已存在的索引；不加且索引已存在时报错并提示
-    --threads INT           工作线程数，默认全部可用核
-    --verbosity INT         0 静默、1 摘要（默认）、2 阶段耗时、3 调试
+<FILE>                      Input file, must be BGZF-compressed VCF or BCF.
+                            stdin is rejected: the index records byte offsets
+                            and reads the file back
+-c, --csi                   Write a CSI index (default; exclusive with -t)
+-t, --tbi                   Write a TBI index
+-o, --output FILE           Write the index elsewhere (default: next to the
+                            input, with a .csi/.tbi suffix)
+-f, --force                 Overwrite an existing index; without it an existing
+                            index is an error with a hint
+    --threads INT           Worker threads, default all available cores
+    --verbosity INT         0 silent, 1 summary (default), 2 stage timing, 3 debug
 ```
 
-## 行为细节
+## Behavior
 
-- 输入必须是文件。普通 gzip 或纯文本 VCF 报错：对它们建索引会得到全零虚拟偏移。
-- BCF 不能配 TBI；BCF 只能用 CSI。
-- TBI 的坐标上限是 2²⁹−1；更大的位点只能用 CSI。
-- 要求排序输入：同一 contig 内位置倒退时报 `positions are not ascending (indexing needs sorted input)`。
-- CSI 的 bin 结构与分块深度采用标准参数，产物可被任何读取 CSI 的程序使用。
+- The input must be a file. Plain gzip or uncompressed VCF is an error: indexing them yields all-zero virtual offsets.
+- BCF cannot take TBI; BCF is CSI only.
+- TBI coordinates top out at 2²⁹−1; larger positions need CSI.
+- Sorted input is required: a position going backwards within a contig raises `positions are not ascending (indexing needs sorted input)`.
+- The CSI bin structure and chunk depth use the standard parameters, and the product can be read by any program that reads CSI.
 
-## 例子
+## Examples
 
 ```bash
 reed index raw.vcf.gz                  # raw.vcf.gz.csi
 reed index -t raw.vcf.gz               # raw.vcf.gz.tbi
-reed index -f raw.vcf.gz               # 覆盖旧索引
+reed index -f raw.vcf.gz               # overwrite the old index
 reed index -o /fast/disk/raw.csi raw.vcf.gz
 ```

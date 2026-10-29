@@ -1,25 +1,25 @@
-# 库调用
+# Library use
 
-`reed` crate（`crates/reed`）是公开 API，命令行是它的一层封装。
+The `reed` crate (`crates/reed`) is the public API; the command line is a wrapper around it.
 
 ```toml
 [dependencies]
 reed = { path = "crates/reed" }
 ```
 
-稳定性承诺只在 crate 根；`crates/` 下层的 crate 是内部实现，类型与签名随时可能变。错误用 `reed::Error` 表示，`Error::kind()` 分类，`Display`/`source()` 读消息。
+The stability promise covers the crate root only; crates below `crates/` are internal implementation whose types and signatures may change. Errors are `reed::Error`, classified by `Error::kind()`, with the message read through `Display`/`source()`.
 
-## 入口函数
+## Entry points
 
-crate 根导出六个入口，各自对应一个子命令：
+The crate root exports six entry points, one per subcommand:
 
 ```rust
 run_filter, run_popgen, run_stats, run_rename, run_index, run_convert
 ```
 
-签名模式统一：`fn run_*(input: Option<&Path>, request: &XxxRequest, budget: &ThreadBudget) -> Result<XxxReport>`。`ThreadBudget`（`reed::budget`）给线程数与内存预算，`Default` 即"全部核 + 物理内存一半"，与 CLI 缺省一致。
+The signature pattern is uniform: `fn run_*(input: Option<&Path>, request: &XxxRequest, budget: &ThreadBudget) -> Result<XxxReport>`. `ThreadBudget` (`reed::budget`) holds the thread count and memory budget; `Default` means "all cores + half of physical memory", the same as the CLI defaults.
 
-## 群体统计
+## Population statistics
 
 ```rust
 use reed::{PopgenRequest, Populations, StatKind};
@@ -34,7 +34,7 @@ let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request,
 let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
 ```
 
-群体映射可以不落盘：
+The population mapping does not have to touch disk:
 
 ```rust
 let request = PopgenRequest {
@@ -47,9 +47,9 @@ let request = PopgenRequest {
 };
 ```
 
-`StatKind` 的变体覆盖 CLI 的全部统计量（`Pi`、`Dxy`、`Fst`、`WattersonTheta`、`TajimaD`、`Pbs`、f 统计量族、`Sfs`、LD 族）；CLI 拼不出来的请求（per-bp 统计、`Regions` 网格）在 `to_args()` 渲染时报错，不影响直接调用。
+`StatKind` variants cover every CLI statistic (`Pi`, `Dxy`, `Fst`, `WattersonTheta`, `TajimaD`, `Pbs`, the f-statistic family, `Sfs`, the LD family); requests the CLI cannot spell (per-bp statistics, a `Regions` grid) fail in `to_args()` rendering but work when called directly.
 
-## 格式转换
+## Format conversion
 
 ```rust
 use reed::{ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions};
@@ -66,19 +66,19 @@ let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request,
                                &reed::budget::ThreadBudget::default())?;
 ```
 
-## 请求与报告
+## Requests and reports
 
-| 请求类型 | 报告类型 |
+| Request type | Report type |
 |---|---|
 | `PopgenRequest` | `PopgenReport` |
 | `FilterSpec` | `FilterReport` |
 | `StatsReportRequest` | `StatsOutcome` |
 | `RenameSpec` | `RenameReport` |
 | `ConvertRequest` | `ConvertReport` |
-| （index 无请求结构） | `IndexOutcome` |
+| (no request structure for index) | `IndexOutcome` |
 
-写出模块也直接可用：`reed::windows`（窗口 TSV）、`reed::reports`、`reed::histogram`、`reed::sfs`、`reed::fstats`、`reed::ld`、`reed::summary`。
+The writer modules are usable directly: `reed::windows` (window TSV), `reed::reports`, `reed::histogram`, `reed::sfs`, `reed::fstats`, `reed::ld`, `reed::summary`.
 
-## 往返渲染
+## Round-trip rendering
 
-`PopgenRequest::to_args(&group_names)` 与 `FilterSpec::to_args()` 把请求渲染回 CLI 拼写，且 `parse(render(x)) == x`（有测试锁定）。用处：把库层构造的请求记进日志、或在库里拼好请求后交给 CLI 进程执行。
+`PopgenRequest::to_args(&group_names)` and `FilterSpec::to_args()` render a request back to CLI spelling, and `parse(render(x)) == x` (locked by tests). Uses: recording a library-built request in a log, or building it in code and handing it to a CLI process.

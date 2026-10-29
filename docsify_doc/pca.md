@@ -1,97 +1,106 @@
 # pca
 
-## 用法
+## Usage
 
 ```
 reed pca [OPTIONS] -o PREFIX <INPUT>
 ```
 
-样本关系矩阵（GRM）的主成分。默认输出前 10 个主成分，用 `binom2` 标准化与 `pairwise` 缺失处理。只统计双等位、二倍体 GT 的位点：多等位位点、单倍体与半调用、没有已调用 ALT 的位点都跳过；一个可用位点都没有时报 `no biallelic sites with a diploid GT were found`。
+Principal components of the sample relationship matrix (GRM). The first 10 components are written by default, with `binom2` standardization and `pairwise` missing-data handling. Only biallelic sites with diploid GT are counted: multiallelic sites, haploid and half-calls, and sites with no called ALT are skipped; with no usable site at all the command reports `no biallelic sites with a diploid GT were found`.
 
-## 参数
+## Options
 
-### 主成分
+### Principal components
 
 ```
-<INPUT>                     VCF/VCF.gz/BCF；- 读 stdin
-    --pcs INT               输出前几个主成分，默认 10，最小 1
-    --stand binom2|binom    标准化口径：binom2 用 √(2p(1−p))（默认），
-                            binom 用 √(p(1−p))。两种口径成分相同、特征值差 2 倍
+<INPUT>                     VCF/VCF.gz/BCF; `-` reads stdin
+    --pcs INT               Number of components to write, default 10, minimum 1
+    --stand binom2|binom    Standardization: binom2 uses √(2p(1−p)) (default),
+                            binom uses √(p(1−p)). Both give the same components
+                            with eigenvalues differing by 2x
     --missing pairwise|meanimpute
-                            缺失基因型处理：pairwise（默认）按每对样本的实际联合
-                            调用数算分母；meanimpute 把缺失填成位点均值，分母用
-                            全部位点
+                            Missing-genotype policy: pairwise (default) uses
+                            each sample pair's own jointly-called count as the
+                            denominator; meanimpute fills missing dosages with
+                            the site mean and divides by all sites
     --solver auto|dense|stream
-                            求解器。auto（默认）在 N×N 矩阵装得下时走 dense
-                            （全谱分解），否则走 stream（不物化矩阵的块 Lanczos）
+                            Solver. auto (default) uses dense when the N×N
+                            matrix fits the budget (full spectrum), otherwise
+                            stream (matrix-free block Lanczos)
 ```
 
-### DAPC 与交叉验证
+### DAPC and cross-validation
 
 ```
-    --dapc                  在主成分上做判别分析，需要 --pop；写 PREFIX.dapc.ind、
-                            PREFIX.dapc.eig、PREFIX.dapc.var
-    --pop FILE              DAPC 的群体文件，样本<TAB>群体，无表头。
-                            别名 --populations
-    --n-da INT              保留几个判别轴，默认保留全部显著轴（svd² > 1e-10）
-    --force-samples         群体文件里的未知样本只警告并跳过；默认报错
-    --xval                  交叉验证选保留的 PC 数；写 PREFIX.dapc.xval。需要 --dapc
-    --xval-rep INT          每个候选重复几次，默认 30
-    --xval-training FLOAT   训练集比例，默认 0.9；最小的群体留不满时自动下调
+    --dapc                  Discriminant analysis on the components; needs
+                            --pop; writes PREFIX.dapc.ind, PREFIX.dapc.eig and
+                            PREFIX.dapc.var
+    --pop FILE              Population file for DAPC, sample<TAB>population,
+                            no header. Alias --populations
+    --n-da INT              Discriminant axes to retain, default every
+                            significant axis (svd² > 1e-10)
+    --force-samples         Unknown samples in the population file only warn and
+                            are skipped; default is an error
+    --xval                  Cross-validate to choose the PC count; writes
+                            PREFIX.dapc.xval. Needs --dapc
+    --xval-rep INT          Repetitions per candidate, default 30
+    --xval-training FLOAT   Training fraction, default 0.9; lowered
+                            automatically when the smallest population cannot
+                            leave a validation sample
     --xval-result overall|group-mean
-                            正确率口径：overall 总体正确率（默认）、
-                            group-mean 各群体等权平均
-    --xval-seed INT         随机种子，默认 42
-    --xval-pca LIST         候选 PC 数，逗号分隔；默认按固定刻度生成约 10 个候选
-                            并去重
+                            Accuracy: overall (default) or group-mean, each
+                            population weighted equally
+    --xval-seed INT         Random seed, default 42
+    --xval-pca LIST         Candidate PC counts, comma-separated; by default
+                            about 10 candidates on a fixed scale, deduplicated
 ```
 
-### 样本与输出
+### Samples and output
 
 ```
--s, --samples [^]LIST       样本子集，逗号分隔，^ 前缀取补
--S, --samples-file FILE     样本名单文件，一行一个
-    --keep FILE             同 -S，另一种拼写
-    --remove FILE           要丢掉的样本名单
--o, --out PREFIX            输出前缀
-    --threads INT           工作线程数，默认全部可用核
-    --memory MB             内存预算，MiB，默认物理内存一半
-    --verbosity INT         0 静默、1 摘要（默认）、2 阶段耗时、3 调试
+-s, --samples [^]LIST       Sample subset, comma-separated, ^ prefix complements
+-S, --samples-file FILE     Sample list file, one name per line
+    --keep FILE             Same as -S, alternative spelling
+    --remove FILE           Samples to drop
+-o, --out PREFIX            Output prefix
+    --threads INT           Worker threads, default all available cores
+    --memory MB             Memory budget in MiB, default half of physical memory
+    --verbosity INT         0 silent, 1 summary (default), 2 stage timing, 3 debug
 ```
 
-`--missing pairwise` 与 `--solver stream` 不兼容，同给报错并给出三个出路：换 `dense`、换 `meanimpute`、或提高 `--memory`。内存不够时错误信息会建议先跑 `reed filter --indep-pairwise` 减位点。
+`--missing pairwise` and `--solver stream` are incompatible; together they raise an error listing three ways out: use `dense`, use `meanimpute`, or raise `--memory`. On low memory the error suggests running `reed filter --indep-pairwise` first to cut sites.
 
-## 算法
+## Algorithm
 
-数据流分三步。
+The data flow has three steps.
 
-1. 标准化。 每个位点估计等位频率 `p`（分母只计已调用剂量），把剂量 `x ∈ {0,1,2}` 变换为
-
-```
---stand binom2（默认）:  W = (x − 2p) / √(2p(1−p))
---stand binom:           W = (x − 2p) / √(p(1−p))
-```
-
-缺失剂量在标准化空间记 0（即该位点的均值）；单态或固定 ALT 的退化列整列置 0，不进入分子。
-
-2. 关系矩阵。
+1. Standardization. Each site's allele frequency `p` is estimated with called dosages only; dosage `x ∈ {0,1,2}` is transformed to
 
 ```
---missing pairwise（默认）:  A_ij = Σ_{s: i,j 都已调用} W_is·W_js / (联合调用位点数)
---missing meanimpute:        A_ij = Σ_s W_is·W_js / m           （m = 位点总数）
+--stand binom2 (default):  W = (x − 2p) / √(2p(1−p))
+--stand binom:             W = (x − 2p) / √(p(1−p))
 ```
 
-`pairwise` 的分子分母都只数两位点都已调用的位点，每个样本对用自己的分母；`meanimpute` 因为缺失已填成均值，分母就是全体位点。两套分母算出来的 `A_ij` 不会相同：`meanimpute` 等于拿均值补缺失，把关系往均值拉；`pairwise` 对覆盖低的样本对分母小、波动大。跟别的软件对坐标时，用同一种缺失处理口径才有可比性。
+A missing dosage becomes 0 in standardized space (the site mean); monomorphic or fixed-ALT degenerate columns are zeroed whole and enter no numerator.
 
-3. 特征求解。`dense` 物化 N×N 矩阵做稠密对称特征分解，取全谱；`stream` 按块扫描基因型迭代求解，固定种子，结果可复现。
+2. Relationship matrix.
 
-## 输出
+```
+--missing pairwise (default):  A_ij = Σ_{s: both i and j called} W_is·W_js / (jointly called sites)
+--missing meanimpute:          A_ij = Σ_s W_is·W_js / m            (m = total sites)
+```
 
-| 文件 | 内容 |
+`pairwise` counts only sites called in both samples, both in numerator and denominator, each pair with its own denominator; `meanimpute` has missing filled with the mean, so the denominator is all sites. The two denominators do not produce the same `A_ij`: `meanimpute` pulls relationships toward the mean, `pairwise` is noisier for pairs with low coverage. Coordinates are only comparable across runs that use the same missing-data policy.
+
+3. Eigen-solve. `dense` materializes the N×N matrix and runs a dense symmetric eigendecomposition over the full spectrum; `stream` scans genotype blocks and iterates, with a fixed seed, so results are reproducible.
+
+## Output
+
+| File | Content |
 |---|---|
-| `PREFIX.eigenvec` | 表头 `#FID IID PC1..PCk`，tab 分隔；FID 与 IID 都用样本名；特征向量单位范数，9 位小数。特征向量整体符号不定，跨运行比较请按方向比 |
-| `PREFIX.eigenval` | 特征值，降序，每行一个，9 位小数（= GRM 的特征值） |
-| `PREFIX.pve` | 每个成分占全谱的比例：λᵢ 除以全谱和（`stream` 模式下用 `Σw²/m` 作全谱和，等价于迹） |
+| `PREFIX.eigenvec` | Header `#FID IID PC1..PCk`, tab-separated; FID and IID both hold the sample name; eigenvectors have unit norm, 9 decimals. The overall sign is arbitrary; compare runs by direction |
+| `PREFIX.eigenval` | Eigenvalues, descending, one per line, 9 decimals (= the GRM eigenvalues) |
+| `PREFIX.pve` | Each component's share of the full spectrum: λᵢ over the spectrum sum (`stream` uses `Σw²/m` as the sum, equivalent to the trace) |
 
 ```
 PREFIX.eigenvec
@@ -112,17 +121,17 @@ PREFIX.pve
 0.172182096
 ```
 
-## DAPC 判别分析
+## DAPC discriminant analysis
 
-`--dapc` 在主成分之上做判别分析：先取前 `n_pca` 个成分（默认 `min(样本数−1, 50)`，特征值小于 1e-14 的成分不计入秩），样本得分取 `U·√λ`，再对得分做线性判别（组内白化 + 组均值 SVD）。
+`--dapc` runs a discriminant analysis on top of the principal components: the first `n_pca` components are taken (default `min(samples−1, 50)`, components with eigenvalues below 1e-14 excluded from the rank), sample scores are `U·√λ`, and a linear discriminant follows (within-group whitening plus between-group mean SVD).
 
-输出：
+Output:
 
-| 文件 | 内容 |
+| File | Content |
 |---|---|
-| `PREFIX.dapc.ind` | 表头 `#IID POP ASSIGN LD1..LDn_da`：样本、真实群体、判别指派的群体、判别坐标 |
-| `PREFIX.dapc.eig` | 判别轴特征值（每行一个） |
-| `PREFIX.dapc.var` | `#n_pca n_da var` 一行：保留的 PC 数、判别轴数、这些 PC 承载的全谱方差比例 |
+| `PREFIX.dapc.ind` | Header `#IID POP ASSIGN LD1..LDn_da`: sample, true population, assigned population, discriminant coordinates |
+| `PREFIX.dapc.eig` | Discriminant eigenvalues, one per line |
+| `PREFIX.dapc.var` | One row `#n_pca n_da var`: retained PC count, discriminant axis count, variance share carried by those PCs |
 
 ```
 PREFIX.dapc.ind
@@ -137,11 +146,11 @@ PREFIX.dapc.var            PREFIX.dapc.eig
 5	1	0.813187618
 ```
 
-## 交叉验证
+## Cross-validation
 
-`--xval` 自动选保留的 PC 数。PCA 在全量数据上只算一次；每次重复按固定种子派生随机流，从每个群体按训练比例抽训练样本，训练集上重拟合判别，在留出集上算正确率。重复结束后按候选 `n_pca` 汇总。
+`--xval` selects the PC count automatically. PCA runs once on the full data; each repetition derives a random stream from the fixed seed, samples training individuals per population by the training fraction, refits the discriminant on the training set and scores accuracy on the held-out set. Repetitions are summarized per candidate `n_pca`.
 
-评价量是 `√(mean((成功率 − 1)²))`，取误差最小的候选；平局取最大的候选。随机基线 `1/群体数` 一并报告。结果写 `PREFIX.dapc.xval`：`#n_pca mean_success` 每候选一行，后接 `#best_n_pca`、`#best_mean_success_n_pca`、`#random_chance` 三行摘要。
+The criterion is `√(mean((success rate − 1)²))`, minimized over candidates; ties go to the largest candidate. The random baseline `1/population count` is reported alongside. Results go to `PREFIX.dapc.xval`: one row per candidate under `#n_pca mean_success`, followed by the summary lines `#best_n_pca`, `#best_mean_success_n_pca` and `#random_chance`.
 
 ```
 PREFIX.dapc.xval
@@ -160,37 +169,37 @@ PREFIX.dapc.xval
 #random_chance	0.500000000
 ```
 
-选中的 PC 数覆盖 `--pcs` 并重新拟合最终 DAPC，同时打印一行 note：
+The chosen PC count overrides `--pcs`, the final DAPC is refit, and one note line is printed:
 
 ```
 reed pca --dapc --xval: best n_pca=5 (mean success 0.8400), highest mean success at n_pca=5, random chance 0.5000
   note: --pcs 10 was overridden by the cross-validated choice (5)
 ```
 
-## 注意事项
+## Notes
 
-- LD 剪枝是上游步骤：先 `reed filter --indep-pairwise`，把剪枝后的文件喂给 `pca`。本命令不收 `--indep-pairwise`。
-- 关联大效应位点会污染 PCs；若做关联分析，常见做法是用剔除目标位点后的 PCs 作协变量。
-- 特征向量符号任意：比较两批 PCs 请用方向（内积绝对值），逐元素差没有意义。
+- LD pruning is an upstream step: run `reed filter --indep-pairwise` first and feed the pruned file to `pca`. This command does not accept `--indep-pairwise`.
+- Large-effect sites associated with the trait contaminate PCs; for association analysis the usual practice is to use PCs computed after removing the target sites.
+- Eigenvector signs are arbitrary: compare two sets of PCs by direction (absolute inner product), not element-wise.
 
-## 例子
+## Examples
 
 ```bash
-# 输出前 20 个主成分
+# write the first 20 components
 reed pca pruned.vcf.gz --pcs 20 -o pcs
 
-# 换标准化口径与缺失处理
+# switch standardization and missing-data policy
 reed pca pruned.vcf.gz --stand binom --missing meanimpute -o pcs
 
-# 强制流式求解，限制内存
+# force the streaming solver with a memory cap
 reed pca pruned.vcf.gz --solver stream --memory 2000 -o pcs
 
-# 只用一部分样本
+# only part of the samples
 reed pca pruned.vcf.gz -S samples.txt -o pcs
 
-# DAPC：保留 5 个 PC 做判别分析
+# DAPC on 5 components
 reed pca pruned.vcf.gz --dapc --pop pops.txt --pcs 5 -o dapc
 
-# DAPC + 交叉验证选 PC 数（100 次重复）
+# DAPC with cross-validation, 100 repetitions
 reed pca pruned.vcf.gz --dapc --pop pops.txt --xval --xval-rep 100 -o dapc
 ```

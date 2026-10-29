@@ -1,141 +1,150 @@
 # distance
 
-## 用法
+## Usage
 
 ```
 reed distance [OPTIONS] --type KIND -o PREFIX <INPUT>
 ```
 
-个体对个体的矩阵：等位差距离、IBS、GRM、协方差、KING、PI_HAT、相关度、不一致率；`--tree upgma|nj` 从距离矩阵建 Newick 树，`--bootstrap` 重采样位点给枝支持度。默认 `--type grm`、`--format triangle`。
+Individual-by-individual matrices: allele-difference distance, IBS, GRM, covariance, KING, PI_HAT, relatedness, discordance; `--tree upgma|nj` builds a Newick tree from a distance matrix and `--bootstrap` resamples sites for branch support. Defaults are `--type grm` and `--format triangle`.
 
-输入门与 `pca` 相同：只统计双等位、二倍体 GT 的位点，无已调用 ALT 的位点跳过。
+The input gate matches `pca`: only biallelic sites with diploid GT are counted, and sites with no called ALT are skipped.
 
-## 参数
+## Options
 
-### 矩阵
-
-```
-<INPUT>                     VCF/VCF.gz/BCF；- 读 stdin
-    --type KIND             矩阵类型，默认 grm。可选：allele-ct（别名 dist）、ibs、
-                            1-ibs、grm（别名 rel）、cov、king、pihat（别名 genome）、
-                            phi（别名 relatedness2）、ajk（别名 relatedness）、
-                            discordance（别名 gtcheck）。公式见下节
-    --format FMT            矩阵型输出的布局：triangle（默认，下三角含对角）、
-                            square、square0（方阵，右上三角置 0）、bin（小端 f64）
-    --stand binom2|binom    标准化口径，同 pca，默认 binom2
-    --mean-impute           仅 grm/cov：分母用全部位点数，不用两样本的实际联合调用数
-    --unbounded             仅 pihat：关掉 PI_HAT 的 [0,1] 裁剪
-    --nudge                 仅 pihat：PI_HAT² < Z2 时把系数吸附到最近的可行配置
-    --mismatch-count        仅 discordance：报告失配数，而不是概率得分
-    --error-probability INT 仅 discordance：Phred 尺度的基因型错误率，默认 40
-```
-
-### 建树与自展
+### Matrices
 
 ```
-    --tree upgma|nj         建树而不是写矩阵，写 PREFIX.nwk。upgma 算术平均连锁
-                            （有根），nj 邻接法（无根）
-    --digits INT            Newick 枝长的小数位数，默认 10；0 报错
-                            （全部枝长会变成零）
-    --bootstrap INT         自展：有放回重采样位点这么多次，支持度写成内节点标签
-    --bootstrap-seed INT    自展随机种子，默认 42
+<INPUT>                     VCF/VCF.gz/BCF; `-` reads stdin
+    --type KIND             Matrix type, default grm. Values: allele-ct (alias
+                            dist), ibs, 1-ibs, grm (alias rel), cov, king,
+                            pihat (alias genome), phi (alias relatedness2),
+                            ajk (alias relatedness), discordance (alias
+                            gtcheck). Formulas below
+    --format FMT            Layout for matrix outputs: triangle (default, lower
+                            triangle with diagonal), square, square0 (square
+                            with the upper right zeroed), bin (little-endian f64)
+    --stand binom2|binom    Standardization, as in pca, default binom2
+    --mean-impute           grm/cov only: divide by all sites instead of each
+                            pair's jointly-called count
+    --unbounded             pihat only: skip the [0,1] clipping of PI_HAT
+    --nudge                 pihat only: when PI_HAT² < Z2, snap to the nearest
+                            feasible configuration
+    --mismatch-count        discordance only: report the mismatch count instead
+                            of the probability score
+    --error-probability INT discordance only: Phred-scaled genotyping error
+                            rate, default 40
+```
+
+### Trees and bootstrap
+
+```
+    --tree upgma|nj         Build a tree instead of writing the matrix, to
+                            PREFIX.nwk. upgma is average linkage (rooted), nj
+                            is neighbor joining (unrooted)
+    --digits INT            Decimal places in Newick branch lengths, default 10;
+                            0 is an error (every branch would round to zero)
+    --bootstrap INT         Bootstrap: resample sites with replacement this many
+                            times, support becomes internal node labels
+    --bootstrap-seed INT    Bootstrap random seed, default 42
     --bootstrap-cutoff FLOAT
-                            支持度低于这个百分数的枝标签写空，默认 0（全保留）
+                            Support below this percentage gets an empty label,
+                            default 0 (keep all)
 ```
 
-### 样本与输出
+### Samples and output
 
 ```
--s, --samples [^]LIST       样本子集，逗号分隔，^ 前缀取补
--S, --samples-file FILE     样本名单文件，一行一个
-    --keep FILE             同 -S，另一种拼写
-    --remove FILE           要丢掉的样本名单
--o, --out PREFIX            输出前缀
-    --threads INT           工作线程数，默认全部可用核
-    --memory MB             内存预算，MiB，默认物理内存一半
-    --verbosity INT         0 静默、1 摘要（默认）、2 阶段耗时、3 调试
+-s, --samples [^]LIST       Sample subset, comma-separated, ^ prefix complements
+-S, --samples-file FILE     Sample list file, one name per line
+    --keep FILE             Same as -S, alternative spelling
+    --remove FILE           Samples to drop
+-o, --out PREFIX            Output prefix
+    --threads INT           Worker threads, default all available cores
+    --memory MB             Memory budget in MiB, default half of physical memory
+    --verbosity INT         0 silent, 1 summary (default), 2 stage timing, 3 debug
 ```
 
-## 矩阵类型与公式
+## Matrix types and formulas
 
-标准先用 `--stand binom2`（`√(2p(1−p))`）或 `--stand binom`（`√(p(1−p))`）做，`p` 按已调用剂量估计。部分类型需要原始剂量，从标准化值反推：`dose = round(W·sd + mean)`，取值 0/1/2，缺失记 -1。
+Standardization uses `--stand binom2` (`√(2p(1−p))`) or `--stand binom` (`√(p(1−p))`), with `p` estimated from called dosages. Some types need the raw dosage, recovered from the standardized value as `dose = round(W·sd + mean)`, taking 0/1/2 with -1 for missing.
 
-| `--type` | 公式 | 输出文件 |
+| `--type` | Formula | Output file |
 |---|---|---|
-| `allele-ct`（别名 `dist`） | 联合调用位点上的等位差之和 `Σ|x_i − x_j|`，缺失用 HWE 权重修正：权重 `w = p(1−p)(p²−p+1)`，分母是权重和减去各自缺失及双方同缺的权重，最后乘回总权重 | `PREFIX.dist` |
-| `ibs` | `1 − d/2m`，d 是 allele-ct 距离，m 位点数 | `PREFIX.mibs` |
+| `allele-ct` (alias `dist`) | Sum of allele differences over jointly called sites `Σ|x_i − x_j|`, with HWE weight correction for missingness: weight `w = p(1−p)(p²−p+1)`, the denominator is the weight sum minus the weights of either-side and both-side missing, multiplied back by the total weight | `PREFIX.dist` |
+| `ibs` | `1 − d/2m`, d the allele-ct distance, m the site count | `PREFIX.mibs` |
 | `1-ibs` | `d/2m` | `PREFIX.mdist` |
-| `grm`（别名 `rel`） | `A_ij = Σ W_is·W_js / 分母`；分母默认是两样本联合调用位点数，`--mean-impute` 改为总位点数 m。对角线是 `ΣW²/m`，不强行置 1 | `PREFIX.rel` |
-| `cov` | 同 grm，但取消标准化里的除以 sd（保留中心化），得到协方差尺度 | `PREFIX.rel` |
-| `king` | 联合调用位点上数四类基因型组合（ibs0、双杂合、het1-hom2、het2-hom1），`φ = 0.5 − (4·ibs0 + h1h2 + h2h1) / (4·(hethet + min(h1h2, h2h1)))`；分母为零记 NaN | `PREFIX.king` |
-| `pihat`（别名 `genome`） | 逐对解 IBS 系数：`z0 = ibs0/(e00·n)`，`z1 = ibs1/(e11·n)`，`z2 = (oo − n(z0·e02 + z1·e12))/n`，期望系数按位点等位频率累计；裁剪到 [0,1]（`--unbounded` 关掉裁剪；`--nudge` 在 `π² < z2` 时把系数吸附到 `z0=(1−π)², z1=2π(1−π), z2=π²`）；`PI_HAT = z1/2 + z2` | `PREFIX.genome` |
-| `phi`（别名 `relatedness2`） | `φ = (N_AaAa − 2·N_AAaa)/(N_Aa[i] + N_Aa[j])`，分母用两样本各自的杂合位点数之和（边缘计数）；对角线 0.5 | `PREFIX.relatedness2` |
-| `ajk`（别名 `relatedness`） | 只用频率在开区间内的位点：`A_ij = mean (a−2p)(b−2p)/(2p(1−p))`；对角线用同一分子加 `x² − (1+2p)x + 2p²` 项 | `PREFIX.relatedness` |
-| `discordance`（别名 `gtcheck`） | 基因型错误模型 `e = 10^(−E/10)`（`--error-probability` 默认 40），逐位点对每个可能的真基因型取 `cost(a,G)+cost(b,G)` 的最小值后求和；`--mismatch-count` 改为直接数失配数 | `PREFIX.gtcheck` |
+| `grm` (alias `rel`) | `A_ij = Σ W_is·W_js / denominator`; the denominator is the jointly-called site count by default, `--mean-impute` switches to all sites m. The diagonal is `ΣW²/m`, not forced to 1 | `PREFIX.rel` |
+| `cov` | Same as grm but without dividing by sd (centering kept), giving covariance scale | `PREFIX.rel` |
+| `king` | Counts four genotype combinations at jointly called sites (ibs0, double het, het1-hom2, het2-hom1), `φ = 0.5 − (4·ibs0 + h1h2 + h2h1) / (4·(hethet + min(h1h2, h2h1)))`; a zero denominator writes NaN | `PREFIX.king` |
+| `pihat` (alias `genome`) | Solves the IBS coefficients per pair: `z0 = ibs0/(e00·n)`, `z1 = ibs1/(e11·n)`, `z2 = (oo − n(z0·e02 + z1·e12))/n`, expected coefficients accumulated from site allele frequencies; clipped to [0,1] (`--unbounded` turns clipping off; `--nudge` snaps to `z0=(1−π)², z1=2π(1−π), z2=π²` when `π² < z2`); `PI_HAT = z1/2 + z2` | `PREFIX.genome` |
+| `phi` (alias `relatedness2`) | `φ = (N_AaAa − 2·N_AAaa)/(N_Aa[i] + N_Aa[j])`, the denominator being the sum of both samples' heterozygous site counts (marginal counts); diagonal 0.5 | `PREFIX.relatedness2` |
+| `ajk` (alias `relatedness`) | Only sites with frequencies strictly inside (0,1): `A_ij = mean (a−2p)(b−2p)/(2p(1−p))`; the diagonal adds a `x² − (1+2p)x + 2p²` term to the same numerator | `PREFIX.relatedness` |
+| `discordance` (alias `gtcheck`) | Genotype error model `e = 10^(−E/10)` (`--error-probability` default 40); per site, `cost(a,G)+cost(b,G)` is minimized over every possible true genotype and summed; `--mismatch-count` counts mismatches directly | `PREFIX.gtcheck` |
 
-矩阵型输出（dist、mibs、mdist、rel、king）附 `PREFIX.<suffix>.id` 边车（两列样本名）。表格型输出（genome、relatedness2、relatedness、gtcheck）按各自表格布局写，`.genome` 的 DST/PPC/RATIO 列写占位 0。
+Matrix outputs (dist, mibs, mdist, rel, king) carry a `PREFIX.<suffix>.id` sidecar (two sample-name columns). Table outputs (genome, relatedness2, relatedness, gtcheck) follow their own table layouts; the DST/PPC/RATIO columns of `.genome` are placeholder 0.
 
-## 输出布局
+## Output layout
 
-`--format` 只作用于矩阵型输出：
+`--format` applies to matrix outputs only:
 
-| 格式 | 布局 |
+| Format | Layout |
 |---|---|
-| `triangle`（默认） | 下三角含对角线：第 i 行是 `d(i,0)..d(i,i)`，9 位小数，tab 分隔 |
-| `square` | 完整 N×N 方阵 |
-| `square0` | 方阵，右上三角置 0 |
-| `bin` | 无表头的 n² 个小端 f64，二进制直接可读 |
+| `triangle` (default) | Lower triangle with the diagonal: row i holds `d(i,0)..d(i,i)`, 9 decimals, tab-separated |
+| `square` | Full N×N matrix |
+| `square0` | Matrix with the upper right zeroed |
+| `bin` | n² little-endian f64 values, no header, directly readable from binary |
 
-## 建树
+## Trees
 
-`--tree` 只接受对角线为零的距离型矩阵。相似度类型（grm、cov、king、ibs、pihat、phi）会被拒绝，错误信息列出可用的距离类型：`1-ibs`、`allele-ct`、`ajk`、`discordance`。
+`--tree` accepts only distance matrices with a zero diagonal. Similarity types (grm, cov, king, ibs, pihat, phi) are rejected and the error lists usable distance types: `1-ibs`, `allele-ct`, `ajk`, `discordance`.
 
-| 方法 | 算法 |
+| Method | Algorithm |
 |---|---|
-| `nj` | 邻接法：Q 矩阵 `Q(i,j) = (n−2)d(i,j) − S_i − S_j` 取最小者合并，新枝长 `d(i,u) = d(i,j)/2 + (S_i−S_j)/(2(n−2))`，归约 `d(u,k) = (d_ik + d_jk − d_ij)/2`；负枝长保留不截断；最后三个分类群并到一个中心节点；结果无根，共 `2n−3` 条边 |
-| `upgma` | 算术平均连锁（Lance-Williams 更新），合并距离对半分成枝长；超度量输入精确还原；结果有根 |
+| `nj` | Neighbor joining: merge the pair minimizing the Q matrix `Q(i,j) = (n−2)d(i,j) − S_i − S_j`, new branch `d(i,u) = d(i,j)/2 + (S_i−S_j)/(2(n−2))`, reduction `d(u,k) = (d_ik + d_jk − d_ij)/2`; negative branches are kept, not truncated; the last three taxa merge into a central node; the result is unrooted with `2n−3` edges |
+| `upgma` | Average linkage (Lance-Williams update), the merged distance split in half for branch lengths; ultrametric input is recovered exactly; the result is rooted |
 
-建树前校验距离阵：方阵、有限值、对角线为零、对称（容差 1e-9）。Newick 输出的尾零剪掉，标签里的保留字符加单引号。
+Before building, the distance matrix is checked: square, finite, zero diagonal, symmetric (tolerance 1e-9). Trailing zeros are trimmed in Newick output and reserved characters in labels are single-quoted.
 
-## 自展支持度
+## Bootstrap support
 
-- 支持度按分支计：每个内节点的后代尖端集合（无根树取包含尖端 0 的二分）在重复中出现的比例，写成百分数；根节点的标签是 100。
-- 每次重复重新标准化、重跑同一个 `--type`、重建同一种树。
-- 失败的重复（如重采样后无可用位点）跳过并计数，支持度分母相应减小。
+- Support is counted per branch: the fraction of replicates in which an internal node's descendant tip set appears (for unrooted trees, the split containing tip 0), written as a percentage; the root label is 100.
+- Each replicate re-standardizes, reruns the same `--type` and rebuilds the same tree.
+- Failed replicates (for example no usable site after resampling) are skipped and counted; the support denominator shrinks accordingly.
 
-## 例子
+## Examples
 
 ```bash
-# 遗传关系矩阵
+# genetic relationship matrix
 reed distance clean.vcf.gz --type grm -o rel
 
-# 协方差尺度（不除以 sd）
+# covariance scale (no division by sd)
 reed distance clean.vcf.gz --type cov -o cov
 
-# 亲缘度矩阵（输入应是常染色体位点）
+# kinship matrix (autosomal sites expected)
 reed distance clean.vcf.gz --type king -o kin
 
-# 相关度表
+# relatedness tables
 reed distance clean.vcf.gz --type phi -o rela
 reed distance clean.vcf.gz --type ajk -o yang
 
-# 距离矩阵与 IBS
+# distance matrix and IBS
 reed distance clean.vcf.gz --type allele-ct -o d
 reed distance clean.vcf.gz --type 1-ibs -o ibsd
 
-# 不一致率，Phred 错误率 30
+# discordance with Phred error 30
 reed distance clean.vcf.gz --type discordance --error-probability 30 -o disc
 
-# 完整方阵与二进制输出
+# full square and binary output
 reed distance clean.vcf.gz --type grm --format square -o rel
 reed distance clean.vcf.gz --type 1-ibs --format bin -o ibsd
 
-# NJ 树，100 次自展，只留支持度 ≥ 50 的标签
+# NJ tree, 100 bootstraps, labels kept only at support >= 50
 reed distance clean.vcf.gz --type 1-ibs --tree nj \
     --bootstrap 100 --bootstrap-cutoff 50 -o tree
 ```
 
-`rel.rel`（`--format triangle` 默认布局，第 i 行到第 i 列）与 `rel.rel.id`：
+`rel.rel` (`--format triangle` default layout, row i up to column i) and `rel.rel.id`:
 
 ```
 1.310800633
@@ -147,7 +156,7 @@ s2	s2
 s3	s3
 ```
 
-`rela.relatedness2`（`--type phi`，完整矩阵两个方向都写）：
+`rela.relatedness2` (`--type phi`, both directions written):
 
 ```
 INDV1	INDV2	N_AaAa	N_AAaa	N1_Aa	N2_Aa	RELATEDNESS_PHI
@@ -156,7 +165,7 @@ s1	s2	12	26	37	31	-0.588235294
 s1	s3	6	29	37	30	-0.776119403
 ```
 
-`kin.genome`（`--type pihat`，严格下三角；DST/PPC/RATIO 是占位列）：
+`kin.genome` (`--type pihat`, strictly lower triangle; DST/PPC/RATIO are placeholder columns):
 
 ```
 FID1	IID1	FID2	IID2	RT	EZ	Z0	Z1	Z2	PI_HAT	PHE	DST	PPC	RATIO
@@ -164,7 +173,7 @@ s2	s2	s1	s1	OT	NA	1.0000	0.0000	0.0000	0.0000	-9	0	0	0
 s3	s3	s1	s1	OT	NA	1.0000	0.0000	0.0000	0.0000	-9	0	0	0
 ```
 
-`tree.nwk`，内节点的数字是自展支持度：
+`tree.nwk`, with bootstrap support at internal nodes:
 
 ```
 (((s1:0.2010492714,s4:0.2172579309)35:0.01874847015,

@@ -1,46 +1,46 @@
-# 输出与日志
+# Output and logging
 
-输出文件名、数值格式、日志与报告的公共约定都收在这一页；每个命令自己特有的输出文件和列，写在各自命令页里。
+Output file names, numeric formats, logs and reports follow common conventions collected on this page; the output files and columns specific to each command live on its own page.
 
-## -o 的两种含义
+## What `-o` means
 
-| 命令 | `-o` 含义 | 缺省行为 |
+| Command | `-o` means | Default |
 |---|---|---|
-| `filter`、`rename` | 输出文件路径 | stdout |
-| `index` | 索引文件路径 | 写在输入旁 |
-| `convert` | 输出前缀（`--vcf` 时是文件路径） | 取输入文件名去扩展名；stdin 无 `-o` 报错 |
-| `stats`、`popg`、`pca`、`distance` | 输出前缀 | 无缺省，空缺报错 |
+| `filter`, `rename` | output file path | stdout |
+| `index` | index file path | next to the input |
+| `convert` | output prefix (a file path with `--vcf`) | input file name minus extension; stdin without `-o` is an error |
+| `stats`, `popg`, `pca`, `distance` | output prefix | no default, an empty value is an error |
 
-`stats` 和 `popg` 没有 stdout 模式；`-o` 为空串报错（会在工作目录写出隐藏文件）。
+`stats` and `popg` have no stdout mode; an empty `-o` is an error (it would write hidden files in the working directory).
 
-## 数值格式
+## Numeric format
 
-- 零分母、无覆盖、空窗口的估计量写 `NA`，不写 0。
-- 坐标是 1-based 闭区间；BED 输入按 BED 的 0-based 半开约定读取并转成 1-based。
-- 浮点输出多位小数（矩阵 9 位），分位数与比例原精度输出。
+- Estimates with a zero denominator, no coverage or an empty window write `NA`, not 0.
+- Coordinates are 1-based closed intervals; BED input is read as 0-based half-open and converted to 1-based.
+- Floats carry many decimals (9 for matrices); quantiles and proportions keep full precision.
 
-## 溯源 header
+## Provenance header
 
-`filter` 和 `rename` 会在 header 里插入：
+`filter` and `rename` insert into the header:
 
 ```
-##reed_version=<版本>
-##reed_command=<原始 argv>        # --no-command 省略
-##reed_filterCommand=<规范化命令>  # 仅 filter
-##reed_filter_spec=<规范化 JSON>   # 仅 filter
-##reed_filter_sha256=<规范 JSON 哈希>
-##reed_rename=<触碰的平面>         # 仅 rename
+##reed_version=<version>
+##reed_command=<raw argv>          # --no-command omits it
+##reed_filterCommand=<normalized command>  # filter only
+##reed_filter_spec=<normalized JSON>       # filter only
+##reed_filter_sha256=<hash of the normalized JSON>
+##reed_rename=<planes touched>     # rename only
 ```
 
-`--no-version` 省掉全部 `##reed_*` 行；`--no-command` 只省原始 argv 那行（它含机器路径）。
+`--no-version` removes every `##reed_*` line; `--no-command` removes only the raw-argv line (the one with machine paths).
 
 ## PREFIX.log
 
-`popg` 的窗口模式与 `convert` 都写 `PREFIX.log`，内容包括：reed 版本、完整命令行、每个统计量的方法与文献（如 π 的估计式与缺失数据处理方式）、不变位点模式、窗口与记录计数、`convert` 的目标与计数器（总记录数、缺样本跳过数、多字符位点数、畸形行数）。
+`popg` in window mode and `convert` both write `PREFIX.log`: reed version, the full command line, method and literature per statistic (for π, the estimator and its missing-data treatment), invariant-site mode, window and record counts, and for `convert` the targets and counters (total records, samples skipped per site, multi-character sites, malformed rows).
 
-## filter 的 JSON 报告
+## filter's JSON report
 
-`--report FILE` 输出一轮过滤的完整账目：
+`--report FILE` writes the full accounting of one filtering run:
 
 ```json
 {
@@ -61,12 +61,12 @@
 }
 ```
 
-漏斗按规则列出累计通过数，规则 id 与[求值顺序](commands.md)的阶段对应（`site.regions`、`after_mask.missing`、`after_mask.ld_prune` 等）。`--mind` 的样本规则单列在 `sample_rule`；LD 剪枝计数在 `ld_prune`。`--timing FILE` 另给各阶段毫秒数。
+The funnel lists cumulative passes per rule; rule ids correspond to the stages in [evaluation order](commands.md) (`site.regions`, `after_mask.missing`, `after_mask.ld_prune`, ...). `--mind` sample rules appear separately under `sample_rule`; LD pruning counts under `ld_prune`. `--timing FILE` adds milliseconds per stage.
 
-## 退出码
+## Exit codes
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| 0 | 成功 |
-| 1 | 运行期失败（错误带 `contig:pos` 定位） |
-| 2 | 用法错误（参数冲突、标签未声明、表达式编译失败、群体缺失等） |
+| 0 | success |
+| 1 | runtime failure (the message carries a `contig:pos` location) |
+| 2 | usage error (conflicting options, undeclared tags, expression compile failure, missing populations, ...) |

@@ -1,45 +1,45 @@
-# 安装
+# Installation
 
-## 编译要求
+## Build requirements
 
-Rust 1.91 或更高版本。仓库根目录的 `rust-toolchain.toml` 记录了开发用的工具链版本，装好 rustup 之后进入仓库目录会自动切换。
+Rust 1.91 or newer. `rust-toolchain.toml` in the repository root records the toolchain used for development; with rustup installed, entering the repository directory switches to it automatically.
 
-reed 是纯 Rust 实现，VCF/BCF 解析、BGZF 编解码、索引写入都在 crate 内部完成，编译和运行不需要额外的 C 库依赖。
+reed is a pure Rust implementation: VCF/BCF parsing, BGZF encoding and decoding, and index writing all live inside the crate. Building and running need no extra C library dependencies.
 
-## 从源码安装命令行
+## Install the command line from source
 
 ```bash
 cargo install --path crates/reed-cli
 reed --version
 ```
 
-`cargo install` 把二进制装到 `~/.cargo/bin`，确认它在 PATH 里。`reed --version` 的长格式带构建信息：
+`cargo install` puts the binary in `~/.cargo/bin`; make sure that directory is on PATH. The long form of `reed --version` carries build information:
 
 ```
 reed 0.4.0 (v0.3.0-112-g53729ef 2026-10-28, rustc 1.99.1)
 ```
 
-括号里是 git 提交、构建日期和 rustc 版本，从 git tarball 构建时显示 `unknown`。
+The parentheses hold the git commit, build date and rustc version; a build from a git tarball shows `unknown` instead.
 
-也可以只构建不安装，二进制在 `target/release/reed`：
+To build without installing, the binary lands in `target/release/reed`:
 
 ```bash
 cargo build --release
 ```
 
-## 运行时资源
+## Runtime resources
 
-- 线程：`--threads N`，默认 `std::thread::available_parallelism()`，即全部可用核。
-- 内存：`--memory MB`，单位 MiB，默认物理内存的一半。预算约束的是中间数据，不等于进程峰值的硬上限。
-- 临时目录：`filter` 在 stdin 输入需要多遍处理时会把输入溢写到 `--tmp-dir`（默认系统临时目录）。
+- Threads: `--threads N`, default `std::thread::available_parallelism()`, i.e. every available core.
+- Memory: `--memory MB`, in MiB, default half of physical memory. The budget constrains intermediate data, not the process peak.
+- Temporary directory: when `filter` needs multiple passes over stdin, it spills the input to `--tmp-dir` (default: the system temporary directory).
 
-## 作为库引用
+## Using it as a library
 
-只需要库、不要命令行的话：
+To use the library without the command line:
 
 ```toml
 [dependencies]
 reed = { path = "crates/reed" }
 ```
 
-路径依赖适合仓库内引用。稳定承诺只在 crate 根（`crates/reed`），`crates/` 下层的 crate 是内部实现，类型和签名随时可能变。用法见[库调用](library.md)。
+A path dependency suits use inside the repository. The stability promise covers the crate root (`crates/reed`) only; crates below `crates/` are internal implementation whose types and signatures may change at any time. See [Library use](library.md).

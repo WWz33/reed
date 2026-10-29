@@ -1,187 +1,213 @@
 # filter
 
-## 用法
+## Usage
 
 ```
 reed filter [OPTIONS] <INPUT>
 ```
 
-硬过滤：位点与样本选择、基因型掩码、QC 阈值、LD 剪枝。默认只保留双等位位点（`-M 2`），输出写 stdout，`-o` 改写到文件。只输出 VCF，不做统计汇总。
+Hard filtering: site and sample selection, genotype masking, QC thresholds, LD pruning. Biallelic sites are kept by default (`-M 2`); output goes to stdout unless `-o` names a file. The command writes VCF only, no statistics.
 
-## 参数
+## Options
 
-### 输入与区域
-
-```
-<INPUT>                     VCF/VCF.gz/BCF；- 读 stdin。多遍运行（--mind、LD 剪枝）
-                            先溢写到 --tmp-dir
--r, --regions LIST          只要这些区域，逗号分隔：chr1、chr1:100、chr1:100-200、
-                            chr1:100-、chr1:-200。需要输入旁有 .csi/.tbi 索引
--R, --regions-file FILE     区域清单文件，一行一个。三列及以上按 BED 读（0-based 半开），
-                            两列按 CHROM POS（1-based），一列按区域串。需要索引
--t, --targets LIST          同样的区域写法，流式处理，不需要索引
--T, --targets-file FILE     区域清单文件，格式同 -R；行首 ^ 表示排除。不需要索引
-```
-
-`#` 注释行与空行跳过。
-
-### 样本选择
+### Input and regions
 
 ```
--s, --samples [^]LIST       只要这些样本，逗号分隔；^ 前缀取补（^A,B 是除 A、B 外全要）
--S, --samples-file FILE     样本名单放文件，一行一个
-    --keep FILE             同 -S，另一种拼写
-    --remove FILE           要丢掉的样本名单，一行一个
-    --force-samples         名单里出现 header 没有的样本名时只警告，不报错
-    --mind FLOAT            缺失率高于 FLOAT 的样本丢掉。按缺失等位 / 2·位点计，
-                            统计范围是掩码之后、通过掩码前规则的位点；在
-                            --geno/--maf/--hwe 之前执行；边界值保留
+<INPUT>                     VCF/VCF.gz/BCF; `-` reads stdin. Multi-pass runs
+                            (--mind, LD pruning) spill stdin to --tmp-dir first
+-r, --regions LIST          Keep these regions, comma-separated: chr1, chr1:100,
+                            chr1:100-200, chr1:100-, chr1:-200. Needs a
+                            .csi/.tbi index next to the input
+-R, --regions-file FILE     Region list, one per line. Three or more columns are
+                            read as BED (0-based half-open), two columns as
+                            CHROM POS (1-based), one column as a region string.
+                            Needs an index
+-t, --targets LIST          Same region syntax, streamed without an index
+-T, --targets-file FILE     Region list file, same format as -R; a leading ^
+                            excludes the region. No index needed
 ```
 
-`-S` 与 `--keep` 同给、`-s` 与 `-S/--keep` 同给、`-s ^…` 与 `--remove` 同给都是用法错。
+`#` comment lines and blank lines are skipped.
 
-### 位点选择
+### Sample selection
 
 ```
--v, --types LIST            保留这些变异类型：snps、mnps、indels、other、ref
--V, --exclude-types LIST    丢掉这些变异类型
-    --snps-only[=just-acgt] 只留 SNP。裸写是任意单碱基替换；=just-acgt 额外要求每个
-                            REF/ALT 都在 A/C/G/T 内
--m, --min-alleles INT       等位数下限，REF+ALT 计
--M, --max-alleles INT       等位数上限，REF+ALT 计。默认 2；-M 1 只留不变位点
--f, --apply-filters LIST    FILTER 列在 LIST 里的记录才留，逗号分隔多个值
--i, --include EXPR          保留满足表达式的记录，可重复（见过滤表达式页）
--e, --exclude EXPR          丢掉满足表达式的记录，可重复
+-s, --samples [^]LIST       Keep these samples, comma-separated; a ^ prefix
+                            complements (^A,B = everything except A and B)
+-S, --samples-file FILE     Sample list in a file, one name per line
+    --keep FILE             Same as -S, alternative spelling
+    --remove FILE           Samples to drop, one name per line
+    --force-samples         Names absent from the header only warn, no error
+    --mind FLOAT            Drop samples whose missing rate exceeds FLOAT,
+                            counted as missing alleles / 2·sites over the sites
+                            that pass the pre-mask rules and after masking;
+                            runs before --geno/--maf/--hwe; boundary kept
+```
+
+`-S` with `--keep`, `-s` with `-S/--keep`, and `-s ^…` with `--remove` are usage errors.
+
+### Site selection
+
+```
+-v, --types LIST            Keep these variant types: snps, mnps, indels, other, ref
+-V, --exclude-types LIST    Drop these variant types
+    --snps-only[=just-acgt] Keep SNP sites. Bare means any single-base
+                            substitution; =just-acgt also requires every
+                            REF/ALT to be in A/C/G/T
+-m, --min-alleles INT       Minimum allele count, REF+ALT
+-M, --max-alleles INT       Maximum allele count, REF+ALT. Default 2; -M 1
+                            keeps only invariant sites
+-f, --apply-filters LIST    Keep records whose FILTER is in LIST, comma-separated
+-i, --include EXPR          Keep records that satisfy the expression, repeatable
+                            (see the filter expressions page)
+-e, --exclude EXPR          Drop records that satisfy the expression, repeatable
 -g, --genotype [^](hom|het|miss)
-                            按基因型组成选位点：hom 存在纯合变异、het 存在杂合、
-                            存在缺失；可重复，之间是 AND；^ 取反。半调用按缺失算
+                            Select sites by genotype composition: hom a
+                            homozygous-alt call, het a heterozygous call, miss a
+                            missing call; repeatable, combined with AND; ^
+                            negates. A half-call counts as missing
 ```
 
-### 基因型掩码
+### Genotype masking
 
 ```
-    --min-dp INT            FMT/DP 低于 INT 的基因型当作没测到；DP 本身缺失的不受影响。
-                            别名 --vcf-min-dp
-    --max-dp INT            FMT/DP 高于 INT 的基因型当作没测到。别名 --vcf-max-dp
-    --min-gq INT            FMT/GQ 低于 INT 的基因型当作没测到；GQ 缺失的不动。
-                            别名 --vcf-min-gq
-    --set-gts .             配合 -i/-e：FORMAT 表达式按样本逐个求值，命中的基因型置为
-                            缺失，位点本身保留。只接受 .
+    --min-dp INT            Genotypes with FMT/DP below INT count as uncalled;
+                            a missing DP never masks. Alias --vcf-min-dp
+    --max-dp INT            Genotypes with FMT/DP above INT count as uncalled.
+                            Alias --vcf-max-dp
+    --min-gq INT            Genotypes with FMT/GQ below INT count as uncalled;
+                            a missing GQ never masks. Alias --vcf-min-gq
+    --set-gts .             With -i/-e: the FORMAT expression is evaluated per
+                            sample, matching genotypes become missing and the
+                            site stays. Only `.` is accepted
 ```
 
-掩码掉的基因型按缺失参与下面所有位点阈值。
+Masked genotypes count as missing in every site threshold below.
 
-### 频率与缺失阈值
+### Frequency and missingness thresholds
 
 ```
-    --geno FLOAT            缺失等位比例超过 FLOAT 的位点丢掉，按掩码之后计。按等位计：
-                            半调用算 1 个已调用等位，全缺失的基因型算 2 个缺失；
-                            边界值保留
-    --maf FLOAT             次要等位频率低于 FLOAT 的位点丢掉（掩码之后）
-    --max-maf FLOAT         次要等位频率上限
-    --mac INT               次要等位计数下限
-    --max-mac INT           次要等位计数上限。别写 --max-mac 0：0 是内部的"关闭"值，
-                            会被拒绝；要 MAC ≤ 1 写 1
--q, --min-af FLOAT[:type]   等位频率下限。优先读 INFO/AC、INFO/AN（样本集没被改过时），
-                            否则按基因型现算。:type 选口径：nref 非参考等位（默认）、
-                            alt1 第一个 ALT、minor 次要、major 主要、nonmajor 非主要
--Q, --max-af FLOAT[:type]   等位频率上限，:type 同 -q
-    --hwe P [midp]          HWE 精确检验 p 值低于 P 的位点丢掉；可选 midp 用 mid-p 值
+    --geno FLOAT            Drop sites whose missing-allele fraction exceeds
+                            FLOAT, counted after masking. Per allele: a
+                            half-call counts as 1 called allele, a fully missing
+                            genotype as 2 missing; boundary kept
+    --maf FLOAT             Drop sites whose minor allele frequency is below
+                            FLOAT (after masking)
+    --max-maf FLOAT         Upper bound on the minor allele frequency
+    --mac INT               Lower bound on the minor allele count
+    --max-mac INT           Upper bound on the minor allele count. Do not write
+                            --max-mac 0: 0 is the internal "off" value and is
+                            rejected; for MAC ≤ 1 write 1
+-q, --min-af FLOAT[:type]   Lower bound on allele frequency. Reads INFO/AC and
+                            INFO/AN when the sample set is unchanged, otherwise
+                            recomputes from genotypes. :type picks the allele:
+                            nref non-reference (default), alt1 first ALT, minor,
+                            major, nonmajor
+-Q, --max-af FLOAT[:type]   Upper bound on allele frequency, same :type values
+    --hwe P [midp]          Drop sites whose HWE exact-test p is below P;
+                            optional midp uses the mid-p value
 ```
 
-`-q/-Q` 优先用 INFO 里的 AC/AN，`--maf` 总是按基因型现算。样本子集或掩码改动了样本集后，`-q/-Q` 改按基因型重算并提示"陈旧 INFO"。
+`-q/-Q` prefer AC/AN from INFO; `--maf` always recomputes from genotypes. When a sample subset or masking changes the sample set, `-q/-Q` switch to genotypes and report stale INFO.
 
-### LD 剪枝
+### LD pruning
 
 ```
     --indep-pairwise W[kb] [S] R2
-                            窗口、步长、r² 上限。窗口按位点数计（写 50kb 则按碱基距离，
-                            此时步长必须是 1）。窗口内 r² 超过 R2 的位点对剪掉次要等位
-                            频率更低的那个。输出就是剪枝后的 VCF
+                            Window, step, r² ceiling. The window counts variant
+                            sites (write 50kb for base-pair distance, in which
+                            case the step must be 1). For pairs inside the window
+                            with r² above R2, the site with the lower minor
+                            allele frequency is dropped. The output is the
+                            pruned VCF
 ```
 
-### 输出
+### Output
 
 ```
 -O, --output-type v|z|b|u[0-9]
-                            v 纯文本 VCF、z BGZF VCF、b BCF、u 未压缩 BCF；
-                            可带压缩级别（-Oz6、-Ob1）
--o, --output FILE           输出文件；不给写 stdout。指向输入文件本身会被拒绝。
-                            不给 -O 时按扩展名猜（.gz 压缩、.bcf 走 BCF）。
-                            别名 --out
--W, --write-index[=csi|tbi] 边写边建索引：-W 或 -W=csi（默认）、-W=tbi；不给不建。
-                            只对 BGZF 输出有效，且必须给了 -o
-    --report FILE           JSON 运行报告：每条规则的累计通过数、掩码归因、
-                            --mind 丢弃数、LD 剪枝数、耗时
-    --timing FILE           各阶段毫秒数
-    --no-version            header 里不写 ##reed_* 溯源行
-    --no-command            只省掉 ##reed_command 行（含机器路径的原始 argv），
-                            其余溯源行保留
-    --tmp-dir DIR           多遍运行的 stdin 溢写目录
-    --threads INT           工作线程数，默认全部可用核
-    --memory MB             在途内存预算，MiB，默认物理内存一半
-    --verbosity INT         0 静默、1 摘要（默认）、2 阶段耗时、3 调试
+                            v plain VCF, z BGZF VCF, b BCF, u uncompressed BCF;
+                            an optional compression level (-Oz6, -Ob1)
+-o, --output FILE           Output file; without it, stdout. Pointing at the
+                            input itself is rejected. Without -O the extension
+                            decides (.gz compressed, .bcf for BCF). Alias --out
+-W, --write-index[=csi|tbi] Build the index while writing: -W or -W=csi
+                            (default), -W=tbi; omit for no index. BGZF output
+                            only, and requires -o
+    --report FILE           JSON run report: per-rule cumulative passes, mask
+                            attribution, --mind drops, LD pruning counts, time
+    --timing FILE           Milliseconds per stage
+    --no-version            No ##reed_* provenance header lines
+    --no-command            Omit only the ##reed_command line (the raw argv with
+                            machine paths); other provenance lines stay
+    --tmp-dir DIR           Spill directory for multi-pass stdin runs
+    --threads INT           Worker threads, default all available cores
+    --memory MB             In-flight memory budget in MiB, default half of
+                            physical memory
+    --verbosity INT         0 silent, 1 summary (default), 2 stage timing, 3 debug
 ```
 
-### INFO 标签
+### INFO tags
 
 ```
--I, --no-update             不更新 INFO/AC、INFO/AN。默认样本集变了就按新样本集重算
--x, --remove-info LIST      删掉这些 INFO 标签。默认删 AC,AN,AF,MLEAC,MLEAF,
-                            ExcessHet,InbreedingCoeff,DP；-x '' 表示一个都不删
-    --fill-tags LIST        按当前样本集重算并写入：AC、AN、NS、MAF、HWE，
-                            大小写不敏感；不支持的标签是用法错
+-I, --no-update             Leave INFO/AC and INFO/AN alone. By default they
+                            are recomputed whenever the sample set changes
+-x, --remove-info LIST      Drop these INFO tags. Default: AC,AN,AF,MLEAC,MLEAF,
+                            ExcessHet,InbreedingCoeff,DP; -x '' drops none
+    --fill-tags LIST        Recompute and write these tags from the current
+                            sample set: AC, AN, NS, MAF, HWE, case-insensitive;
+                            unsupported tags are usage errors
 ```
 
-## 求值顺序
+## Evaluation order
 
-每条记录按固定顺序过八个阶段。顺序决定漏斗计数，不影响最终结果；唯一影响结果的是 `--mind` 在掩码之后：
+Every record passes eight stages in a fixed order. The order decides the funnel counts, not the final result; the one rule that changes the result is `--mind` running after masking:
 
-1. 样本子集与区域/位置选择
-2. 载入期位点过滤：`-v/-V/--snps-only/-m/-M/-f`
-3. 不依赖基因型的 `-i/-e`
-4. 基因型掩码：`--min-dp/--max-dp/--min-gq`、`--set-gts .` 加 FORMAT 表达式
+1. Sample subset and region/position selection
+2. Load-time site filters: `-v/-V/--snps-only/-m/-M/-f`
+3. Genotype-independent `-i/-e`
+4. Genotype masking: `--min-dp/--max-dp/--min-gq`, `--set-gts .` with FORMAT expressions
 5. `--mind`
-6. `--geno`、`--hwe`、`--maf/--max-maf/--mac/--max-mac`、依赖基因型的 `-i/-e`
-7. LD 剪枝（`--indep-pairwise`，需要全局位点顺序）
-8. INFO 更新（`-x` → AC/AN 自动更新 → `--fill-tags`）与输出
+6. `--geno`, `--hwe`, `--maf/--max-maf/--mac/--max-mac`, genotype-dependent `-i/-e`
+7. LD pruning (`--indep-pairwise`, needs the global site order)
+8. INFO updates (`-x` → automatic AC/AN update → `--fill-tags`) and output
 
-需要第一遍全局信息的规则（`--mind`、LD 剪枝）先扫一遍输入，第二遍再产出。
+Rules that need a first pass over the whole input (`--mind`, LD pruning) scan once, then emit on a second pass.
 
-`--max-missing` 这类旧拼写没有静默别名：`--max-missing 0.9` 被拒绝，错误信息要求改用 `--geno 0.1`（含义相反，0.9 是必须调用的比例）。
+Removed spellings have no silent alias: `--max-missing 0.9` is rejected with an error that asks for `--geno 0.1` (opposite meaning: 0.9 is the fraction that must be called).
 
-## 例子
+## Examples
 
 ```bash
-# 区域查询，需要先 reed index 建索引
+# region query, needs a reed index first
 reed filter raw.vcf.gz -r chr1,chr2:1000-200000 -R targets.bed -o region.vcf.gz -Ov
 
-# 位点类型与表达式组合
+# variant types and expression filters combined
 reed filter raw.vcf.gz --snps-only=just-acgt -M 2 -f PASS -i 'QUAL>30' -e 'F_MISSING>0.1' -o snp.vcf.gz -Oz
 
-# 样本子集，顺带按缺失率丢样本
+# sample subset, dropping samples by missing rate on the way
 reed filter raw.vcf.gz -s sampleA,sampleB --mind 0.2 -o subset.vcf.gz -Oz
 
-# 基因型掩码：低深度、高深度、低 GQ 都当作没测到
+# genotype masking: low depth, high depth and low GQ all count as uncalled
 reed filter raw.vcf.gz --min-dp 5 --min-gq 20 --max-dp 100 -o masked.vcf.gz -Oz
 
-# 按表达式掩码，用 --set-gts 把命中样本的基因型置缺失
+# mask by expression, --set-gts turns matching genotypes into missing calls
 reed filter raw.vcf.gz -e 'FMT/DP<5 || FMT/GQ<20' --set-gts . -o masked.vcf.gz -Oz
 
-# 位点阈值
+# site thresholds
 reed filter clean.vcf.gz --geno 0.1 --maf 0.05 --hwe 1e-6 -o qc.vcf.gz -Oz
 
-# LD 剪枝；输出就是剪枝后的 VCF
+# LD pruning; the output is the pruned VCF
 reed filter clean.vcf.gz --indep-pairwise 50 5 0.2 -Oz6 -o pruned.vcf.gz
 
-# 重算 INFO 标签，不删任何旧标签
+# recompute INFO tags, dropping none of the old ones
 reed filter raw.vcf.gz --fill-tags AC,AN,NS,MAF,HWE -x '' -o annotated.vcf.gz -Oz
 
-# 带 JSON 报告、分阶段计时和索引
+# JSON report, per-stage timing and an index
 reed filter raw.vcf.gz -o clean.vcf.gz -Oz6 -W --report clean.json --timing clean.timing
 ```
 
-跑完 stderr 一行摘要加过滤漏斗：
+On completion stderr carries one summary line plus the filter funnel:
 
 ```
 reed filter: 500 -> 131 records (10 of 10 samples), strategy single_pass, 0.0s
@@ -192,4 +218,4 @@ funnel:
   after_mask.hwe               131
 ```
 
-`funnel` 的每行是一条规则过后的剩余位点数。`--mqf`、`--min-mean-dp` 这类未实现的参数在解析期就报错，不会跑一半才失败。
+Each `funnel` line is the number of sites left after one rule. Unimplemented parameters such as `--mqf` or `--min-mean-dp` fail at parse time, not halfway through a run.

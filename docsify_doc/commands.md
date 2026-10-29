@@ -1,63 +1,64 @@
-# 命令与全局约定
+# Commands and global conventions
 
-`reed --help` 按组列出命令：Filtering（`filter`）、Statistics（`stats`、`popg`、`pca`）、Relatedness（`distance`）、Transform（`convert`、`rename`）、File Operations（`index`）。`reed <command> --help` 列出某个命令的全部参数。
+`reed --help` lists commands by group: Filtering (`filter`), Statistics (`stats`, `popg`, `pca`), Relatedness (`distance`), Transform (`convert`, `rename`), File Operations (`index`). `reed <command> --help` lists every option of one command.
 
-## 全局参数
+## Global options
 
-每个子命令都接受：
-
-```
-<INPUT>                 输入 VCF/VCF.gz/BCF；- 读 stdin（index 拒绝 stdin，
-                        索引需要可定位的文件）
-    --threads INT       工作线程数，默认全部可用核
-    --memory MB         在途内存预算，单位 MiB，默认物理内存一半
-    --verbosity INT     0 静默；1 摘要（默认）；2 阶段计时；3 调试日志
-                        （走 RUST_LOG，默认 debug）；大于 3 报错
-```
-
-仅 `filter` 有：
+Every subcommand accepts:
 
 ```
-    --tmp-dir DIR       多遍运行的 stdin 溢写目录
-    --report FILE       JSON 运行报告：过滤漏斗、样本规则、计数器、策略
-    --timing FILE       分阶段计时（key-value 文本）
+<INPUT>                 VCF/VCF.gz/BCF; `-` reads stdin (index rejects stdin,
+                        an index needs a seekable file)
+    --threads INT       Worker threads, default all available cores
+    --memory MB         In-flight memory budget in MiB, default half of
+                        physical memory
+    --verbosity INT     0 silent; 1 summary (default); 2 stage timing; 3 debug
+                        logs (via RUST_LOG, default debug); above 3 is an error
 ```
 
-`filter` 和 `rename` 另有 `--no-version`（省掉全部 `##reed_*` 溯源行）和 `--no-command`（只省 `##reed_command`，即含机器路径的原始 argv）。
+`filter` additionally has:
 
-## 长度与数值写法
+```
+    --tmp-dir DIR       Spill directory for multi-pass stdin runs
+    --report FILE       JSON run report: filter funnel, sample rules, counters, strategy
+    --timing FILE       Per-stage timing (key-value text)
+```
 
-长度参数（`--window`、`--step`、`--block-size`、`--flank`、`--ld-decay`、`--indep-pairwise` 的窗口）接受 `100000`、`100k`、`100kb`、`1M`、`1Mb`，后缀大小写不敏感，k 是 10³，M 是 10⁶。缺失率阈值（`--geno`、`--mind`、`--maf`、`--hwe`）是小数，范围 [0,1]。
+`filter` and `rename` also accept `--no-version` (drop every `##reed_*` provenance line) and `--no-command` (drop only `##reed_command`, the raw argv with machine paths).
 
-## 共享参数组
+## Length and number syntax
 
-三组参数在多个命令间拼写与语义一致：
+Length parameters (`--window`, `--step`, `--block-size`, `--flank`, `--ld-decay`, the window of `--indep-pairwise`) accept `100000`, `100k`, `100kb`, `1M`, `1Mb`; suffixes are case-insensitive, k is 10³ and M is 10⁶. Missing-rate thresholds (`--geno`, `--mind`, `--maf`, `--hwe`) are decimals in [0,1].
 
-- 样本子集：`-s/--samples [^]LIST`（逗号分隔，`^` 前缀取补）、`-S/--samples-file FILE`、`--keep FILE`、`--remove FILE`、`--force-samples`。`filter`、`stats`、`popg`、`pca`、`distance`、`convert` 使用；`-S` 和 `--keep` 同给、`-s` 与 `-S/--keep` 同给、`-s ^…` 与 `--remove` 同给都是用法错。
-- 区域选择：`-r/--regions LIST`、`-R/--regions-file FILE`（需要索引）；`-t/--targets LIST`、`-T/--targets-file FILE`（流式，不需要索引）。文件格式自动识别：三列及以上按 BED 读（0-based 半开），两列按 `CHROM POS`（1-based），一列按区域串（`Chr01`、`Chr01:100-200`）。`#` 注释行与空行跳过；`-T` 文件里 `^` 前缀表示排除。
-- 位点级过滤与阈值：`-v/-V`、`--snps-only`、`-m/-M`、`-f`、`-i/-e`、`-q/-Q`、`--geno`、`--maf/--max-maf`、`--mac/--max-mac`、`--hwe`。`filter` 全部实现；`popg` 里有同名的位点规则，含义是"边过滤边统计"；`stats` 的报告模式拒绝这些参数，要求先跑 `filter`。
+## Shared option groups
 
-## 退出码与错误格式
+Three groups keep the same spelling and semantics across commands:
 
-| 退出码 | 含义 |
+- Sample subsets: `-s/--samples [^]LIST` (comma-separated, a `^` prefix complements), `-S/--samples-file FILE`, `--keep FILE`, `--remove FILE`, `--force-samples`. Used by `filter`, `stats`, `popg`, `pca`, `distance` and `convert`; `-S` with `--keep`, `-s` with `-S/--keep`, and `-s ^…` with `--remove` are usage errors.
+- Region selection: `-r/--regions LIST`, `-R/--regions-file FILE` (need an index); `-t/--targets LIST`, `-T/--targets-file FILE` (streamed, no index). File formats are auto-detected: three or more columns read as BED (0-based half-open), two as `CHROM POS` (1-based), one as a region string (`Chr01`, `Chr01:100-200`). `#` comment lines and blank lines are skipped; a `^` prefix in a `-T` file means exclusion.
+- Site filters and thresholds: `-v/-V`, `--snps-only`, `-m/-M`, `-f`, `-i/-e`, `-q/-Q`, `--geno`, `--maf/--max-maf`, `--mac/--max-mac`, `--hwe`. `filter` implements all of them; `popg` has the same site rules with "filter while computing" semantics; `stats` report mode rejects them and asks for `filter` first.
+
+## Exit codes and error format
+
+| Code | Meaning |
 |---|---|
-| 0 | 成功 |
-| 1 | 运行期失败（错误信息带 `contig:pos` 定位） |
-| 2 | 用法错误：参数冲突、标签未声明、群体不存在、表达式编译失败、不变位点检查未通过、已撤回的参数 |
+| 0 | success |
+| 1 | runtime failure (the message carries a `contig:pos` location) |
+| 2 | usage error: conflicting options, undeclared tags, unknown populations, expression compile failure, failed invariant-site check, withdrawn options |
 
-错误写 stderr，格式 `reed: <原因>`，警告格式 `reed: warning: <原因>`。解析期报错的参数给出改写建议，例如 `--max-missing 0.9` 会被拒绝并提示 `use --geno 0.1 (the fraction that may be missing)`；没有静默别名。
+Errors go to stderr as `reed: <reason>`, warnings as `reed: warning: <reason>`. Parse-time errors suggest a rewrite, for example `--max-missing 0.9` is rejected with `use --geno 0.1 (the fraction that may be missing)`; there is no silent alias.
 
-## 求值顺序（filter 管线）
+## Evaluation order (filter pipeline)
 
-`filter` 的每条记录按固定顺序过八个阶段，顺序决定漏斗计数，不影响最终结果；唯一影响结果的是 `--mind` 在掩码之后：
+`filter` runs every record through eight stages in a fixed order. The order decides the funnel counts, not the final result; the one rule that changes the result is `--mind` running after masking:
 
-1. 样本子集与区域/位置选择
-2. 载入期位点过滤：`-v/-V/--snps-only/-m/-M/-f`
-3. 不依赖基因型的 `-i/-e`
-4. 基因型掩码：`--min-dp/--max-dp/--min-gq`、`--set-gts .` 加 FORMAT 表达式
+1. Sample subset and region/position selection
+2. Load-time site filters: `-v/-V/--snps-only/-m/-M/-f`
+3. Genotype-independent `-i/-e`
+4. Genotype masking: `--min-dp/--max-dp/--min-gq`, `--set-gts .` with FORMAT expressions
 5. `--mind`
-6. `--geno`、`--hwe`、`--maf/--max-maf/--mac/--max-mac`、依赖基因型的 `-i/-e`
-7. LD 剪枝（`--indep-pairwise`，需要全局位点顺序）
-8. INFO 更新（`-x` → AC/AN 自动更新 → `--fill-tags`）与输出
+6. `--geno`, `--hwe`, `--maf/--max-maf/--mac/--max-mac`, genotype-dependent `-i/-e`
+7. LD pruning (`--indep-pairwise`, needs the global site order)
+8. INFO updates (`-x` → automatic AC/AN update → `--fill-tags`) and output
 
-需要第一遍全局信息的规则（`--mind`、LD 剪枝）会先扫一遍输入，第二遍再产出输出。
+Rules needing first-pass information (`--mind`, LD pruning) scan the input once, then emit on a second pass.
