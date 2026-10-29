@@ -1,6 +1,6 @@
 # reed
 
-[English](/) | [简体中文](/zh-cn/)
+[English](/#/) | [简体中文](/#/zh-cn/)
 
 reed is a population-genetics tool written in Rust. It reads VCF/BCF and performs hard filtering, QC reports, windowed population-genetics statistics, principal components and between-individual relationship matrices, format conversion and indexing. Current version 0.4.0.
 

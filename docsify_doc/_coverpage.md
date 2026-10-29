@@ -1,6 +1,6 @@
 # reed
 
-[English](/) | [简体中文](/zh-cn/)
+[English](/#/) | [简体中文](/#/zh-cn/)
 
 > Population-genetics statistics and hard filtering, in pure Rust
 
