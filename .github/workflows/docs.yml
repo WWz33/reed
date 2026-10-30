@@ -1,0 +1,55 @@
+# Build the Starlight site (docsite/) and publish it to GitHub Pages.
+#
+# One-time setup: Settings → Pages → Build and deployment → Source:
+# "GitHub Actions". The workflow builds `docsite/dist` and uploads that
+# directory; the site is served at https://wwz33.github.io/reed/ (the
+# Astro `base` in docsite/astro.config.mjs).
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docsite/**
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never publish two revisions at once; let an in-flight deploy finish so the
+# live site is never left half-updated.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docsite/package-lock.json
+      - run: npm ci
+        working-directory: docsite
+      - run: npm run build
+        working-directory: docsite
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docsite/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

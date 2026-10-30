@@ -40,15 +40,15 @@ reed distance clean.vcf.gz --type 1-ibs --tree nj --bootstrap 100 -o tree
 
 ## 文档
 
-完整手册在 [`docsify_doc/zh-cn/README.md`](docsify_doc/zh-cn/README.md)：安装、每个命令一页的完整参数、逐步的快速开始、过滤表达式、输出约定与 Rust API。本地预览：
+完整手册在 [`docsite/`](docsite/)：安装、每个命令一页的完整参数、逐步的快速开始、过滤表达式、输出约定与 Rust API。用 Astro Starlight 构建，发布在 <https://wwz33.github.io/reed/>。本地预览：
 
 ```bash
-docsify serve docsify_doc
+cd docsite && npm install && npm run dev
 ```
 
 ## 引用
 
-使用到的方法请引用对应文献，完整列表见 [`docsify_doc/zh-cn/citation.md`](docsify_doc/zh-cn/citation.md)。
+使用到的方法请引用对应文献，完整列表见 [`docsite/src/content/docs/zh-cn/citation.md`](docsite/src/content/docs/zh-cn/citation.md)。
 
 ## 许可
 
