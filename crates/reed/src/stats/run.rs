@@ -619,7 +619,7 @@ impl StatsJob {
         scratch: &mut StatsScratch,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
+            return Err(EngineError::job("record line has fewer than 8 columns"));
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let Some(pos0) = self.site_prefix(
@@ -679,7 +679,7 @@ impl StatsJob {
         self.reset_row(scratch);
         for rec in records {
             let Some(lr) = LineRef::parse(rec.line) else {
-                return Err(EngineError::job("record line has fewer than 9 columns"));
+                return Err(EngineError::job("record line has fewer than 8 columns"));
             };
             let site = SiteView::parse(&lr).map_err(EngineError::from)?;
             let Some(pos0) = self.site_prefix(

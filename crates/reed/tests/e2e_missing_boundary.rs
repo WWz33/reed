@@ -369,6 +369,7 @@ fn sample_call_rate_matches_plink2_mind() {
                 field: "GQ".into(),
                 when: "< 20".into(),
                 on_missing: reed_filter::spec::OnMissing::Keep,
+                depth: false,
             }],
             ..reed_filter::spec::GenotypeRules::default()
         },

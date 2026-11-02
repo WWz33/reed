@@ -16,6 +16,13 @@ pub struct GenotypeMaskRule {
     /// triggers the mask — bcftools semantics; §11.1).
     #[serde(default = "default_mask_on_missing")]
     pub on_missing: OnMissing,
+    /// Treat the field as a sequencing-depth column (only valid for `DP`):
+    /// a record whose FORMAT carries no `DP` key reads the sample's `AD`
+    /// values and sums them (bcftools `calc_sample_depth`). The CLI sets
+    /// this for `--min-dp/--max-dp`; an explicit `FMT/DP` expression does
+    /// not (doc_v22 D22-1).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub depth: bool,
 }
 
 /// The mask-context default (`Keep`, not the enum-wide `Pass`).

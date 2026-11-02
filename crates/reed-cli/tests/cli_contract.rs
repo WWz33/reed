@@ -1008,3 +1008,232 @@ fn r5_index_refuses_output_equal_to_input() {
     assert_eq!(after, before, "the input must survive the refused run");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Compresses `text` into a BGZF file at `path`.
+fn write_bgzf(path: &std::path::Path, text: &str) {
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut out = Vec::new();
+    for block in text.as_bytes().chunks(4096) {
+        deflater
+            .deflate_block(block, &mut out)
+            .expect("invariant: block");
+    }
+    out.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    std::fs::write(path, out).expect("invariant: write");
+}
+
+/// Reads a BGZF file back as text.
+fn read_bgzf(path: &std::path::Path) -> String {
+    let bytes = std::fs::read(path).expect("invariant: read");
+    let mut inflater = reed::bgzf::inflate::Inflater::new();
+    let mut text = Vec::new();
+    let mut rest = &bytes[..];
+    while let Some(total) = reed::bgzf::block::parse_block_size(rest) {
+        inflater
+            .inflate_block(&rest[..total], &mut text)
+            .expect("invariant: inflate");
+        rest = &rest[total..];
+    }
+    String::from_utf8(text).expect("invariant: utf8")
+}
+
+/// doc_v22: three real-world VCF shapes bcftools accepts but reed rejected.
+#[test]
+fn v22_accepts_sites_only_haploid_and_trailing_tabs() {
+    let dir = temp_dir("v22-shapes");
+
+    // 1. Sites-only VCF (8 columns, `bcftools view -G` output): filter and
+    //    index must work and the output must stay 8 columns.
+    let sites = dir.join("sites.vcf.gz");
+    write_bgzf(
+        &sites,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\n\
+         chr1\t20\t.\tC\tT\t60\tPASS\t.\n",
+    );
+    let sites_out = dir.join("sites.out.vcf.gz");
+    let out = run(&[
+        "filter",
+        sites.to_str().expect("invariant: utf8"),
+        "-Oz",
+        "-o",
+        sites_out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = read_bgzf(&sites_out);
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        assert_eq!(line.split('\t').count(), 8, "{line}");
+    }
+    let indexed = run(&["index", sites.to_str().expect("invariant: utf8")]);
+    assert!(
+        indexed.status.success(),
+        "sites-only index: {}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    // Record-plane edits work on sites-only input too (V22-R8): only the
+    // first five columns are read, the rest is copied verbatim.
+    let renamed = dir.join("sites.renamed.vcf.gz");
+    let rename = run(&[
+        "rename",
+        sites.to_str().expect("invariant: utf8"),
+        "--set-id",
+        "%CHROM_%POS",
+        "-Oz",
+        "-o",
+        renamed.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        rename.status.success(),
+        "sites-only rename: {}",
+        String::from_utf8_lossy(&rename.stderr)
+    );
+    let renamed_text = read_bgzf(&renamed);
+    let ids: Vec<&str> = renamed_text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| line.split('\t').nth(2).expect("invariant: ID column"))
+        .collect();
+    assert_eq!(ids, ["chr1_10", "chr1_20"]);
+
+    // 2. Haploid calls (mtDNA / male X): the default policy rejects them,
+    //    `--ploidy allow-haploid` accepts them.
+    let haploid = dir.join("haploid.vcf.gz");
+    write_bgzf(
+        &haploid,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t1\t0\n",
+    );
+    let haploid_out = dir.join("haploid.out.vcf.gz");
+    let rejected = run(&[
+        "filter",
+        haploid.to_str().expect("invariant: utf8"),
+        "-Oz",
+        "-o",
+        haploid_out.to_str().expect("invariant: utf8"),
+    ]);
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("haploid"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let allowed = run(&[
+        "filter",
+        haploid.to_str().expect("invariant: utf8"),
+        "--ploidy",
+        "allow-haploid",
+        "-Oz",
+        "-o",
+        haploid_out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    let haploid_text = read_bgzf(&haploid_out);
+    let haploid_rows: Vec<&str> = haploid_text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert_eq!(haploid_rows.len(), 1);
+    // 8 site columns + FORMAT + 2 samples.
+    assert_eq!(haploid_rows[0].split('\t').count(), 11);
+    assert!(
+        haploid_rows[0].ends_with("\tGT\t1\t0"),
+        "{}",
+        haploid_rows[0]
+    );
+
+    // 3. A record with a trailing empty sample column (row ends with `\t`):
+    //    bcftools ignores it; reed must not reject the whole file.
+    let trailing = dir.join("trailing.vcf.gz");
+    write_bgzf(
+        &trailing,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\t\n",
+    );
+    let trailing_out = dir.join("trailing.out.vcf.gz");
+    let ok = run(&[
+        "filter",
+        trailing.to_str().expect("invariant: utf8"),
+        "-Oz",
+        "-o",
+        trailing_out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    let trailing_text = read_bgzf(&trailing_out);
+    let trailing_rows: Vec<&str> = trailing_text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert_eq!(trailing_rows.len(), 1);
+    assert_eq!(
+        trailing_rows[0]
+            .trim_end_matches('\t')
+            .split('\t')
+            .count(),
+        11,
+        "the trailing tab must not become a sample column: {}",
+        trailing_rows[0]
+    );
+    assert!(
+        trailing_rows[0].contains("\tGT\t0/1\t1/1"),
+        "{}",
+        trailing_rows[0]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The `--min-dp` flag itself (not a hand-built spec) carries the AD
+/// fallback through the CLI translation (V22-R9). A regression that dropped
+/// `depth: true` would otherwise only show up as the original
+/// "FORMAT field DP is not declared" error.
+#[test]
+fn v22_cli_min_dp_falls_back_to_ad() {
+    let dir = temp_dir("v22-min-dp");
+    let vcf = dir.join("ad_only.vcf.gz");
+    write_bgzf(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"a\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:2,3\n\
+         chr1\t20\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:10,20\n",
+    );
+    let out = dir.join("masked.vcf.gz");
+    let run_out = run(&[
+        "filter",
+        vcf.to_str().expect("invariant: utf8"),
+        "--min-dp",
+        "10",
+        "-Oz",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        run_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run_out.stderr)
+    );
+    let text = read_bgzf(&out);
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].rsplit('\t').next(), Some("./.:2,3"), "{}", rows[0]);
+    assert_eq!(rows[1].rsplit('\t').next(), Some("0/1:10,20"), "{}", rows[1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

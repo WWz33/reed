@@ -791,10 +791,10 @@ impl ConvertJob {
         // malformed ones included (`snp_num` increments before its checks).
         partial.counters.total_records += 1;
         let Some(lr) = LineRef::parse(line) else {
-            self.bump_malformed(partial, scratch, "fewer than 9 columns");
+            self.bump_malformed(partial, scratch, "fewer than 8 columns");
             return;
         };
-        if lr.n_sample_cols() != self.n_samples {
+        if lr.validate_sample_cols(self.n_samples).is_err() {
             self.bump_malformed(
                 partial,
                 scratch,
@@ -1347,14 +1347,14 @@ impl ConvertJob {
 struct Malformed;
 
 /// Whether one complete record line is structurally sane for the composed
-/// statistics job (9+ columns and a sample-column count matching the
-/// header).
+/// statistics job (`LineRef` parses it, its sample columns match the header
+/// and POS parses).
 fn line_is_sane(line: &[u8], n_samples: usize) -> bool {
     if line.iter().all(|&b| b == b'\n' || b == b'\r') {
         return true;
     }
     LineRef::parse(line).is_some_and(|lr| {
-        lr.n_sample_cols() == n_samples
+        lr.validate_sample_cols(n_samples).is_ok()
             && reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom()).is_ok()
     })
 }

@@ -128,7 +128,7 @@ fn decode_record(
     contigs: &mut ContigTable,
 ) -> Result<RecordStart, EngineError> {
     let Some(lr) = LineRef::parse(record) else {
-        return Err(EngineError::job("record line has fewer than 9 columns"));
+        return Err(EngineError::job("record line has fewer than 8 columns"));
     };
     let Some(tid) = contigs.id_of(lr.chrom()) else {
         return Err(EngineError::job(format!(
@@ -683,7 +683,7 @@ mod tests {
     /// text index must carry the crossing record to the reducer and decode
     /// it exactly once, when its bytes are complete (the pattern
     /// `BcfIndexJob` already uses). The old worker-side eager parse of the
-    /// head/tail fragments failed with "record line has fewer than 9
+    /// head/tail fragments failed with "record line has fewer than 8
     /// columns" on every seam-crossing record.
     #[test]
     fn index_handles_records_spanning_chunk_seams() {

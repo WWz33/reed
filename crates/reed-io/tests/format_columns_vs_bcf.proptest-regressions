@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 114ecd350b47d60fadc1a5d38d7d21bb3e6c45562033a2a7ac9e043da0ba84a0 # shrinks to format = "GT", samples = [Sample { gt: "0/0", dp: None, ad: None, gq: None }, Sample { gt: "0/0", dp: None, ad: None, gq: None }, Sample { gt: "0/0", dp: None, ad: None, gq: None }], pos = 1

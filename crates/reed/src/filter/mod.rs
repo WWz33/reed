@@ -217,17 +217,23 @@ pub fn run_filter(
     let mut plan = reed_filter::plan::compile(spec, &tags, &opts.command_line, true)?;
     // doc_v4 O-4: the native BCF path needs the plan's mask to be a set of
     // single-valued FORMAT columns (no `--set-gts .` expressions), so the
-    // typed decode and the text scan cannot disagree.
+    // typed decode and the text scan cannot disagree. A depth column
+    // (`fallback = Some("AD")`) is multi-valued in the fallback direction;
+    // the native decoder supports that (doc_v22 D22-1).
     let native_bcf = is_bcf
         && plan.mask.iter().all(|m| m.expr.is_none())
         && plan.fmt_expr_fields.is_empty()
+        && plan.int_fields.iter().all(|field| {
+            field.fallback.is_some()
+                || tags
+                    .format(&String::from_utf8_lossy(&field.name))
+                    .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
+        })
         && plan
-            .int_fields
+            .float_fields
             .iter()
-            .chain(plan.float_fields.iter())
             .all(|field| {
-                let name = String::from_utf8_lossy(field);
-                tags.format(&name)
+                tags.format(&String::from_utf8_lossy(field))
                     .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
             });
     let strategy = match opts.strategy {
@@ -694,8 +700,13 @@ pub fn run_filter(
         sketch_funnel
     } else {
         let bcf = bcf_level.map(|_| Arc::new(out_header.clone()));
-        // The native path's FORMAT keys (copied before the plan is shared).
-        let int_keys = plan.int_fields.clone();
+        // The native path's FORMAT columns (copied before the plan is
+        // shared): each integer column carries its explicit fallback.
+        let int_specs: Vec<_> = plan
+            .int_fields
+            .iter()
+            .map(reed_io::vcf::format_layout::IntSpec::from)
+            .collect();
         let float_keys = plan.float_fields.clone();
         // One GT decode table per run, shared by every worker (A6-10).
         let gt_table = native_bcf.then(|| Arc::new(reed_io::bcf::GtTable::new(plan.policies)));
@@ -712,7 +723,7 @@ pub fn run_filter(
             bcf,
             bcf_input: if native_bcf { input_bcf.clone() } else { None },
             gt_table,
-            int_keys: Arc::from(int_keys.into_boxed_slice()),
+            int_specs: Arc::from(int_specs.into_boxed_slice()),
             float_keys: Arc::from(float_keys.into_boxed_slice()),
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));

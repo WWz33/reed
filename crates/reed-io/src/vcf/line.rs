@@ -2,6 +2,43 @@
 //! fixed columns (`docs/spec/architecture.md` §6.7). No allocation, no
 //! parsing — offsets only; the field parsers live in [`super::fixed`].
 
+/// Column shape of a record line (doc_v22 R22-3).
+///
+/// The three shapes are the only legal column layouts; every consumer asks
+/// this instead of counting tabs itself, so sites-only input, a FORMAT column
+/// without samples, and ordinary sample columns cannot drift apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    /// Eight columns: `CHROM`..`INFO`, no FORMAT or sample region
+    /// (bcftools `view -G` output).
+    SitesOnly,
+    /// Nine columns: a FORMAT column but no sample columns.
+    FormatOnly,
+    /// Ten or more columns: FORMAT plus at least one sample column.
+    WithSamples,
+}
+
+/// Why a record's sample columns disagree with the header (doc_v22 R22-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SampleColumnsError {
+    /// Fewer sample columns than the header declares.
+    TooFew {
+        /// Sample columns present.
+        found: usize,
+        /// Sample columns the header declares.
+        expected: usize,
+    },
+    /// A non-empty sample column beyond the header's count. Empty columns
+    /// after the declared count are trailing tabs and are ignored, matching
+    /// htslib.
+    TooMany {
+        /// One-based position of the first non-empty extra column.
+        found: usize,
+        /// Sample columns the header declares.
+        expected: usize,
+    },
+}
+
 /// Byte-offset view of one complete VCF record line (terminating `\n`
 /// included in `line` but excluded from every field slice).
 #[derive(Clone, Copy, Debug)]
@@ -11,33 +48,58 @@ pub struct LineRef<'a> {
     /// Positions of the first nine tabs (after CHROM, POS, ID, REF, ALT,
     /// QUAL, FILTER, INFO, FORMAT).
     tabs: [usize; 9],
+    /// Tabs actually present: 7 = sites-only (8 columns), 8 = FORMAT but no
+    /// sample columns, 9 = FORMAT plus at least one sample column.
+    n_tabs: u8,
 }
 
 impl<'a> LineRef<'a> {
-    /// Parses the tab offsets; `None` when the line has fewer than nine
-    /// tabs (sites-only VCF or a truncated line).
+    /// Parses the tab offsets; `None` when the line has fewer than eight
+    /// columns (a truncated line). A sites-only record (`##`-less header
+    /// without sample columns, bcftools `view -G`) parses with an empty
+    /// [`Self::format_text`] and no sample columns.
     #[must_use]
     pub fn parse(line: &'a [u8]) -> Option<Self> {
         let mut tabs = [0_usize; 9];
         let mut used = 0;
         let mut from = 0;
         while used < 9 {
-            let rel = memchr::memchr(b'\t', &line[from..])?;
+            let Some(rel) = memchr::memchr(b'\t', &line[from..]) else {
+                break;
+            };
             from += rel;
             tabs[used] = from;
             from += 1;
             used += 1;
         }
-        Some(Self { line, tabs })
+        if used < 7 {
+            return None;
+        }
+        Some(Self {
+            line,
+            tabs,
+            n_tabs: u8::try_from(used).unwrap_or(9),
+        })
     }
 
     fn field(&self, index: usize) -> &'a [u8] {
+        let n_tabs = usize::from(self.n_tabs);
+        if index > n_tabs {
+            return &[];
+        }
         let start = if index == 0 {
             0
         } else {
             self.tabs[index - 1] + 1
         };
-        self.trim_line_end(&self.line[start..self.tabs[index]])
+        // The last present column has no terminating tab; the array's
+        // zero-filled tail must not be read as an offset.
+        let end = if index < n_tabs {
+            self.tabs[index]
+        } else {
+            self.line.len()
+        };
+        self.trim_line_end(&self.line[start..end])
     }
 
     fn trim_line_end(&self, field: &'a [u8]) -> &'a [u8] {
@@ -93,28 +155,41 @@ impl<'a> LineRef<'a> {
         self.field(7)
     }
 
-    /// FORMAT column (text).
+    /// FORMAT column (text); empty for a sites-only record.
     #[must_use]
     pub fn format_text(&self) -> &'a [u8] {
-        self.field(8)
+        if self.n_tabs < 8 { &[] } else { self.field(8) }
     }
 
-    /// The sample columns region (all text after the FORMAT tab).
+    /// The sample columns region (all text after the FORMAT tab); empty when
+    /// the record has no FORMAT/sample columns.
     #[must_use]
     pub fn samples_text(&self) -> &'a [u8] {
+        if self.n_tabs < 9 {
+            return &[];
+        }
         self.trim_line_end(&self.line[self.tabs[8] + 1..])
     }
 
-    /// Number of sample columns (tabs after FORMAT + 1).
+    /// Number of sample columns (tabs after FORMAT + 1); 0 for a sites-only
+    /// record or a FORMAT-only record.
     #[must_use]
     pub fn n_sample_cols(&self) -> usize {
+        if self.n_tabs < 9 {
+            return 0;
+        }
         memchr::memchr_iter(b'\t', self.samples_text()).count() + 1
     }
 
-    /// Byte offset of the first sample column within `line`.
+    /// Byte offset of the first sample column within `line`; `line.len()`
+    /// when the record has none.
     #[must_use]
     pub fn samples_start(&self) -> usize {
-        self.tabs[8] + 1
+        if self.n_tabs < 9 {
+            self.line.len()
+        } else {
+            self.tabs[8] + 1
+        }
     }
 
     /// Byte offset of the INFO column text within `line` (columns 1–7 end
@@ -122,6 +197,60 @@ impl<'a> LineRef<'a> {
     #[must_use]
     pub fn info_start(&self) -> usize {
         self.tabs[6] + 1
+    }
+
+    /// The record's column shape (doc_v22 R22-3).
+    #[must_use]
+    pub fn shape(&self) -> Shape {
+        match self.n_tabs {
+            0..=7 => Shape::SitesOnly,
+            8 => Shape::FormatOnly,
+            _ => Shape::WithSamples,
+        }
+    }
+
+    /// Validates the sample columns against a header declaring `expected`
+    /// samples (doc_v22 R22-3).
+    ///
+    /// Empty columns *after* the declared count are trailing tabs and are
+    /// ignored (htslib does the same); a non-empty extra column is
+    /// [`SampleColumnsError::TooMany`]. An empty column inside the declared
+    /// range still counts as a sample — its content is the decoder's
+    /// business, not the structural check's.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleColumnsError::TooFew`] or [`SampleColumnsError::TooMany`].
+    pub fn validate_sample_cols(&self, expected: usize) -> Result<(), SampleColumnsError> {
+        if self.shape() != Shape::WithSamples {
+            return if expected == 0 {
+                Ok(())
+            } else {
+                Err(SampleColumnsError::TooFew {
+                    found: 0,
+                    expected,
+                })
+            };
+        }
+        let mut seen = 0_usize;
+        for (position, field) in self.samples_text().split(|&b| b == b'\t').enumerate() {
+            if position < expected {
+                seen = position + 1;
+            } else if !field.is_empty() {
+                return Err(SampleColumnsError::TooMany {
+                    found: position + 1,
+                    expected,
+                });
+            }
+        }
+        if seen < expected {
+            Err(SampleColumnsError::TooFew {
+                found: seen,
+                expected,
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -163,7 +292,135 @@ mod tests {
     }
 
     #[test]
-    fn sites_only_lines_do_not_parse() {
-        assert!(LineRef::parse(b"chr1\t1\t.\tA\tG\t.\tPASS\t.\n").is_none());
+    fn sites_only_lines_parse_without_format_or_samples() {
+        let line = b"chr1\t1\t.\tA\tG\t.\tPASS\tDP=5\n";
+        let line_ref = LineRef::parse(line).expect("invariant: 8 columns");
+        assert_eq!(line_ref.info_text(), b"DP=5");
+        assert_eq!(line_ref.format_text(), b"");
+        assert_eq!(line_ref.samples_text(), b"");
+        assert_eq!(line_ref.n_sample_cols(), 0);
+        assert_eq!(line_ref.samples_start(), line.len());
+        // A FORMAT column without samples is 9 columns / 8 tabs.
+        let line = b"chr1\t1\t.\tA\tG\t.\tPASS\t.\tGT\n";
+        let line_ref = LineRef::parse(line).expect("invariant: 9 columns");
+        assert_eq!(line_ref.format_text(), b"GT");
+        assert_eq!(line_ref.samples_text(), b"");
+        assert_eq!(line_ref.n_sample_cols(), 0);
+        // Fewer than eight columns is still a truncated record.
+        assert!(LineRef::parse(b"chr1\t1\t.\tA\tG\t.\tPASS\n").is_none());
+    }
+
+    /// The contract `validate_sample_cols` must satisfy, written from the
+    /// naive field split (doc_v22 R22-3).
+    fn reference_validation(fields: &[String], expected: usize) -> Result<(), SampleColumnsError> {
+        if fields.len() < 10 {
+            return if expected == 0 {
+                Ok(())
+            } else {
+                Err(SampleColumnsError::TooFew {
+                    found: 0,
+                    expected,
+                })
+            };
+        }
+        let samples = &fields[9..];
+        if let Some(offset) = samples
+            .iter()
+            .skip(expected)
+            .position(|field| !field.is_empty())
+        {
+            return Err(SampleColumnsError::TooMany {
+                found: expected + offset + 1,
+                expected,
+            });
+        }
+        let found = expected.min(samples.len());
+        if found < expected {
+            Err(SampleColumnsError::TooFew { found, expected })
+        } else {
+            Ok(())
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig {
+            cases: 2_000,
+            ..proptest::prelude::ProptestConfig::default()
+        })]
+
+        /// Every column shape parses deterministically: the accessors agree
+        /// with a naive tab split, and no input panics (doc_v22 R22-3).
+        #[test]
+        fn shape_and_slices_match_a_naive_split(
+            fields in proptest::collection::vec(
+                proptest::string::string_regex("[A-Za-z0-9._,:=/|.-]{0,10}")
+                    .expect("invariant: regex"),
+                5..=12,
+            ),
+            suffix in proptest::prop_oneof![
+                proptest::prelude::Just(""),
+                proptest::prelude::Just("\n"),
+                proptest::prelude::Just("\r\n"),
+            ],
+        ) {
+            let core = fields.join("\t");
+            let line = format!("{core}{suffix}");
+            let bytes = line.as_bytes();
+            let parsed = LineRef::parse(bytes);
+            proptest::prop_assert_eq!(parsed.is_some(), fields.len() >= 8);
+            let Some(line_ref) = parsed else { return Ok(()) };
+
+            let shape = match fields.len() {
+                8 => Shape::SitesOnly,
+                9 => Shape::FormatOnly,
+                _ => Shape::WithSamples,
+            };
+            proptest::prop_assert_eq!(line_ref.shape(), shape);
+            proptest::prop_assert_eq!(line_ref.chrom(), fields[0].as_bytes());
+            proptest::prop_assert_eq!(line_ref.pos_text(), fields[1].as_bytes());
+            proptest::prop_assert_eq!(line_ref.id(), fields[2].as_bytes());
+            proptest::prop_assert_eq!(line_ref.reference(), fields[3].as_bytes());
+            proptest::prop_assert_eq!(line_ref.alts(), fields[4].as_bytes());
+            proptest::prop_assert_eq!(line_ref.qual_text(), fields[5].as_bytes());
+            proptest::prop_assert_eq!(line_ref.filter_text(), fields[6].as_bytes());
+            proptest::prop_assert_eq!(line_ref.info_text(), fields[7].as_bytes());
+
+            let format = fields.get(8).map_or("", String::as_str);
+            proptest::prop_assert_eq!(line_ref.format_text(), format.as_bytes());
+            let samples = if fields.len() > 9 {
+                fields[9..].join("\t")
+            } else {
+                String::new()
+            };
+            proptest::prop_assert_eq!(line_ref.samples_text(), samples.as_bytes());
+            let sample_cols = fields.len().saturating_sub(9);
+            proptest::prop_assert_eq!(line_ref.n_sample_cols(), sample_cols);
+            let sample_start = if fields.len() > 9 {
+                fields[..9].iter().map(|f| f.len() + 1).sum()
+            } else {
+                bytes.len()
+            };
+            proptest::prop_assert_eq!(line_ref.samples_start(), sample_start);
+        }
+
+        /// Validation is total and agrees with the reference for every
+        /// header sample count, including trailing empty columns.
+        #[test]
+        fn validate_sample_cols_is_total_and_matches_the_contract(
+            fields in proptest::collection::vec(
+                proptest::string::string_regex("[A-Za-z0-9._,:=/|.-]{0,6}")
+                    .expect("invariant: regex"),
+                5..=12,
+            ),
+            expected in 0_usize..=6,
+        ) {
+            let line = format!("{}\n", fields.join("\t"));
+            let Some(line_ref) = LineRef::parse(line.as_bytes()) else {
+                return Ok(());
+            };
+            let got = line_ref.validate_sample_cols(expected);
+            let want = reference_validation(&fields, expected);
+            proptest::prop_assert_eq!(got, want);
+        }
     }
 }

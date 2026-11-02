@@ -19,13 +19,15 @@ mkdir -p "$OUTDIR" "$WORKDIR" "$LOGDIR"
 # shellcheck source=/dev/null
 source "$CONFIG_FILE"
 
-# 输入默认值：仓库上级目录的 clean.vcf.gz
+# 输入默认值：仓库上级的 subvcf（小集，3000 记录 / 348 样本）。
+# 全量 clean.* 只在显式 INPUT=... 时使用；测试脚本默认都跑小集。
 if [[ -z "${INPUT:-}" ]]; then
-    for cand in "$REPO_ROOT/../clean.vcf.gz" "$REPO_ROOT/../clean.bcf" "$REPO_ROOT/clean.vcf.gz"; do
+    for cand in "$REPO_ROOT/../subvcf.vcf.gz" "$REPO_ROOT/subvcf.vcf.gz" \
+                "$REPO_ROOT/../subvcf.bcf" "$REPO_ROOT/subvcf.bcf"; do
         [[ -e "$cand" ]] && INPUT="$cand" && break
     done
 fi
-[[ -n "${INPUT:-}" ]] || die "INPUT 未设置且未找到默认输入 (clean.vcf.gz)"
+[[ -n "${INPUT:-}" ]] || die "INPUT 未设置且未找到默认输入 (subvcf.vcf.gz / subvcf.bcf)"
 
 # PATH：把 biosoft 及 htslib 放前面
 export PATH="$BIOSOFT:$BIOSOFT/htslib-1.23:$PATH"

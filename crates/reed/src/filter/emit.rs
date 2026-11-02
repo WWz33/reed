@@ -134,7 +134,7 @@ impl EmitJob {
         stale: &[&[u8]],
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("survivor line has fewer than 9 columns"));
+            return Err(EngineError::job("survivor line has fewer than 8 columns"));
         };
         let site =
             SiteView::parse_declared(&lr, &mut scratch.contigs).map_err(EngineError::from)?;

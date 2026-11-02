@@ -298,17 +298,30 @@ mod tests {
 
     #[test]
     fn deep_tree_does_not_overflow_the_stack() {
-        // A caterpillar: 1 joins 2, then 3, then 4, ...
-        let n = 2000;
-        let mut d = Mat::zeros(n, n);
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let v = (j - i) as f64;
-                d.set(i, j, v);
-                d.set(j, i, v);
-            }
+        // A caterpillar built directly: node 2n-1 joins tip 1 and node
+        // 2n-2, which joins tip 2 and node 2n-3, ... down to tip n.
+        //
+        // Constructing it through `upgma` on a 2000x2000 matrix took ~23 s
+        // and dominated the whole test suite (doc_v22 R22-7); serialization
+        // depth is what this test pins, not UPGMA.
+        let n = 2000_u32;
+        let mut edges = Vec::with_capacity(2 * (n as usize - 1));
+        let mut lengths = Vec::with_capacity(2 * (n as usize - 1));
+        for i in 1..n {
+            let parent = 2 * n - i;
+            let child_b = if i == n - 1 { n } else { parent - 1 };
+            edges.push((parent, i));
+            lengths.push(1.0);
+            edges.push((parent, child_b));
+            lengths.push(1.0);
         }
-        let t = crate::upgma(&d).unwrap();
+        let t = crate::tree::Tree {
+            edges,
+            lengths,
+            tip_labels: (0..n).map(|i| format!("t{i}")).collect(),
+            node_labels: None,
+            rooted: true,
+        };
         let s = to_newick(&t, 6).unwrap();
         assert!(s.ends_with(';'));
     }

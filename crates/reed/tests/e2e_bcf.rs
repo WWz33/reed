@@ -508,6 +508,7 @@ fn filter_output_is_identical_across_formats() {
                 field: "DP".into(),
                 when: "< 8".into(),
                 on_missing: reed_filter::spec::OnMissing::Keep,
+                depth: true,
             }],
             ..reed_filter::spec::GenotypeRules::default()
         },
@@ -800,4 +801,80 @@ fn m1_genotype_matrix_is_format_independent() {
     assert_eq!(from_vcf.cols, from_bcf.cols);
     let bits = |m: &reed::Mat| -> Vec<u64> { m.data.iter().map(|v| v.to_bits()).collect() };
     assert_eq!(bits(&from_vcf), bits(&from_bcf), "dosages must match bit for bit");
+}
+
+/// The native BCF path reads the same depth column as the text scanner: a
+/// BCF with `GT:PL:AD` and no FORMAT/DP masks by the summed AD depth
+/// (bcftools `calc_sample_depth`), so `--min-dp` behaves identically for
+/// VCF.gz and BCF inputs.
+#[test]
+fn bcf_dp_mask_falls_back_to_ad() {
+    use reed_filter::spec::{GenotypeMaskRule, GenotypeRules, OnMissing};
+
+    let header = "##fileformat=VCFv4.2\n\
+                  ##contig=<ID=chr1,length=1000>\n\
+                  ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+                  ##FORMAT=<ID=PL,Number=G,Type=Integer,Description=\"pl\">\n\
+                  ##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"ad\">\n\
+                  #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\n";
+    let records = "chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:PL:AD\t0/1:.:10,20\t0/1:.:.,.\t0/1:.:1,2\n\
+                   chr1\t20\t.\tA\tT\t50\tPASS\t.\tGT:PL:AD\t1/1:.:0,50\t0/0:.:30,0\t0/1:.:5,6\n";
+    let dir = dir("ad-fallback");
+    let vcf = dir.join("in.vcf.gz");
+    std::fs::write(&vcf, reblock(format!("{header}{records}").as_bytes(), 128))
+        .expect("invariant: fixture");
+
+    let opts = |out: &Path, bcf: Option<u8>| FilterOptions {
+        threads: 2,
+        output: Some(out.to_path_buf()),
+        write_index: reed::WriteIndex::None,
+        compress_level: 1,
+        strategy: None,
+        command_line: "test".into(),
+        timing: None,
+        report_json: None,
+        force_samples: false,
+        regions: Vec::new(),
+        tmp_dir: None,
+        output_compressed: if bcf.is_none() { Some(true) } else { None },
+        output_bcf: bcf,
+        mem_bytes: None,
+        no_version: false,
+        no_command: false,
+    };
+    // Encode the fixture as BCF with a no-op spec.
+    let bcf = dir.join("in.bcf");
+    run_filter(Some(&vcf), &FilterSpec::default(), &opts(&bcf, Some(6)))
+        .expect("invariant: BCF encode");
+    // Mask the BCF input by the AD depth.
+    let spec = FilterSpec {
+        genotype: GenotypeRules {
+            mask_if: vec![GenotypeMaskRule {
+                field: "DP".into(),
+                when: "< 10".into(),
+                on_missing: OnMissing::Keep,
+                depth: true,
+            }],
+            ..GenotypeRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let out = dir.join("masked.vcf.gz");
+    run_filter(Some(&bcf), &spec, &opts(&out, None)).expect("invariant: mask");
+    let text = inflate_bgzf(&std::fs::read(&out).expect("invariant: output"));
+    let records: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .flat_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            cols[9..].to_vec()
+        })
+        .collect();
+    assert_eq!(records[0], "0/1:.:10,20");
+    assert_eq!(records[1], "0/1:.:.,.");
+    assert!(records[2].starts_with("./.:.:1,2"), "{records:?}");
+    assert!(records[3].starts_with("1/1:"), "{records:?}");
+    assert!(records[4].starts_with("0/0:"), "{records:?}");
+    assert!(records[5].starts_with("0/1:"), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

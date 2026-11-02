@@ -11,10 +11,11 @@
 //!   transition.
 //! - SN: a record counts in every type it carries (a SNP+indel row
 //!   increments both).
-//! - DP (no `-s`): per-site INFO/DP; with `-s -`: per-genotype FMT/DP
-//!   (AD fallback: the maximum non-ref AD).
-//! - PSC: homRR/homAA/hets/ts/tv per sample over SNP rows; depth from
-//!   FMT/DP only.
+//! - DP (no `-s`): per-site INFO/DP; with `-s -`: per-genotype FMT/DP, or
+//!   the sum of the sample's AD values when the record's FORMAT carries no
+//!   DP key (bcftools `calc_sample_depth`).
+//! - PSC: homRR/homAA/hets/ts/tv per sample over SNP rows; depth follows
+//!   the same FMT/DP-or-AD-sum rule.
 
 use reed_core::site::VariantClass;
 use serde::Serialize;

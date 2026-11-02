@@ -337,3 +337,67 @@ fn render_hist_shape() {
     assert!(text.contains("#p95\t2"), "{text}");
     assert!(text.contains("#missing\t4"), "{text}");
 }
+
+/// A trailing empty sample column is a legal record shape (doc_v22 V22-5),
+/// not a missing observation: the FMT/GQ histogram must see exactly the
+/// declared samples (V22-R4).
+#[test]
+fn hist_fmt_ignores_trailing_empty_columns() {
+    let d = dir("trailing");
+    let vcf = d.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=1000>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        ##FORMAT=<ID=GQ,Number=1,Type=Integer,Description=\"q\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+        chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:GQ\t0/1:10\t1/1:20\n\
+        chr1\t20\t.\tC\tT\t50\tPASS\t.\tGT:GQ\t0/0:30\t0/1:40\t\n";
+    std::fs::write(&vcf, text).expect("invariant: fixture");
+    let prefix = d.join("qc");
+    run_hist(&vcf, &prefix, vec![HistMetric::Gq], 1);
+    let gq = read(&PathBuf::from(format!("{}.gq.hist", prefix.display())));
+    assert!(!gq.contains("#missing"), "trailing tab counted as missing:\n{gq}");
+    for value in [10, 20, 30, 40] {
+        assert!(gq.contains(&format!("{value}\t{value}\t1\t")), "{gq}");
+    }
+    // The generic FMT path uses the same slice.
+    let prefix = d.join("qc_fmt");
+    run_hist(
+        &vcf,
+        &prefix,
+        vec![HistMetric::Tag {
+            format: true,
+            tag: "GQ".into(),
+            kind: HistKind::Int,
+        }],
+        1,
+    );
+    let fmt = read(&PathBuf::from(format!("{}.FMT_GQ.hist", prefix.display())));
+    assert!(!fmt.contains("#missing"), "trailing tab counted as missing:\n{fmt}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The `dp` histogram uses the shared depth column: `AD` sum when the
+/// record has no DP key, and depth 0 is not an observation (doc_v22 D22-1,
+/// bcftools `if (dp > 0)`) (V22-R13).
+#[test]
+fn hist_dp_falls_back_to_ad_and_skips_zero() {
+    let d = dir("ad_depth");
+    let vcf = d.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=1000>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        ##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"a\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+        chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:10,20\t0/0:0,0\n\
+        chr1\t20\t.\tC\tT\t50\tPASS\t.\tGT:AD\t0/1:5,5\t0/0:.\n";
+    std::fs::write(&vcf, text).expect("invariant: fixture");
+    let prefix = d.join("qc");
+    run_hist(&vcf, &prefix, vec![HistMetric::Dp], 1);
+    let dp = read(&PathBuf::from(format!("{}.dp.hist", prefix.display())));
+    // 10,20 -> 30; 5,5 -> 10; 0,0 -> excluded; "." is not an observation.
+    assert!(dp.contains("10\t10\t1\t"), "{dp}");
+    assert!(dp.contains("30\t30\t1\t"), "{dp}");
+    assert!(!dp.lines().any(|line| line.starts_with("0\t0\t")), "{dp}");
+    let _ = std::fs::remove_dir_all(&d);
+}

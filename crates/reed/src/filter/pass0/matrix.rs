@@ -128,19 +128,24 @@ pub(crate) struct MatrixJob {
     /// The GT decode table for the native path, built once per run and
     /// shared by every worker (A6-10). `Some` exactly when `bcf_input` is.
     pub gt_table: Option<Arc<reed_io::bcf::GtTable>>,
-    /// The plan's Integer FORMAT keys.
-    pub int_keys: Arc<[Vec<u8>]>,
+    /// The plan's Integer FORMAT columns (with their fallback policy).
+    pub int_specs: Arc<[reed_io::vcf::format_layout::IntSpec]>,
     /// The plan's Float FORMAT keys.
     pub float_keys: Arc<[Vec<u8>]>,
 }
 
 impl MatrixJob {
     fn build_scratch(&self) -> MatrixScratch {
-        let int_keys: Vec<&[u8]> = self.plan.int_fields.iter().map(Vec::as_slice).collect();
+        let int_specs: Vec<_> = self
+            .plan
+            .int_fields
+            .iter()
+            .map(reed_io::vcf::format_layout::IntSpec::from)
+            .collect();
         let float_keys: Vec<&[u8]> = self.plan.float_fields.iter().map(Vec::as_slice).collect();
         let mut pipeline = RecordPipeline::new(
             self.n_samples,
-            &int_keys,
+            &int_specs,
             &float_keys,
             self.plan.policies,
             &[],
@@ -168,7 +173,7 @@ impl MatrixJob {
                 (Some(_), Some(table)) => Some(NativeScratch::new(
                     std::sync::Arc::clone(table),
                     self.n_samples,
-                    &self.int_keys,
+                    &self.int_specs,
                     &self.float_keys,
                 )),
                 _ => None,
@@ -373,7 +378,7 @@ impl MatrixJob {
         native.decode(
             dict,
             bytes,
-            &self.int_keys,
+            &self.int_specs,
             &self.float_keys,
             self.n_samples,
         )?;
@@ -1008,7 +1013,13 @@ pub(crate) fn run_matrix_pass(
                 .expect("invariant: a BCF input carries its dictionary")
         }),
         gt_table: native_bcf.then(|| Arc::new(reed_io::bcf::GtTable::new(plan.policies))),
-        int_keys: Arc::from(plan.int_fields.clone().into_boxed_slice()),
+        int_specs: Arc::from(
+            plan.int_fields
+                .iter()
+                .map(reed_io::vcf::format_layout::IntSpec::from)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        ),
         float_keys: Arc::from(plan.float_fields.clone().into_boxed_slice()),
     };
     let job = if native_bcf {

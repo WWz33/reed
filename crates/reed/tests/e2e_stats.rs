@@ -664,7 +664,7 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
 }
 
 /// doc_v9 D9-4 / 规约 E1: with a site filter, a record that fails
-/// `LineRef::parse` (fewer than 9 tabs) must fail the run. It used to be
+/// `LineRef::parse` (fewer than 8 columns) must fail the run. It used to be
 /// silently dropped when it happened to reach the reducer through `run_seam`;
 /// both body and seam now go through the same `process` call.
 ///
@@ -674,7 +674,7 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
 /// would need a >1 MiB fixture (the chunk target).
 #[test]
 fn malformed_record_under_site_filter_is_fatal() {
-    // 5 tabs, ~400 bytes: well under the 9 required, and long enough that a
+    // 5 tabs, ~400 bytes: well under the 8 required, and long enough that a
     // 64-byte BGZF block boundary falls inside it.
     let malformed = format!("chr1\t100\t.\tA\tG\t{}", "X".repeat(400));
     let header = "\
@@ -712,7 +712,7 @@ fn malformed_record_under_site_filter_is_fatal() {
     let err = run_popgen(Some(path.as_path()), &request, &budget)
         .expect_err("malformed line must be fatal");
     assert!(
-        err.to_string().contains("fewer than 9 columns"),
+        err.to_string().contains("fewer than 8 columns"),
         "got {err}"
     );
     let _ = std::fs::remove_dir_all(path.parent().expect("temp dir"));

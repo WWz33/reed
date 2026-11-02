@@ -11,16 +11,17 @@
 
 ```bash
 # 1) 参照物（pixy 2.2.4 / vcftools；本机源码装在 ../../.. 的 pixy、scikit-allel）
-./run_pixy.sh ../../../clean.vcf.gz ../../../clean.3pop.txt /tmp/popgen_full 100000
-./run_vcftools.sh ../../../clean.vcf.gz ../../../clean.3pop.txt /tmp/popgen_full 100000
+#    默认用最小子集 subvcf.vcf.gz；全量把路径换成 ../../../clean.vcf.gz
+./run_pixy.sh ../../../subvcf.vcf.gz ../../../clean.3pop.txt /tmp/popgen_sub 100000
+./run_vcftools.sh ../../../subvcf.vcf.gz ../../../clean.3pop.txt /tmp/popgen_sub 100000
 # 2) reed 输出（两种模式）
-reed stats ../../../clean.vcf.gz --pop ../../../clean.3pop.txt --pi --dxy --window 100k \
-  --bypass-invariant-check -o /tmp/popgen_full/reed_bypass
-reed stats ../../../clean.vcf.gz --pop ../../../clean.3pop.txt --pi --dxy --window 100k \
-  --variant-only -o /tmp/popgen_full/reed_vonly
+reed stats ../../../subvcf.vcf.gz --pop ../../../clean.3pop.txt --pi --dxy --window 100k \
+  --bypass-invariant-check -o /tmp/popgen_sub/reed_bypass
+reed stats ../../../subvcf.vcf.gz --pop ../../../clean.3pop.txt --pi --dxy --window 100k \
+  --variant-only -o /tmp/popgen_sub/reed_vonly
 # 3) 比较
-python3 compare.py /tmp/popgen_full/reed_bypass /tmp/popgen_full
-python3 compare.py /tmp/popgen_full/reed_vonly /tmp/popgen_full --vcftools
+python3 compare.py /tmp/popgen_sub/reed_bypass /tmp/popgen_sub
+python3 compare.py /tmp/popgen_sub/reed_vonly /tmp/popgen_sub --vcftools
 ```
 
 all-sites 输入（不变位点写作 `ALT="."`）上 pixy 默认模式与 reed 默认模式（不加

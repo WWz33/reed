@@ -166,6 +166,9 @@ fn gold_spec() -> FilterSpec {
                     field: (*field).into(),
                     when: (*when).into(),
                     on_missing: OnMissing::Keep,
+                    // The gold pipeline's DP rules are `--min-dp/--max-dp`
+                    // (depth masks); GQ is a plain scalar.
+                    depth: *field == "DP",
                 })
                 .collect(),
             ..GenotypeRules::default()
@@ -337,6 +340,7 @@ fn mask_default_on_missing_is_keep() {
                 field: "DP".into(),
                 when: "< 5".into(),
                 on_missing: OnMissing::Keep,
+                depth: true,
             }],
             ..GenotypeRules::default()
         },
@@ -1034,6 +1038,7 @@ fn mind_counts_post_mask_over_head_survivors() {
                 field: "DP".into(),
                 when: "< 5".into(),
                 on_missing: OnMissing::Keep,
+                depth: true,
             }],
             ..GenotypeRules::default()
         },
@@ -1441,6 +1446,7 @@ fn mask_masks_a_float_declared_format_field() {
                 field: "GQ".into(),
                 when: "< 20".into(),
                 on_missing: OnMissing::Keep,
+                depth: false,
             }],
             ..Default::default()
         },
@@ -1481,6 +1487,7 @@ fn min_af_recomputes_after_a_mask_changes_the_cohort() {
                 field: "DP".into(),
                 when: "< 100".into(),
                 on_missing: OnMissing::Keep,
+                depth: true,
             }],
             ..Default::default()
         },
@@ -1567,6 +1574,73 @@ fn s42_filter_write_index_extends_symbolic_deletions_to_end() {
         lines.iter().any(|l| l.contains("<DEL>")),
         "the filter-written index must find the spanning DEL at 20000: {lines:?}"
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// BSA-seq/GATK-lite callsets emit `GT:PL:AD` with no per-sample DP. The DP
+/// mask must accept that header (no "FORMAT field DP is not declared") and
+/// compare the summed AD depth instead (bcftools `calc_sample_depth`):
+/// a record whose FORMAT has DP still uses DP, and a sample with no call
+/// stays missing (the mask default is keep).
+#[test]
+fn min_dp_falls_back_to_ad_when_dp_is_absent() {
+    use reed_filter::spec::{GenotypeMaskRule, GenotypeRules, SiteRules};
+
+    const AD_HEADER: &str = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description=\"pl\">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"ad\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+";
+    const AD_RECORDS: &str = "\
+chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:PL:AD\t0/1:.:10,20\t0/1:.:.,.\t0/1:.:1,2
+chr1\t20\t.\tA\tT\t50\tPASS\t.\tGT:PL:AD\t1/1:.:0,50\t0/0:.:30,0\t0/1:.:5,6
+";
+    let dir = std::env::temp_dir().join(format!("reed-filter-adfallback-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let input = dir.join("in.vcf.gz");
+    let mut file = std::fs::File::create(&input).expect("invariant: fixture file");
+    file.write_all(&bgzf(&format!("{AD_HEADER}{AD_RECORDS}"), 128))
+        .expect("invariant: write");
+    drop(file);
+
+    let spec = FilterSpec {
+        genotype: GenotypeRules {
+            mask_if: vec![GenotypeMaskRule {
+                field: "DP".into(),
+                when: "< 10".into(),
+                on_missing: OnMissing::Keep,
+                depth: true,
+            }],
+            ..GenotypeRules::default()
+        },
+        site: SiteRules::default(),
+        ..FilterSpec::default()
+    };
+    let out = dir.join("o.vcf.gz");
+    run_filter(Some(input.as_path()), &spec, &options(None, &out)).expect("invariant: run");
+    let text = inflate_to_string(&out);
+    let records: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .flat_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            cols[9..].to_vec()
+        })
+        .collect();
+    // pos 10: sums 30 (kept), missing (kept — on_missing defaults to keep),
+    // 3 (masked; PL/AD stay, only GT becomes `./.`).
+    assert_eq!(records[0], "0/1:.:10,20");
+    assert_eq!(records[1], "0/1:.:.,.");
+    assert!(records[2].starts_with("./.:.:1,2"), "{records:?}");
+    // pos 20: sums 50, 30, 11 — all above the threshold.
+    assert!(records[3].starts_with("1/1:"), "{records:?}");
+    assert!(records[4].starts_with("0/0:"), "{records:?}");
+    assert!(records[5].starts_with("0/1:"), "{records:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

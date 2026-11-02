@@ -185,9 +185,9 @@ check "NewlineStitcher is finalized at stream end (doc_v9 D9-3)" \
 # at allele 62, INT16 at 16382 (2a+3 <= 127 / 32767). A regression to the
 # old allele-domain thresholds (32766) truncates codes with `as i16`.
 check "GT width follows the encoded value domain (doc_v10 D10-1)" \
-    bash -c 'grep -q "fn gt_width" crates/reed-io/src/bcf/native_encode.rs &&
-        grep -q "max_allele <= 16382" crates/reed-io/src/bcf/native_encode.rs &&
-        ! grep -q "max_allele <= 32766" crates/reed-io/src/bcf/native_encode.rs'
+    bash -c 'grep -q "fn gt_width" crates/reed-io/src/bcf/encode_native.rs &&
+        grep -q "max_allele <= 16382" crates/reed-io/src/bcf/encode_native.rs &&
+        ! grep -q "max_allele <= 32766" crates/reed-io/src/bcf/encode_native.rs'
 
 # doc_v10 D10-2: a (NULL, count>0) descriptor is rejected at the one read
 # gate (`Cursor::typed`), so the empty payload never reaches the renderers.
@@ -229,7 +229,7 @@ check "the output header declares PASS (doc_v10 D10-7)" \
 # helper, never a raw `type_width(ty) * count` product.
 check "BCF field sizes are computed with checked multiplication (doc_v10 D10-8)" \
     bash -c 'grep -q "pub fn field_bytes" crates/reed-io/src/bcf/record.rs &&
-        ! grep -rn "type_width(ty) \* count" crates/reed-io/src/bcf/render.rs crates/reed-io/src/bcf/native_encode.rs'
+        ! grep -rn "type_width(ty) \* count" crates/reed-io/src/bcf/render.rs crates/reed-io/src/bcf/encode_native.rs'
 
 # ---- doc_v11 (facade API) --------------------------------------------------
 # N1: `Levels`'s default is the window level, not the all-false bool tuple.
@@ -293,12 +293,12 @@ check "the INFO recompute is gated on has_gt (doc_v12 D12-2)" \
 
 # N3: the integer writer checks the BCF value range.
 check "out-of-range integers become missing (doc_v12 D12-3)" \
-    bash -c 'grep -q "INT32_MIN_VALUE..=INT32_MAX_VALUE" crates/reed-io/src/bcf/native_encode.rs'
+    bash -c 'grep -q "INT32_MIN_VALUE..=INT32_MAX_VALUE" crates/reed-io/src/bcf/encode_native.rs'
 
 # N4: the Flag-with-value and String-dot rules are htslib's.
 check "Flag values and String dots keep their bytes (doc_v12 D12-4/5)" \
-    bash -c '! grep -q "if v == b\".\" { &\[\] }" crates/reed-io/src/bcf/native_encode.rs &&
-        grep -q "InfoType::Flag, None" crates/reed-io/src/bcf/native_encode.rs'
+    bash -c '! grep -q "if v == b\".\" { &\[\] }" crates/reed-io/src/bcf/encode_native.rs &&
+        grep -q "InfoType::Flag, None" crates/reed-io/src/bcf/encode_native.rs'
 
 # N5: -q/-Q honour the cohort gate.
 check "-q/-Q follow the cohort change (doc_v12 D12-6)" \
@@ -316,8 +316,8 @@ check "quantifier any applies the comparison (doc_v12 D12-8)" \
 
 # N8: the packed counters are checked before the write.
 check "record counts are checked before packing (doc_v12 D12-9)" \
-    bash -c 'grep -q "fn pack_allele_info" crates/reed-io/src/bcf/native_encode.rs &&
-        grep -q "fn pack_fmt_sample" crates/reed-io/src/bcf/native_encode.rs'
+    bash -c 'grep -q "fn pack_allele_info" crates/reed-io/src/bcf/encode_native.rs &&
+        grep -q "fn pack_fmt_sample" crates/reed-io/src/bcf/encode_native.rs'
 
 # N9: ALT counting is one rule; -M 1 is representable.
 check "ALT counting is one rule (doc_v12 D12-10)" \

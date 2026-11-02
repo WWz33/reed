@@ -134,11 +134,14 @@ pub(crate) struct SiteFilterArgs {
     /// bcftools expression: drop records that satisfy it (repeatable)
     #[arg(short = 'e', long = "exclude", value_name = "EXPR")]
     pub exclude: Vec<String>,
-    /// Mask genotypes with FMT/DP below INT (missing DP never masks);
-    /// plink2 spells this --vcf-min-dp
+    /// Mask genotypes with depth below INT (missing depth never masks). The
+    /// depth is FMT/DP, or the sum of FMT/AD when the record's FORMAT has no
+    /// DP key (bsa-seq-style GT:PL:AD callsets); plink2 spells this
+    /// --vcf-min-dp
     #[arg(long, visible_alias = "vcf-min-dp", value_name = "INT")]
     pub min_dp: Option<u32>,
-    /// Mask genotypes with FMT/DP above INT (plink2 --vcf-max-dp)
+    /// Mask genotypes with depth above INT (FMT/DP, or the FMT/AD sum when
+    /// the record has no DP key; plink2 --vcf-max-dp)
     #[arg(long, visible_alias = "vcf-max-dp", value_name = "INT")]
     pub max_dp: Option<u32>,
     /// Mask genotypes with FMT/GQ below INT (plink2 --vcf-min-gq)

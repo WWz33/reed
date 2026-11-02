@@ -17,6 +17,7 @@ use reed_filter::eval::tail::eval_tail;
 use reed_filter::expr;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
+use reed_io::vcf::format_layout::IntSpec;
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::info::InfoIndex;
 use reed_io::vcf::line::LineRef;
@@ -99,13 +100,13 @@ impl RecordPipeline {
     #[must_use]
     pub(crate) fn new(
         n_samples: usize,
-        int_keys: &[&[u8]],
+        int_specs: &[IntSpec],
         float_keys: &[&[u8]],
         policies: GenotypePolicies,
         contig_names: &[Vec<u8>],
     ) -> Self {
         Self {
-            scanner: GenotypeScanner::new(n_samples, int_keys, float_keys, policies),
+            scanner: GenotypeScanner::new_with_specs(n_samples, int_specs, float_keys, policies),
             contigs: ContigTable::new(contig_names.iter().cloned()),
             counters: PolicyCounters::default(),
             head: HeadScratch::new(),
@@ -166,7 +167,7 @@ impl RecordPipeline {
     {
         funnel.n_input += 1;
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
+            return Err(EngineError::job("record line has fewer than 8 columns"));
         };
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
@@ -264,7 +265,7 @@ impl RecordPipeline {
     {
         funnel.n_input += 1;
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
+            return Err(EngineError::job("record line has fewer than 8 columns"));
         };
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
@@ -346,7 +347,7 @@ impl NativeScratch {
     pub(crate) fn new(
         table: std::sync::Arc<reed_io::bcf::GtTable>,
         n_samples: usize,
-        int_keys: &[Vec<u8>],
+        int_specs: &[IntSpec],
         float_keys: &[Vec<u8>],
     ) -> Self {
         Self {
@@ -354,7 +355,7 @@ impl NativeScratch {
             site_line: Vec::with_capacity(1 << 10),
             full: Vec::with_capacity(1 << 14),
             codes: Vec::with_capacity(n_samples),
-            int_columns: vec![Vec::with_capacity(n_samples); int_keys.len()],
+            int_columns: vec![Vec::with_capacity(n_samples); int_specs.len()],
             float_columns: vec![Vec::with_capacity(n_samples); float_keys.len()],
             counters: PolicyCounters::default(),
             has_gt: false,
@@ -372,7 +373,7 @@ impl NativeScratch {
         &mut self,
         dict: &reed_io::bcf::BcfDict,
         bytes: &[u8],
-        int_keys: &[Vec<u8>],
+        int_specs: &[IntSpec],
         float_keys: &[Vec<u8>],
         n_samples: usize,
     ) -> Result<(), EngineError> {
@@ -400,13 +401,12 @@ impl NativeScratch {
             &mut self.counters,
         )
         .map_err(EngineError::from)?;
-        let int_keys: Vec<&[u8]> = int_keys.iter().map(Vec::as_slice).collect();
         let float_keys: Vec<&[u8]> = float_keys.iter().map(Vec::as_slice).collect();
         reed_io::bcf::decode_format_columns(
             &rec,
             &header,
             dict,
-            &int_keys,
+            int_specs,
             &float_keys,
             &mut self.int_columns,
             &mut self.float_columns,

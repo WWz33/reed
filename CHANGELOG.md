@@ -5,6 +5,92 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v22 真实 callset 的 I/O 兼容与深度回退（2026-11-03）
+
+真实 callset 复核（`bsaseq/raw.bsa.vcf.gz`：4 样本、`GT:PL:AD`、无逐样本 DP）
+暴露 4 类问题：深度列恒缺失、sites-only 文件读不了、单倍体 GT 无开关、尾随
+空样本列整文件报错。明细与复现命令：`docs/rounds/v22/`。
+
+### Added
+- **io**：`IntSpec`（主键按标量读、可选回退键按逗号向量求和）；文本扫描器
+  `GenotypeScanner::new_with_specs` 与 BCF 原生解码 `decode_format_columns`
+  都按它解析。`DP` 的深度回退（记录无 DP 键 → 该样本 `AD` 之和）由调用方
+  显式声明，IO 不再按字段名推断（doc_v22 D22-1）；htslib 文本口径：`.`
+  跳过、向量尾截断、全缺失记 missing。
+- **filter（显式深度策略）**：`GenotypeMaskRule.depth`（serde 默认 false）标记
+  `--min-dp/--max-dp` 的深度语义；显式 `FMT/DP` 表达式保持字面 DP（header
+  未声明 DP 时报错，与 bcftools 一致）。同一 plan 同时含两者时生成两列。
+- **io**：`LineRef` 接受 8 列 sites-only 记录（`bcftools view -G` 形态）：
+  `format_text()`/`samples_text()` 为空，`n_sample_cols() == 0`；`filter`、
+  `index`、`stats`、`rename`、`convert` 的 9 列假设一并改为 8 列下限。
+  sites-only 输出保持 8 列（VCF 与 BCF 输出）。
+- **filter**：`--min-dp/--max-dp` 在 header 只声明 `FORMAT/AD` 时也可用；
+  记录 FORMAT 带 DP 键时仍只用 DP（该样本 DP 为 `.` 不回退）。
+- **filter**：`--ploidy require-diploid|allow-haploid`（默认
+  `require-diploid`）。spec 层早已支持 `policy.ploidy`，但标志层写死默认，
+  mtDNA / 雄性 X / 单倍体生物无法过滤；`stats` 原本就用
+  `HaploidAsHalfCall`，现在 `filter` 也可选。
+- **io**：样本区行尾多余的空列（`...\t0/1\t1/1\t`）按 htslib 语义忽略；
+  非空的额外列仍是 malformed。
+- **stats**：`--summary` 的 DP/PSC 与 `--depth`、`--hist dp` 使用同一深度列；
+  bcftools `calc_sample_depth` 口径已对拍（只计深度 > 0，AD 向量全量求和）。
+- **test infra**：`ci/test-parallel.sh`（一次 build，按测试二进制并发；
+  libtest 的并行只在单二进制内，cargo 本身串行跑各二进制）；
+  `gold/scripts/run_parallel.py`（gold 对拍脚本的独立 case 并发）。
+  gold 脚本默认输入改为 `subvcf.vcf.gz/.bcf`，全量 `clean.*` 只显式使用。
+- **io（R22-3）**：`LineRef::shape()`（`SitesOnly` / `FormatOnly` /
+  `WithSamples`）与 `validate_sample_cols(expected)` 固化列形态契约；文本扫描
+  器、`PCA`、`convert`、行编辑共用同一校验，不再各自数 tab。超出 header 样本数
+  的空列仍忽略，非空额外列仍 malformed；9 列 FORMAT-only 记录在 header 声明
+  样本时按 bcftools 语义报 malformed。
+- **io/bcf（R22-2）**：`bcf/mod.rs` 增加读/写/适配模块地图；`render.rs` 只保留
+  渲染，FORMAT 列解码拆到 `columns.rs`；`encode.rs` / `native_encode.rs` 改名为
+  `encode_noodles.rs` / `encode_native.rs`。
+- **test（R22-4）**：新增 `crates/reed-io/tests/format_columns_vs_bcf.rs`：
+  500 个随机记录（FORMAT 布局、AD 宽度、`.` 与短向量、DP 有无）经 native BCF
+  编码后，原生列解码、原文扫描、渲染文本扫描三条路径逐值相同；另有 2,000-case
+  的 `LineRef` 列形态 proptest。
+
+### Fixed
+- **stats/summary**：`FMT/DP` 为 0 的基因型此前进入 DP 直方图与平均深度，
+  bcftools 只计 `dp > 0`（`vcfstats.c:1119`）；修正后 DP/PSC 与 bcftools 一致。
+- **stats/summary**：模块文档写的 "AD fallback: the maximum non-ref AD" 从未实现
+  且口径错误；实际回退是 AD 之和。
+- **io/bcf**：`n_fmt == 0` 的记录渲染为 FORMAT `.` + 每样本 `.`，与 htslib
+  `vcf_format` / `bcftools view` 逐字节一致（原先输出空 FORMAT 列和多一个空
+  样本列，htslib 回读报 `FORMAT '' is not defined in the header`）。真实
+  `bcftools view -Ob` 生成的 `FORMAT=.` BCF 上，`reed filter -Ov` 的数据行
+  与 `bcftools view` 逐字节相同。
+
+### Changed — 测试速度与最小夹具
+- `crates/reed-io/tests/bcf_vs_noodles.rs`：本地差分改用工作区上级目录的
+  `subvcf.bcf`（3,000 记录 × 348 样本，8.6 MB；`REED_SUBVCF_BCF` 可覆盖，
+  缺失时跳过），并把整文件解压改为流式
+  前缀解压、noodles 端改用惰性 `Record`（原 `clean.bcf` 8 GB 全量解压 +
+  `RecordBuf` 使该单测约 400 s；现 4.5 s）。
+- `crates/reed-graph/src/newick.rs`：`deep_tree_does_not_overflow_the_stack`
+  直接构造 2000 深的 caterpillar，不再用 2000×2000 UPGMA 生成（23.5 s →
+  0.01 s）。
+- 新增 `ci/test-parallel.sh`：`cargo test --workspace` 逐二进制串行，它一次
+  build 后并发跑全部测试二进制；本机 860 项 run 阶段 50 s → 15 s。
+- gold 对拍：`gold/scripts/run_parallel.py` + `run_bcftools_af.sh` 的 40 个
+  独立 case 并发（顺序 ~40 s → 5.8 s 墙钟 / 40 s CPU）；`run_pixy.sh` 的
+  4 个独立 run 并发，`n_cores = nproc/JOBS`；`run_all.sh` 原本三工具已并行。
+  `lib.sh` 默认输入改为 `subvcf.vcf.gz/.bcf`。
+
+### 验收
+- `cargo test --workspace`：860 个测试通过、0 失败；`cargo clippy --workspace
+  --all-targets`：0 告警；`ci/test-parallel.sh`：860 passed / 0 failed（56 个
+  测试二进制，run 阶段 15 s；doctest 由 `--doc` 单独跑）；
+  `ci/check-doc-drift.sh`：97 项全部 ok；`cargo doc -p reed-io --no-deps`：
+  0 warning。
+- 真实数据 `raw.bsa.vcf.gz`（chr1:1-200000）：`--min-dp 10` 掩码 1111 个原调用
+  基因型 + 174 个原缺失，与 AD 求和判据逐样本一致；`--summary` 的 DP/PSC 与
+  `bcftools stats -s -` 逐行相同。
+- `bcftools view -G` 的 sites-only 文件：`filter -Oz/-Ob`、`index`、`stats
+  --freq/--summary` 全部通过，输出 8 列；`GT` 为单倍体的文件在
+  `--ploidy allow-haploid` 下与 `bcftools view` 输出一致。
+
 ## [Unreleased] — doc_v21 真实数据复审 + 修复（2026-10-28）
 
 在仓库**真实**数据上复核了评审 `reed-rs-review-2026-10-27.md`（HEAD fa8131f）：

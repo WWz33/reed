@@ -64,8 +64,10 @@ gold/
 
 ## 3. 本数据集的关键事实与踩坑（务必读）
 
-输入：`../clean.vcf.gz`（348 样本、20 条 Chr、**3,315,604 位点、全为 SNP、0 indel、0 多等位、全 PASS**；
-GATK HaplotypeCaller/GenotypeGVCFs 产出）。**已按 MAF 0.05 / max-missing 0.8 过滤过。**
+输入：默认 `../subvcf.vcf.gz`（3,000 记录 × 348 样本的本地最小子集），
+`INPUT=../clean.vcf.gz` 才跑全量（348 样本、20 条 Chr、**3,315,604 位点、
+全为 SNP、0 indel、0 多等位、全 PASS**；GATK HaplotypeCaller/GenotypeGVCFs
+产出）。**已按 MAF 0.05 / max-missing 0.8 过滤过。**
 
 1. **INFO/AC,AN,AF,MLEAC,MLEAF 是陈旧的**：348 样本是大队列的子集（样本名不连续），
    INFO 未重算。例：POS Chr01:358 实际 AN=672，INFO 却写 AN=466。
@@ -110,6 +112,23 @@ QUAL/PASS/双等位/样本缺失 为空操作守卫；HWE 默认 `0`（关闭）
 
 ---
 
+## 4.5 并行与最小夹具约定（doc_v22 R22-7）
+
+- **默认只跑最小子集**：`lib.sh` 的默认输入是 `../subvcf.vcf.gz`（或
+  `subvcf.bcf`，3,000 记录 × 348 样本，~9 MB）；全量 `clean.*` 只在显式
+  `INPUT=...` / 脚本参数时使用。单独的对拍脚本同理（见各脚本 Usage）。
+- **独立 case 并发**：把每个 case 写成一行 shell 命令，交给
+  `gold/scripts/run_parallel.py`（`JOBS`/`REED_JOBS`，默认 `nproc`）。
+  `run_bcftools_af.sh` 是范例：40 个 (threshold, type) case 并发，每个 case
+  内 `reed --threads 1`，并行度来自 case 数。
+- **参照物自身支持多核就用原生参数**：`pixy --n_cores`、plink2 `--threads`、
+  reed `--threads`；不支持的（bcftools view 等）保持单进程。
+- **输出必须 per-case 唯一**：并行 case 共用输出文件名会变成竞态；
+  例如 `run_bcftools_af.sh` 用 `bcftools.$tag.txt` / `reed.$tag.vcf`。
+- 单个 case 失败不会中断其他 case；`run_parallel.py` 汇总失败命令并以 1 退出。
+
+---
+
 ## 5. 用法
 
 ```bash
@@ -126,8 +145,8 @@ python3 gold/scripts/profile_input.py --input "$REED_SCRATCH/work/subset.Chr01-0
 # (2) 子集上跑金标准（三工具并行 + 三方对拍）
 INPUT=$PWD/$REED_SCRATCH/work/subset.Chr01-03.vcf.gz OUTDIR=$PWD/$REED_SCRATCH/out/subset.Chr01-03 bash gold/scripts/run_all.sh
 
-# (3) 全量跑（默认输入 ../clean.vcf.gz）
-bash gold/scripts/run_all.sh
+# (3) 全量跑（显式给 INPUT；脚本默认只跑 subvcf 小集）
+INPUT=$PWD/../clean.vcf.gz bash gold/scripts/run_all.sh
 
 # (4) 对拍：把任意「过滤后 VCF」与金标准比
 python3 gold/scripts/check_parity.py "$REED_SCRATCH/out/gold.vcf.gz" --gold "$REED_SCRATCH/out/gold.vcf.gz"

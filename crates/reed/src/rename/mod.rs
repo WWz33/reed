@@ -399,23 +399,9 @@ pub fn run_rename_opened(
     }
     let sample_names = facts.sample_names.clone();
     let n_samples = sample_names.len();
-    // A sites-only VCF (8 columns) has no parsable record form for this
-    // editor: the CHROM/ID planes would silently do nothing while the run
-    // "succeeded". Refuse instead (the header planes alone still work).
-    let record_planes = spec.rename_chrs.is_some()
-        || spec.chr_style.is_some()
-        || spec.set_id.is_some()
-        || spec.set_missing_var_ids.is_some()
-        || spec.update_name.is_some()
-        || spec.idspace_to.is_some()
-        || spec.rm_dup_ids
-        || spec.clear_ids;
-    if n_samples == 0 && record_planes {
-        return Err(crate::Error::usage(
-            "the input has no sample columns (a sites-only VCF); the CHROM/ID planes need \
-             9-column records — use the header planes only, or add the samples first",
-        ));
-    }
+    // Sites-only records (8 columns) are valid input: the CHROM/ID editors
+    // only read the first five columns and copy the rest byte-for-byte
+    // (doc_v22 V22-R8). No sample columns are needed for a record-plane edit.
 
     // ---- header: the replacement, the contig edits and the meta edits ----
     let mut header_text = String::from_utf8_lossy(&facts.text).into_owned();
@@ -1296,7 +1282,7 @@ fn index_key(
     line: &[u8],
 ) -> Result<reed_io::write::block_writer::IndexKey, EngineError> {
     let lr = LineRef::parse(line)
-        .ok_or_else(|| EngineError::job("record line has fewer than 9 columns"))?;
+        .ok_or_else(|| EngineError::job("record line has fewer than 8 columns"))?;
     let site = reed_io::vcf::site::SiteView::parse(&lr).map_err(EngineError::from)?;
     let contig = plan
         .contig_id(lr.chrom())

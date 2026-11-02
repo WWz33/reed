@@ -53,7 +53,7 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 
 | 参数 | 含义 | 命令 |
 |---|---|---|
-| `<INPUT>` / `-` | 输入 VCF / VCF.gz / BCF；`-` = stdin（`index` 只接受文件，索引需要可定位输入） | 三者 |
+| `<INPUT>` / `-` | 输入 VCF / VCF.gz / BCF；`-` = stdin（`index` 只接受文件，索引需要可定位输入）。**sites-only（8 列，`bcftools view -G` 形态）合法**：filter/index/stats/rename 照常工作，输出保持 8 列；**行尾多余的空样本列**按 htslib 语义忽略（非空额外列仍是 malformed） | 三者 |
 | `-o, --output FILE\|PREFIX` | filter：输出文件（缺省 stdout），格式来自 `-O` 或扩展名；stats：输出前缀；index：索引路径。别名 `--out` | 三者 |
 | `-O, --output-type v\|z\|b\|u[0-9]` | 输出类型与压缩级别（`-Oz6`、`-Ob1`） | filter |
 | `-W, --write-index[=csi\|tbi]` | 边写边建索引；**不给则不写**（bcftools 语义；W1 修正了"默认写"的缺陷）。索引只在 BGZF 输出且给了 `-o FILE` 时才有意义：其余形态是用法错（doc_v21 D2） | filter、rename |
@@ -101,9 +101,10 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 
 | 参数 | 语义 | 来源 |
 |---|---|---|
-| `--min-dp A` / `--max-dp B` | `FMT/DP ∉ [A, B]` 的基因型置 `./.`；**DP 缺失不掩码**。别名 `--vcf-min-dp/--vcf-max-dp` | plink2 |
+| `--min-dp A` / `--max-dp B` | 深度 `∉ [A, B]` 的基因型置 `./.`；**深度缺失不掩码**。深度 = 该记录的 `FMT/DP`；记录 FORMAT 没有 DP 键时取该样本 `FMT/AD` 之和（bcftools `calc_sample_depth` 口径，兼容 `GT:PL:AD` 的 BSA-seq/GATK-lite callset；DP 键存在但该样本值为 `.` 时不回退）。别名 `--vcf-min-dp/--vcf-max-dp` | plink2（AD 回退为 reed 扩展） |
 | `--min-gq G` | `FMT/GQ < G` 置缺失；GQ 缺失不掩码。别名 `--vcf-min-gq` | plink2 |
 | `--set-gts .` + `-i/-e 'FMT/…'` | 与 `bcftools filter -S . -e EXPR` 相同；只接受 `.` | bcftools |
+| `--ploidy require-diploid\|allow-haploid` | 基因型倍性策略：默认 `require-diploid` 拒绝单倍体/多倍体调用；`allow-haploid` 把单倍体记为半调用（mtDNA、雄性 X、单倍体生物）。这是 spec `policy.ploidy` 的 CLI 入口（doc_v22） | reed 扩展 |
 
 ### 3.4 位点级（掩码后，按基因型重算）
 
@@ -230,8 +231,8 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | `--pbs A,B,C [--pbs-normed]` | PBS，A 为焦点群体；**可重复**。单三元组写 `PREFIX_pbs.txt`；多三元组时**每三元组一份文件** `PREFIX_pbs.<A>-<B>-<C>.txt`（组名中 `[A-Za-z0-9_.-]` 以外的字符记为 `_`，重名追加 `-2`/`-3`；doc_v15 D15-8），每份表头各指自己的三元组 | Yi et al. 2010；PBSn1：Malaspinas 2016 | 已对拍 allel |
 | `--sfs [folded] --proj N[,N…]` | 投影 SFS：每群体一维；两群体起另写每对联合（二维）谱 | Marth 2004；Gutenkunst 2009 | 已对拍 easySFS（`run_easysfs.sh`，含二维联合谱） |
 | `--freq` / `--hardy` / `--het` / `--missing` | 逐位点频率 / HWE 与杂合度 / 个体 F / 缺失率 | Wigginton 2005；Graffelman 2013 | 已对拍 plink2 |
-| `--depth` | 逐样本、逐位点平均深度 | — | 已对拍 vcftools |
-| `--summary` | bcftools stats 格式 QC 汇总 | — | 已对拍 |
+| `--depth` | 逐样本、逐位点平均深度；深度列同 `--min-dp`（`FMT/DP`，记录无 DP 键时用 `FMT/AD` 之和） | — | 已对拍 vcftools（AD 回退为 reed 扩展） |
+| `--summary` | bcftools stats 格式 QC 汇总；样本级 DP/PSC 深度用 `calc_sample_depth` 口径（`FMT/DP`，记录无 DP 键时用 `FMT/AD` 之和，且只计深度 > 0） | `vcfstats.c` | 已对拍（含只带 `GT:PL:AD` 的 callset） |
 | **`--f2/--f3/--f4/--dstat/--f4-ratio`**、**`--ld-decay [MAX_BP]` / `--ld-pairs`** | f 统计（block jackknife）、LD 衰减 | Patterson 2012；Purcell 2007 | f 统计 X4.3 已落地；LD 衰减见 05 §3.4.2。`--indep-pairwise` **不是** stats 独有的统计量，它是 §3.4 的过滤规则，stats 里的含义是"只在剪枝后位点上统计" |
 
 `--fst-global` 的规则：没有 `--fst` 时报错；与 `hudson` 组合报错（Hudson 没有 r 群体形式）；两个群体时值等于成对 wc84，只提示不报错；输出单独的 `PREFIX_fst_global.txt`。`--fst-pops` **作废**（doc_v2 02 §5.2 那一行由本表取代）。

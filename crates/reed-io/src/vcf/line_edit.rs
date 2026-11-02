@@ -17,7 +17,7 @@
 use reed_core::Bitset;
 use reed_core::sample::SampleMask;
 
-use crate::vcf::line::LineRef;
+use crate::vcf::line::{LineRef, Shape};
 
 /// One recomputed INFO value (§6.7: rendered here with the htslib-compatible
 /// formatting so `L_tags` parity holds).
@@ -74,9 +74,9 @@ pub fn render_info_value(value: &InfoValueOut, out: &mut Vec<u8>) {
 /// record (resolved by the caller; `None` = the record has no GT column).
 ///
 /// Infallible by construction: the `LineRef` argument can only be built by
-/// `LineRef::parse`, which already rejected a line with fewer than nine
-/// columns, so the old re-parse and its `MalformedRecord` branch were dead
-/// code (doc_v12 D12-15).
+/// `LineRef::parse`, which already rejected a truncated line (fewer than
+/// eight columns), so the old re-parse and its `MalformedRecord` branch were
+/// dead code (doc_v12 D12-15).
 pub fn edit_vcf_line(
     line: &LineRef<'_>,
     plan: &EditPlan<'_>,
@@ -102,7 +102,22 @@ pub fn edit_vcf_line(
         out.push(b'\n');
         return;
     }
-
+    // The shape is preserved (doc_v22 R22-3): a sites-only record stays
+    // 8 columns, a FORMAT-only record 9, and only a record with samples
+    // writes the sample region.
+    match line.shape() {
+        Shape::SitesOnly => {
+            out.push(b'\n');
+            return;
+        }
+        Shape::FormatOnly => {
+            out.push(b'\t');
+            out.extend_from_slice(line.format_text());
+            out.push(b'\n');
+            return;
+        }
+        Shape::WithSamples => {}
+    }
     out.push(b'\t');
     // FORMAT verbatim.
     out.extend_from_slice(line.format_text());
@@ -440,6 +455,21 @@ mod tests {
 
     const LINE: &[u8] =
         b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9;QD=4.5;AF=0.5;DP=150\tGT:DP:GQ\t0/1:15:99\t1|1:12:99\t./.:0:9\t0/0:8:44\n";
+
+    #[test]
+    fn column_shape_is_preserved() {
+        // doc_v22 R22-3: sites-only stays 8 columns, a FORMAT-only record
+        // stays 9 — neither gains a phantom sample column.
+        let plan = EditPlan::default();
+        assert_eq!(
+            edit(b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\n", &plan, None),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t."
+        );
+        assert_eq!(
+            edit(b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\n", &plan, None),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT"
+        );
+    }
 
     #[test]
     fn verbatim_when_no_plan() {

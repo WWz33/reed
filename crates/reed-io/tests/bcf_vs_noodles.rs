@@ -15,50 +15,83 @@ fn fixture(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
-fn inflate_all(path: &std::path::Path) -> Vec<u8> {
-    let mut reader = std::io::BufReader::with_capacity(
-        1 << 16,
-        std::fs::File::open(path).expect("invariant: fixture opens"),
-    );
-    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
-    let mut data = Vec::new();
+/// Inflates the next BGZF block into `data`; `false` at end of file.
+fn inflate_block(
+    reader: &mut impl Read,
+    inflater: &mut reed_io::bgzf::inflate::Inflater,
+    data: &mut Vec<u8>,
+) -> bool {
     let mut header = [0_u8; 18];
-    while reader.read_exact(&mut header).is_ok() {
-        let total = reed_io::bgzf::block::parse_block_size(&header).expect("invariant: BGZF");
-        let mut block = header.to_vec();
-        block.resize(total, 0);
-        reader
-            .read_exact(&mut block[18..])
-            .expect("invariant: full block");
-        inflater
-            .inflate_block(&block, &mut data)
-            .expect("invariant: inflates");
+    if reader.read_exact(&mut header).is_err() {
+        return false;
     }
-    data
+    let Some(total) = reed_io::bgzf::block::parse_block_size(&header) else {
+        return false;
+    };
+    let mut block = header.to_vec();
+    block.resize(total, 0);
+    reader
+        .read_exact(&mut block[18..])
+        .expect("invariant: full block");
+    inflater
+        .inflate_block(&block, data)
+        .expect("invariant: inflates");
+    true
 }
 
 /// Renders `limit` records of `path` with our decoder.
+///
+/// Streams the BGZF blocks and stops as soon as the prefix is decoded: the
+/// local full-data file is 8 GB, and inflating all of it to read 100,000
+/// records made this test dominate the whole suite (doc_v22 R22-7).
 fn render_ours(path: &std::path::Path, limit: usize) -> String {
-    let data = inflate_all(path);
-    assert_eq!(&data[..3], b"BCF");
-    let l_text = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
-    let dict = reed_io::bcf::BcfDict::from_header(&data[9..9 + l_text]).expect("invariant: header");
-    let mut off = 9 + l_text;
+    let file = std::fs::File::open(path).expect("invariant: fixture opens");
+    let mut reader = std::io::BufReader::with_capacity(1 << 16, file);
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut data = Vec::new();
+    let mut off = 0_usize;
+    let mut dict: Option<reed_io::bcf::BcfDict> = None;
     let mut out = Vec::new();
-    let mut n = 0;
-    while n < limit {
-        let Some(len) = reed_io::bcf::record_len(&data[off..]) else {
+    let mut n = 0_usize;
+    loop {
+        if let Some(d) = &dict {
+            if let Some(len) = reed_io::bcf::record_len(&data[off..])
+                && data.len() >= off + len
+            {
+                let rec = reed_io::bcf::record_ref(&data[off..off + len])
+                    .expect("invariant: record");
+                reed_io::bcf::render_record(&rec, d, &mut out).expect("invariant: renders");
+                off += len;
+                n += 1;
+                if n == limit {
+                    break;
+                }
+                continue;
+            }
+        } else if data.len() >= 9 {
+            assert_eq!(&data[..3], b"BCF");
+            let l_text = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
+            if data.len() >= 9 + l_text {
+                dict = Some(
+                    reed_io::bcf::BcfDict::from_header(&data[9..9 + l_text])
+                        .expect("invariant: header"),
+                );
+                off = 9 + l_text;
+                continue;
+            }
+        }
+        if !inflate_block(&mut reader, &mut inflater, &mut data) {
             break;
-        };
-        let rec = reed_io::bcf::record_ref(&data[off..off + len]).expect("invariant: record");
-        reed_io::bcf::render_record(&rec, &dict, &mut out).expect("invariant: renders");
-        off += len;
-        n += 1;
+        }
     }
     String::from_utf8(out).expect("invariant: VCF text")
 }
 
 /// Renders `limit` records of `path` with noodles' reader.
+///
+/// Uses the lazy [`noodles::bcf::Record`] rather than `RecordBuf`: the eager
+/// form materializes every FORMAT value of all 348 samples per record and
+/// made the 100,000-record prefix take minutes.
 fn render_noodles(path: &std::path::Path, limit: usize) -> String {
     let file = std::fs::File::open(path).expect("invariant: fixture opens");
     let mut reader = bcf::io::Reader::new(std::io::BufReader::new(file));
@@ -67,15 +100,15 @@ fn render_noodles(path: &std::path::Path, limit: usize) -> String {
     {
         let mut writer = vcf::io::Writer::new(&mut out);
         writer.write_header(&header).expect("invariant: header");
-        let mut buffer = vcf::variant::RecordBuf::default();
+        let mut record = bcf::Record::default();
         for _ in 0..limit {
-            match reader.read_record_buf(&header, &mut buffer) {
+            match reader.read_record(&mut record) {
                 Ok(0) => break,
                 Ok(_) => {}
                 Err(err) => unreachable!("noodles read: {err}"),
             }
             writer
-                .write_variant_record(&header, &buffer)
+                .write_variant_record(&header, &record)
                 .expect("invariant: noodles writes");
         }
     }
@@ -163,14 +196,23 @@ fn decoding_matches_noodles_on_the_fixture() {
     compare(&fixture("fix.bcf"), usize::MAX);
 }
 
-/// The local full-data BCF, when present (skipped otherwise).
+/// The local subset BCF (`subvcf.bcf`, 3,000 records x 348 samples), when
+/// present (skipped otherwise). The 8 GB `clean.bcf` prefix made this test
+/// dominate the suite; the subset keeps the same record shapes.
+///
+/// The file is not in the repository: resolve `REED_SUBVCF_BCF` first, then
+/// the workspace parent's `subvcf.bcf`. Missing stays a skip, so a clean
+/// checkout still runs the rest of the suite (V22-R10).
 #[test]
-fn decoding_matches_noodles_on_the_full_file_prefix() {
-    let path = std::path::Path::new("/sri/home/sri2025201067/reed/clean.bcf");
+fn decoding_matches_noodles_on_the_local_subset() {
+    let path = std::env::var_os("REED_SUBVCF_BCF").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../subvcf.bcf"),
+        std::path::PathBuf::from,
+    );
     if !path.exists() {
         return;
     }
-    compare(path, 100_000);
+    compare(&path, usize::MAX);
 }
 
 #[test]

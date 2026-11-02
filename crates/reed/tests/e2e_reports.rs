@@ -220,3 +220,68 @@ fn summary_idd_qual_psc_match_bcftools() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// bcftools `calc_sample_depth` (vcfstats.c:958): a record whose FORMAT has
+/// no DP key uses the sum of the sample's AD values; a FORMAT that carries
+/// DP never falls back, even when a sample's DP value is missing. The
+/// expected lines are `bcftools stats -s -` 1.24 output on this fixture.
+const AD_FALLBACK: &str = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"GT\">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"AD\">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"DP\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:10,20\t0/0:30,0
+chr1\t5\t.\tA\tT\t50\tPASS\t.\tGT:AD\t0/1:.,20\t1/1:0,25
+chr1\t10\t.\tC\tG\t50\tPASS\t.\tGT:DP:AD\t0/1:.:10,20\t0/1:11:5,6
+chr1\t15\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:0,0\t0/1:10,20,99
+";
+
+#[test]
+fn summary_depth_falls_back_to_ad() {
+    let dir = std::env::temp_dir().join(format!("reed-reports-ad-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("in.vcf.gz");
+    let mut file = std::fs::File::create(&vcf).expect("invariant: fixture file");
+    file.write_all(&bgzf(AD_FALLBACK)).expect("invariant: write");
+    drop(file);
+    let prefix = dir.join("out");
+    let request = StatsReportRequest {
+        summary: true,
+        prefix,
+        ..StatsReportRequest::default()
+    };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let outcome = run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
+    let qc = outcome.qc.expect("invariant: summary requested");
+    let names = vec!["s0".to_string(), "s1".to_string()];
+    let text = reed::summary::render_bcftools_stats(&qc, &names);
+    for line in [
+        // AD sums: s0 30, 20, then no fallback (FORMAT has DP, value
+        // missing) and 0 (dropped: bcftools counts only dp > 0); s1 30, 25,
+        // 11 and 10+20+99 = 129 (the whole vector, not just Number=R).
+        "DP\t0\t11\t1\t16.666667\t0\t0.000000",
+        "DP\t0\t20\t1\t16.666667\t0\t0.000000",
+        "DP\t0\t25\t1\t16.666667\t0\t0.000000",
+        "DP\t0\t30\t2\t33.333333\t0\t0.000000",
+        "DP\t0\t129\t1\t16.666667\t0\t0.000000",
+    ] {
+        assert!(text.contains(line), "missing {line:?}\n{text}");
+    }
+    // PSC average depth: s0 (30+20)/2 = 25.0, s1 (30+25+11+129)/4 = 48.8.
+    let avg_depth = |sample: &str| -> String {
+        text.lines()
+            .find(|l| l.starts_with(&format!("PSC\t0\t{sample}\t")))
+            .and_then(|l| l.split('\t').nth(9))
+            .expect("invariant: PSC row")
+            .to_string()
+    };
+    assert_eq!(avg_depth("s0"), "25.0", "{text}");
+    assert_eq!(avg_depth("s1"), "48.8", "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

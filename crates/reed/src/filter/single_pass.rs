@@ -98,9 +98,9 @@ pub(super) struct FilterJob {
     /// The GT decode table for the native path, built once per run and
     /// shared by every worker (A6-10). `Some` exactly when `bcf_input` is.
     pub(super) gt_table: Option<Arc<reed_io::bcf::GtTable>>,
-    /// The plan's Integer/Float FORMAT keys (the mask's columns).
-    pub(super) int_keys: Arc<[Vec<u8>]>,
-    /// See [`FilterJob::int_keys`].
+    /// The plan's Integer/Float FORMAT columns (the mask's columns).
+    pub(super) int_specs: Arc<[reed_io::vcf::format_layout::IntSpec]>,
+    /// See [`FilterJob::int_specs`].
     pub(super) float_keys: Arc<[Vec<u8>]>,
     /// `--indep-pairwise`: the kept sites, per contig, from pass0
     /// (docs/rounds/v5/05-algorithms.md §3.4.1). Pass1 drops a surviving
@@ -196,11 +196,16 @@ struct EmitScratchMut<'a> {
 
 impl FilterJob {
     fn build_scratch(&self) -> WorkerScratch {
-        let int_keys: Vec<&[u8]> = self.plan.int_fields.iter().map(Vec::as_slice).collect();
+        let int_specs: Vec<_> = self
+            .plan
+            .int_fields
+            .iter()
+            .map(reed_io::vcf::format_layout::IntSpec::from)
+            .collect();
         let float_keys: Vec<&[u8]> = self.plan.float_fields.iter().map(Vec::as_slice).collect();
         let mut pipeline = RecordPipeline::new(
             self.n_samples_in,
-            &int_keys,
+            &int_specs,
             &float_keys,
             self.plan.policies,
             &self.contig_names,
@@ -230,7 +235,7 @@ impl FilterJob {
                 (Some(_), Some(table)) => Some(NativeScratch::new(
                     std::sync::Arc::clone(table),
                     self.n_samples_in,
-                    &self.int_keys,
+                    &self.int_specs,
                     &self.float_keys,
                 )),
                 _ => None,
@@ -414,7 +419,7 @@ impl FilterJob {
         native.decode(
             dict,
             bytes,
-            &self.int_keys,
+            &self.int_specs,
             &self.float_keys,
             self.n_samples_in,
         )?;
@@ -487,7 +492,7 @@ impl FilterJob {
                 full.clear();
                 render_record(&rec, dict, &mut full).map_err(EngineError::from)?;
                 let full_lr = LineRef::parse(&full)
-                    .ok_or_else(|| EngineError::job("rendered record has fewer than 9 columns"))?;
+                    .ok_or_else(|| EngineError::job("rendered record has fewer than 8 columns"))?;
                 self.emit_survivor(&mut emit, stale, view, EmitSource::Text(&full_lr))
             },
         )?;

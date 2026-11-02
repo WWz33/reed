@@ -268,6 +268,7 @@ fn indep_pairwise_respects_the_genotype_mask() {
             field: "DP".into(),
             when: "< 20".into(),
             on_missing: reed::spec::OnMissing::Keep,
+            depth: true,
         }],
         ..reed::spec::GenotypeRules::default()
     };

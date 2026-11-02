@@ -110,7 +110,7 @@ fn native_inputs_match_the_text_path() {
             &rec,
             &header,
             &dict,
-            &[b"DP"],
+            &[reed_io::vcf::format_layout::IntSpec::scalar(b"DP")],
             &[],
             &mut int_columns,
             &mut float_columns,
