@@ -124,10 +124,14 @@ impl<J: ChunkJob> FilteredJob<J> {
         let Some(plan) = &self.plan else {
             return FilteredScratch::default();
         };
-        let int_keys: Vec<&[u8]> = plan.int_fields.iter().map(Vec::as_slice).collect();
+        let int_specs: Vec<_> = plan
+            .int_fields
+            .iter()
+            .map(reed_io::vcf::format_layout::IntSpec::from)
+            .collect();
         let float_keys: Vec<&[u8]> = plan.float_fields.iter().map(Vec::as_slice).collect();
         let mut pipeline =
-            RecordPipeline::new(self.keep.len(), &int_keys, &float_keys, plan.policies, &[]);
+            RecordPipeline::new(self.keep.len(), &int_specs, &float_keys, plan.policies, &[]);
         pipeline.resize_for(plan);
         FilteredScratch {
             pipeline: Some(pipeline),
@@ -421,13 +425,13 @@ mod tests {
         let job = job();
         let mut scratch = job.build_scratch();
         let good = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\n";
-        let malformed = b"chr1\t2\t.\tA\tG\n"; // fewer than 9 columns
+        let malformed = b"chr1\t2\t.\tA\tG\n"; // fewer than 8 columns
 
         // Sanity: the same line inside a chunk body is fatal.
         let body_err = job
             .run_chunk(&chunk(), malformed, &mut scratch)
             .expect_err("a malformed body record must fail");
-        assert!(body_err.to_string().contains("fewer than 9 columns"));
+        assert!(body_err.to_string().contains("fewer than 8 columns"));
 
         let mut scratch = job.build_scratch();
         let seam_err = job

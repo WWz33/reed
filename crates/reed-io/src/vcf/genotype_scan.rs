@@ -13,8 +13,8 @@ use std::ops::Range;
 use reed_core::genotype::{GenotypePolicies, GtCode, Ploidy, PolicyCounters};
 
 use crate::error::{IoError, Locus};
-use crate::vcf::format_layout::FormatLayoutCache;
-use crate::vcf::line::LineRef;
+use crate::vcf::format_layout::{FormatLayoutCache, IntSpec};
+use crate::vcf::line::{LineRef, SampleColumnsError};
 use crate::vcf::site::SiteView;
 
 /// Sentinel for a missing integer sample value: real DP/GQ values never
@@ -61,7 +61,8 @@ pub struct GenotypeScanner {
 
 impl GenotypeScanner {
     /// Creates a scanner for `n_samples` header columns, decoding GT plus the
-    /// named integer/float keys, under `policies`.
+    /// named integer/float keys, under `policies`. Every integer key is a
+    /// plain scalar.
     #[must_use]
     pub fn new(
         n_samples: usize,
@@ -69,7 +70,23 @@ impl GenotypeScanner {
         float_keys: &[&[u8]],
         policies: GenotypePolicies,
     ) -> Self {
-        let layouts = FormatLayoutCache::new(int_keys, float_keys);
+        let specs: Vec<IntSpec> = int_keys
+            .iter()
+            .map(|k| IntSpec::owned(k.to_vec(), None))
+            .collect();
+        Self::new_with_specs(n_samples, &specs, float_keys, policies)
+    }
+
+    /// Creates a scanner whose integer columns carry a decode mode and an
+    /// optional fallback key (see [`IntSpec`]).
+    #[must_use]
+    pub fn new_with_specs(
+        n_samples: usize,
+        int_specs: &[IntSpec],
+        float_keys: &[&[u8]],
+        policies: GenotypePolicies,
+    ) -> Self {
+        let layouts = FormatLayoutCache::new_with_specs(int_specs, float_keys);
         let n_int = layouts.n_int_keys();
         let n_float = layouts.n_float_keys();
         Self {
@@ -143,22 +160,34 @@ impl GenotypeScanner {
             alleles.clear();
         }
 
+        // The structural contract lives in `LineRef` (doc_v22 R22-3): the
+        // scanner does not re-derive it from the tab count.
+        line.validate_sample_cols(*n_samples)
+            .map_err(|err| IoError::MalformedRecord {
+                locus: site.locus(),
+                reason: match err {
+                    SampleColumnsError::TooFew { .. } => {
+                        "sample column count disagrees with the header"
+                    }
+                    SampleColumnsError::TooMany { .. } => {
+                        "more sample columns than the header declares"
+                    }
+                },
+            })?;
+
         let layout_ix = layouts.intern(line.format_text());
         let gt_index = layouts.get(layout_ix).gt_index;
         let last_needed = layouts.get(layout_ix).last_needed;
 
         let samples = line.samples_text();
         let mut field_start = 0_usize;
-        let mut sample_count = 0_usize;
-        while field_start <= samples.len() {
+        // `validate_sample_cols` already fixed the structural contract: at
+        // least `n_samples` fields, and every field past them empty
+        // (V22-R16). Decode exactly the declared samples; the trailing tabs
+        // need no second check here.
+        for _ in 0..*n_samples {
             let field_end = memchr::memchr(b'\t', &samples[field_start..])
                 .map_or(samples.len(), |rel| field_start + rel);
-            if sample_count >= *n_samples {
-                return Err(IoError::MalformedRecord {
-                    locus: site.locus(),
-                    reason: "more sample columns than the header declares",
-                });
-            }
             let field = &samples[field_start..field_end];
             split_needed(subfields, field, last_needed);
 
@@ -174,16 +203,26 @@ impl GenotypeScanner {
                 alleles.extend_from_slice(token);
             }
 
-            for (key, column) in layouts
+            for (int_layout, column) in layouts
                 .get(layout_ix)
-                .int_indices
+                .ints
                 .iter()
                 .zip(int_columns.iter_mut())
             {
-                column.push(
-                    key.and_then(|ki| subfields.get(usize::from(ki)))
-                        .map_or(INT_MISSING, |range| parse_int(&field[range.clone()])),
-                );
+                // A record carrying the primary key never falls back, even
+                // when a sample's value is missing (bcftools
+                // `calc_sample_depth`).
+                let value = if let Some(ki) = int_layout.index {
+                    subfields
+                        .get(usize::from(ki))
+                        .map_or(INT_MISSING, |range| parse_int(&field[range.clone()]))
+                } else {
+                    int_layout
+                        .fallback_index
+                        .and_then(|fi| subfields.get(usize::from(fi)))
+                        .map_or(INT_MISSING, |range| parse_int_sum(&field[range.clone()]))
+                };
+                column.push(value);
             }
             for (key, column) in layouts
                 .get(layout_ix)
@@ -197,14 +236,7 @@ impl GenotypeScanner {
                 );
             }
 
-            sample_count += 1;
             field_start = field_end + 1;
-        }
-        if sample_count != *n_samples {
-            return Err(IoError::MalformedRecord {
-                locus: site.locus(),
-                reason: "sample column count disagrees with the header",
-            });
         }
 
         Ok(ScanOutput {
@@ -432,6 +464,24 @@ pub fn parse_int(text: &[u8]) -> u32 {
     value
 }
 
+/// Comma-separated integer FORMAT value (`AD`): the sum of its non-missing
+/// values. `INT_MISSING` when no value is present — htslib's text parse maps
+/// `.`/unparsable tokens to missing and pads a short vector with vector-end,
+/// which the comma split represents by the token simply ending.
+#[must_use]
+pub fn parse_int_sum(text: &[u8]) -> u32 {
+    let mut sum = 0_u32;
+    let mut any = false;
+    for value in text.split(|&b| b == b',') {
+        let v = parse_int(value);
+        if v != INT_MISSING {
+            sum = sum.saturating_add(v);
+            any = true;
+        }
+    }
+    if any { sum } else { INT_MISSING }
+}
+
 /// Float FORMAT value; `.`, empty or unparsable text is `NaN`.
 #[must_use]
 pub fn parse_float(text: &[u8]) -> f32 {
@@ -559,6 +609,74 @@ mod tests {
         assert_eq!(out.int_columns[1], vec![40, INT_MISSING, INT_MISSING]);
         assert_eq!(out.float_columns[0][0], 0.5);
         assert!(out.float_columns[0][1].is_nan() && out.float_columns[0][2].is_nan());
+    }
+
+    #[test]
+    fn depth_column_falls_back_to_ad_sum() {
+        use crate::vcf::format_layout::IntSpec;
+        let mut scanner =
+            GenotypeScanner::new_with_specs(3, &[IntSpec::depth()], &[], permissive());
+        // No DP key: the samples' AD values are summed (Number=R, but every
+        // present value counts — htslib does not truncate).
+        let (out, _) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT:PL:AD\t0/1:.:10,20\t1/1:.:.,25\t0/0:.:.\n",
+        );
+        assert_eq!(out.int_columns[0], vec![30, 25, INT_MISSING]);
+        // FORMAT with DP: DP wins and a missing DP stays missing (no AD
+        // fallback), even though AD is present.
+        let (out, _) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT:DP:AD\t0/1:.:10,20\t1/1:11:5,6\t0/0:0:1,2\n",
+        );
+        assert_eq!(out.int_columns[0], vec![INT_MISSING, 11, 0]);
+    }
+
+    #[test]
+    fn parse_int_sum_matches_htslib_missing_rules() {
+        assert_eq!(parse_int_sum(b"10,20"), 30);
+        assert_eq!(parse_int_sum(b"10,.,20"), 30);
+        assert_eq!(parse_int_sum(b"."), INT_MISSING);
+        assert_eq!(parse_int_sum(b""), INT_MISSING);
+        assert_eq!(parse_int_sum(b".,."), INT_MISSING);
+        assert_eq!(parse_int_sum(b"7"), 7);
+    }
+
+    #[test]
+    fn sites_only_and_trailing_empty_columns_decode() {
+        // 8 columns, no samples: nothing to decode, no phantom sample column.
+        let mut scanner = GenotypeScanner::new(0, &[], &[], permissive());
+        let (out, _) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG\t.\tPASS\tDP=5\n",
+        );
+        assert_eq!(out.codes, []);
+        assert!(!out.has_gt);
+        // A record ending in one (or more) empty sample columns keeps the
+        // declared samples and ignores the extras, as htslib does.
+        let mut scanner = GenotypeScanner::new(2, &[b"DP"], &[], permissive());
+        let (out, _) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT:DP\t0/1:9\t1/1:8\t\t\n",
+        );
+        assert_eq!(out.codes.len(), 2);
+        assert_eq!(out.int_columns[0], vec![9, 8]);
+        // A non-empty extra column is still malformed.
+        let lr = line(b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT:DP\t0/1:9\t1/1:8\t0/0:7\n");
+        let site = SiteView::parse(&lr).expect("invariant: well-formed");
+        let mut counters = PolicyCounters::default();
+        let rejected = scanner.scan(&lr, &site, &mut counters);
+        assert!(matches!(rejected, Err(IoError::MalformedRecord { .. })));
+
+        // A FORMAT column with no sample columns is malformed when the
+        // header declares samples (bcftools: "FORMAT column with no sample
+        // columns"), not one phantom missing sample (doc_v22 R22-3).
+        let mut scanner = GenotypeScanner::new(1, &[b"DP"], &[], permissive());
+        let lr = line(b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\n");
+        let site = SiteView::parse(&lr).expect("invariant: well-formed");
+        let mut counters = PolicyCounters::default();
+        let rejected = scanner.scan(&lr, &site, &mut counters);
+        assert!(matches!(rejected, Err(IoError::MalformedRecord { .. })));
     }
 
     #[test]

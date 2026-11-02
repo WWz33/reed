@@ -1,16 +1,21 @@
 //! `FilterSpec::to_args`: the inverse of the CLI translation
 //! (`docs/rounds/v2/03-architecture.md` §8, `spec/render.rs`).
 //!
-//! Round trip: `to_args()` renders a spec as the flag vector that
-//! `reed-cli`'s `spec_from_flags` parses back into the same spec. Two spec
-//! shapes have no flag spelling and are rendered as their equivalent
-//! expression form instead (documented per tag): a typed `min_qual` becomes
-//! `-i QUAL>=P`, and typed INFO predicates (`site.info`) become no flag at
-//! all — the CLI carries INFO rules as expressions in `site.include`.
+//! Round trip: for a spec the CLI can build, `to_args()` renders the flag
+//! vector that `reed-cli`'s `spec_from_flags` parses back into the same
+//! spec. Two spec shapes have no flag spelling and are rendered as their
+//! equivalent expression form instead (documented per tag): a typed
+//! `min_qual` becomes `-i QUAL>=P`, and typed INFO predicates (`site.info`)
+//! become no flag at all — the CLI carries INFO rules as expressions in
+//! `site.include`.
+//!
+//! A JSON-only mask (a DP rule with `depth = false`) also has no flag
+//! spelling and is omitted rather than replayed as `--min-dp`, which would
+//! silently enable the AD fallback (V22-R6).
 
 use reed_core::args::push_flag as flag;
 
-use super::{AfKind, FilterSpec, HweMode, OnMissing, SampleList};
+use super::{AfKind, FilterSpec, HweMode, OnMissing, PloidyPolicy, SampleList};
 
 /// Renders `value` the way the CLI parses floats back (`{}` round-trips).
 fn f(value: f64) -> String {
@@ -98,14 +103,25 @@ impl FilterSpec {
             flag(&mut args, "--set-gts", value);
         }
 
+        // `--ploidy allow-haploid` is the only non-default policy the CLI
+        // exposes; rendering it keeps the provenance line replayable
+        // (doc_v22 V22-R6).
+        if self.policy.ploidy == PloidyPolicy::AllowHaploid {
+            flag(&mut args, "--ploidy", "allow-haploid");
+        }
+
         // ---- genotype masking (the three CLI spellings) ----
         for rule in &self.genotype.mask_if {
             let when = rule.when.trim();
+            // `depth` is part of the CLI spelling: `--min-dp/--max-dp` carry
+            // the AD fallback, an explicit `FMT/DP` mask does not. A
+            // depth-less DP mask has no flag spelling and is skipped rather
+            // than silently replayed as `--min-dp` (doc_v22 V22-R6).
             let name = match (&*rule.field, when.starts_with('<'), when.starts_with('>')) {
-                ("DP", true, _) if rule.on_missing == OnMissing::Keep => "--min-dp",
-                ("DP", _, true) if rule.on_missing == OnMissing::Keep => "--max-dp",
-                ("GQ", true, _) if rule.on_missing == OnMissing::Keep => "--min-gq",
-                // Not one of the CLI spellings (the CLI never builds those).
+                ("DP", true, _) if rule.depth && rule.on_missing == OnMissing::Keep => "--min-dp",
+                ("DP", _, true) if rule.depth && rule.on_missing == OnMissing::Keep => "--max-dp",
+                ("GQ", true, _) if !rule.depth && rule.on_missing == OnMissing::Keep => "--min-gq",
+                // Not one of the CLI spellings (a JSON-only mask).
                 _ => continue,
             };
             let value = when.trim_start_matches(['<', '>']).trim();
@@ -294,5 +310,37 @@ mod tests {
             ..Default::default()
         };
         assert!(args_of(&spec).contains(&"0.5".to_string()));
+    }
+
+    /// The non-default ploidy policy is a replayable flag (V22-R6).
+    #[test]
+    fn renders_allow_haploid() {
+        let spec = FilterSpec {
+            policy: crate::spec::PolicyRules {
+                ploidy: PloidyPolicy::AllowHaploid,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(args_of(&spec), vec!["--ploidy", "allow-haploid"]);
+    }
+
+    /// A DP mask without the depth policy has no CLI spelling; rendering it
+    /// as `--min-dp` would silently turn the AD fallback on (V22-R6).
+    #[test]
+    fn depth_less_dp_mask_is_not_rendered_as_min_dp() {
+        let spec = FilterSpec {
+            genotype: crate::spec::GenotypeRules {
+                mask_if: vec![crate::spec::GenotypeMaskRule {
+                    field: "DP".into(),
+                    when: "< 10".into(),
+                    on_missing: OnMissing::Keep,
+                    depth: false,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!args_of(&spec).iter().any(|arg| arg == "--min-dp"));
     }
 }

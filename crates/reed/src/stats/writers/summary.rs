@@ -196,6 +196,9 @@ impl QcJob {
         let raw_alleles = out
             .alleles
             .expect("invariant: the summary requires tracking_alleles");
+        // The scanner's depth column is bcftools `calc_sample_depth`
+        // (vcfstats.c:958): FMT/DP when the record's FORMAT carries the
+        // key, otherwise the sum of the sample's AD values.
         let dp_column = out.int_columns.first().map_or(&[][..], Vec::as_slice);
         // bcftools' variant typing for the PSC/IDD sections (doc_v7 D7-7):
         // a record is a "SNP row" when any ALT is an SNV or there is no ALT
@@ -272,8 +275,12 @@ impl QcJob {
                 n_nonref_samples += 1;
                 i_nonref = i;
             }
-            // Genotype DP (PSC depth + DP section).
-            let dp = dp_column.get(i).copied().filter(|&v| v != INT_MISSING);
+            // Genotype DP (PSC depth + DP section) from the scanner's depth
+            // column (FMT/DP, or the AD sum when the record has no DP key).
+            // bcftools only counts a depth above zero (vcfstats.c:1119
+            // `if (dp>0)`), and its average depth divides by those samples
+            // only.
+            let dp = dp_column.get(i).copied().filter(|&v| v != INT_MISSING && v > 0);
             if let Some(dp) = dp {
                 acc.dp_genotypes.push(dp);
                 psc.dp_sum += u64::from(dp);

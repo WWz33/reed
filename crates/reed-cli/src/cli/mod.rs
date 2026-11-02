@@ -324,6 +324,16 @@ pub(crate) struct FilterCli {
     pub force_samples: bool,
     #[command(flatten)]
     pub site_args: filter_flags::SiteFilterArgs,
+    /// Ploidy policy for genotype calls: require-diploid (default) errors on
+    /// haploid calls; allow-haploid counts them as half-calls (mtDNA,
+    /// male X, haploid organisms)
+    #[arg(
+        long,
+        value_name = "POLICY",
+        value_parser = ["require-diploid", "allow-haploid"],
+        default_value = "require-diploid"
+    )]
+    pub ploidy: String,
     /// Do not update INFO/AC,INFO/AN when samples are dropped
     /// (bcftools `view -I`; the update is the default)
     #[arg(short = 'I', long = "no-update")]
@@ -469,7 +479,8 @@ pub(crate) struct StatsCli {
     #[arg(long)]
     pub missing: bool,
     /// Per-sample and per-site mean depth (PREFIX.idepth,
-    /// PREFIX.ldepth.mean, vcftools layouts; reads FMT/DP)
+    /// PREFIX.ldepth.mean, vcftools layouts; reads FMT/DP, falling back to
+    /// the FMT/AD sum for records without a DP key)
     #[arg(long)]
     pub depth: bool,
     /// QC summary in bcftools-stats format (PREFIX.stats)

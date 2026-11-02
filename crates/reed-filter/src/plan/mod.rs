@@ -319,6 +319,27 @@ pub struct RecomputeFlags {
     pub hwe: bool,
 }
 
+/// One planned integer FORMAT column: the key and its explicit fallback.
+///
+/// The fallback is a policy the consumer declares, never inferred from the
+/// key's name: `--min-dp/--max-dp` set `fallback = Some("AD")` (a record
+/// whose FORMAT has no `DP` key uses the sample's AD sum), while an explicit
+/// `FMT/DP` expression keeps `fallback = None` and therefore stays literal
+/// (bcftools parity, doc_v22 D22-1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntField {
+    /// The FORMAT key read into this column.
+    pub name: Vec<u8>,
+    /// Key summed when `name` is absent from a record's FORMAT.
+    pub fallback: Option<Vec<u8>>,
+}
+
+impl From<&IntField> for reed_io::vcf::format_layout::IntSpec {
+    fn from(field: &IntField) -> Self {
+        Self::owned(field.name.clone(), field.fallback.clone())
+    }
+}
+
 /// The compiled plan: the only input of execution (§11.3).
 #[derive(Clone, Debug)]
 pub struct FilterPlan {
@@ -330,8 +351,9 @@ pub struct FilterPlan {
     pub tail: Vec<TailRule>,
     /// The chosen execution strategy.
     pub strategy: ExecStrategy,
-    /// FORMAT fields the mask needs scanned, in scan order.
-    pub int_fields: Vec<Vec<u8>>,
+    /// Integer FORMAT columns the mask needs scanned, in scan order (each
+    /// carries its own fallback policy — doc_v22 D22-1).
+    pub int_fields: Vec<IntField>,
     /// Float-typed FORMAT fields the mask needs scanned, in scan order (the
     /// decoder types its columns; Float-typed rules read these).
     pub float_fields: Vec<Vec<u8>>,
@@ -596,17 +618,61 @@ pub fn compile(
     // ---- mask rules ----
     let mut fmt_expr_fields: Vec<FmtExprField> = Vec::new();
     let mut mask = Vec::new();
-    let mut int_fields: Vec<Vec<u8>> = Vec::new();
+    let mut int_fields: Vec<IntField> = Vec::new();
     let mut float_fields: Vec<Vec<u8>> = Vec::new();
     for rule in &spec.genotype.mask_if {
-        let def = tags.format(&rule.field).ok_or_else(|| {
-            FilterError::Spec(format!(
-                "FORMAT field {} is not declared in the header",
+        // `depth = true` is the explicit depth policy (doc_v22 D22-1): the
+        // record's DP when it carries one, otherwise the sample's AD sum.
+        // Only `DP` can be a depth field.
+        if rule.depth && rule.field != "DP" {
+            return Err(FilterError::Spec(format!(
+                "mask rule {}: depth = true is only valid for FORMAT/DP",
                 rule.field
-            ))
-        })?;
+            )));
+        }
+        let fallback = rule.depth.then(|| b"AD".to_vec());
+        // The fallback reads AD as integers whenever a record's FORMAT has
+        // no DP key. Validate that even when DP is declared: otherwise a
+        // Float AD makes the mask a silent no-op for exactly those records
+        // (doc_v22 V22-R7).
+        if rule.depth
+            && let Some(ad) = tags.format("AD")
+            && ad.ty != TagType::Integer
+        {
+            return Err(FilterError::Spec(
+                "FORMAT field AD must be Integer for the depth fallback (DP is read when the \
+                 record carries it)"
+                    .to_string(),
+            ));
+        }
+        let def = match tags.format(&rule.field) {
+            Some(def) => def,
+            // A depth mask on a callset that only emits AD (`GT:PL:AD`,
+            // common for BSA-seq/GATK-lite pipelines). The type check above
+            // already rejected a non-Integer AD.
+            None if rule.depth => tags.format("AD").ok_or_else(|| {
+                FilterError::Spec(
+                    "FORMAT field DP is not declared in the header, and neither is an \
+                     Integer FORMAT/AD to fall back to"
+                        .to_string(),
+                )
+            })?,
+            None => {
+                return Err(FilterError::Spec(format!(
+                    "FORMAT field {} is not declared in the header",
+                    rule.field
+                )));
+            }
+        };
         validate_numeric(&rule.field, def.ty)?;
         let is_float = def.ty == TagType::Float;
+        if is_float && rule.depth {
+            return Err(FilterError::Spec(
+                "FORMAT field DP is Float; the depth mask needs an Integer DP (or Integer AD \
+                 to fall back to)"
+                    .to_string(),
+            ));
+        }
         let cmp = crate::spec::predicate::Cmp::parse(&rule.when)?;
         // The mask default is keep (§11.1): an omitted on_missing
         // deserializes to the enum default (Pass) and normalizes to Keep.
@@ -614,9 +680,22 @@ pub fn compile(
             OnMissing::Keep | OnMissing::Pass => OnMissing::Keep,
             OnMissing::Mask | OnMissing::Fail => OnMissing::Mask,
         };
-        let column_of = |fields: &mut Vec<Vec<u8>>| match fields
+        let int_column_of = |fields: &mut Vec<IntField>| match fields
             .iter()
-            .position(|f| *f == rule.field.as_bytes())
+            .position(|f| f.name == rule.field.as_bytes() && f.fallback == fallback)
+        {
+            Some(i) => i,
+            None => {
+                fields.push(IntField {
+                    name: rule.field.as_bytes().to_vec(),
+                    fallback: fallback.clone(),
+                });
+                fields.len() - 1
+            }
+        };
+        let float_column_of = |fields: &mut Vec<Vec<u8>>| match fields
+            .iter()
+            .position(|f| f.as_slice() == rule.field.as_bytes())
         {
             Some(i) => i,
             None => {
@@ -625,9 +704,9 @@ pub fn compile(
             }
         };
         let (int_column, float_column) = if is_float {
-            (0, Some(column_of(&mut float_fields)))
+            (0, Some(float_column_of(&mut float_fields)))
         } else {
-            (column_of(&mut int_fields), None)
+            (int_column_of(&mut int_fields), None)
         };
         mask.push(MaskRule {
             expr: None,
@@ -824,7 +903,22 @@ pub fn compile(
             }
             validate_numeric(tag, def.ty)?;
             let is_float = def.ty == TagType::Float;
-            let column_of = |fields: &mut Vec<Vec<u8>>| match fields
+            let int_column_of = |fields: &mut Vec<IntField>| match fields
+                .iter()
+                .position(|f| f.name == tag.as_bytes() && f.fallback.is_none())
+            {
+                Some(i) => i,
+                None => {
+                    fields.push(IntField {
+                        name: tag.as_bytes().to_vec(),
+                        // An explicit `FMT/...` expression is literal: no
+                        // depth fallback (doc_v22 D22-1).
+                        fallback: None,
+                    });
+                    fields.len() - 1
+                }
+            };
+            let float_column_of = |fields: &mut Vec<Vec<u8>>| match fields
                 .iter()
                 .position(|f| f.as_slice() == tag.as_bytes())
             {
@@ -835,9 +929,9 @@ pub fn compile(
                 }
             };
             let (int_column, float_column) = if is_float {
-                (0, Some(column_of(&mut float_fields)))
+                (0, Some(float_column_of(&mut float_fields)))
             } else {
-                (column_of(&mut int_fields), None)
+                (int_column_of(&mut int_fields), None)
             };
             fmt_expr_fields.push(FmtExprField {
                 tag: tag.as_bytes().to_vec(),
@@ -1120,5 +1214,142 @@ mod stale_info_tests {
             af_info_sides(&tail(Some(0.05), None, Some(0.95), None), false, false),
             (false, false)
         );
+    }
+}
+
+/// doc_v22 D22-1: the depth fallback is an explicit policy on the mask rule,
+/// never inferred from the name `DP`; an explicit `FMT/DP` expression stays
+/// literal and needs the tag declared (bcftools parity).
+#[cfg(test)]
+mod depth_policy_tests {
+    use super::*;
+    use crate::spec::{GenotypeMaskRule, GenotypeRules, TailRules};
+
+    fn tags(with_dp: bool) -> TagTable {
+        let mut table = TagTable::new();
+        table.add_format("GT", TagType::Character, TagNumber::Count(1));
+        table.add_format("AD", TagType::Integer, TagNumber::R);
+        if with_dp {
+            table.add_format("DP", TagType::Integer, TagNumber::Count(1));
+        }
+        table
+    }
+
+    fn mask(field: &str, when: &str, depth: bool) -> FilterSpec {
+        FilterSpec {
+            genotype: GenotypeRules {
+                mask_if: vec![GenotypeMaskRule {
+                    field: field.into(),
+                    when: when.into(),
+                    on_missing: OnMissing::Keep,
+                    depth,
+                }],
+                ..GenotypeRules::default()
+            },
+            ..FilterSpec::default()
+        }
+    }
+
+    fn fmt_dp_expr() -> FilterSpec {
+        FilterSpec {
+            genotype: GenotypeRules {
+                set_gts: Some(".".into()),
+                ..GenotypeRules::default()
+            },
+            site_after_mask: TailRules {
+                include: vec!["FMT/DP>10".into()],
+                ..TailRules::default()
+            },
+            ..FilterSpec::default()
+        }
+    }
+
+    fn typed_tags(dp: Option<TagType>, ad: TagType) -> TagTable {
+        let mut table = TagTable::new();
+        table.add_format("GT", TagType::Character, TagNumber::Count(1));
+        table.add_format("AD", ad, TagNumber::R);
+        if let Some(ty) = dp {
+            table.add_format("DP", ty, TagNumber::Count(1));
+        }
+        table
+    }
+
+    #[test]
+    fn float_ad_fallback_is_rejected_even_when_dp_is_declared() {
+        let table = typed_tags(Some(TagType::Integer), TagType::Float);
+        let err = compile(&mask("DP", "< 10", true), &table, "", true)
+            .expect_err("a Float AD cannot be summed as depth");
+        let FilterError::Spec(text) = &err else {
+            panic!("expected a spec error, got {err:?}");
+        };
+        assert!(text.contains("AD must be Integer"), "{text}");
+    }
+
+    #[test]
+    fn float_dp_depth_mask_is_rejected() {
+        let table = typed_tags(Some(TagType::Float), TagType::Integer);
+        let err = compile(&mask("DP", "< 10", true), &table, "", true)
+            .expect_err("a Float DP is not a depth column");
+        let FilterError::Spec(text) = &err else {
+            panic!("expected a spec error, got {err:?}");
+        };
+        assert!(text.contains("DP is Float"), "{text}");
+    }
+
+    #[test]
+    fn depth_mask_without_dp_column_uses_ad_fallback() {
+        let plan = compile(&mask("DP", "< 10", true), &tags(false), "", true)
+            .expect("invariant: an AD-only header supports the depth mask");
+        assert_eq!(
+            plan.int_fields,
+            vec![IntField {
+                name: b"DP".to_vec(),
+                fallback: Some(b"AD".to_vec()),
+            }]
+        );
+        assert_eq!(plan.mask[0].int_column, 0);
+    }
+
+    #[test]
+    fn explicit_fmt_dp_expression_requires_the_tag_and_has_no_fallback() {
+        let err = compile(&fmt_dp_expr(), &tags(false), "", true).expect_err("must reject");
+        let FilterError::Spec(text) = &err else {
+            panic!("expected a spec error, got {err:?}");
+        };
+        assert!(text.contains("DP"), "{text}");
+        let plan = compile(&fmt_dp_expr(), &tags(true), "", true).expect("invariant: DP declared");
+        let dp: Vec<_> = plan
+            .int_fields
+            .iter()
+            .filter(|f| f.name == b"DP")
+            .collect();
+        assert_eq!(dp.len(), 1);
+        assert_eq!(dp[0].fallback, None, "an expression is literal DP");
+    }
+
+    #[test]
+    fn mask_and_expression_dp_are_two_columns() {
+        let mut spec = mask("DP", "< 10", true);
+        spec.genotype.set_gts = Some(".".into());
+        spec.site_after_mask.include = vec!["FMT/DP>10".into()];
+        let plan = compile(&spec, &tags(true), "", true).expect("invariant: compiles");
+        let dp: Vec<_> = plan
+            .int_fields
+            .iter()
+            .filter(|f| f.name == b"DP")
+            .collect();
+        assert_eq!(dp.len(), 2, "the mask and the expression must not share");
+        assert!(dp.iter().any(|f| f.fallback.as_deref() == Some(b"AD")));
+        assert!(dp.iter().any(|f| f.fallback.is_none()));
+    }
+
+    #[test]
+    fn depth_is_only_valid_for_dp() {
+        let err = compile(&mask("GQ", "< 10", true), &tags(true), "", true)
+            .expect_err("depth = true on GQ is a spec error");
+        let FilterError::Spec(text) = &err else {
+            panic!("expected a spec error, got {err:?}");
+        };
+        assert!(text.contains("only valid for FORMAT/DP"), "{text}");
     }
 }

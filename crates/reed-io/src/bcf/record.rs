@@ -46,6 +46,16 @@ pub const fn int_sentinels(ty: u8) -> (i64, i64) {
     }
 }
 
+/// One integer element of `ty` (both renderers and the column decoder read
+/// the same little-endian bytes).
+pub(super) fn int_element(ty: u8, elem: &[u8]) -> i64 {
+    match ty {
+        value_type::INT8 => i64::from(elem[0] as i8),
+        value_type::INT16 => i64::from(i16::from_le_bytes([elem[0], elem[1]])),
+        _ => i64::from(i32::from_le_bytes([elem[0], elem[1], elem[2], elem[3]])),
+    }
+}
+
 /// htslib's legal value ranges (`BCF_MIN_BT_INT*`/`BCF_MAX_BT_INT*`); the
 /// reserved sentinel values sit below `INT*_MIN_VALUE`.
 pub const INT8_MIN_VALUE: i64 = -120;
@@ -183,6 +193,36 @@ pub fn field_bytes(ty: u8, count: usize, n_sample: usize) -> Result<usize, IoErr
         .checked_mul(count)
         .and_then(|v| v.checked_mul(n_sample))
         .ok_or_else(|| malformed("BCF field size overflows"))
+}
+
+/// Walks the individual block's FORMAT descriptors, returning
+/// `(tag id, type, count, payload offset)` in field order (V22-R11).
+///
+/// The column decoder and the text renderer share this walk; `bad` lets each
+/// caller attach its own locus to the two malformed-record cases (a negative
+/// key or a truncated payload).
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] for a negative key, a truncated descriptor or
+/// an overflowing field size.
+pub(crate) fn format_fields(
+    indiv: &[u8],
+    n_fmt: usize,
+    n_sample: usize,
+    bad: impl Fn(&'static str) -> IoError,
+) -> Result<Vec<(u32, u8, usize, usize)>, IoError> {
+    let mut ci = Cursor::new(indiv);
+    let mut fields = Vec::with_capacity(n_fmt);
+    for _ in 0..n_fmt {
+        let key = ci.typed_int()?;
+        let key = u32::try_from(key).map_err(|_| bad("BCF FORMAT key is negative"))?;
+        let (ty, count) = ci.typed()?;
+        let start = indiv.len() - ci.remaining();
+        ci.take(field_bytes(ty, count, n_sample)?)?;
+        fields.push((key, ty, count, start));
+    }
+    Ok(fields)
 }
 
 /// A cursor over one block.

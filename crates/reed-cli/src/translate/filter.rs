@@ -157,21 +157,22 @@ pub(crate) fn site_spec(
     }
 
     // ---- genotype masking (plink2 semantics: missing never masks) ----
-    let mut mask = |field: &str, when: String| {
+    let mut mask = |field: &str, when: String, depth: bool| {
         spec.genotype.mask_if.push(GenotypeMaskRule {
             field: field.to_string(),
             when,
             on_missing: OnMissing::Keep,
+            depth,
         });
     };
     if let Some(v) = cli.min_dp {
-        mask("DP", format!("< {v}"));
+        mask("DP", format!("< {v}"), true);
     }
     if let Some(v) = cli.max_dp {
-        mask("DP", format!("> {v}"));
+        mask("DP", format!("> {v}"), true);
     }
     if let Some(v) = cli.min_gq {
-        mask("GQ", format!("< {v}"));
+        mask("GQ", format!("< {v}"), false);
     }
     if let Some(value) = &cli.set_gts {
         spec.genotype.set_gts = Some(value.clone());
@@ -249,6 +250,13 @@ pub(crate) fn site_spec(
 pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec, String> {
     use reed::spec::{SampleList, SampleSelect};
     let mut spec = site_spec(&cli.site_args)?;
+    // doc_v22: the spec always supported `policy.ploidy = "allow_haploid"`,
+    // but the flags layer hard-wired the default, so haploid callsets
+    // (mtDNA, male X, haploid organisms) could not be filtered at all.
+    spec.policy.ploidy = match cli.ploidy.as_str() {
+        "allow-haploid" => reed::spec::PloidyPolicy::AllowHaploid,
+        _ => reed::spec::PloidyPolicy::RequireDiploid,
+    };
 
     // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
     // once with names to keep, once with a `^`-prefixed removal list — but
@@ -695,6 +703,21 @@ mod tests {
         // applies it anyway, and rendering it would turn the round trip into
         // an explicit `-x` (`drop_stale_explicit`).
         assert_eq!(rendered, flags, "{rendered:?}");
+    }
+
+    /// `--ploidy allow-haploid` is rendered back into the provenance line
+    /// (V22-R6): before the fix the spec produced no flags at all, so the
+    /// header omitted `##reed_filterCommand` and the run could not be
+    /// replayed.
+    #[test]
+    fn ploidy_allow_haploid_round_trips() {
+        let flags = vec!["--ploidy".to_string(), "allow-haploid".to_string()];
+        let first = spec_from_flags(&cli_from(&flags)).expect("invariant: translates");
+        assert_eq!(first.policy.ploidy, reed::spec::PloidyPolicy::AllowHaploid);
+        let rendered = first.to_args();
+        assert_eq!(rendered, flags);
+        let second = spec_from_flags(&cli_from(&rendered)).expect("invariant: renders back");
+        assert_eq!(first, second);
     }
 
     /// doc_v4 02 回退版 §5.2: the withdrawn keep-direction flags error with

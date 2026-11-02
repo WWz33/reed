@@ -11,7 +11,7 @@
 //! Widths follow htslib's `bcf_enc_vint` (the smallest of int8/int16/int32
 //! covering every element, legal ranges −120…127 / −32760…32767), and
 //! dictionary indices come from the output header (see
-//! [`super::encode::bcf_header_text`]).
+//! [`super::encode_noodles::bcf_header_text`]).
 
 // Casts in this file are bounded by construction: Integer widths are chosen from the parsed value ranges.
 #![allow(clippy::cast_possible_truncation)]
@@ -30,10 +30,9 @@ use noodles::vcf;
 use super::dict::BcfDict;
 use super::record::{
     BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE,
-    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, field_bytes, malformed,
-    type_width, value_type,
+    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, field_bytes, int_element,
+    malformed, type_width, value_type,
 };
-use super::render::int_element;
 
 /// A per-worker native encoder.
 pub struct NativeEncoder {

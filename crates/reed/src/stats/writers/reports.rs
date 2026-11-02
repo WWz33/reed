@@ -242,7 +242,9 @@ impl ReportScratch {
         let qc = summary || hist.is_some_and(HistMetric::any_needs_qc);
         // `--singletons` reads the raw allele indices like the QC summary.
         let needs_alleles = qc || singletons;
-        // The QC accumulator's DP sections and `--hist dp` both read FMT/DP.
+        // The QC accumulator's DP sections and `--hist dp` both read the
+        // depth column: FMT/DP, or the AD sum when the record has no DP key
+        // (bcftools `calc_sample_depth`).
         let needs_dp = depth
             || summary
             || hist.is_some_and(|m| m.iter().any(HistMetric::needs_dp));
@@ -253,7 +255,12 @@ impl ReportScratch {
             // (doc_v5 03 §5).
             scanner: {
                 let scanner = if needs_dp {
-                    GenotypeScanner::new(n_samples, &[b"DP"], &[], policies)
+                    GenotypeScanner::new_with_specs(
+                        n_samples,
+                        &[reed_io::vcf::format_layout::IntSpec::depth()],
+                        &[],
+                        policies,
+                    )
                 } else {
                     GenotypeScanner::new(n_samples, &[], &[], policies)
                 };
@@ -372,7 +379,7 @@ impl ReportJob {
         partial: &mut ReportPartial,
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 9 columns"));
+            return Err(EngineError::job("record line has fewer than 8 columns"));
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let pos1 = site.pos1;
@@ -684,7 +691,10 @@ impl ReportJob {
                 );
                 continue;
             };
-            for sample in lr.samples_text().split(|&b| b == b'\t') {
+            // The scanner accepts trailing empty columns (doc_v22 V22-5);
+            // they are not samples, so never count them as missing
+            // observations (V22-R4).
+            for sample in lr.samples_text().split(|&b| b == b'\t').take(self.n_samples) {
                 let token = sample.split(|&b| b == b':').nth(key).unwrap_or(b".");
                 // A Number=A/G/R subfield carries several comma-separated
                 // values; each is one observation (the INFO path's rule).

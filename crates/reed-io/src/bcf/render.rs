@@ -13,8 +13,8 @@
 
 use super::dict::BcfDict;
 use super::record::{
-    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, int_sentinels, malformed,
-    type_width, value_type,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, format_fields,
+    int_element, int_sentinels, malformed, type_width, value_type,
 };
 use crate::error::IoError;
 use crate::vcf::genotype_scan::LocusSource;
@@ -196,27 +196,30 @@ pub fn render_sample_part(
         dict.contig(chrom).unwrap_or(b"<bcf>"),
         u64::try_from(pos0).unwrap_or(0) + 1,
     );
+    // A sites-only BCF (no FORMAT keys, no samples) has no FORMAT/sample
+    // region at all: htslib renders 8 columns, so opening the FORMAT field
+    // here would add a phantom ninth column (doc_v22 V22-R1).
+    if n_fmt == 0 && n_sample == 0 {
+        return Ok(());
+    }
     // FORMAT + samples.
     out.push(b'\t');
     if n_fmt == 0 {
-        for _ in 0..=n_sample {
+        // htslib vcf_format: FORMAT `.` plus one `.` per sample. The
+        // leading `\t` opened the FORMAT field, so each item here must
+        // carry its own separator — one `\t.` per column, not one extra
+        // `\t.` past the (empty) FORMAT column.
+        out.push(b'.');
+        for _ in 0..n_sample {
             out.extend_from_slice(b"\t.");
         }
     } else {
         // Field descriptors live in the individual block; values are
         // field-major: each field's descriptor is followed by its
-        // `n_sample × count` elements (htslib's packed layout).
+        // `n_sample × count` elements (htslib's packed layout). The walk is
+        // shared with the column decoder (V22-R11).
         let indiv = rec.indiv;
-        let mut ci = Cursor::new(indiv);
-        let mut fields: Vec<(u32, u8, usize, usize)> = Vec::with_capacity(n_fmt);
-        for _ in 0..n_fmt {
-            let key = ci.typed_int()?;
-            let key = u32::try_from(key).map_err(|_| bad(locus, "BCF FORMAT key is negative"))?;
-            let (ty, count) = ci.typed()?;
-            let start = indiv.len() - ci.remaining();
-            ci.take(field_bytes(ty, count, n_sample)?)?;
-            fields.push((key, ty, count, start));
-        }
+        let fields = format_fields(indiv, n_fmt, n_sample, |reason| bad(locus, reason))?;
 
         let mut first = true;
         for &(key, ..) in &fields {
@@ -259,7 +262,7 @@ pub fn render_sample_part(
 /// Renders the line the native filter path decides on (doc_v4 O-4): the
 /// site columns plus a placeholder FORMAT column and one `.` per sample, so
 /// the sample *count* stays visible to expressions (`N_SAMPLES`) while the
-/// values come from [`decode_format_columns`]. No trailing newline.
+/// values come from [`super::columns::decode_format_columns`]. No trailing newline.
 ///
 /// # Errors
 ///
@@ -270,116 +273,16 @@ pub fn render_site_line(
     out: &mut Vec<u8>,
 ) -> Result<(), IoError> {
     let (n_sample, _) = render_site_part(rec, dict, out)?;
+    // Sites-only BCF: no FORMAT placeholder, the site line stays 8 columns
+    // (doc_v22 V22-R1).
+    if n_sample == 0 {
+        return Ok(());
+    }
     out.extend_from_slice(b"\t.");
     for _ in 0..n_sample {
         out.extend_from_slice(b"\t.");
     }
     Ok(())
-}
-
-/// Decodes the requested `Number=1` FORMAT columns for every sample without
-/// rendering them (doc_v4 O-4): the typed values feed the filter's mask
-/// stage directly.
-///
-/// Missing values use the text scanner's sentinels — `INT_MISSING`
-/// ([`crate::vcf::genotype_scan::INT_MISSING`]) and `NaN` — and a negative or
-/// non-integer value maps to `INT_MISSING`, exactly as the text scanner's
-/// `parse_int` does, so the native and text paths agree bit for bit.
-///
-/// # Errors
-///
-/// [`IoError::MalformedRecord`] for a truncated individual block.
-pub fn decode_format_columns(
-    rec: &BcfRecordRef<'_>,
-    header: &super::gt::SiteHeader,
-    dict: &BcfDict,
-    int_keys: &[&[u8]],
-    float_keys: &[&[u8]],
-    int_columns: &mut [Vec<u32>],
-    float_columns: &mut [Vec<f32>],
-) -> Result<(), IoError> {
-    let n_sample = header.n_sample;
-    for column in int_columns.iter_mut() {
-        column.clear();
-        column.resize(n_sample, crate::vcf::genotype_scan::INT_MISSING);
-    }
-    for column in float_columns.iter_mut() {
-        column.clear();
-        column.resize(n_sample, f32::NAN);
-    }
-    if header.n_fmt == 0 || n_sample == 0 || (int_keys.is_empty() && float_keys.is_empty()) {
-        return Ok(());
-    }
-    // The individual block is field-major: descriptors first, then each
-    // field's `n_sample × count` elements.
-    let indiv = rec.indiv;
-    let mut ci = Cursor::new(indiv);
-    let mut fields: Vec<(u32, u8, usize, usize)> = Vec::with_capacity(header.n_fmt);
-    for _ in 0..header.n_fmt {
-        let key = ci.typed_int()?;
-        let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
-        let (ty, count) = ci.typed()?;
-        let start = indiv.len() - ci.remaining();
-        ci.take(field_bytes(ty, count, n_sample)?)?;
-        fields.push((key, ty, count, start));
-    }
-    for &(key, ty, count, start) in &fields {
-        let Some(name) = dict.tag(key) else { continue };
-        let width = type_width(ty);
-        if width == 0 || count != 1 {
-            continue;
-        }
-        if let Some(i) = int_keys.iter().position(|k| *k == name) {
-            let Some(column) = int_columns.get_mut(i) else {
-                continue;
-            };
-            for (s, slot) in column.iter_mut().enumerate() {
-                let elem = &indiv[start + s * width..start + (s + 1) * width];
-                *slot = int_element_column(ty, elem);
-            }
-        }
-        if let Some(i) = float_keys.iter().position(|k| *k == name) {
-            let Some(column) = float_columns.get_mut(i) else {
-                continue;
-            };
-            for (s, slot) in column.iter_mut().enumerate() {
-                let elem = &indiv[start + s * width..start + (s + 1) * width];
-                *slot = float_element_column(ty, elem);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// One integer FORMAT element as the text scanner would parse it.
-fn int_element_column(ty: u8, elem: &[u8]) -> u32 {
-    let (missing, _) = int_sentinels(ty);
-    let value = int_element(ty, elem);
-    if value == missing || value < 0 {
-        crate::vcf::genotype_scan::INT_MISSING
-    } else {
-        u32::try_from(value).unwrap_or(crate::vcf::genotype_scan::INT_MISSING)
-    }
-}
-
-/// One float FORMAT element as the text scanner would parse it.
-fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
-    if ty == value_type::FLOAT {
-        let bits = u32::from_le_bytes([elem[0], elem[1], elem[2], elem[3]]);
-        if bits == FLOAT_MISSING || bits == FLOAT_VECTOR_END {
-            f32::NAN
-        } else {
-            f32::from_bits(bits)
-        }
-    } else {
-        let (missing, _) = int_sentinels(ty);
-        let value = int_element(ty, elem);
-        if value == missing {
-            f32::NAN
-        } else {
-            value as f32
-        }
-    }
 }
 
 /// A malformed record at a known locus (borrowed: the `Locus` is built only
@@ -528,14 +431,6 @@ pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8], vcf44
 }
 
 /// One integer element of `ty`.
-pub(super) fn int_element(ty: u8, elem: &[u8]) -> i64 {
-    match ty {
-        value_type::INT8 => i64::from(elem[0] as i8),
-        value_type::INT16 => i64::from(i16::from_le_bytes([elem[0], elem[1]])),
-        _ => i64::from(i32::from_le_bytes([elem[0], elem[1], elem[2], elem[3]])),
-    }
-}
-
 /// htslib `kputd`: 6 significant digits with `%g` beyond `[1e-4, 1e6)`;
 /// `-0` keeps its sign.
 fn float_into(v: f32, out: &mut Vec<u8>) {
@@ -611,6 +506,81 @@ mod tests {
             err.to_string().contains("telomere sentinel"),
             "{err}"
         );
+    }
+
+    /// A BCF record with no FORMAT keys (`n_fmt == 0`, what htslib writes
+    /// for a text FORMAT-`.` record) renders FORMAT as `.` and one `.` per
+    /// sample — htslib vcf_format's output, byte-checked against
+    /// `bcftools view` (found while cross-checking noodles 0.117→0.119
+    /// `3b5b1a8c0`: the render used to emit an empty FORMAT column and an
+    /// extra phantom sample field, which htslib reads back with a
+    /// `FORMAT '' is not defined in the header` warning).
+    #[test]
+    fn fmt_no_format_keys_render_as_missing() {
+        let header_text = "##fileformat=VCFv4.2\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header: noodles::vcf::Header = header_text.parse().expect("invariant: header");
+        let dict_text = crate::bcf::bcf_header_text(&header).expect("invariant: bcf header text");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom = Chr01 (tid 0)
+        shared.extend_from_slice(&19_i32.to_le_bytes()); // pos0 19 → POS 20
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&FLOAT_MISSING.to_le_bytes()); // qual = .
+        shared.extend_from_slice(&(1_u32 << 16).to_le_bytes()); // 1 allele, 0 INFO
+        shared.extend_from_slice(&2_u32.to_le_bytes()); // 0 FORMAT, 2 samples
+        shared.extend_from_slice(&[0x07]); // ID: empty char vector
+        shared.extend_from_slice(&[0x17, b'A']); // REF "A"
+        shared.extend_from_slice(&[0x01]); // FILTER: count 0 (".")
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &[],
+        };
+        let mut out = Vec::new();
+        render_record(&rec, &dict, &mut out).expect("invariant: render");
+        assert_eq!(
+            out,
+            b"Chr01\t20\t.\tA\t.\t.\t.\t.\t.\t.\t.\n",
+            "n_fmt == 0 renders FORMAT `.` plus one `.` per sample (11 columns)"
+        );
+    }
+
+    /// A sites-only BCF (`n_fmt == 0`, `n_sample == 0`) renders 8 columns:
+    /// no FORMAT column and no phantom sample field (doc_v22 V22-R1).
+    #[test]
+    fn sites_only_bcf_stays_eight_columns() {
+        let header_text = "##fileformat=VCFv4.2\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header: noodles::vcf::Header = header_text.parse().expect("invariant: header");
+        let dict_text = crate::bcf::bcf_header_text(&header).expect("invariant: bcf header text");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom = Chr01 (tid 0)
+        shared.extend_from_slice(&19_i32.to_le_bytes()); // pos0 19 → POS 20
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&FLOAT_MISSING.to_le_bytes()); // qual = .
+        shared.extend_from_slice(&(1_u32 << 16).to_le_bytes()); // 1 allele, 0 INFO
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // 0 FORMAT, 0 samples
+        shared.extend_from_slice(&[0x07]); // ID: empty char vector
+        shared.extend_from_slice(&[0x17, b'A']); // REF "A"
+        shared.extend_from_slice(&[0x01]); // FILTER: count 0 (".")
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &[],
+        };
+        let mut out = Vec::new();
+        render_record(&rec, &dict, &mut out).expect("invariant: render");
+        assert_eq!(
+            out,
+            b"Chr01\t20\t.\tA\t.\t.\t.\t.\n",
+            "sites-only BCF renders exactly 8 columns"
+        );
+        // The native filter path's decision line is 8 columns too.
+        let mut site_line = Vec::new();
+        render_site_line(&rec, &dict, &mut site_line).expect("invariant: site line");
+        assert_eq!(site_line, b"Chr01\t20\t.\tA\t.\t.\t.\t.");
     }
 
     /// htslib `bcf_format_gt_v2` (vcf.c:6457-6518): the first allele's phasing

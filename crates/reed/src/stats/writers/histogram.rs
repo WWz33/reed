@@ -28,7 +28,8 @@ pub enum HistKind {
 pub enum HistMetric {
     /// QUAL (0.1 bins, SNV and indel separately).
     Qual,
-    /// FMT/DP, one observation per genotype.
+    /// Genotype depth: FMT/DP, or the FMT/AD sum when the record's FORMAT
+    /// has no DP key (one observation per genotype, only depth > 0).
     Dp,
     /// INFO/DP, one observation per site.
     DpSite,

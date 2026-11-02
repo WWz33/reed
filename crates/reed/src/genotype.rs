@@ -129,9 +129,9 @@ impl ChunkJob for PcaJob {
             // it yields a wrong matrix on a truncated or mismatched file
             // (doc_v20 R6).
             let Some(lr) = LineRef::parse(line) else {
-                return Err(malformed_line(line, "record line has fewer than 9 columns"));
+                return Err(malformed_line(line, "record line has fewer than 8 columns"));
             };
-            if lr.n_sample_cols() != self.n_samples {
+            if lr.validate_sample_cols(self.n_samples).is_err() {
                 return Err(malformed_line(
                     line,
                     "sample column count disagrees with the header",
@@ -210,9 +210,9 @@ impl ChunkJob for PcaJob {
         // Malformed seam records are errors too, like the body path
         // (doc_v20 R6).
         let Some(lr) = LineRef::parse(line) else {
-            return Err(malformed_line(line, "record line has fewer than 9 columns"));
+            return Err(malformed_line(line, "record line has fewer than 8 columns"));
         };
-        if lr.n_sample_cols() != self.n_samples {
+        if lr.validate_sample_cols(self.n_samples).is_err() {
             return Err(malformed_line(
                 line,
                 "sample column count disagrees with the header",
@@ -410,8 +410,8 @@ mod tests {
         );
     }
 
-    /// doc_v20 R6: a truncated record line (fewer than nine tabs) must fail
-    /// the run, not be skipped.
+    /// doc_v20 R6: a truncated record line (fewer than eight columns) must
+    /// fail the run, not be skipped.
     #[test]
     fn r6_run_chunk_errors_on_unparseable_line() {
         let job = job(2);
@@ -422,7 +422,7 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("chr1:102"), "error must name the locus: {msg}");
-        assert!(msg.contains("9 columns"), "error must name the reason: {msg}");
+        assert!(msg.contains("8 columns"), "error must name the reason: {msg}");
     }
 
     /// doc_v20 R6: the seam path (a record spanning a chunk boundary)
