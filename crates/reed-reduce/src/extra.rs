@@ -366,7 +366,58 @@ pub fn nmf(x: &Mat, rank: usize, n_iter: usize, seed: u64) -> (Mat, Mat) {
 }
 
 /// Locally linear embedding.
+/// Largest sample count LLE accepts. The algorithm materializes an `n × n`
+/// distance matrix and an `n × n` M matrix and does an `O(n³)` eigendecom-
+/// position; beyond this the caller wants [`crate::grm_lle`] with a kNN
+/// graph (or a coarser representation). doc_v24 V24-08.
+pub const LLE_MAX_SAMPLES: usize = 5_000;
+
+/// Why LLE refused the input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LleError {
+    /// Samples supplied.
+    pub n: usize,
+    /// [`LLE_MAX_SAMPLES`].
+    pub max: usize,
+}
+
+impl std::fmt::Display for LleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "LLE needs n <= {} samples (got {}); it is O(n^3) time and O(n^2) memory — \
+             use grm_lle with a kNN graph, or reduce the sample set",
+            self.max, self.n
+        )
+    }
+}
+
+impl std::error::Error for LleError {}
+
+fn check_lle_size(n: usize) -> Result<(), LleError> {
+    if n > LLE_MAX_SAMPLES {
+        return Err(LleError {
+            n,
+            max: LLE_MAX_SAMPLES,
+        });
+    }
+    Ok(())
+}
+
+/// LLE on feature vectors; panics for `n > LLE_MAX_SAMPLES` (precondition
+/// documented at [`LLE_MAX_SAMPLES`]). Use [`try_lle`] to handle it.
 pub fn lle(x: &Mat, k: usize, n_components: usize) -> Mat {
+    try_lle(x, k, n_components)
+        .expect("invariant: LLE is documented for n <= LLE_MAX_SAMPLES")
+}
+
+/// Fallible [`lle`].
+///
+/// # Errors
+///
+/// [`LleError`] when `x.rows > LLE_MAX_SAMPLES`.
+pub fn try_lle(x: &Mat, k: usize, n_components: usize) -> Result<Mat, LleError> {
+    check_lle_size(x.rows)?;
     let n = x.rows;
     let mut d2 = Mat::zeros(n, n);
     for i in 0..n {
@@ -374,7 +425,7 @@ pub fn lle(x: &Mat, k: usize, n_components: usize) -> Mat {
             d2.set(i, j, dist2(x.row(i), x.row(j)));
         }
     }
-    lle_from_sq_distances(x, &d2, k, n_components)
+    try_lle_from_sq_distances(x, &d2, k, n_components)
 }
 
 /// LLE with neighbourhoods taken from precomputed **squared** distances.
@@ -383,6 +434,22 @@ pub fn lle(x: &Mat, k: usize, n_components: usize) -> Mat {
 /// weights are defined in the feature space). Pass the standardized genotype
 /// matrix with GRM distances to get relatedness-aware neighbourhoods.
 pub fn lle_from_sq_distances(features: &Mat, d2: &Mat, k: usize, n_components: usize) -> Mat {
+    try_lle_from_sq_distances(features, d2, k, n_components)
+        .expect("invariant: LLE is documented for n <= LLE_MAX_SAMPLES")
+}
+
+/// Fallible [`lle_from_sq_distances`].
+///
+/// # Errors
+///
+/// [`LleError`] when `features.rows > LLE_MAX_SAMPLES`.
+pub fn try_lle_from_sq_distances(
+    features: &Mat,
+    d2: &Mat,
+    k: usize,
+    n_components: usize,
+) -> Result<Mat, LleError> {
+    check_lle_size(features.rows)?;
     let x = features;
     let n = x.rows;
     // Neighbours from the supplied distances.
@@ -431,7 +498,6 @@ pub fn lle_from_sq_distances(features: &Mat, d2: &Mat, k: usize, n_components: u
     let mut m = Mat::zeros(n, n);
     for i in 0..n {
         for j in 0..n {
-            let wi = if i == j { 1.0 } else { 0.0 } - wmat.get(i, j);
             let mut acc = 0.0;
             for kk in 0..n {
                 let a = if kk == i { 1.0 } else { 0.0 } - wmat.get(kk, i);
@@ -439,7 +505,6 @@ pub fn lle_from_sq_distances(features: &Mat, d2: &Mat, k: usize, n_components: u
                 acc += a * b;
             }
             m.set(i, j, acc);
-            let _ = wi;
         }
     }
     for i in 0..n {
@@ -460,7 +525,7 @@ pub fn lle_from_sq_distances(features: &Mat, d2: &Mat, k: usize, n_components: u
             coords.set(i, c, e.vectors.get(i, idx));
         }
     }
-    coords
+    Ok(coords)
 }
 
 /// Solve a symmetric positive-definite system with Gaussian elimination.
@@ -968,5 +1033,24 @@ mod tests {
         let y = ppca(&x, 2, 60, 5);
         let sep = separation(&y, 10);
         assert!(sep > 1.5, "PPCA separation ratio {sep}");
+    }
+
+    /// doc_v24 V24-08: LLE refuses an input past its documented complexity
+    /// limit instead of starting an O(n²)/O(n³) allocation.
+    #[test]
+    fn lle_rejects_an_oversized_input() {
+        let x = Mat::zeros(LLE_MAX_SAMPLES + 1, 2);
+        let err = try_lle(&x, 5, 2).expect_err("must refuse");
+        assert_eq!(err.n, LLE_MAX_SAMPLES + 1);
+        assert_eq!(err.max, LLE_MAX_SAMPLES);
+        assert!(err.to_string().contains("grm_lle"), "{err}");
+        // The boundary itself is accepted (checked before the distance
+        // matrix, so the tiny feature width keeps this cheap).
+        let ok = Mat::zeros(LLE_MAX_SAMPLES, 1);
+        assert_eq!(
+            check_lle_size(ok.rows),
+            Ok(()),
+            "the documented maximum is inclusive"
+        );
     }
 }

@@ -165,6 +165,13 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
 ### Changed
+- **writers（缓冲输出，V24-08）**：`reed distance` 的矩阵/表、`reed pca`
+  的 eigen* 文件、`reed dapc` 的四个文件改为 64 KiB `BufWriter` 并在返回
+  前显式 flush；逐值 `write!` 不再每值一次 syscall，输出字节不变。
+- **reduce（LLE 限制，V24-08）**：新增 `LLE_MAX_SAMPLES = 5000`、
+  `LleError`、`try_lle`/`try_lle_from_sq_distances`；超限在分配距离矩阵
+  前返回错误，既有 `lle` 保留为已满足前置条件的包装；删除 M 构造中的
+  死 `wi`。
 - **filter（热路径分配，V24-07）**：`auto_stale_tags` 与 stale 列表改为
   每 chunk 构造/借用，`stale_for_record` 的常见路径零分配；mid-stage 的
   rules/OR/hits 与 prune 的 exclude 位图改为 per-chunk/per-contig 复用；

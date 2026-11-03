@@ -1,6 +1,6 @@
 //! `reed distance`: the individual-by-individual matrix family (doc_v17).
 
-use std::io::Write as _;
+use std::io::{BufWriter, Write as _};
 
 use reed::budget::ThreadBudget;
 use reed_distance::matrices::{
@@ -321,7 +321,8 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
 /// Writes the per-pair table formats (`.genome`, `.relatedness2`,
 /// `.relatedness`, `.gtcheck`) with the reference tools' exact headers.
 fn write_table(path: &std::path::Path, m: &MatrixResult) -> Result<(), reed::Error> {
-    let mut f = std::fs::File::create(path).map_err(reed::Error::from)?;
+    let file = std::fs::File::create(path).map_err(reed::Error::from)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     let n = m.n;
     match m.kind {
         MatrixKind::Phi => {
@@ -414,5 +415,6 @@ fn write_table(path: &std::path::Path, m: &MatrixResult) -> Result<(), reed::Err
         }
         _ => unreachable!("is_matrix_kind covers the rest"),
     }
+    f.flush().map_err(reed::Error::from)?;
     Ok(())
 }
