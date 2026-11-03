@@ -515,7 +515,13 @@ pub fn compile(
     // decision runs through `af_of`, whose `info_trusted` flag is false in
     // every execution path once the cohort changed (doc_v12 D12-6).
     let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
-    let cohort_changed = spec.sample_select.is_some()
+    // An empty `SampleSelect` (JSON `"sample_select": {}`) selects nothing;
+    // treating it as "cohort changed" silently diverted `-q/-Q` from the
+    // INFO short-circuit (doc_v23 V23-25).
+    let cohort_changed = spec
+        .sample_select
+        .as_ref()
+        .is_some_and(|select| !select.is_empty())
         || spec.mind.is_some()
         || !spec.genotype.mask_if.is_empty()
         || spec.genotype.set_gts.is_some();
@@ -1225,6 +1231,60 @@ mod stale_info_tests {
             (false, false)
         );
     }
+    /// doc_v23 V23-25: an empty `sample_select` is not a cohort change.
+    /// `{"sample_select": {}}` used to switch `-q` from the INFO AC/AN
+    /// short-circuit to genotype-recomputed values.
+    #[test]
+    fn empty_sample_select_keeps_the_info_af_short_circuit() {
+        let mut tags = TagTable::new();
+        tags.add_info("AC", TagType::Integer, TagNumber::A);
+        tags.add_info("AN", TagType::Integer, TagNumber::Count(1));
+        let request = |select: Option<crate::spec::SampleSelect>| FilterSpec {
+            sample_select: select,
+            site_after_mask: crate::spec::TailRules {
+                min_af: Some(0.1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let empty = compile(
+            &request(Some(crate::spec::SampleSelect {
+                keep: None,
+                remove: None,
+            })),
+            &tags,
+            "",
+            true,
+        )
+        .expect("invariant: compiles");
+        assert!(
+            empty
+                .head
+                .iter()
+                .any(|rule| matches!(rule, HeadRule::MinAfInfo(_))),
+            "an empty selection must keep the INFO short-circuit"
+        );
+
+        let real = compile(
+            &request(Some(crate::spec::SampleSelect {
+                keep: Some(crate::spec::SampleList::Names(vec!["s0".into()])),
+                remove: None,
+            })),
+            &tags,
+            "",
+            true,
+        )
+        .expect("invariant: compiles");
+        assert!(
+            !real
+                .head
+                .iter()
+                .any(|rule| matches!(rule, HeadRule::MinAfInfo(_))),
+            "a real selection must recompute from the subset"
+        );
+    }
+
 }
 
 /// doc_v22 D22-1: the depth fallback is an explicit policy on the mask rule,

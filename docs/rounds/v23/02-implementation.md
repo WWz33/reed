@@ -451,6 +451,34 @@ sink 的 pair 跨度缺省是 100_000，两处缺省不一致；pairs-only 的�
   对称阵，faer 在 1/4 线程池与 fallback 的特征值/特征向量逐值 1e-9
   一致（补充既有 `top_k_sign_is_normalized_across_backends`）。
 
+## 第五批：两个低成本 P2（V23-24、V23-25）
+
+### reed-filter：`to_args` 的两字符算符（V23-24）
+
+`spec/render.rs` 的掩码渲染先用 `starts_with('<')` 选 `--min-dp`，但取值用
+`trim_start_matches(['<', '>'])`，`<= 10` 只剩 `"= 10"`，provenance 命令行
+不可重放。现在按 `<=`/`>=`/`<`/`>` 的顺序整段剥离算符再 trim。
+
+测试：`two_character_mask_bounds_render_replayable_args`（`<= 10` →
+`--min-dp 10`，`>= 20` → `--max-dp 20`）。
+
+### reed-filter：空 `SampleSelect`（V23-25）
+
+`plan::compile` 用 `spec.sample_select.is_some()` 判定 cohort 变化，JSON 的
+`"sample_select": {}` 会让 `-q/-Q` 从 INFO AC/AN 短路静默切到基因型重算。
+现在用已有 `SampleSelect::is_empty()`：只有真正选择样本才算变化。
+
+测试：`empty_sample_select_keeps_the_info_af_short_circuit`（空选择保留
+`HeadRule::MinAfInfo`，真实 `keep` 移除它）。
+
+### 仍待拍板
+
+- **V23-26（HLA contig 的 `:`）**：需要把 header contig 表带进
+  `Region::parse`（或新增 header-aware 解析），并同步 CLI 的索引 seeking
+  路径；不在本轮拍板范围。
+- V23-34…37、39、41（profile 先行的性能/精简项）与 V23-47 的剩余 oracle
+  项（WC84 全缺失实测、hobs/hexp 口径）继续挂起。
+
 ## 验收
 
 | 检查 | 结果 |

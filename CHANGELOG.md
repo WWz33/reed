@@ -139,6 +139,12 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
   `-s/-S/--keep/--remove` 冲突规则的唯一实现，`filter` 与
   `stats/popg/pca/distance` 共用，删除两份约 40 行的重复逻辑。
 
+#### Fixed
+- **filter（`to_args` 两字符算符，V23-24）**：`<=`/`>=` 的掩码边界不再渲染成
+  `"= 10"`，provenance 命令行可重放。
+- **filter（空 `sample_select`，V23-25）**：JSON 的空选择不再被当作 cohort
+  变化，`-q/-Q` 保留 INFO AC/AN 短路。
+
 #### Tests
 - 护栏：`pruned_header` 保序/短 keep、IUPAC 15 个子集全表、`pretty_sequence(n≠10)`
   固定回退、WcMulti r=3 半调用组对拍 allel 1.3.13、F2/F3/F4 拆分合并恒等、

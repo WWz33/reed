@@ -62,9 +62,9 @@
 | 编号 | 来源 | 判定 | 建议修法 | 状态 |
 |---|---|---|---|---|
 | V23-23 | ④4 | **属实（语义不一致）** | `TAG=.`/空值统一走 `on_missing`；三形态测试 | **已实施**（随 V23-59；`.`/缺席统一走算符表，Number=A 同规则） |
-| V23-24 | ④5 | **属实** | `to_args` 先匹配两字符算符；`< <= > >=` 重放测试 | 待拍板 |
-| V23-25 | ④11 | **属实（JSON 边界）** | `is_some_and(!is_empty())` | 待拍板 |
-| V23-26 | ④12 | **属实（HLA contig 限制）** | 先整串匹配 header contig 再切 `:` | 待拍板 |
+| V23-24 | ④5 | **属实** | `to_args` 先匹配两字符算符；`< <= > >=` 重放测试 | **已修**（整段剥离算符 + 重放测试） |
+| V23-25 | ④11 | **属实（JSON 边界）** | `is_some_and(!is_empty())` | **已修**（空选择不算 cohort 变化 + 测试） |
+| V23-26 | ④12 | **属实（HLA contig 限制）** | 先整串匹配 header contig 再切 `:` | 待拍板（需 header-aware 解析并同步 CLI seeking，未在本轮范围） |
 | V23-27 | ⑥1 | **属实（库 API）** | `bin_of` 返回 Option/哨兵，首 edge 前跳过 | **已修**（Option<usize>；push_bin 跳过 None） |
 | V23-28 | ⑥4 | **属实（release 静默）** | 内部不变式改 `assert!` 或 `Result` | **已修**（三处无条件断言 + 4 项 panic 测试） |
 | V23-29 | ①6 | **属实（诊断）** | 错误信息带 `found/expected` | **已修**（reason 改 String；样本列两个方向带计数） |
@@ -91,9 +91,9 @@
 | 编号 | 来源 | 内容 |
 |---|---|---|
 | V23-42 | ①4 | `pruned_header` 保序 + 短 keep。**已实施**：`pruned_header_preserves_order_and_selection`、`pruned_header_treats_a_short_keep_as_kept` |
-| V23-43 | ②5 | BCF 畸形类型/扩展计数的失败测试 |
+| V23-43 | ②5 | BCF 畸形类型/扩展计数的失败测试。**已覆盖**：V23-01 的二次扩展/非整数扩展、V23-02 的 CHAR GT/浮点列测试 |
 | V23-44 | ③9/③10 | IUPAC 全表断言；`pretty_sequence(n≠10)` 行为。**已实施**：15 个子集全表 + 表键有序去重；`n≠10` 固定为逐整数回退（R 的分数步长无法用 `usize` 表示，仅 xval 用 n=10） |
-| V23-45 | ④9 | reed-filter 的 `TAG=.`、`to_args`、深度上限（AC 向量测试随 V23-07 丢弃） |
+| V23-45 | ④9 | reed-filter 的 `TAG=.`、`to_args`、深度上限（AC 向量测试随 V23-07 丢弃）。**已覆盖**：`TAG=.` 与深度上限随 V23-59/V23-05，`to_args` 随 V23-24 |
 | V23-46 | ⑥5 | WcMulti r≥3 半调用组、F2/F3/F4 merge 律。**已实施**：r=3 半调用 fixture 对拍 allel 1.3.13（`n = an // 2`，Fst `-0.70271714922049`）；F2/F3/F4 拆分合并恒等 |
 | V23-47 | ⑦1–⑦5 | 拍板：oracle 保持 complete-case（与生产/spec 一致）；补含缺失位点 golden；文档记录与 allel 的逐位点删除差异。其余 oracle 项（WC84 全缺失实测、hobs/hexp 口径）仍待处理 |
 | V23-48 | ⑧8 | faer vs fallback、1/4 线程逐值对拍。**已实施**：`faer_is_stable_across_one_and_four_threads`（10×10，1/4 线程与 fallback 逐值 1e-9） |
