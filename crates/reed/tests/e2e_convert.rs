@@ -1111,3 +1111,50 @@ fn msa_frames_spill_past_the_threshold() {
     assert_eq!(read(&dir.join("out_chr1.fasta")), expected);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v23 V23-11: `--reference` is read as a stream now. The parse must be
+/// unchanged: CRLF line endings, blank lines, a header carrying a
+/// description, and several records all have to produce the same MSA as the
+/// single-line-per-record reference used above.
+#[test]
+fn msa_reference_parses_crlf_blanks_and_multi_record_fastas() {
+    let dir = fixture_dir("msa-crlf");
+    // CRLF endings, a blank line, a description after the name, and a
+    // second contig (unused by the region) to exercise the record switch.
+    let reference = ">chr1 description here\r\nAACCGGT\r\n\r\nTAA\r\n>chr2\r\nGGGG\r\n";
+    let vcf_text = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=10>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t5\t.\tG\tT\t50\tPASS\t.\tGT\t0/0\t0/1
+";
+    let vcf = write_fixture(&dir, "in.vcf", vcf_text);
+    let r#ref = write_fixture(&dir, "ref.fa", reference);
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference: r#ref,
+            regions: vec![MsaRegion {
+                contig: "chr1".into(),
+                start1: Some(1),
+                end1: Some(10),
+            }],
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let fasta = read(&dir.join("out_chr1_1-10.fasta"));
+    // The CRLF/blank handling is the point: the reference is 10 bases
+    // (AACCGGT + TAA, with the blank CRLF line dropped) and the two SNPs
+    // rewrite positions 2 and 5. s0 is 0/1 at both; s1 is 0/0 then 0/1.
+    assert_eq!(
+        fasta,
+        ">chr1:1-10_s0\nARCCGGTTAA\n>chr1:1-10_s1\nAACCKGTTAA\n",
+        "CRLF and blank lines must parse like the LF fixture"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

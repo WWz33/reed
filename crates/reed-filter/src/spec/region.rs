@@ -1,6 +1,15 @@
 //! Region rules (§11.1 `[targets]`): bcftools `--targets` streaming
 //! semantics — a site is kept when it falls in any include region and in
 //! no exclude region. Never needs an index.
+//!
+//! `-r/-R` (indexed regions) land in [`RegionRule::indexed`], a **separate**
+//! list that is ANDed with the `-t/-T` target rule: bcftools intersects the
+//! two families (`-r chr2 -t chr1:10` yields nothing, `-r chr1,chr2 -t
+//! chr2:10` yields chr2 only), and so does reed (doc_v23 V23-61). Within one
+//! family the CLI refuses two sources instead of copying bcftools'
+//! order-dependent overwrite (`vcfview.c:651-652` writes both flags into one
+//! slot, so `-r`+`-R` silently keeps the last one *and* leaves `is_file`
+//! set from either).
 
 use serde::{Deserialize, Serialize};
 
@@ -9,19 +18,23 @@ use crate::FilterError;
 /// Include/exclude region lists.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RegionRule {
-    /// Empty = keep everything.
+    /// `-r/-R`: the indexed region family. ANDed with [`Self::include`] when
+    /// both are present (bcftools' `-r`+`-t` intersection).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexed: Vec<String>,
+    /// `-t/-T`: empty = keep everything.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
-    /// A site in any exclude region is dropped.
+    /// A site in any exclude region is dropped (`^` entries).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
 }
 
 impl RegionRule {
-    /// Whether the rule keeps everything (both lists empty).
+    /// Whether the rule keeps everything (all lists empty).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.include.is_empty() && self.exclude.is_empty()
+        self.indexed.is_empty() && self.include.is_empty() && self.exclude.is_empty()
     }
 }
 

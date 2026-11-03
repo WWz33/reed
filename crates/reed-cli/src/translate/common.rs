@@ -123,7 +123,7 @@ pub(crate) fn region_tokens(text: &str, from_file: bool) -> Result<Vec<String>, 
 fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRegions, String> {
     let mut regions = Vec::new();
     for (list, from_file) in [(&args.regions, false), (&args.regions_file, true)] {
-        if let Some(value) = list {
+        for value in list {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
             } else {
@@ -143,7 +143,7 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
     let mut include = Vec::new();
     let mut exclude = Vec::new();
     for (list, from_file) in [(&args.targets, false), (&args.targets_file, true)] {
-        if let Some(value) = list {
+        for value in list {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
             } else {

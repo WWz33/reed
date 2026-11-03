@@ -508,11 +508,20 @@ impl<'a> Operand<'a> {
     }
 
     /// bcftools' comparison rule over two operands: any pair satisfies the
-    /// comparison, and a missing element on either side only passes for the
-    /// operators that treat missing as a value (`=`/`!=`, the
-    /// `missing_logic` table of `CMP_VECTORS`). Reed keeps the simpler
-    /// "missing makes comparisons false" rule for missing *elements* and
-    /// only implements the any-pair walk here.
+    /// comparison, and a missing element on either side follows the
+    /// `missing_logic` table of `CMP_VECTORS` (`filter.c:4449-4455`):
+    ///
+    /// | operator | one side missing | both sides missing |
+    /// |---|---|---|
+    /// | `==` | false | **true** |
+    /// | `!=` | **true** | **true** |
+    /// | `< <= > >=` | false | false |
+    ///
+    /// The `!=` row is the one that matters in practice: `-i 'DP!=3'` keeps
+    /// records whose `DP` is `.` or absent under bcftools, and reed used to
+    /// drop them (doc_v23 V23-59). The any-pair walk short-circuits on a hit,
+    /// so a single missing pair decides the whole comparison exactly when
+    /// bcftools' `nmiss` branch would set `pass_site`.
     fn any_pair(&self, other: &Self, op: CmpOp) -> bool {
         let scalars_a: Vec<Option<Val<'a>>> = match self {
             Self::Scalar(v) => vec![v.clone()],
@@ -525,7 +534,19 @@ impl<'a> Operand<'a> {
         for a in &scalars_a {
             for b in &scalars_b {
                 let (Some(a), Some(b)) = (a, b) else { continue };
-                if matches!(a, Val::Missing) || matches!(b, Val::Missing) {
+                let a_missing = matches!(a, Val::Missing);
+                let b_missing = matches!(b, Val::Missing);
+                if a_missing || b_missing {
+                    // `missing_logic[nmiss]`: index 1 = one side missing,
+                    // index 2 = both. Only `==` passes on the both-missing
+                    // index and only `!=` on the one-side index.
+                    let passes = match (a_missing, b_missing) {
+                        (true, true) => matches!(op, CmpOp::Eq | CmpOp::Ne),
+                        _ => op == CmpOp::Ne,
+                    };
+                    if passes {
+                        return true;
+                    }
                     continue;
                 }
                 if compare(op, a, b) {
@@ -819,6 +840,51 @@ mod tests {
         assert!(!ev("AF==0", &s, &tags));
         assert!(ev("AF!=0", &s, &tags));
         assert!(ev("MAF>0", &s, &tags));
+    }
+
+    /// doc_v23 V23-59 (decision A): a missing operand follows bcftools'
+    /// `missing_logic` (`filter.c:4449-4455`). Measured on bcftools 1.24-2
+    /// with `DP=.` / `DP=absent` / `DP=5`: `DP!=3` keeps all three, every
+    /// other operator keeps only the called record.
+    #[test]
+    fn missing_operands_follow_the_bcftools_operator_table() {
+        let tags = ["DP"];
+        // `.`: the tag is present with a missing value.
+        let dot = site(b"DP=.", Some(1.0), None);
+        // Absent: no DP in INFO at all.
+        let absent = site(b".", Some(1.0), None);
+        // Called.
+        let called = site(b"DP=5", Some(1.0), None);
+
+        for s in [&dot, &absent] {
+            assert!(
+                ev("DP!=3", s, &tags),
+                "`!=` passes on a missing operand (bcftools)"
+            );
+            assert!(!ev("DP=3", s, &tags), "`==` fails on a missing operand");
+            assert!(!ev("DP>3", s, &tags), "`>` fails on a missing operand");
+            assert!(!ev("DP<3", s, &tags), "`<` fails on a missing operand");
+            assert!(!ev("DP>=0", s, &tags), "`>=` fails on a missing operand");
+            assert!(!ev("DP<=9", s, &tags), "`<=` fails on a missing operand");
+        }
+        // The called record behaves normally.
+        assert!(ev("DP!=3", &called, &tags));
+        assert!(!ev("DP=3", &called, &tags));
+        assert!(ev("DP>3", &called, &tags));
+        assert!(!ev("DP<3", &called, &tags), "5 is not < 3");
+    }
+
+    /// Both operands missing is the `missing_logic[2]` case: `==` and `!=`
+    /// both pass, ordering fails (bcftools). Reed can reach it with a
+    /// literal `.` against a missing tag.
+    #[test]
+    fn both_sides_missing_pass_for_eq_and_ne_only() {
+        let tags = ["DP"];
+        let dot = site(b"DP=.", Some(1.0), None);
+        assert!(ev("DP!=.", &dot, &tags), "`!=` with a missing literal passes");
+        assert!(ev("DP=.", &dot, &tags), "`==` with a missing literal passes");
+        assert!(!ev("DP>.", &dot, &tags), "`>` with a missing literal fails");
+        assert!(!ev("DP<.", &dot, &tags), "`<` with a missing literal fails");
     }
 
     #[test]

@@ -64,11 +64,13 @@
 
 ## 实施结果（2026-11-03）
 
-已落地：V23-01…06（P0）、V23-08/09、V23-14/21/31/47/50（拍板项）。
-`ci/test-parallel.sh` **893 passed / 0 failed**、clippy 0 告警、doc-drift
-97 ok；真实数据 DP/PSC 与负浮点 BCF 均与 bcftools 逐行/逐字节一致。
-两处实施偏离拍板文本（V23-05 上限按实测 128 而非 500；V23-03 不改公开
-签名），理由见 [02-implementation.md](02-implementation.md)。
+已落地：V23-01…06（P0）、V23-08/09/10/11/12、V23-14/21/31/47/50（拍板项），
+以及第二批的 V23-59（缺失值 `!=` 照 bcftools）、V23-60/61（区域两族，
+同时解决 V23-19/20）、V23-23。`ci/test-parallel.sh` **905 passed / 0
+failed**、clippy 0 告警、doc-drift 97 ok；真实数据 DP/PSC 与负浮点 BCF
+均与 bcftools 逐行/逐字节一致。两处实施偏离拍板文本（V23-05 上限按实测
+128 而非 500；V23-03 不改公开签名），另有同族区域重复取并集的有意分歧
+（V23-60），理由见 [02-implementation.md](02-implementation.md)。
 
 ## 拍板结果（2026-11-03）
 

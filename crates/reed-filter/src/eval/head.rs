@@ -241,11 +241,14 @@ fn class_matches(class: VariantClass, wanted: &str) -> bool {
 
 fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> bool {
     let info = line.info_text();
+    // An absent tag is a missing operand, exactly like a `.` value: bcftools
+    // reports nvalues 0 for both and runs them through the same
+    // `missing_logic` table (doc_v23 V23-59).
     let Some(value) = scratch.index.get(info, &rule.tag) else {
-        return rule.on_missing == crate::spec::OnMissing::Pass;
+        return missing_value_passes(rule);
     };
     let Some(value) = value else {
-        return rule.on_missing == crate::spec::OnMissing::Pass;
+        return missing_value_passes(rule);
     };
     if rule.number_a {
         // Comma-separated per-ALT values with a quantifier: `any` is true
@@ -261,7 +264,15 @@ fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> 
                     any |= ok;
                     all &= ok;
                 }
-                None => all = false,
+                // A `.` element counts as missing, so `!=` passes on it for
+                // the same reason a wholly missing tag does (V23-59). The
+                // right-hand side is a concrete literal, so this is the
+                // one-side-missing row of the table, never both.
+                None => {
+                    let ok = missing_value_passes(rule);
+                    any |= ok;
+                    all &= ok;
+                }
             }
         }
         match rule.quantifier {
@@ -269,7 +280,35 @@ fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> 
             crate::spec::Quantifier::All => all,
         }
     } else {
-        parse_number(value).is_some_and(|v| rule.cmp.apply_f64(v))
+        match parse_number(value) {
+            Some(v) => rule.cmp.apply_f64(v),
+            // The tag is present but its value is `.` or unparsable: bcftools
+            // treats that exactly like an absent tag for `!=` (one side
+            // missing) and as false for every other operator
+            // (doc_v23 V23-59/V23-23).
+            None => missing_value_passes(rule),
+        }
+    }
+}
+
+/// bcftools' `missing_logic` for a comparison with a missing observation
+/// (`filter.c:4449-4455`): `!=` passes, `==` needs *both* sides missing —
+/// which a missing observation with a concrete threshold never is — and the
+/// ordering operators fail.
+///
+/// `on_missing` still overrides the decision when the caller asked for it:
+/// an explicit `pass`/`fail` in the spec wins over the parity default.
+fn missing_value_passes(rule: &InfoRule) -> bool {
+    match rule.on_missing {
+        // `pass` is the INFO-rule default and means "do not drop"; within it,
+        // bcftools' operator table decides (`!=` passes, everything else
+        // fails). `plan/mod.rs` rejects `keep`/`mask` on INFO rules, so the
+        // genotype spellings cannot reach here; if one ever did, "do not
+        // drop" is the same reading.
+        crate::spec::OnMissing::Pass | crate::spec::OnMissing::Keep => {
+            rule.cmp.op == crate::spec::predicate::Op::Ne
+        }
+        crate::spec::OnMissing::Fail | crate::spec::OnMissing::Mask => false,
     }
 }
 
@@ -287,6 +326,7 @@ fn locus<'a>(line: &'a LineRef<'_>, pos1: u64) -> (&'a [u8], u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec::OnMissing;
 
     /// One synthetic record with the given FILTER column against a single
     /// `RequireFilter` rule carrying `list` (empty tags: no INFO rule runs,
@@ -340,5 +380,140 @@ mod tests {
         assert!(!require_filter_passes("LowQual;.", &["."]));
         assert!(!require_filter_passes("PASS;.", &["."]));
         assert!(require_filter_passes(".", &["LowQual", "."]));
+    }
+
+    /// One record carrying `info` against a single INFO rule `tag op value`.
+    fn info_rule_passes_with(
+        info: &[u8],
+        tag: &str,
+        cmp: &str,
+        on_missing: OnMissing,
+        number_a: bool,
+        quantifier: crate::spec::Quantifier,
+    ) -> bool {
+        let text = format!("chr1\t100\t.\tA\tG\t50.0\tPASS\t{}\tGT\t0/0\t0/1", String::from_utf8_lossy(info));
+        let line = LineRef::parse(text.as_bytes()).expect("invariant: 10 columns");
+        let rules = vec![HeadRule::Info(InfoRule {
+            tag: tag.as_bytes().to_vec(),
+            cmp: crate::spec::predicate::Cmp::parse(cmp).expect("invariant: operator"),
+            on_missing,
+            quantifier,
+            number_a,
+        })];
+        let mut hits = [0];
+        let mut scratch = HeadScratch::new();
+        eval_head(
+            &line,
+            100,
+            &rules,
+            &mut hits,
+            &mut scratch,
+            &reed_core::tag_table::TagTable::new(),
+        )
+    }
+
+    fn info_rule_passes(info: &[u8], tag: &str, cmp: &str, on_missing: OnMissing) -> bool {
+        info_rule_passes_with(
+            info,
+            tag,
+            cmp,
+            on_missing,
+            false,
+            crate::spec::Quantifier::Any,
+        )
+    }
+
+    /// doc_v23 V23-59 (decision A): with a missing observation, `on_missing`
+    /// "pass" means bcftools' operator table decides — `!=` keeps the record,
+    /// every other operator drops it. `"fail"` overrides to always drop.
+    /// Measured against bcftools 1.24-2 (`DP=.` and `DP` absent).
+    #[test]
+    fn missing_info_values_follow_the_bcftools_operator_table() {
+        // `.` value: the tag is present but missing (the V23-23 shape).
+        assert!(info_rule_passes(b"DP=.", "DP", "!=3", OnMissing::Pass));
+        assert!(!info_rule_passes(b"DP=.", "DP", "==3", OnMissing::Pass));
+        assert!(!info_rule_passes(b"DP=.", "DP", ">3", OnMissing::Pass));
+        assert!(!info_rule_passes(b"DP=.", "DP", "<3", OnMissing::Pass));
+        // Absent tag: bcftools also treats it as a missing operand.
+        assert!(info_rule_passes(b".", "DP", "!=3", OnMissing::Pass));
+        assert!(!info_rule_passes(b".", "DP", "==3", OnMissing::Pass));
+        // A called value is unaffected.
+        assert!(info_rule_passes(b"DP=5", "DP", "!=3", OnMissing::Pass));
+        assert!(!info_rule_passes(b"DP=5", "DP", "==3", OnMissing::Pass));
+        // `fail` is an explicit override, not the parity default.
+        assert!(!info_rule_passes(b"DP=.", "DP", "!=3", OnMissing::Fail));
+        assert!(!info_rule_passes(b".", "DP", "!=3", OnMissing::Fail));
+    }
+
+    /// doc_v23 V23-59, the `Number=A` branch: a `.` element is a missing
+    /// operand, so `!=` passes on it and every other operator fails. The
+    /// first case isolates the missing element (the called `3` fails
+    /// `!=3`), so only the operator table can make it pass.
+    #[test]
+    fn number_a_missing_elements_follow_the_operator_table() {
+        use crate::spec::Quantifier::{All, Any};
+        // `AD=3,.` with `!=3`: the 3 fails, the `.` passes -> any true.
+        assert!(info_rule_passes_with(
+            b"AD=3,.",
+            "AD",
+            "!=3",
+            OnMissing::Pass,
+            true,
+            Any
+        ));
+        // `==` and ordering fail on the missing element; `AD=5,.` ==3 has
+        // no passing element either.
+        assert!(!info_rule_passes_with(
+            b"AD=5,.",
+            "AD",
+            "==3",
+            OnMissing::Pass,
+            true,
+            Any
+        ));
+        assert!(!info_rule_passes_with(
+            b"AD=1,.",
+            "AD",
+            ">3",
+            OnMissing::Pass,
+            true,
+            Any
+        ));
+        // A wholly missing element list: same table.
+        assert!(info_rule_passes_with(
+            b"AD=.",
+            "AD",
+            "!=3",
+            OnMissing::Pass,
+            true,
+            Any
+        ));
+        // `all` requires every element: the missing one passes `!=` but the
+        // called 3 does not, so the rule fails; with 5 it passes.
+        assert!(!info_rule_passes_with(
+            b"AD=3,.",
+            "AD",
+            "!=3",
+            OnMissing::Pass,
+            true,
+            All
+        ));
+        assert!(info_rule_passes_with(
+            b"AD=5,.",
+            "AD",
+            "!=3",
+            OnMissing::Pass,
+            true,
+            All
+        ));
+        // `fail` overrides the table on the missing element too.
+        assert!(!info_rule_passes_with(
+            b"AD=3,.",
+            "AD",
+            "!=3",
+            OnMissing::Fail,
+            true,
+            Any
+        ));
     }
 }

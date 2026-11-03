@@ -444,6 +444,16 @@ pub fn compile(
     // ---- head rules (§11.2 order: targets → class/alt → FILTER → QUAL →
     // INFO in declaration order) ----
     let mut head = Vec::new();
+    // The indexed family (`-r/-R`) and the streaming family (`-t/-T`) are two
+    // separate predicates, so a site must satisfy both — bcftools'
+    // intersection (doc_v23 V23-61).
+    let indexed = crate::spec::region::parse_regions(&spec.targets.indexed)?;
+    if !indexed.is_empty() {
+        head.push(HeadRule::Regions {
+            include: indexed,
+            exclude: Vec::new(),
+        });
+    }
     let regions = compile_regions(&spec.targets)?;
     if let Some(r) = regions {
         head.push(HeadRule::Regions {

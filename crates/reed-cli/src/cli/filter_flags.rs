@@ -66,22 +66,28 @@ pub(crate) fn unsupported_stats_mind(_text: &str) -> Result<String, String> {
     )
 }
 
-/// Region selection (`docs/rounds/v2/02-cli.md` §2): indexed and streamed regions.
+/// Region selection (`docs/rounds/v2/02-cli.md` §2): indexed and streamed
+/// regions.
+///
+/// `-r/-R` and `-t/-T` are two *families* that AND together (bcftools'
+/// `-r`+`-t` intersection, doc_v23 V23-61). Within a family each flag may
+/// repeat, and repeated lists union — bcftools accepts `-t A -t B` and
+/// `-t A -t ^B` on one command line, and both take effect.
 #[derive(Args, Clone, Debug, Default)]
 pub(crate) struct RegionArgs {
     /// Regions to keep, comma-separated (`Chr01`, `Chr01:100-200`);
     /// needs an index next to the input (bcftools `-r`)
     #[arg(short = 'r', long = "regions", value_name = "LIST")]
-    pub regions: Option<String>,
+    pub regions: Vec<String>,
     /// Regions to keep, one per line; needs an index (bcftools `-R`)
     #[arg(short = 'R', long = "regions-file", value_name = "FILE")]
-    pub regions_file: Option<String>,
+    pub regions_file: Vec<String>,
     /// Regions to keep, streamed without an index (bcftools `-t`)
     #[arg(short = 't', long = "targets", value_name = "LIST")]
-    pub targets: Option<String>,
-    /// Regions to keep, one per line (bcftools `-T`); `^` prefix excludes
+    pub targets: Vec<String>,
+    /// Region files (bcftools `-T`); a `^` prefix on an entry excludes
     #[arg(short = 'T', long = "targets-file", value_name = "FILE")]
-    pub targets_file: Option<String>,
+    pub targets_file: Vec<String>,
 }
 
 /// Sample selection (`docs/rounds/v2/02-cli.md` §3): keep and remove lists.

@@ -171,11 +171,22 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 - 支持：`QUAL FILTER ID CHROM POS TYPE`、`INFO/TAG` 与裸名 `TAG`（裸名先查 INFO）、`FMT/TAG`、`N_ALT N_SAMPLES AC AN AF MAC MAF N_MISSING F_MISSING`；比较 `== = != < <= > >=`、正则 `~ !~`；逻辑 `&& || & |`（对 FORMAT 的含义照 bcftools 区分）、`!`、括号；缺失值 `"."`；负数字面量（`-12.5`，对应 bcftools `filter.c:3902` 的一元负号，无前导 `+`——bcftools 将其词法化为加法运算符，`filter.c:332`；标识符内的 `-` 不受影响，reed 无算术故 `A - B` 仍是错误）。
 - 未支持：`FMT/` 下标 `[0]/[*]`、通用正则、函数（`MAX/MIN/AVG/…`）。
 - `AC/AN/AF/MAC/MAF`：INFO 中存在时取 INFO 值，否则按基因型。检测到表达式使用了 INFO 中已存在的 AC/AN 时打印"陈旧 INFO"警告，提示改用 `--maf/--mac` 或先 `-x INFO/AC,INFO/AN`。
-- 与缺失值比较为假（bcftools 语义）。
+- **与缺失值比较按 bcftools 的算符表**（`filter.c:4449-4455` 的
+  `missing_logic`）：
+
+  | 算符 | 一侧缺失 | 两侧都缺失 |
+  |---|---|---|
+  | `==` | 假 | **真** |
+  | `!=` | **真** | **真** |
+  | `<` `<=` `>` `>=` | 假 | 假 |
+
+  即 `-i 'DP!=3'` 保留 `DP` 为 `.` 或缺失的记录（bcftools 实测一致，
+  doc_v23 V23-59）。field 规则（JSON `on_missing`）的 `pass` 表示同一张
+  表；`fail` 是显式覆盖（一律丢弃）。
 - **`AN = 0`（位点全部缺失）时 `AF`/`MAF` 为 NaN，按 IEEE 比较**：`AF!=0`/`MAF!=0`
   为真，`AF==0`/`AF<1`/`AF>0` 为假。这与 bcftools 在同一输入上的逐记录结果一致
-  （doc_v23 V23-50 实测），因此不改成 missing——上面那条"与缺失值比较为假"只
-  指字面量 `"."`，不指计算出的 NaN。
+  （doc_v23 V23-50 实测），因此不改成 missing：NaN 是**计算值**，走上面的算符
+  表（`!=` 为真），不是字面量缺失。
 - 引用基因型量的表达式（`N_MISSING`、`F_MISSING`，以及 INFO 不存在时的 `AC/AN/…`）在掩码之后求值。
 - **Flag 按存在性读写**：`DB=1`/`DB=0` 测 flag 的存在/缺失（`doc/bcftools.txt:4067`），`DB!=0` 等价 `DB=1`；`DB` 单独出现不是合法表达式（bcftools 对单个裸 token 恒假，reed 在编译期报错而不是静默丢弃所有记录；doc_v12 N6）。
 - **多值 INFO 按任一元素比较**：`Number=A/R/G/.` 或 `Count(n>1)` 的标签逐对比较，任一对满足即真（bcftools `CMP_VECTORS`）；`Number=1` 却给了多个值时按 missing 处理（规范外输入，01-review §2.5-B5）。
@@ -191,6 +202,8 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 | ` 5`/`5 `（数值） | Integer 不容忍、Float 容忍 | 不 trim，missing | 数值文法（§1.3）无空白；htslib 两类型不一致 |
 | `Number=1` 却给多值 | 标量读作 0（`vcf.c:4286` 的实现细节） | missing | 不把 htslib 的偶然行为固化成契约（02 §6.2b） |
 | `-q/-Q` 阈值的 f32 量化 | C 的 `float` 存储（无意） | 刻意复现 `sscanf("%f")` | 已对齐，防止未来改成 f64 破坏边界案例 |
+| 同族区域参数重复（`-r`+`-R`、多次 `-t`/`-T`） | 后写覆盖，且 `is_file` 不复位（`-R f -r chr1` 把 `chr1` 当文件名） | **并集**，与顺序无关 | bcftools 的单槽位是实现瑕疵，顺序相关的静默丢数据不固化成契约（doc_v23 V23-60） |
+| `-r/-R` 与 `-t/-T` 同时给出 | 交集 | 交集（一致） | 两个独立谓词 AND（doc_v23 V23-61） |
 
 ---
 

@@ -56,7 +56,13 @@ impl FilterSpec {
             flag(&mut args, "--mind", rate.render());
         }
 
-        // ---- regions (one `-t` list: `^` prefixes the excludes) ----
+        // ---- regions ----
+        // `-r/-R` and `-t/-T` are two families that AND together, and the
+        // spec keeps them apart (`RegionRule::indexed` vs include/exclude),
+        // so both render. `-t` carries its excludes as `^` entries.
+        if !self.targets.indexed.is_empty() {
+            flag(&mut args, "-r", self.targets.indexed.join(","));
+        }
         if !self.targets.include.is_empty() || !self.targets.exclude.is_empty() {
             let mut list: Vec<String> = self.targets.include.clone();
             list.extend(self.targets.exclude.iter().map(|r| format!("^{r}")));

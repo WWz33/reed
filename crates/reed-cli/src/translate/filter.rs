@@ -14,6 +14,14 @@ use crate::units::input_path;
 /// # Errors
 ///
 /// Unknown variant types or malformed expressions.
+/// Which region family a CLI flag belongs to: `-r/-R` (indexed, also used
+/// to seek) or `-t/-T` (streamed). The two families AND together.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RegionFamily {
+    Indexed,
+    Target,
+}
+
 /// Parses `--indep-pairwise W[kb] [S] R2` (docs/rounds/v5/05-algorithms.md
 /// §3.4.1): `W` variants (or `W kb`), the step defaults to 1 and must be 1
 /// when the window is in kb.
@@ -318,38 +326,47 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     spec.mind = cli.mind;
     spec.ld_prune = parse_indep_pairwise(&cli.site_args.indep_pairwise)?;
 
-    // ---- regions (02-cli.md §2): the spec predicate, validated here.
-    // `-r` (indexed) and `-t` (streamed) share it; `-T`/`^` add excludes.
-    // Files may be BED or a plain region list (doc_v21 M4).
-    let mut add_regions = |tokens: Vec<String>, include: bool| -> Result<(), String> {
-        for raw in tokens {
-            let (token, include) = match raw.strip_prefix('^') {
-                Some(rest) => (rest, false),
-                None => (raw.as_str(), include),
-            };
-            reed::spec::Region::parse(token)
-                .map_err(|e| format!("invalid region {token:?}: {e}"))?;
-            if include {
-                spec.targets.include.push(token.to_string());
-            } else {
-                spec.targets.exclude.push(token.to_string());
+    // ---- regions (02-cli.md §2): the spec predicates, validated here.
+    //
+    // Two families, two separate predicates that AND together (doc_v23
+    // V23-60/V23-61):
+    //   - `-r`/`-R` → targets.indexed (the reader also seeks with them)
+    //   - `-t`/`-T` → targets.include/exclude, `^` = exclude
+    //
+    // Within a family the flags repeat and union — bcftools accepts
+    // `-t A -t ^B` on one line and applies both. Across families they AND,
+    // which is the bcftools intersection: `-r chr2 -t chr1:10` selects
+    // nothing, `-r chr1,chr2 -t chr2:10` selects chr2 only.
+    let mut add_regions =
+        |tokens: Vec<String>, family: RegionFamily| -> Result<(), String> {
+            for raw in tokens {
+                let (token, include) = match raw.strip_prefix('^') {
+                    Some(rest) => (rest, false),
+                    None => (raw.as_str(), true),
+                };
+                reed::spec::Region::parse(token)
+                    .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+                match (family, include) {
+                    (RegionFamily::Indexed, _) => spec.targets.indexed.push(token.to_string()),
+                    (RegionFamily::Target, true) => spec.targets.include.push(token.to_string()),
+                    (RegionFamily::Target, false) => spec.targets.exclude.push(token.to_string()),
+                }
             }
-        }
-        Ok(())
-    };
-    for (value, from_file) in [
-        (&cli.regions_args.regions, false),
-        (&cli.regions_args.regions_file, true),
-        (&cli.regions_args.targets, false),
-        (&cli.regions_args.targets_file, true),
+            Ok(())
+        };
+    for (values, from_file, family) in [
+        (&cli.regions_args.regions, false, RegionFamily::Indexed),
+        (&cli.regions_args.regions_file, true, RegionFamily::Indexed),
+        (&cli.regions_args.targets, false, RegionFamily::Target),
+        (&cli.regions_args.targets_file, true, RegionFamily::Target),
     ] {
-        if let Some(value) = value {
+        for value in values {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
             } else {
                 value.clone()
             };
-            add_regions(super::common::region_tokens(&text, from_file)?, true)?;
+            add_regions(super::common::region_tokens(&text, from_file)?, family)?;
         }
     }
 
@@ -460,19 +477,25 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     // is `File::create`d after the input is open, truncating it mid-read.
     super::common::refuse_output_eq_input(input_file.as_deref(), output.as_deref())?;
     let mut regions = Vec::new();
-    let indexed_list = match (&cli.regions_args.regions, &cli.regions_args.regions_file) {
-        (Some(list), _) => Some(
-            super::common::region_tokens(list, false).map_err(reed::Error::usage)?,
-        ),
-        (None, Some(path)) => {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| reed::Error::usage(format!("{path}: {e}")))?;
-            Some(super::common::region_tokens(&text, true).map_err(reed::Error::usage)?)
+    let mut indexed_list = Vec::new();
+    for (values, from_file) in [
+        (&cli.regions_args.regions, false),
+        (&cli.regions_args.regions_file, true),
+    ] {
+        for value in values {
+            let text = if from_file {
+                std::fs::read_to_string(value)
+                    .map_err(|e| reed::Error::usage(format!("{value}: {e}")))?
+            } else {
+                value.clone()
+            };
+            indexed_list.extend(
+                super::common::region_tokens(&text, from_file).map_err(reed::Error::usage)?,
+            );
         }
-        (None, None) => None,
-    };
-    if let Some(tokens) = &indexed_list {
-        for token in tokens {
+    }
+    {
+        for token in &indexed_list {
             let parsed = reed::spec::Region::parse(token)
                 .map_err(|e| reed::Error::usage(format!("invalid region {token:?}: {e}")))?;
             regions.push(reed::chunk::region::Region {

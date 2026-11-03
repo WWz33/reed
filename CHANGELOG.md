@@ -81,6 +81,39 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
   DP/PSC 仍与 `bcftools stats -s -` 逐行相同；真实 BCF 的负浮点
   `reed filter -Ov` == `bcftools view -Ov`。
 
+### 第二批：决策 A/B 与内存三项（2026-11-03）
+
+拍板后继续落地的一批，明细见 `docs/rounds/v23/02-implementation.md`。
+
+#### Fixed
+- **filter（缺失值比较，V23-59）**：表达式路径的 `!=` 与 bcftools 方向相反
+  ——`-i 'DP!=3'` 在 bcftools 保留 `DP=.`/`DP` 缺席的记录，reed 却丢弃。
+  现按 `filter.c:4449-4455` 的 `missing_logic`：一侧缺失时仅 `!=` 为真，
+  两侧都缺失时 `==`/`!=` 为真，排序算符恒假。三处入口统一：表达式
+  `any_pair`、INFO field 规则的 `on_missing`（`pass` = 算符表，`fail` =
+  显式丢弃）、`Number=A` 的 `.` 元素。`TAG=.` 与 tag 缺席同路径（V23-23）。
+- **filter/cli（区域参数，V23-60/61；含 V23-19/20）**：`-r`/`-R` 与
+  `-t`/`-T` 是两个 AND 的谓词（bcftools 交集），同族重复（`-r`+`-R`、
+  `-t`+`-T`、多次 `-t`）取并集且与顺序无关。旧实现把四者塞进一个
+  `include` 列表，`-r chr1 -R f` 只剩 `f`，`-r chr2 -t chr1:10` 忽略 `-t`。
+  `RegionRule` 新增 `indexed`；`to_args` 把 `indexed` 渲染回 `-r`。
+- **filter（驻留预算，V23-10）**：sketch pass0 旧检查逐个比较单矩阵与
+  预算，多个各占大半预算的 contig 全部驻留。`ResidentBudget` 改为累计
+  （`saturating_add`），拒绝的矩阵不计数。
+- **distance（GRM 内存，V23-12）**：`matrices::grm` 不再复制 `n × m`
+  的 `x` 缓冲（2000 样本 × 1e6 位点 = 16 GB），直接读 `st.w`，内积循环
+  顺带累计 `called_both`；数值与旧算法逐值一致。
+
+#### Changed
+- **convert（`--reference` 流式，V23-11）**：FASTA 改为 `BufReader` 逐行
+  解析，峰值从"整文件 + 全部 contig 的 Arc"降为"当前 contig 的短暂两份"；
+  CRLF、空行、带描述的 header 行为不变。
+
+#### Tests
+- 新增 8 项：缺失值算符表（表达式/head/Number=A/双缺失）、区域组合
+  （9 组 + 同族并集）、驻留预算 3 项单测 + 多 contig e2e、流式 FASTA
+  （CRLF/空行/多记录）、GRM 四组逐值对拍。
+
 ## [Unreleased] — doc_v22 真实 callset 的 I/O 兼容与深度回退（2026-11-03）
 
 真实 callset 复核（`bsaseq/raw.bsa.vcf.gz`：4 样本、`GT:PL:AD`、无逐样本 DP）

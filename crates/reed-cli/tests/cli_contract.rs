@@ -1420,3 +1420,98 @@ fn prefix_commands_refuse_dash_and_empty_output() {
     assert!(dir.join("bare.afreq").exists(), "control run must write its file");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v23 V23-49 (decisions B): the two region families AND together, the
+/// same family twice is a usage error, and `-T` is an include file (`^`
+/// excludes). Values measured against bcftools 1.24-2 on the same fixture.
+#[test]
+fn region_flag_combinations_match_bcftools() {
+    let dir = temp_dir("v23-regions");
+    let vcf = dir.join("in.vcf.gz");
+    let text = "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##contig=<ID=chr2,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         chr2\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut compressed = Vec::new();
+    for block in text.as_bytes().chunks(4096) {
+        deflater
+            .deflate_block(block, &mut compressed)
+            .expect("invariant: block");
+    }
+    compressed.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    std::fs::write(&vcf, compressed).expect("invariant: write");
+    let out = run(&["index", vcf.to_str().expect("invariant: utf8")]);
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let inp = vcf.to_str().expect("invariant: utf8");
+    let c2only = dir.join("c2only.tab");
+    std::fs::write(&c2only, "chr2\t1\t1000\n").expect("invariant: write");
+    let c2 = c2only.to_str().expect("invariant: utf8");
+
+    // (args, expected CHROM/POS pairs). The first block is byte-identical
+    // to bcftools 1.24-2; the repeated-flag cases follow reed's documented
+    // union rule (see the `-r`+`-R` case below).
+    type RegionCase<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
+    let cases: &[RegionCase<'_>] = &[
+        (&["-r", "chr2"], &[("chr2", "10")]),
+        // Cross-family intersection: chr2 (from -r) AND chr2:10 (from -t).
+        (&["-r", "chr1,chr2", "-t", "chr2:10"], &[("chr2", "10")]),
+        // Disjoint families select nothing (bcftools prints no records here).
+        (&["-r", "chr2", "-t", "chr1:10"], &[]),
+        (&["-t", "^chr1"], &[("chr2", "10")]),
+        // `-T` is an include file, not an exclude list.
+        (&["-T", c2], &[("chr2", "10")]),
+        // `-r` + `-T`: both families again.
+        (&["-r", "chr1,chr2", "-T", c2], &[("chr2", "10")]),
+        // Repeated `-t`: include and exclude lists union, order-independent.
+        // "keep chr1, minus chr1:10" leaves nothing on this fixture.
+        (&["-t", "chr1", "-t", "^chr1:10"], &[]),
+        (&["-t", "^chr1:10", "-t", "chr1"], &[]),
+        // Two includes union: both contigs.
+        (&["-t", "chr1:10", "-t", "chr2:10"], &[("chr1", "10"), ("chr2", "10")]),
+    ];
+    for (args, want) in cases {
+        let mut argv: Vec<&str> = vec!["filter", inp];
+        argv.extend(*args);
+        argv.extend(["-Ov", "--verbosity", "0"]);
+        let out = run(&argv);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let got: Vec<(&str, &str)> = text
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| {
+                let mut f = l.split('\t');
+                (f.next().expect("chrom"), f.next().expect("pos"))
+            })
+            .collect();
+        assert_eq!(got, *want, "{args:?}");
+    }
+
+    // `-r` and `-R` together union (both are the indexed family).
+    let r12 = dir.join("r12.tab");
+    std::fs::write(&r12, "chr2\t1\t1000\n").expect("invariant: write");
+    let mut argv: Vec<&str> = vec!["filter", inp, "-r", "chr1", "-R", r12.to_str().expect("utf8")];
+    argv.extend(["-Ov", "--verbosity", "0"]);
+    let out = run(&argv);
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let got: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').next().expect("chrom"))
+        .collect();
+    assert_eq!(
+        got,
+        vec!["chr1", "chr2"],
+        "repeated -r/-R union, not last-wins"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

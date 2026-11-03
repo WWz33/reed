@@ -1511,15 +1511,27 @@ pub(crate) struct MsaOutput {
 }
 
 /// Reads a FASTA into per-contig sequences (the MSA reference).
+///
+/// Streams the file line by line: `fs::read` held the whole reference (a
+/// human genome is ~3 GB) and then copied every contig into an `Arc<[u8]>`,
+/// so the peak was twice the file plus all the sequence data (doc_v23
+/// V23-11). Only the current contig's sequence is buffered twice (the
+/// `Vec` and the `Arc` it is moved into), and the `Arc` is the only copy
+/// that outlives a record.
 fn read_reference(path: &PathBuf) -> Result<HashMap<Vec<u8>, Arc<[u8]>>, crate::Error> {
-    let text = std::fs::read(path).map_err(|e| {
+    use std::io::BufRead as _;
+    let file = std::fs::File::open(path).map_err(|e| {
         crate::Error::usage(format!("cannot read --reference {}: {e}", path.display()))
     })?;
+    let reader = std::io::BufReader::with_capacity(1 << 20, file);
     let mut map: HashMap<Vec<u8>, Arc<[u8]>> = HashMap::new();
     let mut name: Option<Vec<u8>> = None;
     let mut seq: Vec<u8> = Vec::new();
-    for line in text.split(|&b| b == b'\n') {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
+    for line in reader.split(b'\n') {
+        let line = line.map_err(|e| {
+            crate::Error::usage(format!("cannot read --reference {}: {e}", path.display()))
+        })?;
+        let line = line.strip_suffix(b"\r").unwrap_or(&line);
         if let Some(header) = line.strip_prefix(b">") {
             if let Some(n) = name.take() {
                 map.insert(n, Arc::from(std::mem::take(&mut seq)));

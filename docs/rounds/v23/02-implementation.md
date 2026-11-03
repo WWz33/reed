@@ -15,10 +15,12 @@
 | P0 静默错数据 | V23-04、V23-06 | 负浮点丢符号、DAPC off-by-one |
 | P1 | V23-08、V23-09（拍板 A） | NaN 排序 panic、跨 backend 变号 |
 | 拍板 | V23-14（C）、V23-21（A）、V23-50（A）、V23-47（A） | README 拍板表 |
+| 第二批 | V23-59（决策 A）、V23-60/61（决策 B）、V23-10/11/12（决策 C ③） | 讨论后拍板 |
 | 丢弃 | V23-07 | 拍板：不接受多等位 |
 
-未落地（仍待拍板）：V23-10…13、15…20、22…30、32…46、48、49，以及全部 D 组
-性能/精简项。它们的复核结论不变，见 STATUS.md。
+未落地（仍待拍板）：V23-13、15…20、22…30、32…46、48、49（其中 V23-19/20/23
+已随 V23-59/60/61 落地），以及全部 D 组性能/精简项。它们的复核结论不变，见
+STATUS.md。
 
 ## 实现说明（按文件）
 
@@ -184,6 +186,100 @@ fallback 逐值对比，容差 1e-9）、`top_k_leaves_an_all_zero_column_alone`
 `pi_is_pairwise_complete_where_the_spectrum_is_complete_case`（同一 fixture
 上 π 的 pair 口径与谱系口径不同）。
 
+## 第二批：决策 A/B 与内存三项（2026-11-03）
+
+> 拍板依据见 [STATUS.md](STATUS.md) §"决策点（第二批）"。这一批的代码在
+> 拍板后先行完成，本条记录补齐逐项实现、测试与文档。
+
+### reed-filter：缺失值的算符表（V23-59；含 V23-23）
+
+bcftools `filter.c:4449-4455` 的 `missing_logic` 是 `{0,0,1}`/`{0,1,1}`：
+
+| 操作数状态 | `==` | `!=` | `< <= > >=` |
+|---|---|---|---|
+| 一侧缺失 | 假 | **真** | 假 |
+| 两侧都缺失 | **真** | **真** | 假 |
+
+三处入口统一到这张表：
+
+- `expr/mod.rs::Operand::any_pair`：缺失对不再 `continue`，按
+  `(a_missing, b_missing)` 查表；真则短路，否则继续。`Eq`/`Ne` 两侧缺失时
+  为真，一侧缺失只有 `Ne` 为真。`> <` 等仍为假。
+- `eval/head.rs::missing_value_passes`（新）：INFO field 规则的
+  `on_missing = pass` 表示"按算符表"，`fail` 是显式一律丢弃；`keep`/`mask`
+  在 `plan/mod.rs` 被拒绝，防御性按 `pass` 处理。tag 缺席与 `TAG=.` 同一条
+  路径（V23-23）。
+- `eval/head.rs` 的 `Number=A` 分支：`.` 元素同样按算符表计入 `any`/`all`。
+  这一处是补齐时自查发现的：第一版只写了 `all = false`，与注释和 bcftools
+  都不符；现在 `!=` 在 `.` 元素上通过，其余算符失败，`all` 量化器要求每个
+  元素各自通过。
+
+测试（`doc_v23 V23-59` 注释）：
+
+| 测试 | 覆盖 |
+|---|---|
+| `missing_operands_follow_the_bcftools_operator_table` | `DP=.`/`DP` 缺席 × 六算符 + 已调用对照 |
+| `both_sides_missing_pass_for_eq_and_ne_only` | 字面量 `.` 与缺失 tag：`==`/`!=` 真，`>`/`<` 假 |
+| `missing_info_values_follow_the_bcftools_operator_table` | head 规则：`. `与缺席 × `!=`/`==`/`>`/`<`，`fail` 覆盖 |
+| `number_a_missing_elements_follow_the_operator_table` | `AD=3,.`/`AD=5,.` × `!=`/`==`/`>` × `any`/`all` + `fail` |
+
+实测（bcftools 1.24-2，`DP=.`@10、`DP` 缺席@20、`DP=5`@30）：`-i 'DP!=3'`
+两边都是 `[10 20 30]`，`-e 'DP!=3'` 两边都是空。
+
+### reed-filter / reed-cli：区域两族（V23-60/61；含 V23-19/20）
+
+- `spec/region.rs`：`RegionRule` 新增 `indexed: Vec<String>`（`-r/-R`），与
+  `include`/`exclude`（`-t/-T`，`^` 为排除）分开；`is_empty` 计入三组。
+- `plan/mod.rs::compile`：`indexed` 先编译成一条 `HeadRule::Regions`
+  （exclude 空），`-t/-T` 再一条；两条 AND，即 bcftools 的跨族交集。
+- `cli/filter_flags.rs`：四个 `Option<String>` 改为 `Vec<String>`，允许重复。
+- `translate/common.rs`/`translate/filter.rs`：同族累加（并集），跨族分别
+  进入 `indexed` 与 `include/exclude`。
+- `spec/render.rs::to_args`：`indexed` 渲染回 `-r`，`include/exclude` 仍渲染
+  为一条 `-t`（排除项带 `^`），round-trip 保真。
+
+同族重复取并集是**有意分歧**：bcftools 把 `-r`/`-R` 写进同一个槽位，后写
+覆盖且 `is_file` 不复位（`-R f -r chr1` 把 `chr1` 当文件名）。顺序相关的
+静默丢数据不固化成契约，已登记在 `docs/spec/cli.md` 的分歧表。
+
+测试：`region_flag_combinations_match_bcftools`（9 组：单族、跨族交集、
+不相交、`^` 排除、`-T` 文件、重复 `-t` 两种顺序、双 include），外加
+`-r`+`-R` 并集。fixture 与实测表（STATUS 决策 B）一致。
+
+### reed：pass0 驻留预算累计（V23-10）
+
+`filter/pass0/matrix.rs` 新增 `ResidentBudget::admit`：`MatrixSink` 记录
+`resident_bytes`，每接收一个 contig 矩阵用 `saturating_add` 累计并与预算
+比较；拒绝的矩阵不计数，所以 `matrices` 与计数器保持同步。旧检查是
+`matrix.size_bytes() > budget`，十个各占 90% 预算的 contig 会逐个通过、
+全部驻留。
+
+测试：`admits_by_running_total_not_per_matrix`（6+6 > 10、拒绝后不计数、
+恰好填满）、`accepts_an_exact_fill`（`>` 而非 `>=`）、
+`overflow_saturates_instead_of_wrapping`；e2e
+`sketch_budget_covers_the_sum_of_every_resident_contig`（6 contig × 40 位点，
+16 KiB 预算；无预算对照成功）。
+
+### reed：`--reference` 流式读取（V23-11）
+
+`convert/job.rs::read_reference` 从 `fs::read` + 整文件按 `\n` 切分改为
+`BufReader::with_capacity(1 MiB)` + `split(b'\n')`。峰值从"文件全量 + 每个
+contig 的 `Arc`"降为"当前 contig 的 `Vec` 与 `Arc`（短暂两份）+ 其余
+`Arc`"。解析规则不变：`\r` 去掉、空行跳过、`>` 后的描述截到空白。
+
+测试：`msa_reference_parses_crlf_blanks_and_multi_record_fastas`（CRLF、空行、
+带描述的 header、两条记录；断言 FASTA 逐字节）。
+
+### reed-distance：GRM 原地内积（V23-12）
+
+`matrices::grm` 删掉 `n × m` 的 `x` 缓冲（2000×1e6 时 16 GB），直接读
+`st.w`；内积循环同时累计 `called_both` 作为 `Pairwise` 分母。`w` 在未调用
+格为 0，所以"缺一个就加 0"与旧零填充缓冲完全等价；方差标准化用 `vi*vj`，
+协方差用 `vi*vj*sd²`。
+
+测试：`reference_grm`（旧算法的逐字重写）在四组
+`(MeanImpute|Pairwise) × (variance|full)` 下与 `grm` 逐值对拍。
+
 ## 验收
 
 | 检查 | 结果 |
@@ -215,12 +311,19 @@ contig、后出现有 pair 的 contig"仍按需创建（新增
 `streamed_pairs_skip_a_pairless_leading_contig` 钉住）；`top_k` 的 sign
 不影响特征值；`popg -o -` 现在 4 ms 返回（此前要跑完整轮）。
 
+第二批自查又抓到一处：
+
+- **V23-59 的 `Number=A` 分支只改了注释**：补文档时发现 `.` 元素仍走
+  `all = false`，`!=` 在该元素上不通过，与同一函数的标量分支和 bcftools
+  都相反。改为 `missing_value_passes` 计入 `any`/`all`，并补
+  `number_a_missing_elements_follow_the_operator_table`。这是"边写文档边
+  核对代码"直接暴露的缺陷。
+
 ## 未做的事（刻意）
 
 - **V23-07（AC 多等位）**：拍板丢弃，未改代码。
-- **B 组内存项**（V23-10 pass0 多 contig 预算、V23-11 `read_reference`
-  整读、V23-12 `matrices::grm` 拷贝、V23-13 `pos_log` 截断、V23-15 tql2、
-  V23-16 frame_chain、V23-17 `standardize`、V23-18 kernel PCA 负特征值、
-  V23-19/20 `-r/-R/-t/-T`）：仍待拍板。
+- **B 组剩余项**（V23-13 `pos_log` 截断、V23-15 tql2、V23-16 frame_chain、
+  V23-17 `standardize`、V23-18 kernel PCA 负特征值、V23-22 `decay_max_bp`
+  约定）：仍待拍板。
 - **性能/精简（V23-34…41）与其余测试缺口（V23-42…46、48、49）**：未动。
 - 本轮未重写历史、未改 `Cargo.toml` 版本、未动 gold 基线。

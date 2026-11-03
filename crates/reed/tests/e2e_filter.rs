@@ -1644,3 +1644,76 @@ chr1\t20\t.\tA\tT\t50\tPASS\t.\tGT:PL:AD\t1/1:.:0,50\t0/0:.:30,0\t0/1:.:5,6
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v23 V23-10: the sketch shape keeps every contig's matrix for the mid
+/// stage, so the memory budget has to cover their **sum**. Each contig below
+/// fits the budget alone; several together must be refused instead of all
+/// staying resident (the pre-v23 check compared one matrix at a time).
+#[test]
+fn sketch_budget_covers_the_sum_of_every_resident_contig() {
+    // Same body as the shared fixture, on several contigs, so pass0 retains
+    // one matrix per contig.
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr0,length=100000>\n\
+         ##contig=<ID=chr1,length=100000>\n\
+         ##contig=<ID=chr2,length=100000>\n\
+         ##contig=<ID=chr3,length=100000>\n\
+         ##contig=<ID=chr4,length=100000>\n\
+         ##contig=<ID=chr5,length=100000>\n\
+         ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+         ##INFO=<ID=QD,Number=1,Type=Float,Description=\"q\">\n\
+         ##INFO=<ID=FS,Number=1,Type=Float,Description=\"f\">\n\
+         ##INFO=<ID=MQ,Number=1,Type=Float,Description=\"m\">\n\
+         ##INFO=<ID=SOR,Number=1,Type=Float,Description=\"s\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n\
+         ##FORMAT=<ID=GQ,Number=1,Type=Integer,Description=\"q\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+    );
+    for c in 0..6 {
+        for i in 0..40_u32 {
+            let pos = i + 1;
+            let _ = writeln!(
+                text,
+                "chr{c}\t{pos}\t.\tA\tG\t50.0\tPASS\tQD=10.0;FS=10.0;MQ=60.0;SOR=1.0\t\
+                 GT:DP:GQ\t0/1:20:99\t0/1:20:99\t0/0:20:99\t0/0:20:99"
+            );
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("reed-v23-budget-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&text, 128)).expect("invariant: write");
+    let out = dir.join("out.vcf.gz");
+    let spec: FilterSpec = FilterSpec::default();
+
+    // Unbudgeted control: the run succeeds and the mid stage sees every
+    // contig's matrix.
+    let control = run_filter(
+        Some(path.as_path()),
+        &spec,
+        &options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &out),
+    );
+    assert!(control.is_ok(), "control run: {control:?}");
+
+    // One contig's matrix is small; the sum of six is not. Pick a budget
+    // between the two: the run must stop with MemBudgetExceeded instead of
+    // admitting all six.
+    let mut opts = options(
+        Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
+        &out,
+    );
+    // 4 samples × 40 sites × 4 words/site × 8 B ≈ 5 KiB per contig; 16 KiB
+    // admits two or three, not six.
+    opts.mem_bytes = Some(16 * 1024);
+    let err = run_filter(Some(path.as_path()), &spec, &opts)
+        .expect_err("six resident contig matrices must exceed a 16 KiB budget");
+    let text = err.to_string();
+    eprintln!("V23-10 budget error: {text}");
+    assert!(
+        text.contains("memory") || text.contains("budget"),
+        "expected a budget error, got: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
