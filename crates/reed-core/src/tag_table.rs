@@ -52,11 +52,15 @@ pub struct TagDef {
     pub number: TagNumber,
 }
 
-/// The header's declared INFO and FORMAT tags.
+/// The header's declared INFO/FORMAT tags and contig names.
 #[derive(Clone, Debug, Default)]
 pub struct TagTable {
     info: HashMap<String, TagDef>,
     format: HashMap<String, TagDef>,
+    /// Contig names in header order (empty for a hand-built table). Region
+    /// parsing needs this vocabulary: a contig name may contain `:`, so the
+    /// text alone is ambiguous (doc_v24 V24-04).
+    contigs: Vec<String>,
 }
 
 impl TagTable {
@@ -100,6 +104,23 @@ impl TagTable {
     #[must_use]
     pub fn format(&self, name: &str) -> Option<&TagDef> {
         self.format.get(name)
+    }
+
+    /// Declares a contig name (header order is preserved).
+    pub fn add_contig(&mut self, name: &str) {
+        self.contigs.push(name.to_string());
+    }
+
+    /// The declared contig names, in header order.
+    #[must_use]
+    pub fn contigs(&self) -> &[String] {
+        &self.contigs
+    }
+
+    /// Whether `name` is a declared contig.
+    #[must_use]
+    pub fn has_contig(&self, name: &str) -> bool {
+        self.contigs.iter().any(|c| c == name)
     }
 
     /// INFO tag names, sorted by name.

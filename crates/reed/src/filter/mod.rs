@@ -133,11 +133,11 @@ impl Default for FilterOptions {
 fn open_pass1(
     first: &mut Option<crate::input::OpenedInput>,
     replay_path: Option<&Path>,
-    opts: &FilterOptions,
+    regions: &[reed_io::chunk::region::Region],
 ) -> Result<crate::input::OpenedInput, FilterError> {
     match first.take() {
         Some(opened) => Ok(opened),
-        None => crate::input::open_regions(replay_path, &opts.regions).map_err(io_err),
+        None => crate::input::open_regions(replay_path, regions).map_err(io_err),
     }
 }
 
@@ -173,11 +173,38 @@ pub fn run_filter(
     // are summed; `chunks` stays the final pass's count (doc_v3 O10).
     let mut timing_engine = reed_engine::metrics::StageMetrics::default();
     let timing_chunks: u64;
-    if input.is_none() && !opts.regions.is_empty() {
+    // Indexed regions come from the spec (`-r/-R`) or, for library callers,
+    // from `FilterOptions.regions`. The spec is the CLI spelling and is
+    // resolved here against the header's contig vocabulary, so both the
+    // predicate and the seek list come from one parse (doc_v24 V24-04).
+    if !spec.targets.indexed.is_empty() && !opts.regions.is_empty() {
+        return Err(crate::error::Error::usage(
+            "indexed regions were given both in the spec and in FilterOptions.regions: give one source",
+        ));
+    }
+    if input.is_none() && (!opts.regions.is_empty() || !spec.targets.indexed.is_empty()) {
         return Err(crate::error::Error::usage(
             "regions need a seekable file, not stdin",
         ));
     }
+    let seek_regions: Vec<reed_io::chunk::region::Region> = if spec.targets.indexed.is_empty() {
+        opts.regions.clone()
+    } else {
+        let path = input.expect("invariant: stdin was rejected above");
+        // Read the header once before seeking; the region grammar needs the
+        // contig vocabulary (`HLA-A*01:01` is a name, not `contig:pos`).
+        let probe = crate::input::open(Some(path)).map_err(io_err)?;
+        let contigs = probe.facts().contig_names.clone();
+        drop(probe);
+        reed_filter::spec::region::parse_regions_strict(&spec.targets.indexed, &contigs)?
+            .into_iter()
+            .map(|(contig, start1, end1)| reed_io::chunk::region::Region {
+                contig,
+                start1,
+                end1,
+            })
+            .collect()
+    };
     // ---- input: stdin streams straight into the single-pass pipeline;
     // multi-pass runs (`--mind`, and `--indep-pairwise` whose prune pass0 also
     // consumes the stream) spill it once and delete the spill on every exit
@@ -188,13 +215,13 @@ pub fn run_filter(
     let mut first: Option<crate::input::OpenedInput>;
     match input {
         Some(p) => {
-            first = Some(crate::input::open_regions(Some(p), &opts.regions).map_err(io_err)?);
+            first = Some(crate::input::open_regions(Some(p), &seek_regions).map_err(io_err)?);
             _spill = None;
         }
         None if spec.mind.is_some() || spec.ld_prune.is_some() => {
             let guard = crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
             let path = guard.path().to_path_buf();
-            first = Some(crate::input::open_regions(Some(&path), &opts.regions).map_err(io_err)?);
+            first = Some(crate::input::open_regions(Some(&path), &seek_regions).map_err(io_err)?);
             replay_path = Some(path);
             _spill = Some(guard);
         }
@@ -687,7 +714,7 @@ pub fn run_filter(
         };
         // Header first (as BGZF block(s) on the compressed path).
         sink.out.write_header(&header_bytes).map_err(io_err)?;
-        let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
+        let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
         let abort = reed_engine::abort::abort_for(&budget);
         let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
         let pass1_start = Instant::now();
@@ -695,7 +722,7 @@ pub fn run_filter(
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
         timing_engine.merge(&report.metrics);
         timing_chunks = report.n_chunks;
-        job.finish(report.n_chunks, opts.regions.is_empty())
+        job.finish(report.n_chunks, seek_regions.is_empty())
             .map_err(ferr)?;
         sketch_funnel
     } else {
@@ -740,7 +767,7 @@ pub fn run_filter(
             slot: Arc::clone(&slot),
         };
         sink.out.write_header(&header_bytes).map_err(io_err)?;
-        let mut opened = open_pass1(&mut first, replay_path.as_deref(), opts)?;
+        let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
         let abort = reed_engine::abort::abort_for(&budget);
         // doc_v4 O-4: BCF input with a native-eligible plan decodes the
         // records directly; everything else renders text as before.
@@ -759,7 +786,7 @@ pub fn run_filter(
         timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
         timing_engine.merge(&report.metrics);
         timing_chunks = report.n_chunks;
-        job.finish(report.n_chunks, opts.regions.is_empty())
+        job.finish(report.n_chunks, seek_regions.is_empty())
             .map_err(ferr)?;
         slot.lock()
             .expect("invariant: funnel slot not poisoned")

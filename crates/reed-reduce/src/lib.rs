@@ -4,6 +4,10 @@
 //! and flashpca), plus PCoA, kernel PCA, Laplacian eigenmaps, diffusion maps,
 //! Isomap, LLE, NMF, PPCA-EM, UMAP and t-SNE.
 //!
+//! LLE is dense: `O(n²)` memory and `O(n³)` time, documented at
+//! [`LLE_MAX_SAMPLES`] (5,000). Use [`try_lle`] to handle an oversized input
+//! as an error instead of the panicking [`lle`].
+//!
 //! The dense linear algebra goes through [`backend`], which selects between
 //! `faer` (default) and a dependency-free fallback. Both produce identical
 //! results; the fallback exists so every number can be audited against a
@@ -52,7 +56,10 @@ pub mod xval;
 
 pub use backend::{gram_divide, sym_eig, sym_eig_top_k, Backend, SymEigResult, COMPILED_BACKEND};
 pub use eig::SymEig;
-pub use extra::{lle, lle_from_sq_distances, nmf, ppca, tsne, tsne_from_sq_distances, TsneConfig, TsneError};
+pub use extra::{
+    LleError, LLE_MAX_SAMPLES, lle, lle_from_sq_distances, nmf, ppca, try_lle,
+    try_lle_from_sq_distances, tsne, tsne_from_sq_distances, TsneConfig, TsneError,
+};
 pub use grm_reduce::{grm_diffusion, grm_distances, grm_isomap, grm_kernel, grm_kernel_pca, grm_knn_weights, grm_laplacian, grm_lle, grm_pcoa, grm_similarity, grm_tsne, grm_umap};
 pub use graph::{diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa, pairwise_distances, Embedding, Kernel};
 pub use reed_core::linalg::Mat;

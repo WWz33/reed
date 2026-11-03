@@ -16,7 +16,7 @@
 //! (`LD1..LDk`) differ by a per-axis scale. See
 //! `docs/rounds/v17b/01-research.md` §1.5.
 
-use std::io::Write as _;
+use std::io::{BufWriter, Write as _};
 
 use reed_engine::budget::ThreadBudget;
 use reed_reduce::lda::{self, LdaError};
@@ -329,7 +329,7 @@ pub fn run_dapc_opened(
     };
 
     // Re-slice the scores to the selected component count.
-    let mut scores = if n_pca < scores.cols {
+    let scores = if n_pca < scores.cols {
         let mut s = Mat::zeros(n_samples, n_pca);
         for i in 0..n_samples {
             for c in 0..n_pca {
@@ -340,7 +340,6 @@ pub fn run_dapc_opened(
     } else {
         scores
     };
-    let _ = &mut scores;
 
     let model = lda::fit(&scores, &groups, &levels, 1e-30).map_err(map_lda_err)?;
     // `adegenet` keeps only the axes whose squared singular value exceeds
@@ -415,7 +414,8 @@ fn write_outputs(o: &Outputs<'_>) -> Result<(), crate::Error> {
         var,
     } = *o;
     let ind_path = format!("{prefix}.dapc.ind");
-    let mut f = std::fs::File::create(&ind_path)?;
+    let file = std::fs::File::create(&ind_path)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     write!(f, "#IID\tPOP\tASSIGN").map_err(io_err)?;
     for k in 0..n_da {
         write!(f, "\tLD{}", k + 1).map_err(io_err)?;
@@ -434,12 +434,14 @@ fn write_outputs(o: &Outputs<'_>) -> Result<(), crate::Error> {
         writeln!(f).map_err(io_err)?;
     }
 
-    let mut f = std::fs::File::create(format!("{prefix}.dapc.eig"))?;
+    let file = std::fs::File::create(format!("{prefix}.dapc.eig"))?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     for v in eig {
         writeln!(f, "{v:.9}").map_err(io_err)?;
     }
 
-    let mut f = std::fs::File::create(format!("{prefix}.dapc.var"))?;
+    let file = std::fs::File::create(format!("{prefix}.dapc.var"))?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     writeln!(f, "#n_pca\tn_da\tvar").map_err(io_err)?;
     writeln!(f, "{n_pca}\t{n_da}\t{var:.9}").map_err(io_err)?;
     Ok(())
@@ -447,7 +449,8 @@ fn write_outputs(o: &Outputs<'_>) -> Result<(), crate::Error> {
 
 /// Writes `PREFIX.dapc.xval`: one row per candidate plus the summary lines.
 fn write_xval(prefix: &str, xv: &XvalOutcome) -> Result<(), crate::Error> {
-    let mut f = std::fs::File::create(format!("{prefix}.dapc.xval"))?;
+    let file = std::fs::File::create(format!("{prefix}.dapc.xval"))?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     writeln!(f, "#n_pca\tmean_success").map_err(io_err)?;
     for (n, s) in &xv.candidates {
         writeln!(f, "{n}\t{s:.9}").map_err(io_err)?;

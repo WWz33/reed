@@ -130,6 +130,17 @@ pub struct HetSiteResult {
 
 /// Per-site heterozygosity over a group; sites with no called individual are
 /// skipped.
+///
+/// Contract (`docs/rounds/v24/02-oracle-contract.md` §4):
+///
+/// ```text
+/// hobs = het / n_called      // diploid, fully called individuals only
+/// hexp = 2 p (1 - p)         // p from every called allele, half calls included
+/// ```
+///
+/// A half call therefore contributes an allele to `hexp` but not to
+/// `het`/`n_called`; this is the usual Ho/He convention, not a bug. The
+/// half-call fixture is `heterozygosity_declares_the_half_call_contract`.
 pub fn heterozygosity(
     window: &WindowBuffer,
     pops: &PopulationView,

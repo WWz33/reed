@@ -13,8 +13,7 @@
 //! Output files follow plink so existing scripts can consume them:
 //! `PREFIX.eigenvec` (`#FID IID PC1..PCk`), `PREFIX.eigenval`, `PREFIX.pve`.
 
-use std::io::Write as _;
-use std::path::Path;
+use std::io::{BufWriter, Write as _};
 
 use reed_engine::budget::ThreadBudget;
 
@@ -456,8 +455,8 @@ fn write_outputs(
     let val_path = format!("{prefix}.eigenval");
     let pve_path = format!("{prefix}.pve");
 
-    let mut f = std::fs::File::create(&vec_path)
-        ?;
+    let file = std::fs::File::create(&vec_path)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     // plink's header: `#FID IID PC1..PCk`; reed uses the sample name for both
     // FID and IID so single-name datasets round-trip.
     write!(f, "#FID\tIID").map_err(io_err)?;
@@ -474,18 +473,18 @@ fn write_outputs(
         writeln!(f).map_err(io_err)?;
     }
 
-    let mut f = std::fs::File::create(&val_path)
-        ?;
+    let file = std::fs::File::create(&val_path)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     for v in values {
         writeln!(f, "{v:.9}").map_err(io_err)?;
     }
 
-    let mut f = std::fs::File::create(&pve_path)
-        ?;
+    let file = std::fs::File::create(&pve_path)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     for v in pve {
         writeln!(f, "{v:.9}").map_err(io_err)?;
     }
-    let _ = Path::new(prefix);
+    f.flush().map_err(io_err)?;
     Ok(())
 }
 

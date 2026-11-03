@@ -197,10 +197,8 @@ pub fn run_popgen_opened(
                     "--bed-file windows require the window level (--levels window)",
                 ));
             }
-            if request.contig_lengths.is_empty() && !regions.is_empty() {
-                // Region ends carry the clipping the Bp path takes from the
-                // contig length; nothing else needs it.
-            }
+            // Region ends carry the clipping the Bp path takes from the
+            // contig length; nothing else needs it.
             GridMode::Regions(Arc::clone(regions))
         }
         WindowGrid::Sites { .. } => {

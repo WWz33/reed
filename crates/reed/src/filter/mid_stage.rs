@@ -138,10 +138,29 @@ pub(super) fn count_site_planes(
 /// rule `r` (the caller folds them in funnel order; a sample may fire
 /// several rules but SinglePass attributes the FIRST one — mirrored by
 /// folding `keep ∧ rule_r ∧ ¬(rule_0 ∨ … ∨ rule_{r-1})`).
+#[cfg(test)]
 pub(super) fn rule_hits_of(planes_rules: &[&[u64]], keep: &[u64]) -> Vec<u64> {
-    let w = keep.len();
-    let mut or_so_far = vec![0_u64; w];
+    let mut or_so_far = vec![0_u64; keep.len()];
     let mut hits = vec![0_u64; planes_rules.len()];
+    rule_hits_into(planes_rules, keep, &mut or_so_far, &mut hits);
+    hits
+}
+
+/// [`rule_hits_of`] into caller-owned buffers (doc_v24 V24-07): the mid
+/// stage reuses `or_so_far`/`hits` across sites instead of allocating two
+/// `Vec`s per site. Both buffers are cleared first; their lengths must be
+/// `keep.len()` and `planes_rules.len()`.
+pub(super) fn rule_hits_into(
+    planes_rules: &[&[u64]],
+    keep: &[u64],
+    or_so_far: &mut [u64],
+    hits: &mut [u64],
+) {
+    debug_assert_eq!(or_so_far.len(), keep.len());
+    debug_assert_eq!(hits.len(), planes_rules.len());
+    or_so_far.fill(0);
+    hits.fill(0);
+    let w = keep.len();
     for (r, hit) in hits.iter_mut().enumerate() {
         let rule = planes_rules[r];
         for (i, or_word) in or_so_far.iter_mut().enumerate().take(w) {
@@ -151,7 +170,6 @@ pub(super) fn rule_hits_of(planes_rules: &[&[u64]], keep: &[u64]) -> Vec<u64> {
             *or_word |= rule[i];
         }
     }
-    hits
 }
 
 /// The effective mask of one site: the OR of every rule's firing bitmap
@@ -337,15 +355,20 @@ fn decide_chunk_inner(
     // Per-chunk HWE memo (A6-16): the decisions run in parallel, so the
     // cache lives and dies with this chunk.
     let mut hwe = reed_core::math::hwe::HweCache::new();
+    // Per-chunk reusable buffers (doc_v24 V24-07): rules, the cumulative
+    // OR and the hit counts used to be rebuilt per site.
+    let mut rules: Vec<&[u64]> = Vec::with_capacity(plan.mask.len());
+    let mut or_scratch = vec![0_u64; keep_words.len()];
+    let mut hits_scratch = vec![0_u64; plan.mask.len()];
     for s in 0..chunk.n_sites {
         let (matrix, local) = resolve(matrices, contig_base, chunk.start + s);
         let planes = matrix.planes(local);
-        let rules: Vec<&[u64]> = (0..matrix.n_rules)
-            .map(|r| matrix.rule_mask(local, r))
-            .collect();
+        rules.clear();
+        rules.extend((0..matrix.n_rules).map(|r| matrix.rule_mask(local, r)));
         let c = count_site_planes(planes, &rules, keep_words);
         funnel.masked_gt += c.masked_gt;
-        for (r, hits) in rule_hits_of(&rules, keep_words).into_iter().enumerate() {
+        rule_hits_into(&rules, keep_words, &mut or_scratch, &mut hits_scratch);
+        for (r, &hits) in hits_scratch.iter().enumerate() {
             if let Some(slot) = funnel.mask_hits.get_mut(r) {
                 *slot += hits;
             }

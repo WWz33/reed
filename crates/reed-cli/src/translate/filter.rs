@@ -302,8 +302,9 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
                     Some(rest) => (rest, false),
                     None => (raw.as_str(), true),
                 };
-                reed::spec::Region::parse(token)
-                    .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+                // Syntax/contig validation happens in the engine, where the
+                // header's contig vocabulary is available: `HLA-A*01:01` is a
+                // whole contig, not `HLA-A*01` position 1 (doc_v24 V24-04).
                 match (family, include) {
                     (RegionFamily::Indexed, _) => spec.targets.indexed.push(token.to_string()),
                     (RegionFamily::Target, true) => spec.targets.include.push(token.to_string()),
@@ -434,35 +435,10 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     // (doc_v20 R5) refuse `-o` == input before the writer opens: the output
     // is `File::create`d after the input is open, truncating it mid-read.
     super::common::refuse_output_eq_input(input_file.as_deref(), output.as_deref())?;
-    let mut regions = Vec::new();
-    let mut indexed_list = Vec::new();
-    for (values, from_file) in [
-        (&cli.regions_args.regions, false),
-        (&cli.regions_args.regions_file, true),
-    ] {
-        for value in values {
-            let text = if from_file {
-                std::fs::read_to_string(value)
-                    .map_err(|e| reed::Error::usage(format!("{value}: {e}")))?
-            } else {
-                value.clone()
-            };
-            indexed_list.extend(
-                super::common::region_tokens(&text, from_file).map_err(reed::Error::usage)?,
-            );
-        }
-    }
-    {
-        for token in &indexed_list {
-            let parsed = reed::spec::Region::parse(token)
-                .map_err(|e| reed::Error::usage(format!("invalid region {token:?}: {e}")))?;
-            regions.push(reed::chunk::region::Region {
-                contig: parsed.contig.clone(),
-                start1: parsed.start,
-                end1: parsed.end,
-            });
-        }
-    }
+    // The seek list is derived inside `run_filter` from `spec.targets.indexed`
+    // and the header's contig vocabulary (doc_v24 V24-04); the CLI no longer
+    // parses it a second time.
+    let regions = Vec::new();
     // doc_v21 S16: `-W` used to be a silent no-op when the output cannot
     // carry an index (stdout, or a plain VCF). bcftools errors; so do we.
     // Checked here rather than in the library so library callers that set

@@ -120,12 +120,6 @@ impl BcfEncoder {
         Ok(())
     }
 
-    /// A fresh encoder with no string maps; the worker primes it with
-    /// [`BcfEncoder::write_header`].
-    #[must_use]
-    pub fn clone_for_worker(&self) -> Self {
-        Self::new().expect("invariant: the encoder allocates")
-    }
 }
 
 /// Whether the encoder refused a record because a String FORMAT field had

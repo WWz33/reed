@@ -138,15 +138,12 @@ impl PbsAcc {
         let n_a = u64::from(a.n_ref_alleles + a.n_alt_alleles);
         let n_b = u64::from(b.n_ref_alleles + b.n_alt_alleles);
         let n_c = u64::from(c.n_ref_alleles + c.n_alt_alleles);
-        if n_a > 0 && n_b > 0 {
-            Self::push_pair(&mut self.pair_ab, a, b);
-        }
-        if n_a > 0 && n_c > 0 {
-            Self::push_pair(&mut self.pair_ac, a, c);
-        }
-        if n_b > 0 && n_c > 0 {
-            Self::push_pair(&mut self.pair_bc, b, c);
-        }
+        // `push_pair` already gates on `n_x >= 1 && n_y >= 1` for the
+        // between term; the outer coverage checks were redundant
+        // (doc_v24 V24-05).
+        Self::push_pair(&mut self.pair_ab, a, b);
+        Self::push_pair(&mut self.pair_ac, a, c);
+        Self::push_pair(&mut self.pair_bc, b, c);
         self.n_sites += 1;
         if n_a == 0 || n_b == 0 || n_c == 0 {
             self.n_skipped += 1;

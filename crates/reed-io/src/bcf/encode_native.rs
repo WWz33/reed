@@ -136,12 +136,6 @@ impl NativeEncoder {
         })
     }
 
-    /// Number of sample columns the encoder expects.
-    #[must_use]
-    pub const fn n_samples(&self) -> usize {
-        self.n_samples
-    }
-
     /// Encodes one VCF text record into `out` (the BCF record bytes,
     /// including the two length prefixes), applying `edit` in the same walk
     /// — with a default edit the output equals the pre-Y4 encode of the

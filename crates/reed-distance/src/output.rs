@@ -1,6 +1,6 @@
 //! Writing a matrix in the formats the reference tools use.
 
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 use crate::matrices::{MatrixKind, MatrixResult};
 
@@ -57,16 +57,20 @@ pub fn write_matrix(
     m: &MatrixResult,
     format: MatrixFormat,
 ) -> std::io::Result<()> {
-    let mut f = std::fs::File::create(path)?;
+    // Row-major matrices are written value by value; without buffering that
+    // is one syscall per value (doc_v24 V24-08).
+    let file = std::fs::File::create(path)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     match format {
-        MatrixFormat::Bin => write_bin(&mut f, m),
-        MatrixFormat::Triangle => write_triangle(&mut f, m),
-        MatrixFormat::Square => write_square(&mut f, m, false),
-        MatrixFormat::Square0 => write_square(&mut f, m, true),
+        MatrixFormat::Bin => write_bin(&mut f, m)?,
+        MatrixFormat::Triangle => write_triangle(&mut f, m)?,
+        MatrixFormat::Square => write_square(&mut f, m, false)?,
+        MatrixFormat::Square0 => write_square(&mut f, m, true)?,
     }
+    f.flush()
 }
 
-fn write_bin(f: &mut std::fs::File, m: &MatrixResult) -> std::io::Result<()> {
+fn write_bin<W: Write>(f: &mut W, m: &MatrixResult) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(m.values.len() * 8);
     for v in &m.values {
         buf.extend_from_slice(&v.to_le_bytes());
@@ -76,7 +80,7 @@ fn write_bin(f: &mut std::fs::File, m: &MatrixResult) -> std::io::Result<()> {
 
 /// plink's triangle layout **includes the diagonal**: row `i` holds
 /// `d(i,0) .. d(i,i)`, so row 0 has one value and row `n-1` has `n`.
-fn write_triangle(f: &mut std::fs::File, m: &MatrixResult) -> std::io::Result<()> {
+fn write_triangle<W: Write>(f: &mut W, m: &MatrixResult) -> std::io::Result<()> {
     for i in 0..m.n {
         for j in 0..=i {
             if j > 0 {
@@ -89,7 +93,7 @@ fn write_triangle(f: &mut std::fs::File, m: &MatrixResult) -> std::io::Result<()
     Ok(())
 }
 
-fn write_square(f: &mut std::fs::File, m: &MatrixResult, zero_upper: bool) -> std::io::Result<()> {
+fn write_square<W: Write>(f: &mut W, m: &MatrixResult, zero_upper: bool) -> std::io::Result<()> {
     for i in 0..m.n {
         for j in 0..m.n {
             if j > 0 {
@@ -114,11 +118,12 @@ fn write_square(f: &mut std::fs::File, m: &MatrixResult, zero_upper: bool) -> st
 ///
 /// I/O failures.
 pub fn write_ids(path: &std::path::Path, ids: &[String]) -> std::io::Result<()> {
-    let mut f = std::fs::File::create(path)?;
+    let file = std::fs::File::create(path)?;
+    let mut f = BufWriter::with_capacity(1 << 16, file);
     for id in ids {
         writeln!(f, "{id}\t{id}")?;
     }
-    Ok(())
+    f.flush()
 }
 
 /// Whether a kind is written as a matrix (triangle/square/bin) rather than as
