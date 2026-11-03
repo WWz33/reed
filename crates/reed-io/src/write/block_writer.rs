@@ -64,18 +64,6 @@ pub struct ChunkOutput {
     pub deflate_nanos: u64,
 }
 
-/// What the writer emits: BGZF-compressed VCF text (`-Oz`, `-Ob`),
-/// BGZF level-0 (`-Ou`) or plain text (`-Ov`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OutputFormat {
-    /// Plain VCF text.
-    Plain,
-    /// BGZF blocks at the configured deflate level.
-    Bgzf,
-    /// BGZF level-0 blocks (uncompressed BCF's container, htslib's `-Ou`).
-    BgzfLevel0,
-}
-
 /// Append-only block builder.
 pub struct BlockWriter {
     compressed: bool,
@@ -108,20 +96,6 @@ impl BlockWriter {
             raw: Vec::new(),
             deflate_nanos: 0,
         })
-    }
-
-    /// A writer for an explicit output format (BCF's `-Ou` wants level-0
-    /// BGZF blocks, which is still "compressed" framing).
-    ///
-    /// # Errors
-    ///
-    /// [`IoError::Io`] from the deflater.
-    pub fn for_format(format: OutputFormat, level: u8) -> Result<Self, IoError> {
-        match format {
-            OutputFormat::Plain => Self::new(level, false),
-            OutputFormat::Bgzf => Self::new(level, true),
-            OutputFormat::BgzfLevel0 => Self::new(0, true),
-        }
     }
 
     /// Appends one record and cuts a block whenever the pending buffer
@@ -161,12 +135,6 @@ impl BlockWriter {
             raw: std::mem::take(&mut self.raw),
             deflate_nanos: std::mem::take(&mut self.deflate_nanos),
         })
-    }
-
-    /// Whether nothing has been appended since the last `finish_chunk`.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.blocks.is_empty() && self.raw.is_empty()
     }
 
     /// Deflates one block of at most [`BGZF_BLOCK_SIZE`] bytes. Records that

@@ -39,8 +39,6 @@ pub struct RegionChunkSource<R: Read + Seek> {
     end_uoffset: u64,
     chunk_target: u64,
     next_chunk_id: u64,
-    pending_block: Option<Vec<u8>>,
-    pending_block_offset: u64,
     first_in_block_offset: u64,
     done: bool,
 }
@@ -72,8 +70,6 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             end_uoffset: end & 0xFFFF,
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
-            pending_block: None,
-            pending_block_offset: 0,
             first_in_block_offset: start & 0xFFFF,
             done: false,
         })
@@ -125,15 +121,11 @@ impl<R: Read + Seek> RegionChunkSource<R> {
     ///
     /// Transport failures.
     pub fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, IoError> {
-        if self.done && self.pending_block.is_none() {
+        if self.done {
             return Ok(None);
         }
-        let (first, compressed_start) = match self.pending_block.take() {
-            Some(block) => (block, self.pending_block_offset),
-            None => match self.read_block()? {
-                Some(pair) => pair,
-                None => return Ok(None),
-            },
+        let Some((first, compressed_start)) = self.read_block()? else {
+            return Ok(None);
         };
         let mut blocks = vec![block_pair(&first)];
         let mut compressed = first;
@@ -190,8 +182,6 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             end_uoffset: 0,
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
-            pending_block: None,
-            pending_block_offset: 0,
             first_in_block_offset: 0,
             done: true,
         }

@@ -158,37 +158,90 @@ fn parse_version(text: &[u8]) -> Option<(u32, u32)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-/// The `KEY=value` inside a `##TAG=<...>` payload (value up to `,` or `>`).
-fn field<'a>(rest: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
-    let mut i = 0;
-    while i + key.len() < rest.len() {
-        if &rest[i..i + key.len()] == key && rest[i + key.len()] == b'=' {
-            let start = i + key.len() + 1;
-            let end = rest[start..]
-                .iter()
-                .position(|&b| b == b',' || b == b'>')
-                .map_or(rest.len(), |p| start + p);
-            return Some(&rest[start..end]);
-        }
-        // Skip to the next top-level comma (values may contain quoted commas).
-        let mut quoted = false;
-        while i < rest.len() {
-            match rest[i] {
-                b'"' => quoted = !quoted,
-                b',' if !quoted => {
-                    i += 1;
+/// The top-level `KEY=value` pairs inside a `##TAG=<...>` payload.
+///
+/// The payload may contain quoted commas and escaped quotes
+/// (`Description="a, b \"c\""`); a `>` inside quotes is data, not the end.
+/// One tokenizer serves every header line so the hand-written `field()`
+/// lookup can no longer match `ID=` inside a quoted description
+/// (doc_v23 V23-35, doc_v24 V24-03). Values are returned verbatim, quotes
+/// included; callers only need `ID`/`IDX`, which are never quoted.
+pub(crate) struct AnglePairs<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> Iterator for AnglePairs<'a> {
+    type Item = (&'a [u8], &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // Skip separators between pairs.
+            while let Some((&b, tail)) = self.rest.split_first() {
+                if b == b',' || b == b' ' {
+                    self.rest = tail;
+                } else {
                     break;
                 }
-                b'>' if !quoted => return None,
-                _ => {}
             }
-            i += 1;
-        }
-        if i >= rest.len() {
-            return None;
+            if self.rest.is_empty() || self.rest[0] == b'>' {
+                return None;
+            }
+            // Key: up to '='; a bare token (no '=') is skipped.
+            let key_end = self
+                .rest
+                .iter()
+                .position(|&b| b == b'=' || b == b',' || b == b'>')?;
+            if self.rest[key_end] != b'=' {
+                self.rest = &self.rest[key_end..];
+                continue;
+            }
+            let key = &self.rest[..key_end];
+            let mut i = key_end + 1;
+            let mut quoted = false;
+            let mut escaped = false;
+            while i < self.rest.len() {
+                let b = self.rest[i];
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                match b {
+                    b'\\' if quoted => {
+                        escaped = true;
+                        i += 1;
+                    }
+                    b'"' => {
+                        quoted = !quoted;
+                        i += 1;
+                    }
+                    b',' | b'>' if !quoted => break,
+                    _ => i += 1,
+                }
+            }
+            let value = &self.rest[key_end + 1..i];
+            // Continue after the separator (a '>' leaves the iterator done).
+            self.rest = if i < self.rest.len() && self.rest[i] == b',' {
+                &self.rest[i + 1..]
+            } else {
+                &self.rest[i..]
+            };
+            return Some((key, value));
         }
     }
-    None
+}
+
+/// [`AnglePairs`] over `rest`.
+pub(crate) fn angle_pairs(rest: &[u8]) -> AnglePairs<'_> {
+    AnglePairs { rest }
+}
+
+/// The `KEY=value` inside a `##TAG=<...>` payload (value up to a top-level
+/// `,` or `>`), using the quote-aware tokenizer above.
+fn field<'a>(rest: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    angle_pairs(rest)
+        .find(|(k, _)| *k == key)
+        .map(|(_, value)| value)
 }
 
 #[cfg(test)]
@@ -251,5 +304,38 @@ mod tests {
         let dict = BcfDict::from_header(text).expect("invariant: parses");
         assert_eq!(dict.tag(1_000_000).expect("1e6"), b"Z");
         assert_eq!(dict.key_of(b"Z"), Some(1_000_000));
+    }
+
+    /// doc_v24 V24-03: the tokenizer honors quoted commas, escaped quotes and
+    /// a `>` inside a quoted value, and `ID=` inside a description is not a
+    /// key.
+    #[test]
+    fn angle_pairs_respect_quotes_and_escapes() {
+        let rest = br#"Description="see ID=FAKE, a \"quote\" and > here",ID=REAL,Number=1"#;
+        let pairs: Vec<(&[u8], &[u8])> = angle_pairs(rest).collect();
+        assert_eq!(pairs[0].0, b"Description");
+        assert!(
+            pairs[0].1.starts_with(br#""see ID=FAKE"#),
+            "value = {:?}",
+            String::from_utf8_lossy(pairs[0].1)
+        );
+        assert_eq!(pairs[1], (&b"ID"[..], &b"REAL"[..]));
+        assert_eq!(pairs[2], (&b"Number"[..], &b"1"[..]));
+        assert!(
+            field(rest, b"ID") == Some(&b"REAL"[..]),
+            "ID= inside a quoted description must not win"
+        );
+    }
+
+    /// The dictionary itself uses the same tokenizer: a quoted `ID=FAKE`
+    /// before the real `ID` must not register a bogus tag.
+    #[test]
+    fn dict_ignores_id_inside_a_quoted_description() {
+        let text = b"##fileformat=VCFv4.4\n\
+                     ##INFO=<Description=\"see ID=FAKE\",ID=REAL,Number=1,Type=Integer>\n\
+                     #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let dict = BcfDict::from_header(text).expect("invariant: parses");
+        assert_eq!(dict.tag(0).expect("0"), b"REAL");
+        assert!(dict.key_of(b"FAKE").is_none());
     }
 }

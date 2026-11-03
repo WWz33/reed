@@ -164,6 +164,13 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
+### Changed
+- **io（死代码与 header 词法，V24-03）**：删除 `RegionChunkSource` 的
+  死 `pending_block` 状态机、`OutputFormat`/`for_format`/`is_empty`/
+  `eof_block`/`n_samples`/`clone_for_worker`/`PlainChunkSource::first_offset`；
+  `##TAG=<...>` 解析改为引号/转义感知的 `AnglePairs`，`ID=` 不再在
+  `Description` 字符串内被误匹配。
+
 ### Documentation
 - **oracle 契约**：新增 `docs/rounds/v24/02-oracle-contract.md`，逐估计器
   固定位点集、半呼叫、缺失与 allel 分歧；WC84 全缺失与 hobs/hexp 半呼叫

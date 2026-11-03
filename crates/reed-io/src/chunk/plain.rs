@@ -23,7 +23,6 @@ pub struct PlainChunkSource {
     reader: Box<dyn BufRead + Send>,
     next_chunk_id: u64,
     header_done: bool,
-    first_offset: u64,
     buf: Vec<u8>,
 }
 
@@ -72,7 +71,6 @@ impl PlainChunkSource {
                 reader,
                 next_chunk_id: 0,
                 header_done: true,
-                first_offset: 0,
                 buf: Vec::with_capacity(PLAIN_CHUNK_BYTES + (1 << 14)),
             },
             facts,
@@ -100,11 +98,10 @@ impl crate::chunk::ChunkSource for PlainChunkSource {
         }
         let id = ChunkId(self.next_chunk_id);
         self.next_chunk_id += 1;
-        let offset = std::mem::take(&mut self.first_offset);
         Ok(Some(ChunkBytes {
             id,
             compressed: ChunkPayload::from(Arc::<[u8]>::from(self.buf.as_slice())),
-            first_in_block_offset: offset,
+            first_in_block_offset: 0,
             plain: true,
             compressed_start: 0,
             blocks: Vec::new(),

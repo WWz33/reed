@@ -4,7 +4,7 @@
 // Casts in this file are bounded by construction: BGZF blocks are at most 65,536 bytes by construction.
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::bgzf::block::{BGZF_MAX_BLOCK_DATA, EOF_BLOCK};
+use crate::bgzf::block::BGZF_MAX_BLOCK_DATA;
 use crate::error::IoError;
 
 /// Worker-local compressor: allocate once per worker, reuse per block.
@@ -84,12 +84,6 @@ impl Deflater {
         debug_assert_eq!(dst.len() - start, total);
         Ok(total)
     }
-}
-
-/// The 28-byte EOF block every BGZF file must end with.
-#[must_use]
-pub const fn eof_block() -> [u8; 28] {
-    EOF_BLOCK
 }
 
 #[cfg(test)]
