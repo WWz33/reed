@@ -168,6 +168,10 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 - **oracle 契约**：新增 `docs/rounds/v24/02-oracle-contract.md`，逐估计器
   固定位点集、半呼叫、缺失与 allel 分歧；WC84 全缺失与 hobs/hexp 半呼叫
   补命名 golden（V24-01）。
+- **bench 协议**：新增 `docs/rounds/v24/03-bench-protocol.md` 与
+  `bench/README.md`；`run_matrix.sh` 改为 warmup/交替顺序/中位数/JSONL/
+  保留 stderr，并在 `n_rec` 不一致时失败；vs-noodles 的 BCF 分支改用
+  与 VCF 分支相同的 `select("GT")`（V24-02）。
 
 ## [Unreleased] — doc_v22 真实 callset 的 I/O 兼容与深度回退（2026-11-03）
 

@@ -46,17 +46,18 @@ fn main() {
         for result in reader.records() {
             let rec = result.unwrap();
             n_rec += 1;
-            let samples = rec.samples().unwrap();
-            for s in samples.series() {
-                let series = s.unwrap();
-                if series.name(&header).unwrap() == "GT" {
-                    for v in series.iter(&header) {
-                        match v.unwrap() {
-                            Some(Value::Genotype(gt)) => {
-                                tally(gt.as_ref(), &mut n_alt, &mut n_miss, &mut n_phased)
-                            }
-                            _ => {}
+            // Same accessor as the VCF branch (doc_v24 V24-02): the old
+            // per-series `name(&header) == "GT"` walked every series and
+            // compared strings, so the BCF leg did O(samples) more work
+            // than the VCF leg and the comparison was not like-for-like.
+            if let Some(series) = rec.samples().unwrap().select(&header, "GT") {
+                let series = series.unwrap();
+                for v in series.iter(&header) {
+                    match v.unwrap() {
+                        Some(Value::Genotype(gt)) => {
+                            tally(gt.as_ref(), &mut n_alt, &mut n_miss, &mut n_phased)
                         }
+                        _ => {}
                     }
                 }
             }
