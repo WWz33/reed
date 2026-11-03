@@ -447,14 +447,15 @@ pub fn compile(
     // The indexed family (`-r/-R`) and the streaming family (`-t/-T`) are two
     // separate predicates, so a site must satisfy both — bcftools'
     // intersection (doc_v23 V23-61).
-    let indexed = crate::spec::region::parse_regions(&spec.targets.indexed)?;
+    let indexed =
+        crate::spec::region::parse_regions_strict(&spec.targets.indexed, tags.contigs())?;
     if !indexed.is_empty() {
         head.push(HeadRule::Regions {
             include: indexed,
             exclude: Vec::new(),
         });
     }
-    let regions = compile_regions(&spec.targets)?;
+    let regions = compile_regions(&spec.targets, tags.contigs())?;
     if let Some(r) = regions {
         head.push(HeadRule::Regions {
             include: r.0,
@@ -1069,14 +1070,17 @@ fn validate_numeric(tag: &str, ty: TagType) -> Result<(), FilterError> {
 /// Parsed include/exclude region lists.
 type RegionLists = (Vec<RegionTriple>, Vec<RegionTriple>);
 
-fn compile_regions(rule: &RegionRule) -> Result<Option<RegionLists>, FilterError> {
+fn compile_regions(
+    rule: &RegionRule,
+    contigs: &[String],
+) -> Result<Option<RegionLists>, FilterError> {
     if rule.is_empty() {
         return Ok(None);
     }
-    use crate::spec::region::parse_regions;
+    use crate::spec::region::parse_regions_with;
     Ok(Some((
-        parse_regions(&rule.include)?,
-        parse_regions(&rule.exclude)?,
+        parse_regions_with(&rule.include, contigs)?,
+        parse_regions_with(&rule.exclude, contigs)?,
     )))
 }
 
@@ -1421,5 +1425,60 @@ mod depth_policy_tests {
             panic!("expected a spec error, got {err:?}");
         };
         assert!(text.contains("only valid for FORMAT/DP"), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod region_contig_tests {
+    use super::*;
+
+    /// doc_v24 V24-04: the plan compiler resolves a colon-containing contig
+    /// from the header vocabulary instead of splitting at the first `:`.
+    #[test]
+    fn indexed_region_uses_the_header_contig_vocabulary() {
+        let mut tags = TagTable::new();
+        tags.add_contig("HLA-A*01:01");
+        let spec = FilterSpec {
+            targets: crate::spec::RegionRule {
+                indexed: vec!["HLA-A*01:01".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plan = compile(&spec, &tags, "", true).expect("invariant: compiles");
+        let mut seen = false;
+        for rule in &plan.head {
+            if let HeadRule::Regions { include, .. } = rule {
+                seen |= include
+                    .iter()
+                    .any(|(c, s, e)| c == "HLA-A*01:01" && s.is_none() && e.is_none());
+            }
+        }
+        assert!(seen, "the whole HLA contig must be one region: {:?}", plan.head);
+    }
+
+    /// The same text with an explicit interval; without the vocabulary it
+    /// would parse as contig `HLA-A*01` position 1.
+    #[test]
+    fn indexed_region_with_a_range_on_a_colon_contig() {
+        let mut tags = TagTable::new();
+        tags.add_contig("HLA-A*01:01");
+        let spec = FilterSpec {
+            targets: crate::spec::RegionRule {
+                indexed: vec!["HLA-A*01:01:10-20".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plan = compile(&spec, &tags, "", true).expect("invariant: compiles");
+        let mut seen = false;
+        for rule in &plan.head {
+            if let HeadRule::Regions { include, .. } = rule {
+                seen |= include
+                    .iter()
+                    .any(|(c, s, e)| c == "HLA-A*01:01" && *s == Some(10) && *e == Some(20));
+            }
+        }
+        assert!(seen, "expected HLA-A*01:01:10-20: {:?}", plan.head);
     }
 }

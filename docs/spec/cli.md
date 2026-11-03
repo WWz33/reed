@@ -191,6 +191,7 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 - **Flag 按存在性读写**：`DB=1`/`DB=0` 测 flag 的存在/缺失（`doc/bcftools.txt:4067`），`DB!=0` 等价 `DB=1`；`DB` 单独出现不是合法表达式（bcftools 对单个裸 token 恒假，reed 在编译期报错而不是静默丢弃所有记录；doc_v12 N6）。
 - **多值 INFO 按任一元素比较**：`Number=A/R/G/.` 或 `Count(n>1)` 的标签逐对比较，任一对满足即真（bcftools `CMP_VECTORS`）；`Number=1` 却给了多个值时按 missing 处理（规范外输入，01-review §2.5-B5）。
 - **数值解析**：按 header 声明类型选择文法（Integer 严格十进制含可选 `+`/`-`，Float 为规范正则文法）；解析失败即 missing，不做字节序比较（doc_v12 N13）。
+- **区域与 contig 名**：解析时先整串匹配 header 的 contig 词表（`HLA-A*01:01` 是一个名字），否则按**最后一个**合法区间切分（`HLA-A*01:01:10-20`）；含 `:` 但既不是已声明 contig、也没有合法区间时报错。`-r/-R` 指向未声明 contig 是错误（索引无法 seek），`-t/-T` 保持静默空选择（与 bcftools targets 一致，便于跨文件复用区域列表）。doc_v24 V24-04。
 
 **与 htslib 的有意分歧**（doc_v12 §2.5-B，永久保留，只登记不改）：
 

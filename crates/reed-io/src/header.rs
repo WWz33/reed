@@ -53,6 +53,9 @@ pub fn tag_table(header: &noodles::vcf::Header) -> reed_core::tag_table::TagTabl
     for (key, map) in header.infos() {
         table.add_info(key.as_str(), info_type(map.ty()), number(map.number()));
     }
+    for (name, _) in header.contigs() {
+        table.add_contig(name.as_str());
+    }
     for (key, map) in header.formats() {
         let format_number = match map.number() {
             format::Number::Count(n) => TagNumber::Count(u32::try_from(n).unwrap_or(u32::MAX)),

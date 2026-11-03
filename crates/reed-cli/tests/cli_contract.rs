@@ -1572,3 +1572,96 @@ fn contig_lengths_error_names_the_file() {
     assert!(stderr.contains(missing), "the path must be named: {stderr}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v24 V24-04: region parsing uses the header's contig vocabulary. A
+/// contig whose name contains `:` is a whole name when declared, and still
+/// accepts an interval; the plan predicate and the index seek are derived
+/// from the same parse.
+#[test]
+fn hla_contig_regions_use_the_header_vocabulary() {
+    let dir = temp_dir("v24-hla-regions");
+    let vcf = dir.join("in.vcf.gz");
+    let text = "##fileformat=VCFv4.2\n\
+         ##contig=<ID=HLA-A*01:01,length=1000>\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         HLA-A*01:01\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         HLA-A*01:01\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         HLA-A*01:01\t30\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut compressed = Vec::new();
+    for block in text.as_bytes().chunks(4096) {
+        deflater
+            .deflate_block(block, &mut compressed)
+            .expect("invariant: block");
+    }
+    compressed.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    std::fs::write(&vcf, compressed).expect("invariant: write");
+    let inp = vcf.to_str().expect("invariant: utf8");
+    let out = run(&["index", inp]);
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let positions = |args: &[&str]| -> Vec<(String, String)> {
+        let mut argv: Vec<&str> = vec!["filter", inp];
+        argv.extend(args);
+        argv.extend(["-Ov", "--verbosity", "0"]);
+        let out = run(&argv);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| {
+                let mut f = l.split('\t');
+                (
+                    f.next().expect("chrom").to_string(),
+                    f.next().expect("pos").to_string(),
+                )
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        positions(&["-r", "HLA-A*01:01"]),
+        vec![
+            ("HLA-A*01:01".to_string(), "10".to_string()),
+            ("HLA-A*01:01".to_string(), "20".to_string()),
+            ("HLA-A*01:01".to_string(), "30".to_string()),
+        ],
+        "a declared colon contig is one whole region"
+    );
+    assert_eq!(
+        positions(&["-r", "HLA-A*01:01:10-20"]),
+        vec![
+            ("HLA-A*01:01".to_string(), "10".to_string()),
+            ("HLA-A*01:01".to_string(), "20".to_string()),
+        ],
+        "the last ':' with an interval splits the range"
+    );
+    assert_eq!(
+        positions(&["-t", "HLA-A*01:01:10-20"]),
+        vec![
+            ("HLA-A*01:01".to_string(), "10".to_string()),
+            ("HLA-A*01:01".to_string(), "20".to_string()),
+        ],
+        "streamed targets use the same vocabulary"
+    );
+    assert_eq!(
+        positions(&["-r", "chr1"]),
+        vec![("chr1".to_string(), "10".to_string())]
+    );
+
+    // A typo is loud, not a silent empty result.
+    let out = run(&[
+        "filter", inp, "-r", "HLA-A*01:99", "-Ov", "--verbosity", "0",
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "undeclared colon name must fail");
+    assert!(stderr.contains("not declared in the header"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -120,7 +120,10 @@ pub(crate) fn region_tokens(text: &str, from_file: bool) -> Result<Vec<String>, 
 /// # Errors
 ///
 /// Malformed region spellings and unreadable region files.
-fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRegions, String> {
+fn parse_regions(
+    args: &crate::cli::filter_flags::RegionArgs,
+    contigs: &[String],
+) -> Result<ParsedRegions, String> {
     let mut regions = Vec::new();
     for (list, from_file) in [(&args.regions, false), (&args.regions_file, true)] {
         for value in list {
@@ -130,12 +133,16 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
                 value.clone()
             };
             for token in region_tokens(&text, from_file)? {
-                let parsed = reed::spec::Region::parse(&token)
-                    .map_err(|e| format!("invalid region {token:?}: {e}"))?;
+                let (contig, start1, end1) = reed::spec::region::parse_regions_strict(
+                    std::slice::from_ref(&token),
+                    contigs,
+                )
+                .map_err(|e| format!("invalid region {token:?}: {e}"))?
+                .remove(0);
                 regions.push(reed::chunk::region::Region {
-                    contig: parsed.contig.clone(),
-                    start1: parsed.start,
-                    end1: parsed.end,
+                    contig,
+                    start1,
+                    end1,
                 });
             }
         }
@@ -154,7 +161,7 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
                     Some(rest) => (rest, false),
                     None => (raw.as_str(), true),
                 };
-                let parsed = reed::spec::Region::parse(token)
+                let parsed = reed::spec::Region::parse_in(token, contigs)
                     .map_err(|e| format!("invalid region {token:?}: {e}"))?;
                 let triple = (parsed.contig, parsed.start, parsed.end);
                 if include_it {
@@ -354,16 +361,44 @@ pub(crate) fn prelude(
     memory_arg: Option<u64>,
 ) -> Result<Prelude, reed::Error> {
     let started = std::time::Instant::now();
-    let (regions, mut targets, targets_exclude) =
-        parse_regions(regions_args).map_err(reed::Error::usage)?;
+    let input_file = input_path(input);
+    let open_path: Option<PathBuf> = input_file.clone();
+    let has_indexed = !regions_args.regions.is_empty() || !regions_args.regions_file.is_empty();
+    if has_indexed && open_path.is_none() {
+        return Err(reed::Error::usage(
+            "regions need a seekable file, not stdin",
+        ));
+    }
+    // The region grammar needs the header's contig vocabulary (doc_v24
+    // V24-04): `HLA-A*01:01` is a name, not `contig:pos`. Indexed regions
+    // also drive the seek, so read the header once before opening for the
+    // seek range; a `-t`-only run reuses its single open.
+    let (opened, regions, mut targets, targets_exclude) = if has_indexed {
+        let probe = reed::open_regions(open_path.as_deref(), &[])?;
+        let contigs = probe.facts().contig_names.clone();
+        drop(probe);
+        let (regions, targets, exclude) =
+            parse_regions(regions_args, &contigs).map_err(reed::Error::usage)?;
+        let opened = Some(reed::open_regions(open_path.as_deref(), &regions)?);
+        (opened, regions, targets, exclude)
+    } else {
+        let opened = Some(reed::open_regions(open_path.as_deref(), &[])?);
+        let contigs = opened
+            .as_ref()
+            .expect("invariant: just opened")
+            .facts()
+            .contig_names
+            .clone();
+        let (regions, targets, exclude) =
+            parse_regions(regions_args, &contigs).map_err(reed::Error::usage)?;
+        debug_assert!(regions.is_empty(), "no indexed flags -> no seek regions");
+        (opened, regions, targets, exclude)
+    };
     // Indexed ranges are coarse (whole blocks), so the same regions also act
     // as the record predicate — exactly how the filter's `-r` works.
     for region in &regions {
         targets.push((region.contig.clone(), region.start1, region.end1));
     }
-    let input_file = input_path(input);
-    let open_path: Option<PathBuf> = input_file.clone();
-    let opened = Some(reed::open_regions(open_path.as_deref(), &regions)?);
     let open_secs = started.elapsed().as_secs_f64();
     tracing::debug!(open_ms = open_secs * 1e3, input, "{verb} opened the input");
     let facts = opened.as_ref().expect("invariant: just opened").facts();

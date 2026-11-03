@@ -165,6 +165,11 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
 ### Changed
+- **filter（区域唯一解析，V24-04）**：`TagTable` 携带 header 的 contig 词表，
+  `Region::parse_in` 先整串匹配再按最后一个合法区间切分；`filter` 的 `-r/-R`
+  谓词与索引 seek 由引擎一次解析，CLI 不再重复解析；`stats`/`popg` 的
+  `-r/-R` 同样 header-aware。`-r` 指向未声明 contig 现在报错（bcftools
+  语义），`-t` 保持静默空选择。
 - **io（死代码与 header 词法，V24-03）**：删除 `RegionChunkSource` 的
   死 `pending_block` 状态机、`OutputFormat`/`for_format`/`is_empty`/
   `eof_block`/`n_samples`/`clone_for_worker`/`PlainChunkSource::first_offset`；
