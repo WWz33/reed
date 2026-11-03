@@ -151,7 +151,9 @@ impl LdDecayAcc {
     /// Bins over the given ascending edges.
     #[must_use]
     pub fn new(edges: Vec<u64>) -> Self {
-        let n = edges.len().max(1);
+        // No edges = no decay table (doc_v23 V23-22): zero bins, so `push`
+        // and `push_bin` are no-ops instead of silently creating one bin.
+        let n = edges.len();
         Self {
             edges,
             sum_r2: (0..n)
@@ -161,32 +163,38 @@ impl LdDecayAcc {
         }
     }
 
-    fn bin_of(&self, distance: u64) -> usize {
+    /// The bin for `distance`, or `None` before the first edge (doc_v23
+    /// V23-27): a custom edge list need not start at 0, and folding such a
+    /// pair into bin 0 would silently misreport it.
+    fn bin_of(&self, distance: u64) -> Option<usize> {
         // Last bin with edge <= distance.
         match self.edges.binary_search(&distance) {
-            Ok(i) => i,
-            Err(i) => i.saturating_sub(1),
+            Ok(i) => Some(i),
+            Err(0) => None,
+            Err(i) => Some(i - 1),
         }
     }
 
     /// The bin index for a distance (the caller may compute it once and
     /// share it across accumulators built on the same edges).
     #[must_use]
-    pub fn bin_index(&self, distance: u64) -> usize {
+    pub fn bin_index(&self, distance: u64) -> Option<usize> {
         self.bin_of(distance)
     }
 
     /// Absorbs one pair's (distance, r²).
     pub fn push(&mut self, distance: u64, r2: f64) {
-        let b = self.bin_of(distance);
-        if b < self.counts.len() {
+        if let Some(b) = self.bin_of(distance)
+            && b < self.counts.len()
+        {
             self.sum_r2[b].add(r2);
             self.counts[b] += 1;
         }
     }
 
     /// Absorbs one pair's r² into a precomputed [`bin_index`](Self::bin_index).
-    pub fn push_bin(&mut self, bin: usize, r2: f64) {
+    pub fn push_bin(&mut self, bin: Option<usize>, r2: f64) {
+        let Some(bin) = bin else { return };
         if bin < self.counts.len() {
             self.sum_r2[bin].add(r2);
             self.counts[bin] += 1;
@@ -632,5 +640,29 @@ mod v23_pos_log_tests {
         let seen = p.seen;
         p.finish_contig();
         assert_eq!(p.kept_sites().len(), seen);
+    }
+
+    /// doc_v23 V23-22: no edges means no decay table. A pairs-only library
+    /// request must not synthesize a single `[0, bin)` row.
+    #[test]
+    fn no_edges_means_no_decay_bins() {
+        let mut acc = LdDecayAcc::new(Vec::new());
+        acc.push(10, 0.5);
+        assert_eq!(acc.counts(), &[] as &[u64]);
+        assert_eq!(acc.mean_r2(), Vec::<Option<f64>>::new());
+    }
+
+    /// doc_v23 V23-27: a distance below the first edge has no bin. It used
+    /// to saturate to bin 0 and be counted in `[first_edge, …)`.
+    #[test]
+    fn a_distance_before_the_first_edge_has_no_bin() {
+        let mut acc = LdDecayAcc::new(vec![100, 200]);
+        assert_eq!(acc.bin_index(50), None);
+        assert_eq!(acc.bin_index(150), Some(0));
+        assert_eq!(acc.bin_index(250), Some(1));
+        acc.push(50, 0.5);
+        assert_eq!(acc.counts(), &[0, 0]);
+        acc.push(150, 0.25);
+        assert_eq!(acc.counts(), &[1, 0]);
     }
 }

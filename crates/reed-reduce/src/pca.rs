@@ -101,7 +101,11 @@ pub fn pca_dense_with(x: &Mat, k: usize, stand: Stand) -> Pca {
     pack(sym_eig(&grm.a), Some(k))
 }
 
-/// The backend that served the most recent dense PCA call in this build.
+/// The eigendecomposition backend this build was **compiled** with:
+/// `Backend::Faer` when the `faer-backend` feature is on, `Backend::Fallback`
+/// otherwise. This is a compile-time constant, not a record of the last
+/// call (doc_v23 V23-33); the per-call backend is the `_backend` value
+/// [`sym_eig_top_k`] returns.
 pub fn backend() -> Backend {
     crate::backend::COMPILED_BACKEND
 }

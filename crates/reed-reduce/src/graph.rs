@@ -125,6 +125,12 @@ pub fn kernel_pca(x: &Mat, k: usize, kind: Kernel, gamma: f64) -> Embedding {
     Embedding { coords, values: vals }
 }
 
+/// Whether `value` is the diffusion map's stationary eigenvalue (1) within
+/// `1e-9` of the spectrum's largest magnitude.
+fn is_stationary_mode(value: f64, lambda_max: f64) -> bool {
+    (value - 1.0).abs() <= 1e-9 * lambda_max
+}
+
 /// The magnitude of a kernel-PCA eigenvalue: negative values are numerical
 /// error on a PSD kernel and become 0 rather than `abs()` (doc_v23 V23-18).
 #[must_use]
@@ -295,12 +301,16 @@ pub fn diffusion_map(w: &Mat, k: usize, alpha: f64) -> Embedding {
     let mut coords = Mat::zeros(n, k);
     let mut c = 0usize;
     let mut skipped_stationary = false;
+    // The tolerance is relative to the largest eigenvalue (doc_v23 V23-33):
+    // a fixed 1e-9 could not distinguish the stationary mode on a matrix
+    // whose whole spectrum is far below 1.
+    let lambda_max = e.values.last().copied().unwrap_or(0.0).abs();
     for idx in (0..n).rev() {
         if c >= k {
             break;
         }
         // Skip the stationary eigenvector (eigenvalue 1) exactly once.
-        if !skipped_stationary && (e.values[idx] - 1.0).abs() < 1e-9 {
+        if !skipped_stationary && is_stationary_mode(e.values[idx], lambda_max) {
             skipped_stationary = true;
             continue;
         }
@@ -626,5 +636,17 @@ mod tests {
         assert!(!kernel_scale(-3.0).is_nan());
         assert_eq!(kernel_scale(4.0), 2.0);
         assert_eq!(kernel_scale(0.0), 0.0);
+    }
+
+    /// doc_v23 V23-33: the stationary-mode tolerance is `1e-9 * λ_max`, not
+    /// an absolute 1e-9.
+    #[test]
+    fn stationary_tolerance_is_relative_to_the_spectrum() {
+        assert!(is_stationary_mode(1.0, 1.0));
+        assert!(is_stationary_mode(1.0 - 1e-10, 1.0));
+        assert!(!is_stationary_mode(1.0 - 1e-8, 1.0));
+        // On a spectrum whose maximum is 1e-6 the tolerance is 1e-15, so
+        // the old absolute 1e-9 would have skipped a non-stationary mode.
+        assert!(!is_stationary_mode(1.0 - 1e-10, 1e-6));
     }
 }

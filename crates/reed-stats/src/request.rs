@@ -284,10 +284,12 @@ impl StatAcc {
     ///
     /// # Panics
     ///
-    /// Debug builds panic when the two variants differ (a caller bug: parts
-    /// of one request are never merged across requests).
+    /// Panics when the two variants differ (a caller bug: parts of one
+    /// request are never merged across requests). This used to be a
+    /// `debug_assert!` whose release fall-through silently dropped the
+    /// data (doc_v23 V23-28).
     pub fn merge(&mut self, other: &Self) {
-        debug_assert_eq!(
+        assert_eq!(
             std::mem::discriminant(self),
             std::mem::discriminant(other),
             "invariant: merge combines identical accumulator kinds"
@@ -301,7 +303,7 @@ impl StatAcc {
             (Self::Sfs(a), Self::Sfs(b)) => a.merge(b),
             (Self::Theta(a), Self::Theta(b)) => a.merge(b),
             (Self::Tajima(a), Self::Tajima(b)) => a.merge(b),
-            _ => {}
+            _ => unreachable!("invariant: the discriminants were just compared"),
         }
     }
 

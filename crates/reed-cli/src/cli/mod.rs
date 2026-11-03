@@ -242,9 +242,10 @@ pub(crate) struct DistanceCli {
     #[arg(long = "type", value_name = "KIND", default_value = "grm")]
     pub matrix_type: String,
     /// Output layout for matrix kinds: triangle (plink default), square,
-    /// square0 (upper-right zeroed) or bin (double-precision, R-readable)
-    #[arg(long, value_name = "FMT", default_value = "triangle")]
-    pub format: String,
+    /// square0 (upper-right zeroed) or bin (double-precision, R-readable).
+    /// Rejected for the per-pair table kinds, which have one layout.
+    #[arg(long, value_name = "FMT")]
+    pub format: Option<String>,
     /// Genotype standardization: binom2 (default) or binom
     #[arg(long, value_name = "binom2|binom", default_value = "binom2")]
     pub stand: String,

@@ -408,9 +408,18 @@ pub(super) struct LdPlan {
 
 impl LdPlan {
     /// Decay bin edges: `[0, bin), [bin, 2·bin), …` up to `decay_max_bp`.
+    ///
+    /// `decay_max_bp = None` means "no decay table" and yields **no** edges
+    /// (doc_v23 V23-22). It used to synthesize `[0, bin)`, which made a
+    /// pairs-only library request carry a one-bin decay curve that looked
+    /// complete; the sink merges zero bins and `write_ld` then writes no
+    /// `.ld.decay`, which is the same convention as the CLI (it requires
+    /// `--ld-decay`).
     pub(super) fn decay_edges(&self) -> Vec<u64> {
+        let Some(max) = self.decay_max_bp else {
+            return Vec::new();
+        };
         let bin = self.decay_bin_bp.max(1);
-        let max = self.decay_max_bp.unwrap_or(bin);
         let mut edges = Vec::new();
         let mut e = 0;
         while e < max {

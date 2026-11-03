@@ -295,7 +295,7 @@ pub fn render_site_line(
 fn bad(locus: impl LocusSource, reason: &'static str) -> IoError {
     IoError::MalformedRecord {
         locus: locus.error_locus(),
-        reason,
+        reason: reason.to_string(),
     }
 }
 

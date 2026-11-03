@@ -354,7 +354,11 @@ pub(crate) fn prelude(
         })
         .collect();
     if let Some(path) = contig_lengths_arg {
-        for line in std::fs::read_to_string(Path::new(path))?.lines() {
+        // Name the file: the raw `io::Error` text ("No such file or
+        // directory") does not say which flag path failed (doc_v23 V23-32).
+        let text = std::fs::read_to_string(Path::new(path))
+            .map_err(|e| reed::Error::usage(format!("{path}: {e}")))?;
+        for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;

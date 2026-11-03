@@ -127,7 +127,7 @@ impl<R: Read> BgzfChunkReader<R> {
                 let Some(total) = parse_block_size(&out[pos..pos + BGZF_HEADER_LEN]) else {
                     return Err(IoError::MalformedBgzf {
                         locus: None,
-                        reason: "not a BGZF block header (trailing garbage after the last block?)",
+                        reason: "not a BGZF block header (trailing garbage after the last block?)".to_string(),
                     });
                 };
                 if out.len() < pos + total {
@@ -172,9 +172,9 @@ impl<R: Read> BgzfChunkReader<R> {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
                     reason: if out.len() - pos < BGZF_HEADER_LEN {
-                        "stream ends inside a block header"
+                        "stream ends inside a block header".to_string()
                     } else {
-                        "stream ends inside a block payload"
+                        "stream ends inside a block payload".to_string()
                     },
                 });
             }
@@ -211,7 +211,7 @@ impl<R: Read> BgzfChunkReader<R> {
                         }
                         return Err(IoError::MalformedBgzf {
                             locus: None,
-                            reason: "stream ends inside a block header",
+                            reason: "stream ends inside a block header".to_string(),
                         });
                     }
                     Ok(n) => filled += n,
@@ -222,7 +222,7 @@ impl<R: Read> BgzfChunkReader<R> {
             let Some(total) = parse_block_size(&header) else {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
-                    reason: "not a BGZF block header (trailing garbage after the last block?)",
+                    reason: "not a BGZF block header (trailing garbage after the last block?)".to_string(),
                 });
             };
             let mut block = Vec::with_capacity(total);
@@ -428,19 +428,19 @@ impl crate::chunk::ChunkSource for MmapChunkSource {
             if pos + BGZF_HEADER_LEN > self.map.len() {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
-                    reason: "stream ends inside a block header",
+                    reason: "stream ends inside a block header".to_string(),
                 });
             }
             let Some(size) = parse_block_size(&self.map[pos..pos + BGZF_HEADER_LEN]) else {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
-                    reason: "not a BGZF block header (trailing garbage after the last block?)",
+                    reason: "not a BGZF block header (trailing garbage after the last block?)".to_string(),
                 });
             };
             if pos + size > self.map.len() {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
-                    reason: "stream ends inside a block payload",
+                    reason: "stream ends inside a block payload".to_string(),
                 });
             }
             let block = &self.map[pos..pos + size];

@@ -54,7 +54,7 @@ fn malformed_line(line: &[u8], reason: &'static str) -> EngineError {
             contig_name: String::from_utf8_lossy(chrom).into_owned(),
             pos1,
         },
-        reason,
+        reason: reason.to_string(),
     })
 }
 

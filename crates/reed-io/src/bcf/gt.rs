@@ -169,7 +169,7 @@ impl GtTable {
         if !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
             return Err(IoError::MalformedRecord {
                 locus: locus.error_locus(),
-                reason: "BCF GT field is not integer-typed",
+                reason: "BCF GT field is not integer-typed".to_string(),
             });
         }
         let count = data.len() / type_width(ty);
@@ -178,7 +178,7 @@ impl GtTable {
         fmt_gt(text, ty, count, data, false)
             .map_err(|reason| IoError::MalformedRecord {
                 locus: locus.error_locus(),
-                reason,
+                reason: reason.to_string(),
             })?;
         let mut token = [None; 2];
         decode_gt_text(text, locus, &self.policies, counters, &mut token)
@@ -280,7 +280,7 @@ pub fn decode_record_gt(
                 contig_name: String::from_utf8_lossy(contig_name).into_owned(),
                 pos1,
             },
-            reason,
+            reason: reason.to_string(),
         });
     }
     let mut found: Option<(u8, usize, usize)> = None;

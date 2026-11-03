@@ -116,6 +116,22 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
   标准化链。
 - **reduce（核 PCA 负特征值，V23-18）**：核 PCA/GRM 核 PCA 的坐标缩放从
   `abs().sqrt()` 改为 `max(0.0).sqrt()`，数值误差产生的负特征值映射为 0。
+- **stats（LD decay 缺省，V23-22）**：`decay_max_bp = None` 不再合成
+  `[0, bin)` 一行；`LdDecayAcc` 的空 edges 即零 bin，pairs-only 库请求
+  不写 `.ld.decay`。
+- **stats（decay 分箱，V23-27）**：距离小于首条 edge 时 `bin_index`
+  返回 `None` 并跳过，不再静默计入 bin 0。
+- **stats（merge 不变式，V23-28）**：`StatAcc::merge`、`ContigBins::merge_bins`、
+  `BpBlockJackknife::merge` 的形状断言改为无条件；release 下不再经
+  `zip`/`_ => {}` 静默丢数据。
+- **io（诊断与空 ALT，V23-29/V23-30）**：`MalformedRecord`/`MalformedBgzf`
+  的 `reason` 改为 `String`；样本列不匹配报 `found/expected`；`count_alts("")`
+  为 0。
+- **cli（`--format`，V23-32）**：表类 `--type` 显式给 `--format` 是 usage
+  错误；`--contig-lengths` 读取失败带文件名；`tree.rs` 的内部节点 id 上限
+  文档改为 `2n−1`。
+- **reduce（diffusion，V23-33）**：平稳模式判定改为相对阈值
+  `1e-9 · λ_max`；`pca::backend()` 文档改为编译期常量。
 
 #### Changed
 - **convert（`--reference` 流式，V23-11）**：FASTA 改为 `BufReader` 逐行

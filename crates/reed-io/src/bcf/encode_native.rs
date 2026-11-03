@@ -252,7 +252,7 @@ impl NativeEncoder {
         if site.pos1 > (i32::MAX as u64) + 1 {
             return Err(IoError::MalformedRecord {
                 locus: site.locus(),
-                reason: "position exceeds the BCF i32 range",
+                reason: "position exceeds the BCF i32 range".to_string(),
             });
         }
         let pos0 = i32::try_from(site.pos1.saturating_sub(1)).unwrap_or(i32::MAX);
@@ -774,7 +774,7 @@ impl NativeEncoder {
                     contig_name: String::from_utf8_lossy(contig).into_owned(),
                     pos1: 0,
                 },
-                reason: "BCF position is below the telomere sentinel (-1)",
+                reason: "BCF position is below the telomere sentinel (-1)".to_string(),
             });
         }
         {
@@ -1366,7 +1366,7 @@ fn bad(reason: &'static str) -> IoError {
             contig_name: "<bcf-encode>".into(),
             pos1: 0,
         },
-        reason,
+        reason: reason.to_string(),
     }
 }
 

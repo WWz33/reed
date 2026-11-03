@@ -7,7 +7,8 @@ use crate::error::GraphError;
 /// A tree over named tips, in `ape`'s `phylo` shape.
 ///
 /// Node ids are 1-based: tips are `1..=n_tips`, internal nodes follow in
-/// creation order (`n_tips + 1..=2 * n_tips - 2` for a rooted binary tree).
+/// creation order (`n_tips + 1..=2 * n_tips - 1` for a rooted binary tree,
+/// i.e. `n_tips - 1` internal nodes with maximum id `2 * n_tips - 1`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tree {
     /// `(parent, child)` pairs.

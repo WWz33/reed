@@ -195,7 +195,7 @@ pub fn inflate_chunk<'a>(
     if total_compressed != chunk.compressed.len() {
         return Err(IoError::MalformedBgzf {
             locus: None,
-            reason: "chunk block table disagrees with the payload length",
+            reason: "chunk block table disagrees with the payload length".to_string(),
         });
     }
     if scratch.len() < total_inflated {
@@ -246,7 +246,7 @@ fn split_text<'a>(chunk: &ChunkBytes, text: &'a [u8]) -> Result<InflatedChunk<'a
     if scan_start > text.len() {
         return Err(IoError::MalformedBgzf {
             locus: None,
-            reason: "chunk start offset is beyond the inflated text (corrupt index virtual offset)",
+            reason: "chunk start offset is beyond the inflated text (corrupt index virtual offset)".to_string(),
         });
     }
 

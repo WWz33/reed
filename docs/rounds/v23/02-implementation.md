@@ -343,6 +343,75 @@ mean=0.5、sd=√0.375、两个 Inf 不算 called、`w` 有限）。
 测试：`negative_kernel_eigenvalues_scale_to_zero`（-1e-12/-3 → 0 且非
 NaN，4 → 2）。
 
+### reed：LD decay 的 `None` 约定（V23-22）
+
+`LdPlan::decay_edges` 原来对 `decay_max_bp = None` 合成 `[0, bin)`，而
+sink 的 pair 跨度缺省是 100_000，两处缺省不一致；pairs-only 的库调用会
+得到一条"看似完整"的单行 decay。现在 `None` 返回空 edges，`LdDecayAcc`
+的 bin 数就是 `edges.len()`（空 = 0），push 全部 no-op，`write_ld` 因此
+不写 `.ld.decay`——与 CLI（要求 `--ld-decay`）同一约定。
+
+测试：`no_edges_means_no_decay_bins`。
+
+### reed-stats：decay 的 `bin_of`（V23-27）
+
+`LdDecayAcc::bin_of` 在距离小于首条 edge 时返回 `Err(0).saturating_sub(1)`
+= 0，把该 pair 静默并进 bin 0。现在 `bin_of`/`bin_index` 返回
+`Option<usize>`（`Err(0) → None`），`push_bin` 收到 `None` 直接跳过。
+仓库调用方的 edges 总从 0 起步，行为不变；库 API 不再误报。
+
+测试：`a_distance_before_the_first_edge_has_no_bin`（edges `[100,200]`：
+50 → None、150 → 0、250 → 1）。
+
+### reed-stats：merge 不变式（V23-28）
+
+三处 `debug_assert!` 在 release 是空操作，随后 `zip` 会截断较长的一侧：
+
+- `StatAcc::merge`：不同 variant → 无条件 `assert_eq!`，`_` 分支改
+  `unreachable!`（原来 `_ => {}` 静默丢数据）。
+- `ContigBins::merge_bins`：bin 宽度 + 每 bin 累加器数量都无条件断言。
+- `BpBlockJackknife::merge`：block 大小无条件断言。
+
+测试：`merge_bins_rejects_a_different_width`、
+`merge_bins_rejects_a_different_accumulator_count`、
+`merge_rejects_different_accumulator_kinds`、
+`bp_merge_rejects_a_different_block_size`（均 `should_panic`）。
+
+### reed-io：诊断与空 ALT（V23-29、V23-30）
+
+- `IoError::MalformedRecord.reason` 与 `MalformedBgzf.reason` 从
+  `&'static str` 改为 `String`（`encode_noodles` 的 `Box::leak` 随之删除）。
+  `genotype_scan` 的样本列错误改为 `format!("... (found {found}, expected
+  {expected})")`，两种方向（过少/多余）各自带计数。
+- `count_alts(b"")` 返回 0（原来 commas+1 = 1）；`.` 与空列同为零。
+
+测试：`column_count_mismatch_is_an_error` 增加 `found 1`/`expected 3`
+断言；`empty_alt_has_zero_alleles`（`""`/`.` → 0，`A` → 1，`A,G` → 2，
+尾随逗号仍是 2）。
+
+### reed-cli / reed-graph：表类 `--format`、路径与 tree 文档（V23-32）
+
+- `DistanceCli.format` 改为 `Option<String>`（无 clap 默认值）。表类
+  （`king`/`pihat`/`phi`/`ajk`/`discordance`）显式给 `--format` 是 usage
+  错误；矩阵类缺省仍为 `triangle`。
+- `common.rs` 的 `--contig-lengths` 读取错误带文件名（`{path}: {e}`）。
+- `tree.rs` 模块文档：内部节点 `n_tips + 1..=2 * n_tips - 1`（最大
+  id = 2n−1）。
+
+测试：`format_is_rejected_for_table_distance_kinds`（表类 exit 2 且点名
+`--format`，矩阵 `ibs` 对照成功）、`contig_lengths_error_names_the_file`
+（`popg`，stderr 含缺失路径）。
+
+### reed-reduce：diffusion 相对阈值与 backend 文档（V23-33）
+
+- `graph.rs` 的平稳模式判定改为 `is_stationary_mode(v, λ_max) =
+  |v − 1| <= 1e-9 * λ_max`，不再用绝对 1e-9。
+- `pca::backend()` 文档改为"编译期 backend 常量"，并指向
+  `sym_eig_top_k` 返回的 per-call backend。
+
+测试：`stationary_tolerance_is_relative_to_the_spectrum`（λ_max=1e-6 时
+绝对 1e-9 会误跳过的模式不再被跳过）。
+
 ## 验收
 
 | 检查 | 结果 |

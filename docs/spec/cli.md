@@ -448,7 +448,7 @@ reed distance in.vcf.gz --type grm -o out      # out.rel + out.rel.id
 
 | 参数 | 说明 |
 |---|---|
-| `--format triangle\|square\|square0\|bin` | 矩阵类输出布局。`triangle` 含对角线（plink 语义）；`bin` 是双精度方阵（R `readBin` 可读） |
+| `--format triangle\|square\|square0\|bin` | 仅矩阵类（`allele-ct`/`ibs`/`1-ibs`/`grm`/`cov`）；`triangle` 含对角线（plink 语义），`bin` 是双精度方阵（R `readBin` 可读）。表类（`king`/`pihat`/`phi`/`ajk`/`discordance`）只有一种布局，显式给 `--format` 是 usage 错误（doc_v23 V23-32），不再静默忽略 |
 | `--stand binom2\|binom` | 标准化口径 |
 | `--mean-impute` | `grm`/`cov` 用总位点数作分母（plink `meanimpute`） |
 | `--unbounded`、`--nudge` | `pihat` 的裁剪与修正（plink 同名修饰符） |

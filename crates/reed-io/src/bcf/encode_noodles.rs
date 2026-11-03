@@ -90,7 +90,7 @@ impl BcfEncoder {
                     contig_name: "<bcf-encode>".into(),
                     pos1: 0,
                 },
-                reason: leak(&e),
+                reason: e.to_string(),
             })?;
         match self.writer.write_variant_record(header, &record) {
             Ok(()) => {}
@@ -103,7 +103,7 @@ impl BcfEncoder {
                             contig_name: "<bcf-encode>".into(),
                             pos1: 0,
                         },
-                        reason: leak(&e),
+                        reason: e.to_string(),
                     }
                 })?;
                 fix_missing_strings(&self.string_keys, &mut owned);
@@ -159,10 +159,6 @@ fn fix_missing_strings(string_keys: &[String], record: &mut vcf::variant::Record
 
 /// An owned error string squeezed into a `&'static str` slot. The message is
 /// leaked: encode errors are fatal per-record diagnostics, not a hot path.
-fn leak(e: &std::io::Error) -> &'static str {
-    Box::leak(e.to_string().into_boxed_str())
-}
-
 impl Default for BcfEncoder {
     fn default() -> Self {
         Self::new().expect("invariant: the encoder allocates")

@@ -1515,3 +1515,60 @@ fn region_flag_combinations_match_bcftools() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v23 V23-32: `--format` is a matrix-only option. The per-pair table
+/// kinds used to ignore it silently, so a script could configure a layout
+/// that was never written.
+#[test]
+fn format_is_rejected_for_table_distance_kinds() {
+    let dir = temp_dir("v23-format-table");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let inp = input.to_str().expect("invariant: utf8");
+    let out_dir = dir.join("out");
+    let outp = out_dir.to_str().expect("invariant: utf8");
+
+    let out = run(&[
+        "distance", inp, "--type", "pihat", "--format", "square", "-o", outp,
+        "--verbosity", "0",
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "must be a usage error: {stderr}");
+    assert!(stderr.contains("--format"), "{stderr}");
+
+    // The matrix control still accepts it.
+    let out = run(&[
+        "distance", inp, "--type", "ibs", "--format", "square", "-o", outp,
+        "--verbosity", "0",
+    ]);
+    assert!(out.status.success(), "matrix --format must still work: {out:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v23 V23-32: a missing `--contig-lengths` file names the path, not
+/// just the OS message.
+#[test]
+fn contig_lengths_error_names_the_file() {
+    let dir = temp_dir("v23-contig-lengths");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let inp = input.to_str().expect("invariant: utf8");
+    let out_dir = dir.join("out");
+    let outp = out_dir.to_str().expect("invariant: utf8");
+    let missing = dir.join("no-such-lengths.tsv");
+    let missing = missing.to_str().expect("invariant: utf8");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let pops = pops.to_str().expect("invariant: utf8");
+
+    // `stats` redirects --contig-lengths to `popg`, which is where the
+    // windowed modes live.
+    let out = run(&[
+        "popg", inp, "--pop", pops, "--pi", "--contig-lengths", missing, "-o", outp,
+        "--verbosity", "0",
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a missing file must fail: {out:?}");
+    assert!(stderr.contains(missing), "the path must be named: {stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

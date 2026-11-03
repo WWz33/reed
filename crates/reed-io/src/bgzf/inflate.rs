@@ -36,13 +36,13 @@ impl Inflater {
         let Some(total) = parse_block_size(block) else {
             return Err(IoError::MalformedBgzf {
                 locus: None,
-                reason: "not a BGZF block header",
+                reason: "not a BGZF block header".to_string(),
             });
         };
         if total != block.len() {
             return Err(IoError::MalformedBgzf {
                 locus: None,
-                reason: "block length disagrees with BSIZE",
+                reason: "block length disagrees with BSIZE".to_string(),
             });
         }
         let start = dst.len();
@@ -75,7 +75,7 @@ impl Inflater {
         if written != out.len() {
             return Err(IoError::MalformedBgzf {
                 locus: None,
-                reason: "block's inflated size disagrees with its ISIZE",
+                reason: "block's inflated size disagrees with its ISIZE".to_string(),
             });
         }
         Ok(written)

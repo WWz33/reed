@@ -45,7 +45,19 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     // doc_v21 S34: distance had no --verbosity, so scripts could not silence it.
     args.verbosity.init_tracing();
     let kind = parse_kind(&args.matrix_type).map_err(reed::Error::usage)?;
-    let format = MatrixFormat::parse(&args.format).map_err(reed::Error::usage)?;
+    // doc_v23 V23-32: `--format` only means something for the four matrix
+    // kinds. Silently ignoring it on `.genome`/`.relatedness2`/… let a
+    // script "configure" a layout that was never used.
+    if !is_matrix_kind(kind) && args.format.is_some() {
+        return Err(reed::Error::usage(format!(
+            "--format applies to matrix --type values; {} is a per-pair table",
+            args.matrix_type
+        )));
+    }
+    let format = match &args.format {
+        Some(text) => MatrixFormat::parse(text).map_err(reed::Error::usage)?,
+        None => MatrixFormat::Triangle,
+    };
     let stand = Stand::parse(&args.stand).map_err(reed::Error::usage)?;
     let Some(prefix) = args.output.as_deref() else {
         return Err(reed::Error::usage(

@@ -165,13 +165,18 @@ impl GenotypeScanner {
         line.validate_sample_cols(*n_samples)
             .map_err(|err| IoError::MalformedRecord {
                 locus: site.locus(),
+                // Name the counts: the old message dropped the
+                // `found`/`expected` both variants carry, which is the one
+                // detail a mismatched record needs (doc_v23 V23-29).
                 reason: match err {
-                    SampleColumnsError::TooFew { .. } => {
-                        "sample column count disagrees with the header"
-                    }
-                    SampleColumnsError::TooMany { .. } => {
-                        "more sample columns than the header declares"
-                    }
+                    SampleColumnsError::TooFew { found, expected } => format!(
+                        "sample column count disagrees with the header \
+                         (found {found}, expected {expected})"
+                    ),
+                    SampleColumnsError::TooMany { found, expected } => format!(
+                        "more sample columns than the header declares \
+                         (first non-empty extra column at {found}, expected {expected})"
+                    ),
                 },
             })?;
 
@@ -391,7 +396,7 @@ fn decode_gt<S: LocusSource>(
         reed_core::CoreError::Unimplemented(reason) => IoError::UnsupportedInput(reason),
         other => IoError::MalformedRecord {
             locus: site.error_locus(),
-            reason: reason_str(&other),
+            reason: reason_str(&other).to_string(),
         },
     })
 }
@@ -425,7 +430,7 @@ fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, I
     if token.is_empty() || token.len() > 5 {
         return Err(IoError::MalformedRecord {
             locus: site.error_locus(),
-            reason: "GT allele index is empty or too long",
+            reason: "GT allele index is empty or too long".to_string(),
         });
     }
     let mut value: u16 = 0;
@@ -433,7 +438,7 @@ fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, I
         if !b.is_ascii_digit() {
             return Err(IoError::MalformedRecord {
                 locus: site.error_locus(),
-                reason: "GT allele contains a non-digit",
+                reason: "GT allele contains a non-digit".to_string(),
             });
         }
         // 5 digits can overflow u16 (99_999 > 65_535): reject the wrap.
@@ -442,7 +447,7 @@ fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, I
             .and_then(|v| v.checked_add(u16::from(b - b'0')))
             .ok_or(IoError::MalformedRecord {
                 locus: site.error_locus(),
-                reason: "GT allele index exceeds u16",
+                reason: "GT allele index exceeds u16".to_string(),
             })?;
     }
     Ok(Some(value))
@@ -825,7 +830,11 @@ mod tests {
         let site = SiteView::parse(&lr).expect("invariant: well-formed");
         let mut counters = PolicyCounters::default();
         let err = scanner.scan(&lr, &site, &mut counters).unwrap_err();
+        // doc_v23 V23-29: the diagnostic carries both counts.
+        let text = err.to_string();
         assert!(matches!(err, IoError::MalformedRecord { .. }));
+        assert!(text.contains("found 1"), "{text}");
+        assert!(text.contains("expected 3"), "{text}");
     }
 
     #[test]

@@ -93,7 +93,7 @@ pub fn malformed(reason: &'static str) -> IoError {
             contig_name: "<bcf>".into(),
             pos1: 0,
         },
-        reason,
+        reason: reason.to_string(),
     }
 }
 
