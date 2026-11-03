@@ -310,6 +310,13 @@ fn s46_wc84_pair_equals_multi_at_r2() {
         multi.value().expect("typed sites contribute"),
     );
     assert!((p - m).abs() < 1e-12, "pair {p} vs multi {m}");
+    // doc_v24 V24-05: the pair path is the r = 2 instance of the same core,
+    // so its components are at the multi scale too (they used to be 2×).
+    let (pa, pb, pc) = pair.wc_components();
+    let (ma, mb, mc) = multi.components();
+    assert!((pa - ma.value()).abs() < 1e-12, "a {pa} vs {}", ma.value());
+    assert!((pb - mb.value()).abs() < 1e-12, "b {pb} vs {}", mb.value());
+    assert!((pc - mc.value()).abs() < 1e-12, "c {pc} vs {}", mc.value());
 }
 
 #[test]

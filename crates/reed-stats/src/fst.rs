@@ -55,6 +55,89 @@ impl WcAcc {
     }
 }
 
+/// One site's WC84 outcome at the **multi-population scale** (the scale
+/// `WcMultiAcc::components` reports). The pair path is the `r = 2` instance,
+/// so there is one formula and one set of tests (doc_v24 V24-05).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Wc84Site {
+    /// A guard rejected the site (`n̄ ≤ 1`, `n_C ≤ 0`, or no called group).
+    Skip,
+    /// A group has no called diploid individual (`an = 0`, or a lone half
+    /// call with `n = an // 2 = 0` when `n_C` collapses): a/b are undefined
+    /// and only `c = h̄/2` is kept, matching allel's `nansum` (doc_v7 D7-20).
+    KeepC { c: f64 },
+    /// Full contribution; `Fst = a / (a + b + c)`.
+    Full { a: f64, b: f64, c: f64 },
+}
+
+/// One population's WC84 inputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Wc84Group {
+    /// Called alleles (`an`).
+    pub an: u64,
+    /// Reference-allele count.
+    pub refs: u64,
+    /// Fully-called heterozygotes (`n_het`).
+    pub het: u64,
+}
+
+/// The single WC84 formula. Pair path: two groups; multi path: r groups.
+/// Allocation-free; callers own the group slice.
+pub(crate) fn wc84_site(groups: &[Wc84Group]) -> Wc84Site {
+    let r = groups.len();
+    if r < 2 {
+        return Wc84Site::Skip;
+    }
+    let (mut an_total, mut refs_total, mut h_sum) = (0_u64, 0_u64, 0_u64);
+    let (mut n_total, mut n_sq_sum) = (0.0_f64, 0.0_f64);
+    for group in groups {
+        an_total += group.an;
+        refs_total += group.refs;
+        h_sum += group.het;
+        let ni = (group.an / 2) as f64;
+        n_total += ni;
+        n_sq_sum += ni * ni;
+    }
+    if n_total == 0.0 {
+        return Wc84Site::Skip;
+    }
+    let r_f = r as f64;
+    let n_bar = n_total / r_f;
+    let n_c = (n_total - n_sq_sum / n_total) / (r_f - 1.0);
+    let any_empty = groups.iter().any(|g| g.an == 0);
+    let any_half_only = groups.iter().any(|g| g.an < 2);
+    if any_empty || (any_half_only && n_c <= 0.0) {
+        return Wc84Site::KeepC {
+            c: (h_sum as f64 / n_total) / 2.0,
+        };
+    }
+    if n_bar <= 1.0 || n_c <= 0.0 {
+        return Wc84Site::Skip;
+    }
+    let p_bar = refs_total as f64 / an_total as f64;
+    let mut s2 = 0.0_f64;
+    for group in groups {
+        let pi = group.refs as f64 / group.an as f64;
+        let ni = (group.an / 2) as f64;
+        s2 += ni * (pi - p_bar).powi(2);
+    }
+    s2 /= n_bar * (r_f - 1.0);
+    let h_bar = h_sum as f64 / n_total;
+    let a = (n_bar / n_c)
+        * (s2
+            - (1.0 / (n_bar - 1.0))
+                * (p_bar * (1.0 - p_bar) - (r_f - 1.0) * s2 / r_f - h_bar / 4.0));
+    let b = (n_bar / (n_bar - 1.0))
+        * (p_bar * (1.0 - p_bar)
+            - (r_f - 1.0) * s2 / r_f
+            - (2.0 * n_bar - 1.0) * h_bar / (4.0 * n_bar));
+    Wc84Site::Full {
+        a,
+        b,
+        c: h_bar / 2.0,
+    }
+}
+
 /// Fst accumulator for one group pair. One pass fills every estimator's
 /// components (the integer `PairAcc` audit trail is estimator-independent,
 /// exactly as in the oracle).
@@ -140,53 +223,32 @@ between_comps,
             }
         }
 
-        // WC84 (r = 2 populations; n = called // 2 floor, allel fst.py:163).
-        // A group whose called-diploid count floors to 0 — no called allele
-        // (an = 0) or a lone half-call (an = 1, e.g. one `./1`) — leaves
-        // a, b undefined (NaN in allel; n_C = 2·n1·n2/(n1+n2) = 0) while
-        // c = h̄/2 stays finite over the typed group; allel's `nansum`
-        // keeps c, and so do we (doc_v7 D7-20; the an = 1 case routes here
-        // since doc_v20 S46 — it degenerates exactly like an = 0, and the
-        // old dedicated skip dropped the site's c with it). vcftools/plink2
-        // drop the site instead — documented divergence (masked Chr01:
-        // 0.0086203 vs vcftools 0.0086449). Both groups empty → c is NaN
-        // too, the site contributes nothing.
-        if n_a < 2 || n_b < 2 {
-            let n_total = (n_a / 2 + n_b / 2) as f64;
-            if n_total == 0.0 {
-                self.wc.n_skipped += 1;
-            } else {
-                let h_bar = u64::from(a.n_het + b.n_het) as f64 / n_total;
-                self.wc.c.add(h_bar);
+        // WC84: the r = 2 instance of the one core formula (doc_v24 V24-05).
+        // The pair path used to carry its own copy at 2× the multi scale;
+        // Fst is a ratio, so the estimate is unchanged and `components()`
+        // now has one documented scale.
+        let groups = [
+            Wc84Group {
+                an: n_a,
+                refs: u64::from(a.n_ref_alleles),
+                het: u64::from(a.n_het),
+            },
+            Wc84Group {
+                an: n_b,
+                refs: u64::from(b.n_ref_alleles),
+                het: u64::from(b.n_het),
+            },
+        ];
+        match wc84_site(&groups) {
+            Wc84Site::Skip => self.wc.n_skipped += 1,
+            Wc84Site::KeepC { c } => {
+                self.wc.c.add(c);
                 self.wc.n_sites += 1;
             }
-        } else {
-            let (n1, n2) = ((n_a / 2) as f64, (n_b / 2) as f64);
-            let n_total = n1 + n2;
-            let n_bar = n_total / 2.0;
-            let n_c = (n_total - (n1 * n1 + n2 * n2) / n_total) / (2.0 - 1.0);
-            // n1, n2 ≥ 1 here (an < 2 routed above), so the degenerate
-            // n_i = 0 case cannot reach this guard.
-            if n_bar <= 1.0 || n_c <= 0.0 {
-                self.wc.n_skipped += 1;
-            } else {
-                let p_ref_1 = u64::from(a.n_ref_alleles) as f64 / n_a as f64;
-                let p_ref_2 = u64::from(b.n_ref_alleles) as f64 / n_b as f64;
-                let p_bar =
-                    u64::from(a.n_ref_alleles + b.n_ref_alleles) as f64 / (n_a + n_b) as f64;
-                let s2 = (n1 * (p_ref_1 - p_bar).powi(2) + n2 * (p_ref_2 - p_bar).powi(2))
-                    / (n_bar * (2.0 - 1.0));
-                let h_bar = (u64::from(a.n_het + b.n_het) as f64) / n_total;
-                let term = p_bar * (1.0 - p_bar) - (2.0 - 1.0) * s2 / 2.0 - h_bar / 4.0;
-                let a_allele = (n_bar / n_c) * (s2 - term / (n_bar - 1.0));
-                let b_allele = (n_bar / (n_bar - 1.0))
-                    * (p_bar * (1.0 - p_bar)
-                        - (2.0 - 1.0) * s2 / 2.0
-                        - (2.0 * n_bar - 1.0) * h_bar / (4.0 * n_bar));
-                let c_allele = h_bar / 2.0;
-                self.wc.a.add(2.0 * a_allele);
-                self.wc.b.add(2.0 * b_allele);
-                self.wc.c.add(2.0 * c_allele);
+            Wc84Site::Full { a, b, c } => {
+                self.wc.a.add(a);
+                self.wc.b.add(b);
+                self.wc.c.add(c);
                 self.wc.n_sites += 1;
             }
         }
@@ -254,6 +316,15 @@ between_comps,
     pub const fn wc_tally(&self) -> (u64, u64) {
         (self.wc.n_sites, self.wc.n_skipped)
     }
+
+    /// WC84 variance components `(a, b, c)` at the **multi-population
+    /// scale** shared with [`WcMultiAcc::components`] (doc_v24 V24-05).
+    /// Before v24 the pair path carried its own 2×-scaled copy; `Fst` is a
+    /// ratio and is unchanged.
+    #[must_use]
+    pub fn wc_components(&self) -> (f64, f64, f64) {
+        (self.wc.a.value(), self.wc.b.value(), self.wc.c.value())
+    }
 }
 
 // ---------------------------------------------------- multi-population WC84
@@ -273,6 +344,8 @@ between_comps,
 #[derive(Clone, Debug)]
 pub struct WcMultiAcc {
     groups: Vec<usize>,
+    /// Per-site input scratch, reused across `push` (doc_v24 V24-05/07).
+    site: Vec<Wc84Group>,
     a: NeumaierSum,
     b: NeumaierSum,
     c: NeumaierSum,
@@ -286,6 +359,7 @@ impl WcMultiAcc {
     pub fn new(groups: Vec<usize>) -> Self {
         Self {
             groups,
+            site: Vec::new(),
             a: NeumaierSum::new(),
             b: NeumaierSum::new(),
             c: NeumaierSum::new(),
@@ -294,82 +368,34 @@ impl WcMultiAcc {
         }
     }
 
-    /// Absorbs one site.
+    /// Absorbs one site through the same core the pair path uses.
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
-        let r = self.groups.len();
-        if r < 2 {
+        if self.groups.len() < 2 {
             self.n_skipped += 1;
             return;
         }
-        let counts: Vec<&SiteGroupCounts> = self.groups.iter().map(|&g| &row[g]).collect();
-        // n_i = an_i // 2 (allel floor semantics), an_i = called alleles.
-        let an: Vec<u64> = counts
-            .iter()
-            .map(|c| u64::from(c.n_ref_alleles + c.n_alt_alleles))
-            .collect();
-        let n: Vec<f64> = an.iter().map(|&a| (a / 2) as f64).collect();
-        let n_total: f64 = n.iter().sum();
-        let n_bar = n_total / r as f64;
-        let n_c = (n_total - n.iter().map(|x| x * x).sum::<f64>() / n_total) / (r as f64 - 1.0);
-        // Same keep-c rule as the pair path (doc_v7 D7-20): with a typed
-        // remainder the site contributes only c = h̄/2 over the typed
-        // groups when a group's called-diploid count floors to 0 — fully
-        // uncalled, an_i = 0 (allel `nansum` parity; vcftools drops the
-        // site, hierfstat recomputes with r′ groups — masked Chr01 r=3:
-        // allel 0.003237 vs vcftools 0.0032631), or a lone half-call
-        // (an_i = 1) when that floor degenerates n_c to 0 and a/b with it
-        // (doc_v20 S46). At r ≥ 3 n_c can stay positive over the other
-        // groups, and the full contribution below is kept — allel keeps
-        // those sites too. Every group empty → the site contributes
-        // nothing.
-        if an.contains(&0) || (n.contains(&0.0) && n_c <= 0.0) {
-            if n_total == 0.0 {
-                self.n_skipped += 1;
-            } else {
-                let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
-                self.c.add(h_bar / 2.0);
+        self.site.clear();
+        for &g in &self.groups {
+            let c = &row[g];
+            self.site.push(Wc84Group {
+                an: u64::from(c.n_ref_alleles + c.n_alt_alleles),
+                refs: u64::from(c.n_ref_alleles),
+                het: u64::from(c.n_het),
+            });
+        }
+        match wc84_site(&self.site) {
+            Wc84Site::Skip => self.n_skipped += 1,
+            Wc84Site::KeepC { c } => {
+                self.c.add(c);
                 self.n_sites += 1;
             }
-            return;
+            Wc84Site::Full { a, b, c } => {
+                self.a.add(a);
+                self.b.add(b);
+                self.c.add(c);
+                self.n_sites += 1;
+            }
         }
-        if n_bar <= 1.0 || n_c <= 0.0 {
-            self.n_skipped += 1;
-            return;
-        }
-        // Allele frequencies and the total (reference-allele convention,
-        // like allel: p_i of the reference allele).
-        let p: Vec<f64> = an
-            .iter()
-            .zip(&counts)
-            .map(|(&a, c)| f64::from(c.n_ref_alleles) / a as f64)
-            .collect();
-        let ac_total: u64 = counts.iter().map(|c| u64::from(c.n_ref_alleles)).sum();
-        let an_total: u64 = an.iter().sum();
-        let p_bar = ac_total as f64 / an_total as f64;
-        let s2 = n
-            .iter()
-            .zip(&p)
-            .map(|(&ni, &pi)| ni * (pi - p_bar) * (pi - p_bar))
-            .sum::<f64>()
-            / (n_bar * (r as f64 - 1.0));
-        // h̄ = Σ n_het_i / n_total (from the count table). `n_het` counts
-        // genotypes with both alleles called and different (a half call is
-        // not a full heterozygote) — the same rule as scikit-allel's
-        // `count_het`, so h̄ matches allel (doc_v7 D7-27).
-        let h_bar = counts.iter().map(|c| u64::from(c.n_het)).sum::<u64>() as f64 / n_total;
-        let a = (n_bar / n_c)
-            * (s2
-                - (1.0 / (n_bar - 1.0))
-                    * (p_bar * (1.0 - p_bar) - (r as f64 - 1.0) * s2 / r as f64 - h_bar / 4.0));
-        let b = (n_bar / (n_bar - 1.0))
-            * (p_bar * (1.0 - p_bar)
-                - (r as f64 - 1.0) * s2 / r as f64
-                - (2.0 * n_bar - 1.0) * h_bar / (4.0 * n_bar));
-        let c = h_bar / 2.0;
-        self.a.add(a);
-        self.b.add(b);
-        self.c.add(c);
-        self.n_sites += 1;
     }
 
     /// Component-wise merge.

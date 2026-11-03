@@ -165,6 +165,10 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
 ### Changed
+- **stats（WC84 唯一公式，V24-05）**：pair 与 multi 路径合并到
+  `wc84_site`（pair = r=2，multi = r=N）；pair 分量从 2× 归一为 multi
+  尺度，`Fst` 比值不变；新增 `FstAcc::wc_components()`。删除 PBS 三重
+  冗余守卫与 `projected_sfs` 的死函数。
 - **filter（区域唯一解析，V24-04）**：`TagTable` 携带 header 的 contig 词表，
   `Region::parse_in` 先整串匹配再按最后一个合法区间切分；`filter` 的 `-r/-R`
   谓词与索引 seek 由引擎一次解析，CLI 不再重复解析；`stats`/`popg` 的

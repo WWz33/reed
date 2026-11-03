@@ -2,7 +2,6 @@
 //! independent exact-binomial path, hand-computed projections, and the
 //! accumulator laws on the weighted bins.
 
-use reed_core::math::sum::NeumaierSum;
 use reed_stats::sfs::{ProjectedSfsAcc, ProjectionCache, projection_weights};
 
 /// Exact hypergeometric P(k | n, m, alt) via f64 lgamma-summed binomial
@@ -245,9 +244,4 @@ fn projected_tajima_on_known_spectrum() {
     excess.push_weighted(Some(&[(9, 10.0)]));
     let d_excess = excess.tajima_d(0).expect("invariant: variance > 0");
     assert!(d_excess < 0.0, "het excess: D={d_excess}");
-}
-
-#[allow(dead_code)]
-fn _neumaier_visible(n: NeumaierSum) -> NeumaierSum {
-    n
 }
