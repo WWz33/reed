@@ -149,6 +149,8 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 - 护栏：`pruned_header` 保序/短 keep、IUPAC 15 个子集全表、`pretty_sequence(n≠10)`
   固定回退、WcMulti r=3 半调用组对拍 allel 1.3.13、F2/F3/F4 拆分合并恒等、
   faer 1/4 线程与 fallback 逐值对拍。
+- 全量：`ci/test-parallel.sh` **931 passed / 0 failed**（56 二进制，15 s）；
+  clippy `-D warnings` 0 告警；doc-drift 97 ok。
 
 #### Changed
 - **convert（`--reference` 流式，V23-11）**：FASTA 改为 `BufReader` 逐行

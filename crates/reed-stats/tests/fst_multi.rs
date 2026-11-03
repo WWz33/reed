@@ -408,7 +408,7 @@ fn wc84_three_populations_accept_a_half_called_group() {
     assert!((b_sum.value() - rb).abs() < 1e-12);
     assert!((c_sum.value() - rc).abs() < 1e-12);
     assert!(
-        (acc.value().expect("invariant: sites") - (-0.70271714922049)).abs() < 1e-12,
+        (acc.value().expect("invariant: sites") - (-0.702_717_149_220_49)).abs() < 1e-12,
         "allel pooled Fst: {}",
         acc.value().expect("invariant: sites")
     );
