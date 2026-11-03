@@ -6,6 +6,9 @@
 >
 > 复核方式：本机 `reed 0.4.0`（debug 构建）+ `bcftools 1.24-2` +
 > `pixy 2.2.4`，最小 fixture 在 `/tmp/v22verify`；未改评审前的代码。
+>
+> 第二轮（GQ/u8 索引/整数哨兵/`--hist dp` AD-only）见
+> [03-review-pass2.md](03-review-pass2.md)，全部并入 v22，当前**待修**。
 
 ## 结论
 

@@ -106,6 +106,12 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `--set-gts .` + `-i/-e 'FMT/…'` | 与 `bcftools filter -S . -e EXPR` 相同；只接受 `.` | bcftools |
 | `--ploidy require-diploid\|allow-haploid` | 基因型倍性策略：默认 `require-diploid` 拒绝单倍体/多倍体调用；`allow-haploid` 把单倍体记为半调用（mtDNA、雄性 X、单倍体生物）。这是 spec `policy.ploidy` 的 CLI 入口（doc_v22） | reed 扩展 |
 
+整数字段（`DP`/`AD`/`GQ` 与通用 `FMT/<Integer>`）按 VCF Integer 语法解析
+（可选 `+`/`-`，doc_v22 V22-R2-5）。列以 `u32` 存储，htslib 的 `int32`
+域之外的值按 missing 处理；负数受限于无符号列，同样记为 missing（有符号
+列留后续轮）。`AD` 求和用 `u64` 累加并钳到 missing 哨兵前一位，不会溢出成
+缺失（V22-R2-2）。
+
 ### 3.4 位点级（掩码后，按基因型重算）
 
 | 参数 | 保留条件 | 分子 / 分母 |
@@ -346,6 +352,11 @@ iqual 索引）；超出累加器量程的整数观测写 `>max` 行且不进分
 header 声明对应字段且为 Integer/Float，否则用法错（§0.7）；空列表
 （`--hist ""`）同样是用法错。`--hist` 可单独使用（裸
 `reed stats` 仍是用法错，但给了 `--hist` 即为合法请求）。
+`dp` 是深度列而非字面 `FMT/DP`：header 有 `FORMAT/DP` 用 DP，否则用
+`FORMAT/AD` 之和（与 `--depth`/`--summary` 同口径，doc_v22 D22-1）；两者
+皆无才报错。深度消费者（`--depth`、`--summary`、`--hist dp`）与 `gq`/
+`dp-site` 的 header 类型校验共用 `validate_report_tags`：非 Integer 的
+`DP`/`AD`/`GQ`/`INFO/DP` 是用法错（exit 2），不再静默按缺失。
 
 另有 `--singletons`：逐等位（含 REF）输出 singleton（计数 1）与 private
 doubleton（计数 2 且有纯合携带者），列 `CHROM POS SINGLETON/DOUBLETON

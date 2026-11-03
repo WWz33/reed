@@ -62,6 +62,33 @@ are the stability promise (`docs/spec/cli.md` §0).
   `bcftools view -Ob` 生成的 `FORMAT=.` BCF 上，`reed filter -Ov` 的数据行
   与 `bcftools view` 逐字节相同。
 
+### Fixed — V22-R2 第二轮评审（字段解析、索引与 stats 消费）
+- **io/filter**：FORMAT 子字段索引从 `u8` 改为 `usize`（`IntLayout`、
+  `Layout::gt_index/float_indices`、`gt_subfield_index`、`line_edit` 的 GT
+  位置）。第 256 个及之后的 `GT`/`DP`/`GQ`/`AD` 原先被 `u8::try_from().ok()`
+  静默当作缺失，掩码与统计随之 no-op；`filtered.rs` 的重复 GT 位置实现
+  收敛到 `record_pipeline::gt_subfield_index`。
+- **io/stats**：整数 FORMAT 解析统一为 `info::parse_info_int`（可选 `+`/`-`）
+  再限制在 `0..=i32::MAX`：超出 i32、负数、非数字均记 missing，与 htslib
+  对文本整数的处理一致；不再出现"饱和到 `u32::MAX` 恰好等于缺失哨兵"或
+  `5000000000` 变成有效值的情况。`parse_int_sum` 与 BCF `int_sum_column`
+  用 `u64` 累加并以 `clamp_int_sum` 钳到 `INT_MISSING-1`，AD 向量求和不会
+  撞哨兵。`--hist` 的整数 token 与 `--summary` 的 INFO/DP 共用同一解析器，
+  `+50` 在 filter/stats 两条路径同值。
+- **stats**：`reports::validate_report_tags` 在 `run_stats_opened` 入口校验
+  头部类型：深度消费者（`--depth`、`--summary`、`--hist dp`）需要 Integer
+  `FORMAT/DP`（无 DP 时 Integer `FORMAT/AD`），`--hist gq` 需要 Integer
+  `FORMAT/GQ`，`--hist dp-site` 需要 Integer `INFO/DP`；非 Integer 报 usage
+  （exit 2）而不是静默按缺失。
+- **cli**：`--hist dp` 的 header gate 接受 `FORMAT/DP` 或 `FORMAT/AD`
+  （AD-only callset 不再被 CLI 拒绝，与 `--summary`/`--depth` 的深度口径
+  一致）。
+- **test**：新增 257-key 布局/扫描/GT 掩码测试、整数边界（`i32::MAX`、
+  `i32::MAX+1`、`u32::MAX`、三个最大值求和、`+50`、负数）测试、文本/BCF
+  边界对拍、`--hist dp` AD-only 与 Float DP/AD/GQ 的 CLI 契约测试；
+  `parse_float` 的 `inf`/`nan` 语义（htslib `strtod` 兼容）由测试固化。
+  Float NaN 哨兵与有符号整数列留后续轮（设计选项见 `03-review-pass2.md`）。
+
 ### Changed — 测试速度与最小夹具
 - `crates/reed-io/tests/bcf_vs_noodles.rs`：本地差分改用工作区上级目录的
   `subvcf.bcf`（3,000 记录 × 348 样本，8.6 MB；`REED_SUBVCF_BCF` 可覆盖，
@@ -79,8 +106,8 @@ are the stability promise (`docs/spec/cli.md` §0).
   `lib.sh` 默认输入改为 `subvcf.vcf.gz/.bcf`。
 
 ### 验收
-- `cargo test --workspace`：860 个测试通过、0 失败；`cargo clippy --workspace
-  --all-targets`：0 告警；`ci/test-parallel.sh`：860 passed / 0 failed（56 个
+- `cargo test --workspace`：867 个测试通过、0 失败；`cargo clippy --workspace
+  --all-targets`：0 告警；`ci/test-parallel.sh`：867 passed / 0 failed（56 个
   测试二进制，run 阶段 15 s；doctest 由 `--doc` 单独跑）；
   `ci/check-doc-drift.sh`：97 项全部 ok；`cargo doc -p reed-io --no-deps`：
   0 warning。
@@ -90,6 +117,8 @@ are the stability promise (`docs/spec/cli.md` §0).
 - `bcftools view -G` 的 sites-only 文件：`filter -Oz/-Ob`、`index`、`stats
   --freq/--summary` 全部通过，输出 8 列；`GT` 为单倍体的文件在
   `--ploidy allow-haploid` 下与 `bcftools view` 输出一致。
+- 真实 `subvcf.vcf.gz`：`stats --summary --hist dp --depth` 的 DP/PSC/GDB
+  与 `bcftools stats -s -` 逐行相同；`.dp.hist` 最小箱为 3（无 0 深度箱）。
 
 ## [Unreleased] — doc_v21 真实数据复审 + 修复（2026-10-28）
 

@@ -54,7 +54,7 @@
 | **R22-4** | 文本/BCF 编解码一致性 | proptest：随机记录（AD 宽度、`.`、短向量、DP 有无）→ BCF（native 编码）→ 原生列解码 == 渲染为文本后 `GenotypeScanner` 解码 | 差异 0；覆盖 DP/AD、GQ、PL 无关注 |
 | **R22-5** | 头部事实 | 复核结论：`reed-io/src/header.rs:52` 已是 `TagTable` 的唯一构造点（noodles Header → TagTable），无需新抽象；在代码/文档中写清"解析→声明→编译"三段，避免误以为三份实现 | 文档；无代码改动 |
 | R22-6 | 错误上下文（可选） | `MalformedRecord` 增加 FORMAT key / 样本号的结构化字段 | 暂缓，按需 |
-| **R22-7** | 测试速度与并行 | ① `bcf_vs_noodles` 改用工作区上级目录的本地子集 `subvcf.bcf`（3000 记录 × 348 样本，8.6 MB；`REED_SUBVCF_BCF` 可覆盖，缺失时跳过），并改流式解压 + noodles 惰性 `Record`：单测 ~400 s → 4.5 s；② `reed-graph` 的深树测试改直接构造 caterpillar（原 2000×2000 UPGMA 占 23.5 s → 0.01 s）；③ 新增 `ci/test-parallel.sh`：build 一次后按测试二进制用 `xargs`/线程池并发（libtest 的并行只在单二进制内），整库 run 阶段 50 s → 15 s；④ 新增 `gold/scripts/run_parallel.py`，gold 对拍脚本的独立 case 可并发（`run_bcftools_af.sh` 40 case：顺序 ~40 s → 5.8 s 墙钟 / 40 s CPU）；⑤ gold 脚本默认输入改为 `subvcf.vcf.gz/.bcf`，全量 `clean.*` 只在显式 `INPUT=`/参数时使用 | `ci/test-parallel.sh`：当前 860 passed / 0 failed；`run_bcftools_af.sh` 40/40 PASS on subvcf |
+| **R22-7** | 测试速度与并行 | ① `bcf_vs_noodles` 改用工作区上级目录的本地子集 `subvcf.bcf`（3000 记录 × 348 样本，8.6 MB；`REED_SUBVCF_BCF` 可覆盖，缺失时跳过），并改流式解压 + noodles 惰性 `Record`：单测 ~400 s → 4.5 s；② `reed-graph` 的深树测试改直接构造 caterpillar（原 2000×2000 UPGMA 占 23.5 s → 0.01 s）；③ 新增 `ci/test-parallel.sh`：build 一次后按测试二进制用 `xargs`/线程池并发（libtest 的并行只在单二进制内），整库 run 阶段 50 s → 15 s；④ 新增 `gold/scripts/run_parallel.py`，gold 对拍脚本的独立 case 可并发（`run_bcftools_af.sh` 40 case：顺序 ~40 s → 5.8 s 墙钟 / 40 s CPU）；⑤ gold 脚本默认输入改为 `subvcf.vcf.gz/.bcf`，全量 `clean.*` 只在显式 `INPUT=`/参数时使用 | `ci/test-parallel.sh`：当前 867 passed / 0 failed；`run_bcftools_af.sh` 40/40 PASS on subvcf |
 
 ## 进度（2026-11-03）
 
@@ -67,6 +67,31 @@
 | R22-4 编解码一致性 proptest | **完成** | `crates/reed-io/tests/format_columns_vs_bcf.rs`：500 个随机 FORMAT/AD/DP 记录，native 列解码 == 原文扫描 == 渲染文本扫描 |
 | R22-5 头部事实 | 完成（文档） | 复核后确认 `header.rs` 已是单点，无需改动 |
 | R22-6 错误上下文 | 暂缓 | 可选，按需 |
+
+## V22-R2 第二轮评审（2026-11-03，A–D 批完成）
+
+明细见 [03-review-pass2.md](03-review-pass2.md)，逐项修复与测试名见
+[STATUS.md](STATUS.md)。全部并入 v22 范围：
+
+| 批次 | 项 | 优先级 | 状态 |
+|---|---|---|---|
+| V22-R2-A | `--hist dp` 放行 AD-only header；stats 深度/GQ 类型校验（R2-4、R2-6） | P0 | 完成（`validate_report_tags` + CLI gate/测试） |
+| V22-R2-B | 整数解析收口：i32 边界、可选 `+`、求和防哨兵、单一解析器（R2-2、R2-5） | P0 | 完成（`parse_info_int` → `parse_int`，`clamp_int_sum`） |
+| V22-R2-C | 子字段索引 `u8` 溢出（含 GT 编辑两处，R2-1） | P1 | 完成（全链路 `usize`，GT 位置实现收敛为一处） |
+| V22-R2-D | `inf`/`nan` 行为文档化（R2-3）；Float NaN 哨兵设计选项（R2-7） | P2 | R2-3 完成；R2-7 只记录选项 |
+| V22-R2-E | 负数/有符号 FORMAT Integer 的列表示（R2-8） | 后续轮 | 未开始（已记录设计约束） |
+
+“GQ 列缺失跳过全部位点”经复核对普通缺失不成立（R2-9），由测试固化。
+
+R2-7 的设计选项（后续轮）：A. 浮点列改 `Option<f32>`（文本/BCF 一致，
+每值 +4 字节）；B. 用 BCF 的 missing/vector-end 位型做列内哨兵（保持 4
+字节，但文本 `nan` 与缺失仍不可分，且需在渲染处特判）；C. 维持现状并在
+文档声明。当前 A/B 都会触及 columns/expr/hist/BCF 渲染，单开一轮。
+
+R2-8 的设计约束：整数列从 `u32` 改为 `i32`/`i64` 会同时影响掩码比较、
+表达式求值与直方图；在此之前负数按 missing（与 htslib 对负 FORMAT
+Integer 的保留行为有分歧，已写入 `parse_int` 文档）。
+
 
 ## 不做
 

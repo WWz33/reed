@@ -8,8 +8,10 @@
 > 并在真实 `raw.bsa.vcf.gz` 与真实 `subvcf.vcf.gz` 上回归。
 >
 > 本目录：README（结论与决策）、[01-review.md](01-review.md)（逐条复现与证据）、
+> [02-review.md](02-review.md)（第一轮并行评审与修复）、
+> [03-review-pass2.md](03-review-pass2.md)（第二轮字段解析/索引评审与修复）、
 > [STATUS.md](STATUS.md)（修复表与测试名）、[06-roadmap.md](06-roadmap.md)
-> （架构收口决策 D22-1 与 R22 收口记录）。
+> （架构收口决策 D22-1、R22 收口记录与 V22-R2 修复记录）。
 
 ## 结论速览
 

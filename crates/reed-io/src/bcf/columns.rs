@@ -20,7 +20,7 @@ use super::record::{
 };
 use crate::error::IoError;
 use crate::vcf::format_layout::IntSpec;
-use crate::vcf::genotype_scan::INT_MISSING;
+use crate::vcf::genotype_scan::{INT_MISSING, clamp_int_sum};
 
 /// Decodes the requested FORMAT columns for every sample without rendering
 /// them (doc_v4 O-4): the typed values feed the filter's mask stage directly.
@@ -117,10 +117,13 @@ pub fn decode_format_columns(
 /// One sample's integer vector summed the way the text scanner's
 /// `parse_int_sum` reads it: missing elements are skipped, vector-end
 /// truncates, and a sample with no value at all is [`INT_MISSING`].
+///
+/// The accumulator is `u64` and clamped like the text path, so a vector of
+/// large elements cannot overflow into [`INT_MISSING`] (V22-R2-2).
 fn int_sum_column(ty: u8, count: usize, data: &[u8]) -> u32 {
     let width = type_width(ty);
     let (missing, vector_end) = int_sentinels(ty);
-    let mut sum = 0_u32;
+    let mut sum = 0_u64;
     let mut any = false;
     for j in 0..count {
         let v = int_element(ty, &data[j * width..(j + 1) * width]);
@@ -130,10 +133,14 @@ fn int_sum_column(ty: u8, count: usize, data: &[u8]) -> u32 {
         if v == missing || v < 0 {
             continue;
         }
-        sum = sum.saturating_add(u32::try_from(v).unwrap_or(u32::MAX));
+        sum = sum.saturating_add(u64::try_from(v).unwrap_or(u64::MAX));
         any = true;
     }
-    if any { sum } else { INT_MISSING }
+    if any {
+        clamp_int_sum(sum)
+    } else {
+        INT_MISSING
+    }
 }
 
 /// One integer FORMAT element as the text scanner would parse it.

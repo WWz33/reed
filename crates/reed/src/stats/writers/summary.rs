@@ -430,11 +430,13 @@ impl QcJob {
             for (tag, value) in info_fragments(info) {
                 if tag == b"DP"
                     && let Some(v) = value
-                    && let Some(dp) = std::str::from_utf8(v)
-                        .ok()
-                        .and_then(|t| t.parse::<u32>().ok())
                 {
-                    acc.dp_sites.push(dp);
+                    // The same strict integer parser as the FORMAT columns
+                    // (V22-R2-5); INFO/DP is `i32` in htslib too.
+                    let dp = reed_io::vcf::genotype_scan::parse_int(v);
+                    if dp != INT_MISSING {
+                        acc.dp_sites.push(dp);
+                    }
                 }
             }
         }

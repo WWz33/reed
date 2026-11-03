@@ -1237,3 +1237,117 @@ fn v22_cli_min_dp_falls_back_to_ad() {
     assert_eq!(rows[1].rsplit('\t').next(), Some("0/1:10,20"), "{}", rows[1]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// V22-R2-4/R2-6: `--hist dp` accepts an AD-only header through the CLI
+/// gate (it used to demand FORMAT/DP even though the engine has the AD
+/// fallback), and the depth/GQ consumers reject non-Integer tags with the
+/// usage exit instead of silently treating every value as missing.
+#[test]
+fn v22_r2_hist_dp_ad_only_and_stats_type_checks() {
+    let dir = temp_dir("v22-r2-hist");
+    let ad_only = dir.join("ad_only.vcf.gz");
+    write_bgzf(
+        &ad_only,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"a\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:10,20\t0/1:5,5\n\
+         chr1\t20\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/0:0,0\t0/1:.\n",
+    );
+    let prefix = dir.join("ad");
+    let out = run(&[
+        "stats",
+        ad_only.to_str().expect("invariant: utf8"),
+        "--hist",
+        "dp",
+        "-o",
+        prefix.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        out.status.success(),
+        "the AD fallback must satisfy the --hist dp gate: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let hist = std::fs::read_to_string(format!("{}.dp.hist", prefix.display()))
+        .expect("invariant: the dp histogram exists");
+    assert!(hist.contains("10\t10\t1\t"), "{hist}");
+    assert!(hist.contains("30\t30\t1\t"), "{hist}");
+    assert!(!hist.lines().any(|line| line.starts_with("0\t0\t")), "{hist}");
+
+    // Float depth/GQ tags are rejected by type, not silently decoded as
+    // missing. The three fixtures differ only in the offending tag.
+    let float_dp = dir.join("float_dp.vcf.gz");
+    write_bgzf(
+        &float_dp,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=DP,Number=1,Type=Float,Description=\"d\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:9.5\n",
+    );
+    let float_ad = dir.join("float_ad.vcf.gz");
+    write_bgzf(
+        &float_ad,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=AD,Number=R,Type=Float,Description=\"a\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:AD\t0/1:9.5,0.5\n",
+    );
+    let float_gq = dir.join("float_gq.vcf.gz");
+    write_bgzf(
+        &float_gq,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         ##FORMAT=<ID=GQ,Number=1,Type=Float,Description=\"q\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:GQ\t0/1:9.5\n",
+    );
+    let cases: [(&str, &std::path::Path, &[&str], &str); 3] = [
+        ("float-dp", &float_dp, &["--depth"], "DP is Float"),
+        ("float-ad", &float_ad, &["--hist", "dp"], "AD is Float"),
+        ("float-gq", &float_gq, &["--hist", "gq"], "GQ is Float"),
+    ];
+    for (tag, vcf, report, expected) in cases {
+        let prefix = dir.join(tag);
+        let mut args = vec![
+            "stats",
+            vcf.to_str().expect("invariant: utf8"),
+            report[0],
+        ];
+        args.extend(&report[1..]);
+        args.extend(["-o", prefix.to_str().expect("invariant: utf8")]);
+        let out = run(&args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{tag}: a non-Integer depth/GQ tag is a usage error: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(expected), "{tag}: {stderr}");
+    }
+    // `--summary` shares the depth type check with `--depth`.
+    let prefix = dir.join("float-summary");
+    let out = run(&[
+        "stats",
+        float_dp.to_str().expect("invariant: utf8"),
+        "--summary",
+        "-o",
+        prefix.to_str().expect("invariant: utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("DP is Float"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

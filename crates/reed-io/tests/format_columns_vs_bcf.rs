@@ -214,3 +214,29 @@ proptest! {
         );
     }
 }
+
+/// V22-R2-2: the text and native paths agree at the `i32` boundaries that
+/// used to saturate or collide with the missing sentinel.
+#[test]
+fn boundary_ints_match_text_and_native() {
+    let record = "chr1\t1\t.\tA\tG\t.\tPASS\t.\tGT:DP:AD:GQ\
+                  \t0/1:2147483647:2147483647,2147483647,2147483647:2147483647\
+                  \t0/1:2147483648:2147483647,2147483648,-5:5000000000\
+                  \t0/1:+50:+5,+0:0007\n";
+    let specs = specs();
+    let (native, rendered) = encode_and_decode(record.as_bytes(), &specs);
+    let from_original = scan_columns(record.as_bytes(), &specs);
+    let from_rendered = scan_columns(&rendered, &specs);
+    assert_eq!(native, from_original, "text scan of the source");
+    assert_eq!(native, from_rendered, "text scan of the rendered BCF");
+    // depth (DP present, so no AD fallback) / strict DP / GQ.
+    assert_eq!(
+        native[0],
+        vec![2_147_483_647, reed_io::vcf::genotype_scan::INT_MISSING, 50]
+    );
+    assert_eq!(native[1], native[0]);
+    assert_eq!(
+        native[2],
+        vec![2_147_483_647, reed_io::vcf::genotype_scan::INT_MISSING, 7]
+    );
+}

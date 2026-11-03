@@ -35,7 +35,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| `ci/test-parallel.sh`（全量工作区） | exit 0；860 passed / 0 failed（56 个测试二进制，15 s 墙钟） |
+| `ci/test-parallel.sh`（全量工作区） | exit 0；867 passed / 0 failed（56 个测试二进制，15 s 墙钟；V22-R2 新增 7 项） |
 | `cargo clippy --workspace --all-targets` | 0 告警 |
 | `ci/check-doc-drift.sh` | exit 0；97 项全部 ok（编码器改名后的路径已同步） |
 | `cargo doc -p reed-io --no-deps` | 0 warning（`super::encode_noodles` 断链已修） |
@@ -82,6 +82,34 @@
 | V22-R17 | cli test | v22 CLI 测试断言 haploid/trailing 的实际行内容与列数 | `v22_accepts_sites_only_haploid_and_trailing_tabs` |
 | V22-R18 | docs | `e2e_stats` “9 required” → 8；测试计数 860；`encode_native` 断链修复 | `cargo doc -p reed-io --no-deps` 0 warning |
 | #2 | — | `.gitignore`/提交项按要求跳过 | 提交时对新文件 `git add -f` |
+
+## V22-R2 第二轮评审修复（2026-11-03，完成）
+
+明细与复现证据见 [03-review-pass2.md](03-review-pass2.md)。按 A–D 批完成；
+E 批（有符号整数列）按设计留到后续轮。
+
+| ID | 层 | 修复 | 测试 / 验证 |
+|---|---|---|---|
+| V22-R2-1 | io/filter | `IntLayout.index/fallback_index`、`Layout.gt_index/float_indices`、`gt_subfield_index` 全部 `u8` → `usize`；`filtered.rs` 的重复实现改为复用 `record_pipeline::gt_subfield_index`（`pub(crate)`）；`line_edit` 的 GT 位置同改 | `vcf::format_layout::tests::keys_past_index_255_keep_their_position`；`vcf::genotype_scan::tests::keys_past_index_255_decode`（GQ@256、AD@257、GT@258）；`vcf::line_edit::tests::sample_pruning_and_gt_masking`（GT@256 输出 `./.`） |
+| V22-R2-2 | io/bcf/stats | 整数文本解析收敛到 `info::parse_info_int`（可选 `+`/`-`）再限 `0..=i32::MAX`：超出/负数 → `INT_MISSING`（htslib 口径）；`parse_int_sum`/BCF `int_sum_column` 用 `u64` 累加并 `clamp_int_sum` 到 `INT_MISSING-1` | `genotype_scan::tests::{parse_int_uses_the_htslib_i32_domain,int_sum_never_collides_with_the_missing_sentinel}`；`format_columns_vs_bcf::boundary_ints_match_text_and_native`（`i32::MAX`、`i32::MAX+1`、三个最大值求和、`+50`、负数/超范围分量） |
+| V22-R2-3 | io | `parse_float` 的 `inf`/`nan` 语义为 htslib `strtod` 兼容，文档固化；R2-7 的 NaN 哨兵设计选项记录在 03 §8 | `genotype_scan::tests::parse_float_accepts_htslib_inf_and_nan`（含 `parse_int(b"inf") == INT_MISSING`，GQ 是 Integer） |
+| V22-R2-4 | cli/stats | `--hist dp` 的 header gate 接受 `FORMAT/DP` 或 `FORMAT/AD`（二者皆无才报 usage）；类型由 `validate_report_tags` 统一校验 | CLI `v22_r2_hist_dp_ad_only_and_stats_type_checks`（AD-only 出 `10/30` 两箱、无 0 箱） |
+| V22-R2-5 | filter/stats | `--hist` 的 `parse_int_token` 改为调用扫描器同一个 `parse_int`；INFO/DP（`--summary` 的 `dp_sites`）同改。`+50` 两条路径同值，超 `i32` 两边都 missing | 上述 parser 测试 + `boundary_ints_match_text_and_native` |
+| V22-R2-6 | stats | `reports::validate_report_tags` 在 `run_stats_opened` 入口校验：深度消费者需 Integer `DP`（无 DP 时 Integer `AD`），`--hist gq` 需 Integer `GQ`，`--hist dp-site` 需 Integer `INFO/DP`；非 Integer → usage（exit 2）。`--summary/--depth` 在两者皆无时仍允许（深度段为空） | CLI `v22_r2_hist_dp_ad_only_and_stats_type_checks` 的 Float DP/AD/GQ 三 case（含 `--summary`） |
+| V22-R2-7 | — | 设计选项记录（03 §8）：`Option<f32>` 列 vs BCF 位型 vs 维持 NaN 哨兵；本轮不改，文本/BCF 两条路径已一致地无法区分 | 文档；`parse_float` 的 doc 注释 |
+| V22-R2-8 | — | 负数/有符号整数列留到后续轮；当前负数按 missing（与 `u32` 列一致），已在 parser 文档与测试声明 | 文档；`parse_int` 负数用例 |
+| V22-R2-9 | test | 三形态（无 header / 部分记录 / 全部记录无 GQ）经复核不是 bug；既有 `e2e` 行为由本轮 CLI 类型校验补强 | 见 03 §1；GQ Float 的 usage 用例 |
+
+### 验收记录（V22-R2）
+
+| 检查 | 结果 |
+|---|---|
+| `ci/test-parallel.sh`（全量工作区） | exit 0；867 passed / 0 failed（56 个测试二进制，15 s 墙钟） |
+| `cargo clippy --workspace --all-targets` | 0 告警 |
+| `ci/check-doc-drift.sh` | exit 0；全部 ok |
+| `cargo doc -p reed-io --no-deps` | 0 warning |
+| 真实 `subvcf.vcf.gz` `--summary --hist dp --depth` | DP/PSC/GDB 与 `bcftools stats -s -` 逐行相同；`.dp.hist` 最小箱 3（无 0 深度箱） |
+
 
 ## 未做 / 残余
 

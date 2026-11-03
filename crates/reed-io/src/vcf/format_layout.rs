@@ -64,23 +64,28 @@ impl IntSpec {
 }
 
 /// One integer column's resolved subfield positions in a record's FORMAT.
+///
+/// The index is a `usize`: FORMAT keys are counted, not stored, and an
+/// artificial `u8` ceiling silently turned every key past the 256th into
+/// "absent" (V22-R2-1). htslib rejects FORMAT columns with more than 255
+/// keys at the text parser; reed accepts them and reads the real position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IntLayout {
     /// Index of the primary key (`None` = absent from this FORMAT).
-    pub index: Option<u8>,
+    pub index: Option<usize>,
     /// Index of the fallback key (`None` = absent or no fallback declared).
-    pub fallback_index: Option<u8>,
+    pub fallback_index: Option<usize>,
 }
 
 /// Subfield layout of one FORMAT string.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     /// Index of `GT` among the colon-separated keys (`None` when absent).
-    pub gt_index: Option<u8>,
+    pub gt_index: Option<usize>,
     /// One entry per planned integer column.
     pub ints: Vec<IntLayout>,
     /// Index of each requested float key.
-    pub float_indices: Vec<Option<u8>>,
+    pub float_indices: Vec<Option<usize>>,
     /// One past the highest subfield index a consumer reads (0 = none): the
     /// scanner stops splitting subfields there and skips to the next tab.
     pub last_needed: usize,
@@ -151,11 +156,7 @@ impl FormatLayoutCache {
             self.index.clear();
         }
         let keys: Vec<&[u8]> = format.split(|&b| b == b':').collect();
-        let index_of = |key: &[u8]| -> Option<u8> {
-            keys.iter()
-                .position(|k| *k == key)
-                .and_then(|i| u8::try_from(i).ok())
-        };
+        let index_of = |key: &[u8]| -> Option<usize> { keys.iter().position(|k| *k == key) };
         let gt_index = index_of(b"GT");
         let ints: Vec<IntLayout> = self
             .int_specs
@@ -165,7 +166,8 @@ impl FormatLayoutCache {
                 fallback_index: s.fallback.as_deref().and_then(index_of),
             })
             .collect();
-        let float_indices: Vec<Option<u8>> = self.float_keys.iter().map(|k| index_of(k)).collect();
+        let float_indices: Vec<Option<usize>> =
+            self.float_keys.iter().map(|k| index_of(k)).collect();
         let last_needed = gt_index
             .into_iter()
             .chain(
@@ -174,7 +176,7 @@ impl FormatLayoutCache {
                     .flatten(),
             )
             .chain(float_indices.iter().copied().flatten())
-            .map(|i| usize::from(i) + 1)
+            .map(|i| i + 1)
             .max()
             .unwrap_or(0);
         let ix = self.layouts.len();
@@ -270,5 +272,34 @@ mod tests {
         let ix = cache.intern(b"DP:GQ");
         assert_eq!(cache.get(ix).gt_index, None);
         assert_eq!(cache.get(ix).last_needed, 0);
+    }
+
+    /// V22-R2-1: key positions are unbounded. A `u8` conversion used to
+    /// return `None` for the 256th key, making GT/GQ/DP/AD silently absent.
+    #[test]
+    fn keys_past_index_255_keep_their_position() {
+        use std::fmt::Write as _;
+        let mut filler = String::new();
+        for i in 0..256 {
+            let _ = write!(filler, "K{i}:");
+        }
+        // GQ at position 256 (0-based), GT at 257.
+        let format = format!("{filler}GQ:GT");
+        let mut cache = FormatLayoutCache::new_with_specs(
+            &[IntSpec::scalar(b"DP"), IntSpec::depth(), IntSpec::scalar(b"GQ")],
+            &[b"AB"],
+        );
+        let ix = cache.intern(format.as_bytes());
+        let layout = cache.get(ix);
+        assert_eq!(layout.ints[0].index, None, "DP is absent");
+        assert_eq!(layout.ints[1].index, None, "primary is absent");
+        assert_eq!(
+            layout.ints[1].fallback_index, None,
+            "AD is absent, not the 256th key"
+        );
+        assert_eq!(layout.ints[2].index, Some(256));
+        assert_eq!(layout.gt_index, Some(257));
+        assert_eq!(layout.float_indices, vec![None]);
+        assert_eq!(layout.last_needed, 258);
     }
 }

@@ -93,6 +93,103 @@ impl StatsReportRequest {
     }
 }
 
+/// Validates the header types the requested reports read (V22-R2-6).
+///
+/// The filter already types-checks its depth mask at compile time (V22-R7);
+/// the reports used to accept a Float `DP`/`AD`/`GQ` and silently treat
+/// every value as missing. The policies now match the readers:
+///
+/// - depth consumers (`--depth`, `--summary`'s DP/PSC sections, `--hist dp`)
+///   need an Integer `FORMAT/DP`, or an Integer `FORMAT/AD` when the header
+///   declares no DP. `--hist dp` additionally requires one of them
+///   (otherwise it would write an empty histogram);
+/// - `--hist gq` needs an Integer `FORMAT/GQ`;
+/// - `--hist dp-site` needs an Integer `INFO/DP`.
+///
+/// `--summary`/`--depth` without either depth tag stay accepted: the depth
+/// sections are simply empty, as vcftools/bcftools report for such a
+/// callset.
+///
+/// # Errors
+///
+/// A usage error naming the tag and its declared type.
+pub fn validate_report_tags(
+    request: &StatsReportRequest,
+    tags: &reed_core::tag_table::TagTable,
+) -> Result<(), crate::error::Error> {
+    use reed_core::tag_table::TagType;
+    use crate::error::Error;
+    let text = |ty: TagType| format!("{ty:?}");
+    let needs_depth = request.depth || request.summary;
+    let hist_dp = request
+        .hist
+        .iter()
+        .any(crate::stats::writers::histogram::HistMetric::needs_dp);
+    if needs_depth || hist_dp {
+        match tags.format("DP") {
+            Some(def) if def.ty != TagType::Integer => {
+                return Err(Error::usage(format!(
+                    "FORMAT field DP is {}; depth reports need an Integer DP (or an Integer AD \
+                     fallback)",
+                    text(def.ty)
+                )));
+            }
+            Some(_) => {}
+            None => {
+                if let Some(def) = tags.format("AD")
+                    && def.ty != TagType::Integer
+                {
+                    return Err(Error::usage(format!(
+                        "FORMAT field DP is not declared and FORMAT/AD is {}; the depth fallback \
+                         needs Integer AD",
+                        text(def.ty)
+                    )));
+                }
+                if hist_dp && tags.format("AD").is_none() {
+                    return Err(Error::usage(
+                        "--hist \"dp\": the header declares no Integer FORMAT/DP or FORMAT/AD",
+                    ));
+                }
+            }
+        }
+    }
+    for metric in &request.hist {
+        match metric {
+            crate::stats::writers::histogram::HistMetric::Gq => match tags.format("GQ") {
+                Some(def) if def.ty != TagType::Integer => {
+                    return Err(Error::usage(format!(
+                        "--hist \"gq\": FORMAT/GQ is {}; the GQ histogram needs an Integer GQ",
+                        text(def.ty)
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    return Err(Error::usage(
+                        "--hist \"gq\": the header declares no FORMAT/GQ",
+                    ));
+                }
+            },
+            crate::stats::writers::histogram::HistMetric::DpSite => match tags.info("DP") {
+                Some(def) if def.ty != TagType::Integer => {
+                    return Err(Error::usage(format!(
+                        "--hist \"dp-site\": INFO/DP is {}; the site-depth histogram needs an \
+                         Integer DP",
+                        text(def.ty)
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    return Err(Error::usage(
+                        "--hist \"dp-site\": the header declares no INFO/DP",
+                    ));
+                }
+            },
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Files written and records seen.
 #[derive(Clone, Debug)]
 pub struct StatsOutcome {
@@ -1118,11 +1215,13 @@ fn alt_at(alts: &[u8], index: usize) -> &[u8] {
     alts.split(|&b| b == b',').nth(index).unwrap_or(alts)
 }
 
-/// One `--hist` integer token: `.` and unparsable text are missing.
+/// One `--hist` integer token, using the same parser as the filter's
+/// integer columns (V22-R2-5): optional `+`/`-`, `.`/unparsable/negative/
+/// outside-`i32` is missing. The old `str::parse::<u32>` accepted `+50` but
+/// kept values above `i32::MAX`, diverging from the scanner.
 fn parse_int_token(token: &[u8]) -> Option<u32> {
-    std::str::from_utf8(token)
-        .ok()
-        .and_then(|t| t.trim().parse::<u32>().ok())
+    let value = reed_io::vcf::genotype_scan::parse_int(token);
+    (value != INT_MISSING).then_some(value)
 }
 
 /// One `--hist` float token: `.`, non-finite text (`NaN`, `inf`) and
@@ -1242,6 +1341,9 @@ pub fn run_stats_opened(
     budget: &ThreadBudget,
 ) -> Result<StatsOutcome, crate::error::Error> {
     let n_samples = opened.facts.n_samples();
+    // Header types are a request property, checked before the first record
+    // (V22-R2-6): a Float depth/GQ tag used to decode as all-missing.
+    validate_report_tags(request, &reed_io::header::tag_table(&opened.facts.header))?;
     // `--pop` (doc_v14 02 §2.2): resolve the assignment against the header
     // before the run; `None` keeps the whole-cohort behavior. An empty group
     // set (every row skipped) is a usage error — the stratified files would
