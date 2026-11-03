@@ -60,10 +60,10 @@ fn malformed_line(line: &[u8], reason: &'static str) -> EngineError {
 
 #[derive(Default)]
 pub(crate) struct PcaScratch {
-    /// Per-sample GT token of the current record.
-    gt: Vec<Option<u32>>,
-    /// Allele count of the current record's ALT field.
-    n_alt: usize,
+    /// Per-sample dosages of the current record, reused across records
+    /// (doc_v24 V24-07). The old `gt`/`n_alt` fields were written but never
+    /// read.
+    values: Vec<f64>,
 }
 
 pub(crate) struct PcaJob {
@@ -153,12 +153,10 @@ impl ChunkJob for PcaJob {
             if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
                 continue;
             }
-            scratch.n_alt = n_alt;
-
             let samples = lr.samples_text();
-            scratch.gt.clear();
             let mut start = 0usize;
-            let mut values = Vec::with_capacity(self.n_samples);
+            scratch.values.clear();
+            scratch.values.reserve(self.n_samples);
             for i in 0..self.n_samples {
                 let begin = start.min(samples.len());
                 let end = samples[begin..]
@@ -173,15 +171,15 @@ impl ChunkJob for PcaJob {
                 // The GT is the first colon-separated field.
                 let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
                 let raw = &column[..colon];
-                values.push(PcaJob::dosage(raw, n_alt).unwrap_or(f64::NAN));
+                scratch.values.push(PcaJob::dosage(raw, n_alt).unwrap_or(f64::NAN));
             }
-            if values.is_empty() {
+            if scratch.values.is_empty() {
                 continue;
             }
             // Skip sites with no variation at all: they contribute nothing and
             // would make the standardization degenerate.
             let mut any_alt = false;
-            for v in &values {
+            for v in &scratch.values {
                 if !v.is_nan() && *v > 0.0 {
                     any_alt = true;
                     break;
@@ -191,7 +189,7 @@ impl ChunkJob for PcaJob {
                 continue;
             }
             out.n_sites += 1;
-            out.dosages.extend_from_slice(&values);
+            out.dosages.extend_from_slice(&scratch.values);
         }
         Ok(out)
     }
@@ -231,10 +229,10 @@ impl ChunkJob for PcaJob {
         if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
             return Ok(out);
         }
-        scratch.n_alt = n_alt;
         let samples = lr.samples_text();
         let mut start = 0usize;
-        let mut values = Vec::with_capacity(self.n_samples);
+        scratch.values.clear();
+        scratch.values.reserve(self.n_samples);
         for i in 0..self.n_samples {
             let begin = start.min(samples.len());
             let end = samples[begin..]
@@ -247,20 +245,20 @@ impl ChunkJob for PcaJob {
             }
             let column = &samples[begin..end];
             let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
-            values.push(PcaJob::dosage(&column[..colon], n_alt).unwrap_or(f64::NAN));
+            scratch.values.push(PcaJob::dosage(&column[..colon], n_alt).unwrap_or(f64::NAN));
         }
         let mut any_alt = false;
-        for v in &values {
+        for v in &scratch.values {
             if !v.is_nan() && *v > 0.0 {
                 any_alt = true;
                 break;
             }
         }
-        if values.is_empty() || !any_alt {
+        if scratch.values.is_empty() || !any_alt {
             return Ok(out);
         }
         out.n_sites += 1;
-        out.dosages.extend_from_slice(&values);
+        out.dosages.extend_from_slice(&scratch.values);
         Ok(out)
     }
 }

@@ -329,7 +329,7 @@ pub fn run_dapc_opened(
     };
 
     // Re-slice the scores to the selected component count.
-    let mut scores = if n_pca < scores.cols {
+    let scores = if n_pca < scores.cols {
         let mut s = Mat::zeros(n_samples, n_pca);
         for i in 0..n_samples {
             for c in 0..n_pca {
@@ -340,7 +340,6 @@ pub fn run_dapc_opened(
     } else {
         scores
     };
-    let _ = &mut scores;
 
     let model = lda::fit(&scores, &groups, &levels, 1e-30).map_err(map_lda_err)?;
     // `adegenet` keeps only the axes whose squared singular value exceeds

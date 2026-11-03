@@ -55,6 +55,7 @@ impl ChunkJob for EmitJob {
         })?;
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         let stale = self.stale_refs();
+        let auto = self.auto_refs();
         let mut record = 0_usize;
         let mut site = 0_usize;
         for line in body.split(|&b| b == b'\n') {
@@ -74,7 +75,7 @@ impl ChunkJob for EmitJob {
             let Some(emit) = dec.survivors.get(s).and_then(|e| e.as_ref()) else {
                 continue;
             };
-            self.emit_line(line, emit, scratch, &stale)?;
+            self.emit_line(line, emit, scratch, &stale, &auto)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
@@ -98,7 +99,8 @@ impl ChunkJob for EmitJob {
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         if let Some(emit) = emitted {
             let stale = self.stale_refs();
-            self.emit_line(line, &emit, scratch, &stale)?;
+            let auto = self.auto_refs();
+            self.emit_line(line, &emit, scratch, &stale, &auto)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
@@ -113,6 +115,11 @@ impl EmitJob {
     /// by the callers (A6-15).
     fn stale_refs(&self) -> Vec<&[u8]> {
         self.plan.stale_tags.iter().map(Vec::as_slice).collect()
+    }
+
+    /// The automatic-stale tags, built once per chunk (V24-07).
+    fn auto_refs(&self) -> Vec<&[u8]> {
+        self.plan.auto_stale_tags.iter().map(Vec::as_slice).collect()
     }
     fn build_scratch(&self) -> EmitScratch {
         EmitScratch {
@@ -132,6 +139,7 @@ impl EmitJob {
         emit: &SiteEmit,
         scratch: &mut EmitScratch,
         stale: &[&[u8]],
+        auto: &[&[u8]],
     ) -> Result<(), EngineError> {
         let Some(lr) = LineRef::parse(line) else {
             return Err(EngineError::job("survivor line has fewer than 8 columns"));
@@ -158,18 +166,12 @@ impl EmitJob {
         // A GT-less record keeps the input's AC/AN: the automatic update has
         // no value to put back, so only user-requested removals apply
         // (doc_v12 D12-2).
-        let auto: Vec<&[u8]> = self
-            .plan
-            .auto_stale_tags
-            .iter()
-            .map(Vec::as_slice)
-            .collect();
         let stale_record =
-            reed_filter::eval::edit_plan::stale_for_record(stale, &auto, emit.has_gt);
+            reed_filter::eval::edit_plan::stale_for_record(stale, auto, emit.has_gt);
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(&scratch.mask_bitset),
-            info_remove: &stale_record,
+            info_remove: stale_record.as_slice(),
             info_set: &emit.infos,
         };
         scratch.edit_buf.clear();

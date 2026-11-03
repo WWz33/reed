@@ -56,23 +56,48 @@ pub fn fill_info_set(
     }
 }
 
+/// The stale tags for one record: borrowed from the plan on the common path
+/// (GT present), owned only when the automatic AC/AN entries must be kept
+/// (no GT; doc_v12 D12-2). This used to allocate a `Vec` per record even in
+/// the borrowed case (doc_v24 V24-07).
+#[derive(Debug)]
+pub enum StaleTags<'s, 'a> {
+    /// The plan's full list.
+    Borrowed(&'s [&'a [u8]]),
+    /// The list minus the automatic update entries.
+    Owned(Vec<&'a [u8]>),
+}
+
+impl<'a> StaleTags<'_, 'a> {
+    /// The tags to hand to the edit plan.
+    #[must_use]
+    pub fn as_slice(&self) -> &[&'a [u8]] {
+        match self {
+            Self::Borrowed(tags) => tags,
+            Self::Owned(tags) => tags,
+        }
+    }
+}
+
 /// The stale tags to drop from one record: the plan's list, minus the
 /// automatic AC/AN update entries when the record has no GT (there is no
 /// value to put back, so dropping them would destroy the input's INFO —
 /// doc_v12 D12-2). A user's explicit `-x INFO/AC` still applies: the caller
 /// passes the tags that came from `--fill-tags`/`-x` separately.
 #[must_use]
-pub fn stale_for_record<'a>(
-    stale: &[&'a [u8]],
+pub fn stale_for_record<'s, 'a>(
+    stale: &'s [&'a [u8]],
     auto_update: &[&'a [u8]],
     has_gt: bool,
-) -> Vec<&'a [u8]> {
+) -> StaleTags<'s, 'a> {
     if has_gt {
-        return stale.to_vec();
+        return StaleTags::Borrowed(stale);
     }
-    stale
-        .iter()
-        .copied()
-        .filter(|t| !auto_update.iter().any(|a| a == t))
-        .collect()
+    StaleTags::Owned(
+        stale
+            .iter()
+            .copied()
+            .filter(|t| !auto_update.iter().any(|a| a == t))
+            .collect(),
+    )
 }

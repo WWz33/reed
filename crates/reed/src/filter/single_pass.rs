@@ -143,13 +143,14 @@ impl ChunkJob for FilterJob {
             self.plan.tail.len(),
             self.plan.mask.len(),
         );
-        // One build per chunk, not per surviving record (A6-15).
+        // One build per chunk, not per surviving record (A6-15, V24-07).
         let stale = self.stale_refs();
+        let auto = self.auto_refs();
         for line in body.split(|&b| b == b'\n') {
             if line.is_empty() {
                 continue;
             }
-            self.push_line(line, scratch, &stale)?;
+            self.push_line(line, scratch, &stale, &auto)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         let partial = FilterPartial {
@@ -172,7 +173,8 @@ impl ChunkJob for FilterJob {
             self.plan.mask.len(),
         );
         let stale = self.stale_refs();
-        self.push_line(line, scratch, &stale)?;
+        let auto = self.auto_refs();
+        self.push_line(line, scratch, &stale, &auto)?;
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
             output,
@@ -258,6 +260,7 @@ impl FilterJob {
         records: &[&[u8]],
         scratch: &mut WorkerScratch,
         stale: &[&[u8]],
+        auto: &[&[u8]],
     ) -> Result<(), EngineError> {
         let dict = self
             .bcf_input
@@ -270,7 +273,7 @@ impl FilterJob {
                 .native
                 .take()
                 .expect("invariant: the native scratch exists with the dictionary");
-            let result = self.push_bcf_record(dict, bytes, scratch, &mut native, stale);
+            let result = self.push_bcf_record(dict, bytes, scratch, &mut native, stale, auto);
             scratch.native = Some(native);
             result?;
         }
@@ -296,7 +299,8 @@ impl FilterJob {
             self.plan.mask.len(),
         );
         let stale = self.stale_refs();
-        self.push_bcf_records(records, scratch, &stale)?;
+        let auto = self.auto_refs();
+        self.push_bcf_records(records, scratch, &stale, &auto)?;
         let output = scratch.writer.finish_chunk().map_err(job_err)?;
         Ok(FilterPartial {
             output,
@@ -311,6 +315,12 @@ impl FilterJob {
         self.plan.stale_tags.iter().map(Vec::as_slice).collect()
     }
 
+    /// The automatic-stale tags, built once per chunk (V24-07; it used to
+    /// be one `Vec` per surviving record).
+    fn auto_refs(&self) -> Vec<&[u8]> {
+        self.plan.auto_stale_tags.iter().map(Vec::as_slice).collect()
+    }
+
     /// The one emit step shared by the text and native paths (A6-20): the
     /// pass0 pruning rule, the recomputed INFO fill, the edit and the write.
     /// `source` is the record itself — its text line, or the framed BCF
@@ -321,6 +331,7 @@ impl FilterJob {
         &self,
         emit: &mut EmitScratchMut<'_>,
         stale: &[&[u8]],
+        auto: &[&[u8]],
         view: &mut RecordView<'_, '_>,
         source: EmitSource<'_, '_>,
     ) -> Result<(), EngineError> {
@@ -336,21 +347,15 @@ impl FilterJob {
         // A GT-less record keeps the input's AC/AN: the automatic update has
         // no value to put back, so only user-requested removals apply
         // (doc_v12 D12-2).
-        let auto: Vec<&[u8]> = self
-            .plan
-            .auto_stale_tags
-            .iter()
-            .map(Vec::as_slice)
-            .collect();
         let stale_record =
-            reed_filter::eval::edit_plan::stale_for_record(stale, &auto, counts.has_gt);
+            reed_filter::eval::edit_plan::stale_for_record(stale, auto, counts.has_gt);
         let masked = view.masked;
         let site = view.site;
         let pos1 = view.pos1;
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(masked),
-            info_remove: &stale_record,
+            info_remove: stale_record.as_slice(),
             info_set: emit.info_set,
         };
         view.funnel.n_output += 1;
@@ -415,6 +420,7 @@ impl FilterJob {
         scratch: &mut WorkerScratch,
         native: &mut NativeScratch,
         stale: &[&[u8]],
+        auto: &[&[u8]],
     ) -> Result<(), EngineError> {
         native.decode(
             dict,
@@ -484,6 +490,7 @@ impl FilterJob {
                     return self.emit_survivor(
                         &mut emit,
                         stale,
+                        auto,
                         view,
                         EmitSource::Bcf { bytes, dict },
                     );
@@ -493,7 +500,7 @@ impl FilterJob {
                 render_record(&rec, dict, &mut full).map_err(EngineError::from)?;
                 let full_lr = LineRef::parse(&full)
                     .ok_or_else(|| EngineError::job("rendered record has fewer than 8 columns"))?;
-                self.emit_survivor(&mut emit, stale, view, EmitSource::Text(&full_lr))
+                self.emit_survivor(&mut emit, stale, auto, view, EmitSource::Text(&full_lr))
             },
         )?;
         *full_slot = full;
@@ -507,6 +514,7 @@ impl FilterJob {
         line: &[u8],
         scratch: &mut WorkerScratch,
         stale: &[&[u8]],
+        auto: &[&[u8]],
     ) -> Result<(), EngineError> {
         let plan = &self.plan;
         let opts = PipelineOptions {
@@ -539,7 +547,7 @@ impl FilterJob {
         };
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
             let edit_line = view.line;
-            self.emit_survivor(&mut emit, stale, view, EmitSource::Text(edit_line))
+            self.emit_survivor(&mut emit, stale, auto, view, EmitSource::Text(edit_line))
         })?;
         Ok(())
     }

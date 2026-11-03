@@ -165,6 +165,12 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
 ### Changed
+- **filter（热路径分配，V24-07）**：`auto_stale_tags` 与 stale 列表改为
+  每 chunk 构造/借用，`stale_for_record` 的常见路径零分配；mid-stage 的
+  rules/OR/hits 与 prune 的 exclude 位图改为 per-chunk/per-contig 复用；
+  单 run 的 `append_sites` 用 `mem::take` 零拷贝；`PcaScratch` 删除死字段
+  并复用 dosage 缓冲。分配回归测试：single-pass 从 1.000 降到
+  0.001 次/记录（阈值 0.1）。
 - **io（FORMAT 双代缓存，V24-06）**：`FormatLayoutCache` 改为 current +
   previous 两代（各 256），满时轮换而不是整表清空；`intern` 返回带 epoch
   的 `LayoutId`，旧代句柄在 `get` 处显式失败，不会别名到新 layout。

@@ -373,7 +373,7 @@ impl LdPruner {
         planes: [&[u64]; 4],
         stats: SitePruneStats,
     ) -> bool {
-        self.push_ex(ordinal, pos0, planes, stats, Vec::new())
+        self.push_ex(ordinal, pos0, planes, stats, &[])
     }
 
     /// [`Self::push`] with a per-sample exclusion bitmap (doc_v7 D7-4): the
@@ -385,7 +385,7 @@ impl LdPruner {
         pos0: u64,
         planes: [&[u64]; 4],
         stats: SitePruneStats,
-        exclude: Vec<u64>,
+        exclude: &[u64],
     ) -> bool {
         let arrival = self.seen;
         self.seen += 1;
@@ -418,11 +418,14 @@ impl LdPruner {
         for p in planes {
             flat.extend_from_slice(p);
         }
+        // Copy only for a site that will actually be scanned; a monomorphic
+        // site returns above, so the caller can reuse one buffer
+        // (doc_v24 V24-07).
         self.sites.push(PruneSite {
             ordinal,
             arrival,
             planes: flat,
-            exclude,
+            exclude: exclude.to_vec(),
             maj_freq: stats.maj_freq,
         });
         // The site survives unless this window's scan removed it. `pruned`

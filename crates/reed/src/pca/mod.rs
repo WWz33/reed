@@ -14,7 +14,6 @@
 //! `PREFIX.eigenvec` (`#FID IID PC1..PCk`), `PREFIX.eigenval`, `PREFIX.pve`.
 
 use std::io::Write as _;
-use std::path::Path;
 
 use reed_engine::budget::ThreadBudget;
 
@@ -485,7 +484,6 @@ fn write_outputs(
     for v in pve {
         writeln!(f, "{v:.9}").map_err(io_err)?;
     }
-    let _ = Path::new(prefix);
     Ok(())
 }
 

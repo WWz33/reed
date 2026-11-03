@@ -135,6 +135,8 @@ pub(crate) fn prune_one(
 ) -> PruneOutcome {
     let w = matrix.w;
     let mut pruner = LdPruner::new(config.threshold, config.window, config.step, w, n_samples);
+    // One exclusion buffer for the whole contig (doc_v24 V24-07).
+    let mut exclude = vec![0_u64; w];
     let mut n_seen = 0_u64;
     for (i, &pos0) in matrix.pos0().iter().enumerate() {
         if let Some(words) = survivor
@@ -148,7 +150,6 @@ pub(crate) fn prune_one(
         // The site's mask plane carries the fired mask; the keep bitmap
         // removes the samples the static subset (and `--mind`) dropped.
         let mask = matrix.mask_plane(i);
-        let mut exclude = vec![0_u64; w];
         for (wi, e) in exclude.iter_mut().enumerate() {
             let keep = if keep_words.is_empty() {
                 !0_u64
@@ -158,7 +159,7 @@ pub(crate) fn prune_one(
             *e = mask.get(wi).copied().unwrap_or(0) | !keep;
         }
         let stats = site_prune_stats_ex(planes, n_samples, &exclude);
-        pruner.push_ex(i, pos0, planes, stats, exclude);
+        pruner.push_ex(i, pos0, planes, stats, &exclude);
     }
     pruner.finish_contig();
     // A later pair can prune an earlier site, so `push`'s return is

@@ -896,25 +896,66 @@ impl MatrixSink {
             self.chunks.push(open.sites);
         }
         let start = self.total_sites;
+        // `append_sites` takes the vectors on the single-run path, so the
+        // chunk bookkeeping must read them first (V24-07).
+        let n_sites = partial.pos0.len();
+        let n_records = partial.n_records;
+        let head_bits = std::mem::take(&mut partial.head_bits);
         self.append_sites(partial)?;
         self.open = Some(OpenChunk {
             sites: ChunkSites {
                 id,
-                head_bits: std::mem::take(&mut partial.head_bits),
-                n_records: partial.n_records,
+                head_bits,
+                n_records,
                 start,
-                n_sites: partial.pos0.len(),
+                n_sites,
                 seam_site: None,
             },
         });
         Ok(())
     }
 
+    /// Starts (or keeps) the pending matrix for `contig`.
+    fn ensure_pending(&mut self, contig: &[u8]) -> Result<&mut SiteMatrix, EngineError> {
+        let same = self
+            .pending
+            .as_ref()
+            .is_some_and(|m| m.contig.as_slice() == contig);
+        if !same {
+            self.close_pending()?;
+            self.pending = Some(SiteMatrix::new(
+                contig.to_vec(),
+                self.w,
+                self.n_rules,
+                self.mask_plane,
+            ));
+            self.contig_base.push(self.total_sites);
+        }
+        Ok(self.pending.as_mut().expect("invariant: just set"))
+    }
+
     /// Appends a partial's sites to the per-contig matrices (the pending
     /// contig's matrix is closed when a new contig starts).
+    ///
+    /// The common single-run partial hands its vectors over with
+    /// `mem::take` (doc_v24 V24-07); only a partial that spans several
+    /// contigs copies per run.
     fn append_sites(&mut self, partial: &mut MatrixPartial) -> Result<(), EngineError> {
         if partial.pos0.is_empty() {
             return Ok(());
+        }
+        if partial.contigs.len() == 1 {
+            let (offset, contig) = &partial.contigs[0];
+            if *offset == 0 {
+                let flat = std::mem::take(&mut partial.flat);
+                let pos0 = std::mem::take(&mut partial.pos0);
+                let has_gt = std::mem::take(&mut partial.has_gt);
+                let n = pos0.len();
+                let matrix = self.ensure_pending(contig)?;
+                matrix.push_block(flat, pos0, has_gt);
+                self.total_sites += n;
+                return Ok(());
+            }
         }
         for (run_index, (offset, contig)) in
             partial.contigs.iter().map(|(o, c)| (*o, c)).enumerate()
@@ -923,25 +964,14 @@ impl MatrixSink {
                 .contigs
                 .get(run_index + 1)
                 .map_or(partial.pos0.len(), |(next, _)| *next);
-            let same = self.pending.as_ref().is_some_and(|m| m.contig == *contig);
-            if !same {
-                self.close_pending()?;
-                self.pending = Some(SiteMatrix::new(
-                    contig.clone(),
-                    self.w,
-                    self.n_rules,
-                    self.mask_plane,
-                ));
-                self.contig_base.push(self.total_sites);
-            }
-            let stride = self.pending.as_ref().map_or(1, SiteMatrix::stride);
+            let matrix = self.ensure_pending(contig)?;
+            let stride = matrix.stride();
             let flat = partial.flat[offset * stride..end * stride].to_vec();
             let pos0 = partial.pos0[offset..end].to_vec();
             let has_gt = partial.has_gt[offset..end].to_vec();
-            self.total_sites += pos0.len();
-            if let Some(matrix) = self.pending.as_mut() {
-                matrix.push_block(flat, pos0, has_gt);
-            }
+            let n = pos0.len();
+            matrix.push_block(flat, pos0, has_gt);
+            self.total_sites += n;
         }
         Ok(())
     }
