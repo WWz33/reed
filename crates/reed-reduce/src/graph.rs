@@ -114,12 +114,22 @@ pub fn kernel_pca(x: &Mat, k: usize, kind: Kernel, gamma: f64) -> Embedding {
     let (vals, vecs) = e.top_k(k);
     let mut coords = Mat::zeros(n, k);
     for c in 0..k {
-        let scale = vals[c].abs().sqrt();
+        // A negative eigenvalue is numerical error on a PSD kernel; `abs()`
+        // would turn it into an imaginary-magnitude coordinate. Clamp to 0
+        // (doc_v23 V23-18).
+        let scale = kernel_scale(vals[c]);
         for i in 0..n {
             coords.set(i, c, vecs.get(i, c) * scale);
         }
     }
     Embedding { coords, values: vals }
+}
+
+/// The magnitude of a kernel-PCA eigenvalue: negative values are numerical
+/// error on a PSD kernel and become 0 rather than `abs()` (doc_v23 V23-18).
+#[must_use]
+pub fn kernel_scale(value: f64) -> f64 {
+    value.max(0.0).sqrt()
 }
 
 pub fn centre_kernel(k: &mut Mat) {
@@ -605,5 +615,16 @@ mod tests {
         let p = pcoa(&d, 2);
         assert_eq!(p.coords.rows, 20);
         assert_eq!(p.coords.cols, 2);
+    }
+
+    /// doc_v23 V23-18: a negative kernel eigenvalue is clamped to 0, not
+    /// turned into the magnitude of an imaginary number by `abs().sqrt()`.
+    #[test]
+    fn negative_kernel_eigenvalues_scale_to_zero() {
+        assert_eq!(kernel_scale(-1e-12), 0.0);
+        assert_eq!(kernel_scale(-3.0), 0.0);
+        assert!(!kernel_scale(-3.0).is_nan());
+        assert_eq!(kernel_scale(4.0), 2.0);
+        assert_eq!(kernel_scale(0.0), 0.0);
     }
 }

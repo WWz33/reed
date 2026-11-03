@@ -158,6 +158,14 @@ impl FrameChain {
         // the watchdog.
         let mut state = self.state.lock().expect("invariant: chain not poisoned");
         loop {
+            // A ready cell wins over the watchdog: the predecessor did its
+            // job, and a slow storage that already delivered must not be
+            // reported as a stalled chain (doc_v23 V23-16).
+            if let Some(slot) = state.cells.get_mut(id as usize)
+                && let Some(cell) = slot.take()
+            {
+                return Ok(cell);
+            }
             let now_ns = self.epoch.elapsed().as_nanos() as u64;
             let silence_ns = now_ns.saturating_sub(self.last_publish_ns.load(Ordering::Acquire));
             if u128::from(silence_ns) > self.stall_limit.as_nanos() {
@@ -168,11 +176,6 @@ impl FrameChain {
                     self.last_publish_id.load(Ordering::Acquire),
                     silence_ns as f64 / 1e9,
                 )));
-            }
-            if let Some(slot) = state.cells.get_mut(id as usize)
-                && let Some(cell) = slot.take()
-            {
-                return Ok(cell);
             }
             if state.poisoned || self.finished.load(Ordering::Acquire) || self.abort.is_aborted() {
                 return Err(EngineError::Aborted);
@@ -298,5 +301,21 @@ mod tests {
         assert!(chain.wait(1).is_ok());
         assert!(chain.wait_time() > Duration::ZERO);
         assert_eq!(chain.last_publish_id.load(Ordering::Acquire), 1);
+    }
+
+    /// doc_v23 V23-16: a cell that is already published is served even when
+    /// the last publish is older than the stall limit. The old order checked
+    /// the watchdog first and failed a healthy run after a slow read.
+    #[test]
+    fn a_ready_cell_is_served_despite_a_stale_publish_clock() {
+        let abort = crate::abort::abort();
+        let mut chain = FrameChain::new(abort.signal.clone());
+        chain.stall_limit = Duration::from_millis(1);
+        chain.publish(1, Carried::default());
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            chain.wait(1).is_ok(),
+            "a ready cell must not be reported as a stalled chain"
+        );
     }
 }

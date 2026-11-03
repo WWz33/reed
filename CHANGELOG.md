@@ -106,6 +106,16 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 - **stats（LD 剪枝内存，V23-13）**：`LdPruner` 的 `pos_log` 在 bp 窗口
   推进后丢弃 `window_start` 之前的前缀（搜索从 `window_start + 1` 开始，
   死前缀不会再读），内存从 O(单 contig 位点数) 降为 O(窗口内位点数)。
+- **reduce（`tql2` 不收敛，V23-15）**：QL 迭代 100 次仍未收敛时不再静默
+  返回未变换的尾块，`sym_eig` 以带尺寸的断言终止；正常输入（2–5 次收敛）
+  不受影响。
+- **engine（看门狗顺序，V23-16）**：`FrameChain::wait_inner` 先取已就绪的
+  cell 再判全局静默，慢存储恢复后不会把健康运行误报为 "chain stalled"。
+- **distance（非有限剂量，V23-17）**：`standardize` 用 `is_finite()` 判断
+  观测，Inf/-Inf 按缺失处理，不再让 `mean`/`sd` 变成 Inf/NaN 并污染整条
+  标准化链。
+- **reduce（核 PCA 负特征值，V23-18）**：核 PCA/GRM 核 PCA 的坐标缩放从
+  `abs().sqrt()` 改为 `max(0.0).sqrt()`，数值误差产生的负特征值映射为 0。
 
 #### Changed
 - **convert（`--reference` 流式，V23-11）**：FASTA 改为 `BufReader` 逐行

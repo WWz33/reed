@@ -68,7 +68,7 @@ pub fn grm_kernel_pca(grm: &Grm, k: usize) -> Embedding {
     let n = s.rows;
     let mut coords = Mat::zeros(n, k);
     for c in 0..k {
-        let scale = vals[c].abs().sqrt();
+        let scale = crate::graph::kernel_scale(vals[c]);
         for i in 0..n {
             coords.set(i, c, vecs.get(i, c) * scale);
         }
@@ -285,7 +285,7 @@ pub fn grm_kernel(grm: &Grm, k: usize, kind: Kernel) -> Embedding {
             let (vals, vecs) = e.top_k(k);
             let mut coords = Mat::zeros(n, k);
             for c in 0..k {
-                let scale = vals[c].abs().sqrt();
+                let scale = crate::graph::kernel_scale(vals[c]);
                 for i in 0..n {
                     coords.set(i, c, vecs.get(i, c) * scale);
                 }

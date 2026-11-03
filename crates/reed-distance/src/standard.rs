@@ -122,7 +122,10 @@ pub fn standardize(x: &Mat, stand: Stand) -> Standardized {
         let mut cnt = 0usize;
         for i in 0..n {
             let v = x.get(i, j);
-            if !v.is_nan() {
+            // Only a finite dosage is a real observation. `is_nan()` alone
+            // let an Inf through: the mean/sd became Inf/NaN and the whole
+            // standardized chain turned into NaN (doc_v23 V23-17).
+            if v.is_finite() {
                 sum += v;
                 cnt += 1;
                 called[i * m + j] = true;
@@ -139,7 +142,7 @@ pub fn standardize(x: &Mat, stand: Stand) -> Standardized {
         freq[j] = r;
         for i in 0..n {
             let v = x.get(i, j);
-            let z = if v.is_nan() {
+            let z = if !v.is_finite() {
                 0.0
             } else if s > 1e-9 {
                 (v - mu) / s
@@ -205,5 +208,27 @@ mod tests {
         for (fa, fb) in a.freq.iter().zip(&b.freq) {
             assert!((fa - fb).abs() < 1e-15);
         }
+    }
+
+    /// doc_v23 V23-17: only finite dosages are observations. Inf used to be
+    /// summed as if called (`!is_nan()`), so `mean`/`sd` became Inf/NaN and
+    /// every standardized cell turned into NaN.
+    #[test]
+    fn infinite_dosages_are_missing_not_observations() {
+        let x = Mat::from_fn(4, 1, |i, _| {
+            [0.0, 1.0, f64::INFINITY, f64::NEG_INFINITY][i]
+        });
+        let st = standardize_binom2(&x);
+        assert_eq!(st.mean[0], 0.5, "mean over the finite observations only");
+        assert!(
+            (st.sd[0] - 0.375f64.sqrt()).abs() < 1e-12,
+            "sd = {}",
+            st.sd[0]
+        );
+        assert!(st.called[0] && st.called[1]);
+        assert!(!st.called[2] && !st.called[3], "Inf is not a called dosage");
+        assert_eq!(st.w.get(2, 0), 0.0);
+        assert_eq!(st.w.get(3, 0), 0.0);
+        assert!(st.w.get(0, 0).is_finite() && st.w.get(1, 0).is_finite());
     }
 }

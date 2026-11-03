@@ -303,6 +303,46 @@ contig 的 `Arc`"降为"当前 contig 的 `Vec` 与 `Arc`（短暂两份）+ 其
 | `bp_window_drops_the_dead_prefix` | 10,000 个 1 kb 间隔位点、100 bp 窗口：每次 push 后 `pos_log.len() <= 2`，全部保留 |
 | `bp_window_keeps_the_in_span_entries` | 3 kb 窗口：日志只保留 span 内到达项（`<= 5`），结束 contig 后 kept == seen |
 
+### reed-reduce：`tql2` 不收敛不再静默（V23-15）
+
+`eig.rs::tql2` 的 `iter > 100 { break; }` 让未变换的尾块照常返回，PCA 会
+静默得到错误特征值。现在 `tql2` 返回 `bool`，`sym_eig` 用
+`assert!(converged, "tql2: ... did not converge ...")` 终止。EISPACK 的
+100 次上限远高于正常的 2–5 次，命中意味着输入退化（NaN/Inf）或矩阵病态；
+继续返回错误结果比报错更糟。
+
+测试：`non_convergence_is_reported` 通过 `tql2_with_limit(.., 0)` 直接触
+发上限分支（普通对称矩阵在 100 次内必收敛，无法自然构造失败样本），断言
+返回 `false`。
+
+### reed-engine：先取 cell，再判看门狗（V23-16）
+
+`frame_chain.rs::wait_inner` 原来先检查全局静默是否超过 `stall_limit`，
+再取已就绪的 cell。慢存储停顿 >120 s 后恢复、且 cell 已经发布时，健康
+运行仍被判"chain stalled"。现在循环内先 `take` cell，拿到就返回；看门狗
+只对"cell 未就绪"的等待生效。
+
+测试：`a_ready_cell_is_served_despite_a_stale_publish_clock`（1 ms 上限、
+发布 cell 1 后 sleep 5 ms，`wait(1)` 仍返回 cell）。
+
+### reed-distance：`standardize` 只把有限值当观测（V23-17）
+
+`standard.rs` 的两处 `is_nan()` 改为 `is_finite()`：Inf/-Inf 既不计入
+`sum`/`cnt`/`called`，也不参与标准化（写 0），与 NaN 同一条缺失路径。
+此前 Inf 被当作已调用，`mean`/`sd` 变成 Inf/NaN，整条链静默全 NaN。
+
+测试：`infinite_dosages_are_missing_not_observations`（`[0,1,+Inf,-Inf]`：
+mean=0.5、sd=√0.375、两个 Inf 不算 called、`w` 有限）。
+
+### reed-reduce：核 PCA 负特征值截零（V23-18）
+
+`graph.rs:120`、`grm_reduce.rs:71/288` 的 `vals[c].abs().sqrt()` 改为
+`kernel_scale(vals[c]) = vals[c].max(0.0).sqrt()`。PSD 核上的负特征值来自
+数值误差，`abs()` 会给出"虚数模长"的坐标；截零才与"该方向不存在"一致。
+
+测试：`negative_kernel_eigenvalues_scale_to_zero`（-1e-12/-3 → 0 且非
+NaN，4 → 2）。
+
 ## 验收
 
 | 检查 | 结果 |
