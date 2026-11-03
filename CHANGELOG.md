@@ -164,6 +164,11 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
+v23 挂起项的结构化收尾：oracle 契约、基准协议、死代码/词法、区域唯一
+解析、WC84 唯一公式、双代缓存、热路径 scratch、缓冲写出与 LLE 契约。
+全量：**945 passed / 0 failed**、clippy 0 告警、doc-drift 97 ok；
+single-pass 分配从 1.000 降到 0.001 次/记录。
+
 ### Changed
 - **writers（缓冲输出，V24-08）**：`reed distance` 的矩阵/表、`reed pca`
   的 eigen* 文件、`reed dapc` 的四个文件改为 64 KiB `BufWriter` 并在返回

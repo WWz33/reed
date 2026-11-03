@@ -54,9 +54,10 @@ check "the shared Verbosity enum exists (doc_v4 03 §3.3)" \
 
 # doc_v6 06 Y0 / A6-22: the unsound AVX-512 count kernel was deleted, leaving
 # the mmap as the only audited `unsafe` site (doc_v6 03 §5). A new one must
-# change the docs and this guard first.
-check "exactly one allow(unsafe_code) site (doc_v6 06 Y0)" \
-    bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | wc -l)" -eq 1 ]'
+# change the docs and this guard first. Test-only allocators
+# (`crates/*/tests/`) are excluded: they cannot ship in the binaries.
+check "exactly one production allow(unsafe_code) site (doc_v6 06 Y0)" \
+    bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | grep -v "/tests/" | wc -l)" -eq 1 ]'
 
 # doc_v5 03 §6 / A5-3: the stale names are gone from the code.
 check "no code says sample.max_missing (doc_v5 A5-3)" \
