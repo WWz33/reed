@@ -103,6 +103,9 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 - **distance（GRM 内存，V23-12）**：`matrices::grm` 不再复制 `n × m`
   的 `x` 缓冲（2000 样本 × 1e6 位点 = 16 GB），直接读 `st.w`，内积循环
   顺带累计 `called_both`；数值与旧算法逐值一致。
+- **stats（LD 剪枝内存，V23-13）**：`LdPruner` 的 `pos_log` 在 bp 窗口
+  推进后丢弃 `window_start` 之前的前缀（搜索从 `window_start + 1` 开始，
+  死前缀不会再读），内存从 O(单 contig 位点数) 降为 O(窗口内位点数)。
 
 #### Changed
 - **convert（`--reference` 流式，V23-11）**：FASTA 改为 `BufReader` 逐行

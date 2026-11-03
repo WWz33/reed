@@ -280,6 +280,29 @@ contig 的 `Arc`"降为"当前 contig 的 `Vec` 与 `Arc`（短暂两份）+ 其
 测试：`reference_grm`（旧算法的逐字重写）在四组
 `(MeanImpute|Pairwise) × (variance|full)` 下与 `grm` 逐值对拍。
 
+## 第三批：决策 C ④ 低成本确定性项（进行中）
+
+### reed-stats：bp 窗口的 `pos_log` 截断（V23-13）
+
+`ld.rs::LdPruner` 的 `pos_log` 记录每个 arrival 的位置，供 bp 窗口推进时
+按 `bp >= trigger − W` 找新起点。它原来只随 contig 增长、从不缩短；复核
+已修正为"单 contig 内"（`finish_contig` 会 `clear()`），但大染色体 × 每
+线程仍是 O(位点数) 的内存。
+
+改动：新增 `pos_base`（`pos_log[0]` 的 arrival 下标）。`evaluate_window_bp`
+先按 `arrival − pos_base` 索引搜索，`evaluate_window` 把 `window_start`
+推进到 `new_start` 后，把 `pos_log` 的前缀 `[0, window_start − pos_base)`
+`drain` 掉并同步 `pos_base`。搜索区间本来就从 `window_start + 1` 开始，
+被丢弃的前缀不可能再被读取；`finish_contig` 的 `usize::MAX` 路径不截断
+（随后的 `clear()` 负责）。
+
+测试（`ld::v23_pos_log_tests`）：
+
+| 测试 | 覆盖 |
+|---|---|
+| `bp_window_drops_the_dead_prefix` | 10,000 个 1 kb 间隔位点、100 bp 窗口：每次 push 后 `pos_log.len() <= 2`，全部保留 |
+| `bp_window_keeps_the_in_span_entries` | 3 kb 窗口：日志只保留 span 内到达项（`<= 5`），结束 contig 后 kept == seen |
+
 ## 验收
 
 | 检查 | 结果 |

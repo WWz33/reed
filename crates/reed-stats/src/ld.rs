@@ -275,10 +275,15 @@ pub struct LdPruner {
     window_start_bp: u64,
     /// Whether a bp window start is established (the first push).
     bp_started: bool,
-    /// Every arrival's position, indexed by arrival — the bp window's start
-    /// advance walks all variants (plink2's `variant_include` bits), not
-    /// only the slotted ones.
+    /// Every arrival's position, indexed by `arrival - pos_base` — the bp
+    /// window's start advance walks all variants (plink2's
+    /// `variant_include` bits), not only the slotted ones. Entries below
+    /// `window_start` are dropped on every advance (doc_v23 V23-13): the
+    /// search starts at `window_start + 1`, so the prefix can never be read
+    /// again.
     pos_log: Vec<u64>,
+    /// Arrival index of `pos_log[0]`; `0` after a contig reset.
+    pos_base: usize,
 }
 
 /// The per-site aggregates plink2's `FillVaggs` produces.
@@ -346,6 +351,7 @@ impl LdPruner {
             window_start_bp: 0,
             bp_started: false,
             pos_log: Vec::new(),
+            pos_base: 0,
         }
     }
 
@@ -435,15 +441,26 @@ impl LdPruner {
     /// window keeps advancing).
     fn evaluate_window_bp(&mut self, bp: u64) {
         let floor = self.last_pos0.saturating_sub(bp);
-        let new_start = (self.window_start + 1..self.pos_log.len())
-            .find(|&i| self.pos_log[i] >= floor)
-            .unwrap_or(self.pos_log.len());
+        let end = self.pos_base + self.pos_log.len();
+        let new_start = (self.window_start + 1..end)
+            .find(|&i| self.pos_log[i - self.pos_base] >= floor)
+            .unwrap_or(end);
         self.window_start_bp = self
             .pos_log
-            .get(new_start)
+            .get(new_start - self.pos_base)
             .copied()
             .unwrap_or(self.last_pos0);
         self.evaluate_window(new_start);
+        // The window start moved forward; every position below it is dead
+        // (the next search begins at `window_start + 1`). Drop the prefix so
+        // the log is O(window span) instead of O(contig variants)
+        // (doc_v23 V23-13). `finish_contig` passes `usize::MAX` as the next
+        // start; it clears the log itself.
+        if self.window_start != usize::MAX && self.window_start > self.pos_base {
+            let drop = self.window_start - self.pos_base;
+            self.pos_log.drain(..drop);
+            self.pos_base = self.window_start;
+        }
     }
 
     /// Runs the window's pairwise scan, then advances it: slots below
@@ -540,6 +557,7 @@ impl LdPruner {
         self.window_start_bp = 0;
         self.bp_started = false;
         self.pos_log.clear();
+        self.pos_base = 0;
     }
 
     /// The kept global ordinals, ascending.
@@ -556,5 +574,63 @@ impl LdPruner {
         let mut out = self.pruned.clone();
         out.sort_unstable();
         out
+    }
+}
+
+#[cfg(test)]
+mod v23_pos_log_tests {
+    use super::*;
+
+    fn stats() -> SitePruneStats {
+        SitePruneStats {
+            maj_freq: 0.5,
+            n_hom_ref: 1,
+            n_hom_alt: 1,
+            n_het: 0,
+        }
+    }
+
+    /// doc_v23 V23-13: the position log used to grow with every variant of
+    /// the contig. Only `window_start + 1..` is ever searched, so the prefix
+    /// below the advanced start is dropped; the log is O(variants in one
+    /// span), not O(contig variants).
+    #[test]
+    fn bp_window_drops_the_dead_prefix() {
+        let mut p = LdPruner::new(2.0, LdWindow::Bp(100), 1, 1, 2);
+        let plane = [0b01_u64];
+        for i in 0..10_000_usize {
+            let pos = i as u64 * 1_000;
+            assert!(
+                p.push(i, pos, [&plane, &plane, &plane, &plane], stats()),
+                "site {i} must be kept (threshold 2.0 never prunes)"
+            );
+            assert!(
+                p.pos_log.len() <= 2,
+                "log grew to {} entries at site {i}",
+                p.pos_log.len()
+            );
+        }
+        p.finish_contig();
+        assert_eq!(p.kept_sites().len(), 10_000);
+    }
+
+    /// The advance still finds every in-span variant: with 1 kb spacing and a
+    /// 3 kb window, the log holds the arrivals since the window start and the
+    /// kept set matches the unbounded-window-for-this-input expectation.
+    #[test]
+    fn bp_window_keeps_the_in_span_entries() {
+        let mut p = LdPruner::new(2.0, LdWindow::Bp(3_000), 1, 1, 2);
+        let plane = [0b01_u64];
+        for i in 0..5_000_usize {
+            let pos = i as u64 * 1_000;
+            assert!(p.push(i, pos, [&plane, &plane, &plane, &plane], stats()));
+        }
+        // Every fourth arrival triggers a close; after truncation the log
+        // holds at most the four in-span arrivals plus the trigger.
+        assert!(p.pos_log.len() <= 5, "log = {} entries", p.pos_log.len());
+        assert!(p.pos_base <= p.window_start);
+        let seen = p.seen;
+        p.finish_contig();
+        assert_eq!(p.kept_sites().len(), seen);
     }
 }
