@@ -114,12 +114,28 @@ pub fn kernel_pca(x: &Mat, k: usize, kind: Kernel, gamma: f64) -> Embedding {
     let (vals, vecs) = e.top_k(k);
     let mut coords = Mat::zeros(n, k);
     for c in 0..k {
-        let scale = vals[c].abs().sqrt();
+        // A negative eigenvalue is numerical error on a PSD kernel; `abs()`
+        // would turn it into an imaginary-magnitude coordinate. Clamp to 0
+        // (doc_v23 V23-18).
+        let scale = kernel_scale(vals[c]);
         for i in 0..n {
             coords.set(i, c, vecs.get(i, c) * scale);
         }
     }
     Embedding { coords, values: vals }
+}
+
+/// Whether `value` is the diffusion map's stationary eigenvalue (1) within
+/// `1e-9` of the spectrum's largest magnitude.
+fn is_stationary_mode(value: f64, lambda_max: f64) -> bool {
+    (value - 1.0).abs() <= 1e-9 * lambda_max
+}
+
+/// The magnitude of a kernel-PCA eigenvalue: negative values are numerical
+/// error on a PSD kernel and become 0 rather than `abs()` (doc_v23 V23-18).
+#[must_use]
+pub fn kernel_scale(value: f64) -> f64 {
+    value.max(0.0).sqrt()
 }
 
 pub fn centre_kernel(k: &mut Mat) {
@@ -169,7 +185,9 @@ pub fn auto_gamma(x: &Mat) -> f64 {
     if ds.is_empty() {
         return 1.0;
     }
-    ds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Every `d` passed the `d > 0.0` filter (NaN fails it), so this sort
+    // cannot see a NaN; `total_cmp` keeps it total anyway.
+    ds.sort_by(|a, b| a.total_cmp(b));
     let med = ds[ds.len() / 2];
     1.0 / (med * med).max(1e-12)
 }
@@ -283,12 +301,16 @@ pub fn diffusion_map(w: &Mat, k: usize, alpha: f64) -> Embedding {
     let mut coords = Mat::zeros(n, k);
     let mut c = 0usize;
     let mut skipped_stationary = false;
+    // The tolerance is relative to the largest eigenvalue (doc_v23 V23-33):
+    // a fixed 1e-9 could not distinguish the stationary mode on a matrix
+    // whose whole spectrum is far below 1.
+    let lambda_max = e.values.last().copied().unwrap_or(0.0).abs();
     for idx in (0..n).rev() {
         if c >= k {
             break;
         }
         // Skip the stationary eigenvector (eigenvalue 1) exactly once.
-        if !skipped_stationary && (e.values[idx] - 1.0).abs() < 1e-9 {
+        if !skipped_stationary && is_stationary_mode(e.values[idx], lambda_max) {
             skipped_stationary = true;
             continue;
         }
@@ -323,7 +345,10 @@ pub fn isomap(x: &Mat, k: usize, n_components: usize) -> Embedding {
             .filter(|&j| j != i)
             .map(|j| (d.get(i, j), j))
             .collect();
-        order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // `total_cmp`, not `partial_cmp(..).unwrap()`: a genotype with a
+        // missing call makes `pairwise_distances` emit NaN, and the unwrap
+        // panicked instead of ordering the NaN last (doc_v23 V23-08).
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
         for &(_, j) in order.iter().take(k) {
             keep[i][j] = true;
             keep[j][i] = true;
@@ -522,6 +547,21 @@ mod tests {
         assert_eq!(w.get(0, 3), 0.0);
     }
 
+    /// doc_v23 V23-08: the same NaN tolerance must hold for `isomap`, whose
+    /// kNN-order sort was still `partial_cmp(..).unwrap()` after S31 fixed
+    /// `knn_graph`. A missing genotype makes `pairwise_distances` emit NaN;
+    /// the sort must order it, not abort.
+    #[test]
+    fn isomap_sort_tolerates_nan_rows() {
+        let pts = [[0.0, 0.0], [1.0, 0.0], [5.0, 0.0], [f64::NAN, f64::NAN]];
+        let x = Mat::from_fn(4, 2, |i, j| pts[i][j]);
+        // Reaching the embedding at all is the regression: the old code
+        // panicked inside the kNN-order sort.
+        let e = isomap(&x, 2, 2);
+        assert_eq!(e.coords.rows, 4);
+        assert_eq!(e.coords.cols, 2);
+    }
+
     #[test]
     fn pcoa_recovers_linear_structure() {
         let x = blobs(20);
@@ -585,5 +625,28 @@ mod tests {
         let p = pcoa(&d, 2);
         assert_eq!(p.coords.rows, 20);
         assert_eq!(p.coords.cols, 2);
+    }
+
+    /// doc_v23 V23-18: a negative kernel eigenvalue is clamped to 0, not
+    /// turned into the magnitude of an imaginary number by `abs().sqrt()`.
+    #[test]
+    fn negative_kernel_eigenvalues_scale_to_zero() {
+        assert_eq!(kernel_scale(-1e-12), 0.0);
+        assert_eq!(kernel_scale(-3.0), 0.0);
+        assert!(!kernel_scale(-3.0).is_nan());
+        assert_eq!(kernel_scale(4.0), 2.0);
+        assert_eq!(kernel_scale(0.0), 0.0);
+    }
+
+    /// doc_v23 V23-33: the stationary-mode tolerance is `1e-9 * λ_max`, not
+    /// an absolute 1e-9.
+    #[test]
+    fn stationary_tolerance_is_relative_to_the_spectrum() {
+        assert!(is_stationary_mode(1.0, 1.0));
+        assert!(is_stationary_mode(1.0 - 1e-10, 1.0));
+        assert!(!is_stationary_mode(1.0 - 1e-8, 1.0));
+        // On a spectrum whose maximum is 1e-6 the tolerance is 1e-15, so
+        // the old absolute 1e-9 would have skipped a non-stationary mode.
+        assert!(!is_stationary_mode(1.0 - 1e-10, 1e-6));
     }
 }

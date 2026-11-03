@@ -15,8 +15,9 @@ use crate::vcf::fixed::{parse_pos1, parse_qual};
 use crate::vcf::info::info_fragments;
 use crate::vcf::line::LineRef;
 
-/// Number of ALT alleles in an ALT column: `.` (no variant) is zero, else
-/// the comma count plus one.
+/// Number of ALT alleles in an ALT column: `.` (no variant) and the empty
+/// column are zero, else the comma count plus one. An empty ALT used to
+/// count as one allele (doc_v23 V23-30).
 ///
 /// This is the single implementation of the rule (doc_v12 D12-10): the head
 /// rules and the expression layer used to count commas without the `.`
@@ -25,7 +26,7 @@ use crate::vcf::line::LineRef;
 /// filter.c:1453-1456).
 #[must_use]
 pub fn count_alts(alts: &[u8]) -> u32 {
-    if alts == b"." {
+    if alts.is_empty() || alts == b"." {
         return 0;
     }
     let commas = memchr::memchr_iter(b',', alts).count();
@@ -129,7 +130,7 @@ impl<'a> SiteView<'a> {
         let Some(contig) = contigs.id_of(site.contig_name) else {
             return Err(IoError::MalformedRecord {
                 locus: site.locus(),
-                reason: "contig is not declared in the header",
+                reason: "contig is not declared in the header".to_string(),
             });
         };
         site.contig = Some(contig);
@@ -409,5 +410,16 @@ mod tests {
         let lr = line(b"chr1\t100\t.\tA\t<DEL>\t50\tPASS\tEND=500\tGT\t0/1\n");
         let site = SiteView::parse(&lr).expect("invariant: well-formed");
         assert_eq!(site.indexed_span_len(), 401);
+    }
+
+    /// doc_v23 V23-30: an empty ALT column has no alleles; it used to count
+    /// as one, so a malformed record passed single-ALT filters and `N_ALT`.
+    #[test]
+    fn empty_alt_has_zero_alleles() {
+        assert_eq!(count_alts(b""), 0);
+        assert_eq!(count_alts(b"."), 0);
+        assert_eq!(count_alts(b"A"), 1);
+        assert_eq!(count_alts(b"A,G"), 2);
+        assert_eq!(count_alts(b"A,"), 2, "a trailing empty allele still counts");
     }
 }

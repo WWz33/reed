@@ -19,7 +19,7 @@ pub fn parse_pos1(text: &[u8], contig_name: &[u8]) -> Result<u64, IoError> {
     if text.is_empty() || text.len() > 19 {
         return Err(IoError::MalformedRecord {
             locus: locus(),
-            reason: "POS is empty or too long",
+            reason: "POS is empty or too long".to_string(),
         });
     }
     let mut pos1: u64 = 0;
@@ -27,7 +27,7 @@ pub fn parse_pos1(text: &[u8], contig_name: &[u8]) -> Result<u64, IoError> {
         if !b.is_ascii_digit() {
             return Err(IoError::MalformedRecord {
                 locus: locus(),
-                reason: "POS contains a non-digit",
+                reason: "POS contains a non-digit".to_string(),
             });
         }
         pos1 = pos1 * 10 + u64::from(b - b'0');
@@ -50,7 +50,7 @@ pub fn parse_qual(text: &[u8], locus: (&[u8], u64)) -> Result<Option<f32>, IoErr
             contig_name: String::from_utf8_lossy(locus.0).into_owned(),
             pos1: locus.1,
         },
-        reason,
+        reason: reason.to_string(),
     };
     let s = std::str::from_utf8(text).map_err(|_| err("QUAL is not ASCII"))?;
     s.parse::<f32>()

@@ -108,7 +108,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         let Some(total) = parse_block_size(&header) else {
             return Err(IoError::MalformedBgzf {
                 locus: None,
-                reason: "not a BGZF block header in the region range",
+                reason: "not a BGZF block header in the region range".to_string(),
             });
         };
         let mut block = Vec::with_capacity(total);

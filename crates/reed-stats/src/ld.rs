@@ -151,7 +151,9 @@ impl LdDecayAcc {
     /// Bins over the given ascending edges.
     #[must_use]
     pub fn new(edges: Vec<u64>) -> Self {
-        let n = edges.len().max(1);
+        // No edges = no decay table (doc_v23 V23-22): zero bins, so `push`
+        // and `push_bin` are no-ops instead of silently creating one bin.
+        let n = edges.len();
         Self {
             edges,
             sum_r2: (0..n)
@@ -161,32 +163,38 @@ impl LdDecayAcc {
         }
     }
 
-    fn bin_of(&self, distance: u64) -> usize {
+    /// The bin for `distance`, or `None` before the first edge (doc_v23
+    /// V23-27): a custom edge list need not start at 0, and folding such a
+    /// pair into bin 0 would silently misreport it.
+    fn bin_of(&self, distance: u64) -> Option<usize> {
         // Last bin with edge <= distance.
         match self.edges.binary_search(&distance) {
-            Ok(i) => i,
-            Err(i) => i.saturating_sub(1),
+            Ok(i) => Some(i),
+            Err(0) => None,
+            Err(i) => Some(i - 1),
         }
     }
 
     /// The bin index for a distance (the caller may compute it once and
     /// share it across accumulators built on the same edges).
     #[must_use]
-    pub fn bin_index(&self, distance: u64) -> usize {
+    pub fn bin_index(&self, distance: u64) -> Option<usize> {
         self.bin_of(distance)
     }
 
     /// Absorbs one pair's (distance, r²).
     pub fn push(&mut self, distance: u64, r2: f64) {
-        let b = self.bin_of(distance);
-        if b < self.counts.len() {
+        if let Some(b) = self.bin_of(distance)
+            && b < self.counts.len()
+        {
             self.sum_r2[b].add(r2);
             self.counts[b] += 1;
         }
     }
 
     /// Absorbs one pair's r² into a precomputed [`bin_index`](Self::bin_index).
-    pub fn push_bin(&mut self, bin: usize, r2: f64) {
+    pub fn push_bin(&mut self, bin: Option<usize>, r2: f64) {
+        let Some(bin) = bin else { return };
         if bin < self.counts.len() {
             self.sum_r2[bin].add(r2);
             self.counts[bin] += 1;
@@ -275,10 +283,15 @@ pub struct LdPruner {
     window_start_bp: u64,
     /// Whether a bp window start is established (the first push).
     bp_started: bool,
-    /// Every arrival's position, indexed by arrival — the bp window's start
-    /// advance walks all variants (plink2's `variant_include` bits), not
-    /// only the slotted ones.
+    /// Every arrival's position, indexed by `arrival - pos_base` — the bp
+    /// window's start advance walks all variants (plink2's
+    /// `variant_include` bits), not only the slotted ones. Entries below
+    /// `window_start` are dropped on every advance (doc_v23 V23-13): the
+    /// search starts at `window_start + 1`, so the prefix can never be read
+    /// again.
     pos_log: Vec<u64>,
+    /// Arrival index of `pos_log[0]`; `0` after a contig reset.
+    pos_base: usize,
 }
 
 /// The per-site aggregates plink2's `FillVaggs` produces.
@@ -346,6 +359,7 @@ impl LdPruner {
             window_start_bp: 0,
             bp_started: false,
             pos_log: Vec::new(),
+            pos_base: 0,
         }
     }
 
@@ -435,15 +449,26 @@ impl LdPruner {
     /// window keeps advancing).
     fn evaluate_window_bp(&mut self, bp: u64) {
         let floor = self.last_pos0.saturating_sub(bp);
-        let new_start = (self.window_start + 1..self.pos_log.len())
-            .find(|&i| self.pos_log[i] >= floor)
-            .unwrap_or(self.pos_log.len());
+        let end = self.pos_base + self.pos_log.len();
+        let new_start = (self.window_start + 1..end)
+            .find(|&i| self.pos_log[i - self.pos_base] >= floor)
+            .unwrap_or(end);
         self.window_start_bp = self
             .pos_log
-            .get(new_start)
+            .get(new_start - self.pos_base)
             .copied()
             .unwrap_or(self.last_pos0);
         self.evaluate_window(new_start);
+        // The window start moved forward; every position below it is dead
+        // (the next search begins at `window_start + 1`). Drop the prefix so
+        // the log is O(window span) instead of O(contig variants)
+        // (doc_v23 V23-13). `finish_contig` passes `usize::MAX` as the next
+        // start; it clears the log itself.
+        if self.window_start != usize::MAX && self.window_start > self.pos_base {
+            let drop = self.window_start - self.pos_base;
+            self.pos_log.drain(..drop);
+            self.pos_base = self.window_start;
+        }
     }
 
     /// Runs the window's pairwise scan, then advances it: slots below
@@ -540,6 +565,7 @@ impl LdPruner {
         self.window_start_bp = 0;
         self.bp_started = false;
         self.pos_log.clear();
+        self.pos_base = 0;
     }
 
     /// The kept global ordinals, ascending.
@@ -556,5 +582,87 @@ impl LdPruner {
         let mut out = self.pruned.clone();
         out.sort_unstable();
         out
+    }
+}
+
+#[cfg(test)]
+mod v23_pos_log_tests {
+    use super::*;
+
+    fn stats() -> SitePruneStats {
+        SitePruneStats {
+            maj_freq: 0.5,
+            n_hom_ref: 1,
+            n_hom_alt: 1,
+            n_het: 0,
+        }
+    }
+
+    /// doc_v23 V23-13: the position log used to grow with every variant of
+    /// the contig. Only `window_start + 1..` is ever searched, so the prefix
+    /// below the advanced start is dropped; the log is O(variants in one
+    /// span), not O(contig variants).
+    #[test]
+    fn bp_window_drops_the_dead_prefix() {
+        let mut p = LdPruner::new(2.0, LdWindow::Bp(100), 1, 1, 2);
+        let plane = [0b01_u64];
+        for i in 0..10_000_usize {
+            let pos = i as u64 * 1_000;
+            assert!(
+                p.push(i, pos, [&plane, &plane, &plane, &plane], stats()),
+                "site {i} must be kept (threshold 2.0 never prunes)"
+            );
+            assert!(
+                p.pos_log.len() <= 2,
+                "log grew to {} entries at site {i}",
+                p.pos_log.len()
+            );
+        }
+        p.finish_contig();
+        assert_eq!(p.kept_sites().len(), 10_000);
+    }
+
+    /// The advance still finds every in-span variant: with 1 kb spacing and a
+    /// 3 kb window, the log holds the arrivals since the window start and the
+    /// kept set matches the unbounded-window-for-this-input expectation.
+    #[test]
+    fn bp_window_keeps_the_in_span_entries() {
+        let mut p = LdPruner::new(2.0, LdWindow::Bp(3_000), 1, 1, 2);
+        let plane = [0b01_u64];
+        for i in 0..5_000_usize {
+            let pos = i as u64 * 1_000;
+            assert!(p.push(i, pos, [&plane, &plane, &plane, &plane], stats()));
+        }
+        // Every fourth arrival triggers a close; after truncation the log
+        // holds at most the four in-span arrivals plus the trigger.
+        assert!(p.pos_log.len() <= 5, "log = {} entries", p.pos_log.len());
+        assert!(p.pos_base <= p.window_start);
+        let seen = p.seen;
+        p.finish_contig();
+        assert_eq!(p.kept_sites().len(), seen);
+    }
+
+    /// doc_v23 V23-22: no edges means no decay table. A pairs-only library
+    /// request must not synthesize a single `[0, bin)` row.
+    #[test]
+    fn no_edges_means_no_decay_bins() {
+        let mut acc = LdDecayAcc::new(Vec::new());
+        acc.push(10, 0.5);
+        assert_eq!(acc.counts(), &[] as &[u64]);
+        assert_eq!(acc.mean_r2(), Vec::<Option<f64>>::new());
+    }
+
+    /// doc_v23 V23-27: a distance below the first edge has no bin. It used
+    /// to saturate to bin 0 and be counted in `[first_edge, …)`.
+    #[test]
+    fn a_distance_before_the_first_edge_has_no_bin() {
+        let mut acc = LdDecayAcc::new(vec![100, 200]);
+        assert_eq!(acc.bin_index(50), None);
+        assert_eq!(acc.bin_index(150), Some(0));
+        assert_eq!(acc.bin_index(250), Some(1));
+        acc.push(50, 0.5);
+        assert_eq!(acc.counts(), &[0, 0]);
+        acc.push(150, 0.25);
+        assert_eq!(acc.counts(), &[1, 0]);
     }
 }

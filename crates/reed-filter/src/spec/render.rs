@@ -56,7 +56,13 @@ impl FilterSpec {
             flag(&mut args, "--mind", rate.render());
         }
 
-        // ---- regions (one `-t` list: `^` prefixes the excludes) ----
+        // ---- regions ----
+        // `-r/-R` and `-t/-T` are two families that AND together, and the
+        // spec keeps them apart (`RegionRule::indexed` vs include/exclude),
+        // so both render. `-t` carries its excludes as `^` entries.
+        if !self.targets.indexed.is_empty() {
+            flag(&mut args, "-r", self.targets.indexed.join(","));
+        }
         if !self.targets.include.is_empty() || !self.targets.exclude.is_empty() {
             let mut list: Vec<String> = self.targets.include.clone();
             list.extend(self.targets.exclude.iter().map(|r| format!("^{r}")));
@@ -124,7 +130,16 @@ impl FilterSpec {
                 // Not one of the CLI spellings (a JSON-only mask).
                 _ => continue,
             };
-            let value = when.trim_start_matches(['<', '>']).trim();
+            // Strip the whole operator: `trim_start_matches(['<', '>'])`
+            // left the `=` of `<=`/`>=` in the value, so the provenance
+            // line was not replayable (doc_v23 V23-24).
+            let value = when
+                .strip_prefix("<=")
+                .or_else(|| when.strip_prefix(">="))
+                .or_else(|| when.strip_prefix('<'))
+                .or_else(|| when.strip_prefix('>'))
+                .unwrap_or(when)
+                .trim();
             flag(&mut args, name, value);
         }
 
@@ -239,6 +254,32 @@ mod tests {
         };
         let args = args_of(&spec);
         assert_eq!(&args[..6], &["-s", "a,b", "-s", "^c", "--mind", "0.25"]);
+    }
+
+    /// doc_v23 V23-24: two-character bounds must render as the bare number,
+    /// otherwise the provenance line replays as `--min-dp "= 10"`.
+    #[test]
+    fn two_character_mask_bounds_render_replayable_args() {
+        let rule = |when: &str| crate::spec::GenotypeMaskRule {
+            field: "DP".into(),
+            when: when.into(),
+            on_missing: OnMissing::Keep,
+            depth: true,
+        };
+        let spec = FilterSpec {
+            genotype: crate::spec::GenotypeRules {
+                mask_if: vec![rule("<= 10"), rule(">= 20")],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let args = args_of(&spec);
+        let pairs: Vec<(&str, &str)> = args
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
+        assert!(pairs.contains(&("--min-dp", "10")), "{args:?}");
+        assert!(pairs.contains(&("--max-dp", "20")), "{args:?}");
     }
 
     #[test]

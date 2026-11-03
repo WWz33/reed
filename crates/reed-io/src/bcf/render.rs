@@ -247,7 +247,12 @@ pub fn render_sample_part(
                 let start = base + s * stride;
                 let data = &indiv[start..start + stride];
                 if is_gt {
-                    fmt_gt(out, ty, count, data, dict.vcf44());
+                    // htslib `bcf_format_gt_v2` rejects a non-integer GT
+                    // type (`default: return -2`); a CHAR-typed GT has a
+                    // 1-byte element, so reading it as int32 panics
+                    // (doc_v23 V23-02).
+                    fmt_gt(out, ty, count, data, dict.vcf44())
+                        .map_err(|reason| bad(locus, reason))?;
                 } else if count == 1 {
                     fmt_array1(out, ty, data);
                 } else {
@@ -290,7 +295,7 @@ pub fn render_site_line(
 fn bad(locus: impl LocusSource, reason: &'static str) -> IoError {
     IoError::MalformedRecord {
         locus: locus.error_locus(),
-        reason,
+        reason: reason.to_string(),
     }
 }
 
@@ -387,7 +392,23 @@ fn fmt_array1(out: &mut Vec<u8>, ty: u8, data: &[u8]) {
 /// The BCF GT fast path ([`super::gt`]) builds its byte-pair table with this
 /// function (at `vcf44 = false`, since the table is header-independent), so
 /// a decoded code is exactly what the text pipeline would see.
-pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8], vcf44: bool) {
+///
+/// # Errors
+///
+/// The descriptor's type is not an integer type. htslib returns an error for
+/// that (`bcf_format_gt_v2`'s `default: return -2`); without the guard a
+/// CHAR element (1 byte wide) was read as int32 and panicked on the slice
+/// (doc_v23 V23-02).
+pub(crate) fn fmt_gt(
+    out: &mut Vec<u8>,
+    ty: u8,
+    count: usize,
+    data: &[u8],
+    vcf44: bool,
+) -> Result<(), &'static str> {
+    if !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
+        return Err("BCF GT field is not integer-typed");
+    }
     let width = type_width(ty);
     let (_, vector_end) = int_sentinels(ty);
     let mark = out.len();
@@ -428,6 +449,7 @@ pub(crate) fn fmt_gt(out: &mut Vec<u8>, ty: u8, count: usize, data: &[u8], vcf44
             out.insert(mark, b'/');
         }
     }
+    Ok(())
 }
 
 /// One integer element of `ty`.
@@ -608,8 +630,63 @@ mod tests {
         ];
         for (codes, vcf44, want) in cases {
             let mut out = Vec::new();
-            fmt_gt(&mut out, value_type::INT8, codes.len(), codes, *vcf44);
+            fmt_gt(&mut out, value_type::INT8, codes.len(), codes, *vcf44)
+                .expect("invariant: INT8 is integer-typed");
             assert_eq!(out, want.to_vec(), "codes {codes:02x?} vcf44={vcf44}");
         }
+    }
+
+    /// doc_v23 V23-02: a GT descriptor whose type nibble is CHAR has a 1-byte
+    /// element, so reading it as int32 must be an error, not a panic.
+    /// htslib `bcf_format_gt_v2` rejects the type (`default: return -2`).
+    #[test]
+    fn char_typed_gt_is_malformed_not_an_out_of_bounds_panic() {
+        let mut out = Vec::new();
+        let err = fmt_gt(&mut out, value_type::CHAR, 2, b"01", true)
+            .expect_err("CHAR is not an integer GT type");
+        assert_eq!(err, "BCF GT field is not integer-typed");
+        assert!(out.is_empty(), "nothing is rendered for a rejected field");
+        // FLOAT is rejected the same way (its element would be readable but
+        // semantically invalid).
+        assert!(fmt_gt(&mut out, value_type::FLOAT, 1, &[0, 0, 0, 0], false).is_err());
+    }
+
+    /// doc_v23 V23-02: the render path (not just `fmt_gt`) reports a
+    /// CHAR-typed GT as a malformed record at the record's locus.
+    #[test]
+    fn render_record_rejects_char_typed_gt() {
+        let header_text = "##fileformat=VCFv4.2\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n";
+        let header: noodles::vcf::Header = header_text.parse().expect("invariant: header");
+        let dict_text = crate::bcf::bcf_header_text(&header).expect("invariant: bcf header text");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom = Chr01 (tid 0)
+        shared.extend_from_slice(&19_i32.to_le_bytes()); // pos0 19 -> POS 20
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&FLOAT_MISSING.to_le_bytes()); // qual = .
+        shared.extend_from_slice(&(1_u32 << 16).to_le_bytes()); // 1 allele, 0 INFO
+        shared.extend_from_slice(&(1_u32 << 24 | 1).to_le_bytes()); // 1 FORMAT, 1 sample
+        shared.extend_from_slice(&[0x07]); // ID: empty char vector
+        shared.extend_from_slice(&[0x17, b'A']); // REF "A"
+        shared.extend_from_slice(&[0x01]); // FILTER: count 0 (".")
+        // FORMAT: GT key, then a descriptor with count 2 and type CHAR.
+        let gt = dict.key_of(b"GT").expect("invariant: GT is in the dictionary");
+        let mut indiv = Vec::new();
+        indiv.push(0x11); // typed int: count 1, INT8
+        indiv.push(u8::try_from(gt).expect("invariant: small dictionary"));
+        indiv.extend_from_slice(&[0x27, b'0', b'1']); // count 2, CHAR, "01"
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &indiv,
+        };
+        let mut out = Vec::new();
+        let err = render_record(&rec, &dict, &mut out)
+            .expect_err("a CHAR-typed GT is a malformed record");
+        let text = err.to_string();
+        assert!(text.contains("Chr01:20"), "{text}");
+        assert!(text.contains("not integer-typed"), "{text}");
     }
 }

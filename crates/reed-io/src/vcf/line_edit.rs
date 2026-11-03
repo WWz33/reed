@@ -189,6 +189,15 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
 
 /// Sample region edit: skip dropped columns, replace the GT subfield of
 /// masked samples with `./.`, copy everything else verbatim.
+///
+/// The bound on sample columns is the header's sample count, read off the
+/// bitsets the plan carries (`SampleMask::n_samples` / `Bitset::len` are both
+/// built from the header). A line may carry extra *empty* columns past it
+/// (htslib ignores a trailing run of tabs, V22-4); those columns have no mask
+/// bit, so indexing the mask/GT bitset with them would trip
+/// `Bitset::get`'s assert and abort the batch (doc_v23 V23-03). They are
+/// dropped rather than written, which is what the scan stage accepted them
+/// as: nothing. `samples_edited` guarantees at least one bitset is present.
 fn edit_samples(
     samples: &[u8],
     plan: &EditPlan<'_>,
@@ -197,13 +206,22 @@ fn edit_samples(
 ) {
     let keep = plan.keep_samples;
     let mask = plan.mask_gt;
+    let n_samples = keep.map_or_else(
+        || mask.map_or(0, Bitset::len),
+        reed_core::SampleMask::n_samples,
+    );
+    // Work only on the first `n_samples` fields. The line may carry extra
+    // empty columns past the header count (htslib ignores them); they have
+    // no mask bit, and the verbatim tail copy at the end of this function
+    // would otherwise write them back out (doc_v23 V23-03).
+    let samples = &samples[..sample_region_end(samples, n_samples)];
     let mut field_start = 0;
     let mut sample_idx = 0_usize;
     let mut wrote_column = false;
     // Byte offset where the current run of verbatim samples begins
     // (doc_v3 03 O7: one copy per run instead of one per sample).
     let mut run_start: Option<usize> = None;
-    while field_start < samples.len() {
+    while field_start < samples.len() && sample_idx < n_samples {
         let field_end = memchr::memchr(b'\t', &samples[field_start..])
             .map_or(samples.len(), |rel| field_start + rel);
         let kept = keep.is_none_or(|k| k.contains(reed_core::SampleId(sample_idx as u32)));
@@ -239,6 +257,24 @@ fn edit_samples(
     }
     // A sample-count mismatch against the header is a caller invariant (the
     // scan stage validates it).
+}
+
+/// Byte offset just past the `n`-th sample field of a sample region (or the
+/// region's length when fewer fields are present).
+///
+/// The scan stage accepts a trailing run of empty columns past the header's
+/// sample count and ignores them (V22-4); the editor must end the region at
+/// the same place so the verbatim tail copy cannot resurrect them
+/// (doc_v23 V23-03).
+fn sample_region_end(samples: &[u8], n: usize) -> usize {
+    let mut start = 0;
+    for _ in 0..n {
+        let Some(rel) = memchr::memchr(b'\t', &samples[start..]) else {
+            return samples.len();
+        };
+        start += rel + 1;
+    }
+    start.saturating_sub(1).min(samples.len())
 }
 
 /// Copies `field`, replacing the GT subfield with `./.` when the row is
@@ -381,6 +417,13 @@ pub fn format_g6_into(out: &mut Vec<u8>, v: f64) {
             .expect("invariant: ASCII")
             .parse()
             .expect("invariant: integer exponent");
+        // `wide`/`scientific` was formatted from `v.abs()`, so the sign has
+        // to be restored here; the fixed branch formats `v` itself and keeps
+        // it. Without this a negative INFO/FORMAT float was silently written
+        // as positive (doc_v23 V23-04: BCF→VCF data corruption, not latent).
+        if v < 0.0 {
+            out.push(b'-');
+        }
         out.extend_from_slice(mantissa);
         out.push(b'e');
         out.push(if exp < 0 { b'-' } else { b'+' });
@@ -417,6 +460,56 @@ mod tests {
         for (v, expected) in cases {
             assert_eq!(format_g6(f64::from(v)), expected, "value {v}");
         }
+    }
+
+    /// doc_v23 V23-04: the scientific branch formats `v.abs()`, so the sign
+    /// must be restored separately. Every negative value that renders in
+    /// exponent form used to lose its `-` (the fixed branch formats `v`
+    /// itself and was unaffected).
+    #[test]
+    fn g6_negative_scientific_values_keep_their_sign() {
+        let cases = [
+            (-1.5e-7_f64, "-1.5e-07"),
+            (-1_234_567.0_f64, "-1.23457e+06"),
+            (-1.0e-5_f64, "-1e-05"),
+            (-8.20818e-38_f64, "-8.20818e-38"),
+            (-0.000_099_999_f64, "-9.9999e-05"),
+            (-999_999.5_f64, "-1e+06"),
+            // The fixed branch keeps its sign without help.
+            (-0.123_f64, "-0.123"),
+            (-0.0_f64, "-0"),
+            // And positives are unchanged.
+            (1.5e-7_f64, "1.5e-07"),
+        ];
+        for (v, expected) in cases {
+            assert_eq!(format_g6(v), expected, "value {v}");
+        }
+    }
+
+    /// Both renderers that reach `format_g6_into` are covered: the INFO
+    /// rewrite (`render_info_value`, V23-04's reported BCF→VCF corruption)
+    /// and FORMAT floats (the BCF renderer's `float_into`, checked here via
+    /// the same helper). An INFO value the plan does not touch is copied
+    /// verbatim, so the sign survives there by construction; a recomputed
+    /// float goes through the renderer.
+    #[test]
+    fn negative_info_float_survives_an_info_edit() {
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\tXF=-1.5e-7;AC=1\tGT\t0/1\n";
+        let plan = EditPlan {
+            info_set: &[(b"AC".as_slice(), InfoValueOut::Int(2))],
+            ..EditPlan::default()
+        };
+        let got = edit(line, &plan, Some(0));
+        // Untouched tag: the input bytes are preserved.
+        assert!(got.contains("XF=-1.5e-7"), "{got}");
+        assert!(got.contains("AC=2"), "{got}");
+        // Recomputed tag: the renderer must keep the sign.
+        let plan = EditPlan {
+            info_set: &[(b"XF".as_slice(), InfoValueOut::Float(-1.5e-7))],
+            ..EditPlan::default()
+        };
+        let got = edit(line, &plan, Some(0));
+        assert!(got.contains("XF=-1.5e-07"), "{got}");
     }
 
     #[test]
@@ -604,6 +697,67 @@ mod tests {
         };
         let got = edit(line, &plan, Some(1));
         assert!(got.contains("\t15:./.\t12:1|1"), "{got}");
+    }
+
+    /// doc_v23 V23-03: a line with extra trailing empty sample columns (which
+    /// htslib and the scan stage ignore, V22-4) used to walk `sample_idx`
+    /// past the header's sample count and index the keep mask / GT mask out
+    /// of range — `Bitset::get` asserts, aborting the worker. Both edit kinds
+    /// must survive by dropping the extras, exactly as the scan accepted
+    /// them (nothing).
+    #[test]
+    fn trailing_empty_columns_do_not_overrun_the_header_sample_count() {
+        // Byte-exact (no `trim_end`): a resurrected trailing tab is the bug,
+        // so the assertion has to see it. Header declares two samples; the
+        // line carries both plus two empty columns past the header count
+        // (the shape the scan stage tolerates, V22-4).
+        let raw = |line: &[u8], plan: &EditPlan<'_>| {
+            let lr = LineRef::parse(line).expect("invariant: full line");
+            let mut out = Vec::new();
+            edit_vcf_line(&lr, plan, Some(0), &mut out);
+            String::from_utf8(out).expect("invariant: utf-8")
+        };
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\t1/1:9\t\t\n";
+
+        // Sample subset: one of two kept, so the region is edited.
+        let keep = SampleMask::from_ids(2, [SampleId(0)]).expect("invariant: id in range");
+        let plan = EditPlan {
+            keep_samples: Some(&keep),
+            ..EditPlan::default()
+        };
+        assert_eq!(
+            raw(line, &plan),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\n",
+            "the trailing empty columns must be dropped, not copied back"
+        );
+
+        // The GT-mask path (`--min-gq`-style) without `-s`: same bound.
+        let mut bits = Bitset::new(2);
+        bits.set(1, true);
+        let plan = EditPlan {
+            mask_gt: Some(&bits),
+            ..EditPlan::default()
+        };
+        assert_eq!(
+            raw(line, &plan),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\t./.:9\n"
+        );
+
+        // A single trailing tab (no extra column) keeps working.
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\t1/1:9\t\n";
+        assert_eq!(
+            raw(line, &plan),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\t./.:9\n"
+        );
+
+        // No sample edit at all still copies the line verbatim, trailing
+        // columns included: the scan stage accepted them, and the writer's
+        // job is only to not crash and not invent columns.
+        let verbatim_plan = EditPlan::default();
+        assert_eq!(
+            raw(line, &verbatim_plan),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\t1/1:9\t\n"
+        );
     }
 
 }

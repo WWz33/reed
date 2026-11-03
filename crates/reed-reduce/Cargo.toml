@@ -15,3 +15,6 @@ faer-backend = ["dep:faer"]
 faer = { version = "0.20", optional = true }
 reed-core.workspace = true
 reed-distance = { path = "../reed-distance" }
+
+[dev-dependencies]
+rayon.workspace = true

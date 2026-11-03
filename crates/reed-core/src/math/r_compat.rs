@@ -8,6 +8,10 @@
 // Every float-to-integer cast here converts a value that is already integral
 // and range-checked, so the truncation lint is noise.
 #![allow(clippy::cast_possible_truncation)]
+// The tie test is an *exact* comparison by design: `x - floor(x)` is exact
+// for a finite f64, and any epsilon window mis-rounds neighbours that are not
+// ties (that was doc_v23 V23-06). R's `round()` does the same bit-exact test.
+#![allow(clippy::float_cmp)]
 
 /// R's `round()`: round half to even ("banker's rounding").
 ///
@@ -16,7 +20,13 @@
 /// build the candidate list, so the difference changes results.
 ///
 /// The tie case is detected on the exact binary value, which is what R does:
-/// `round(0.5) == 0`, `round(1.5) == 2`, `round(2.5) == 2`.
+/// `round(0.5) == 0`, `round(1.5) == 2`, `round(2.5) == 2`. A tolerance is
+/// wrong here: `x - floor(x)` is exact for a finite `f64`, and any epsilon
+/// window also catches neighbours that are *not* ties. With
+/// `EPSILON * max(|x|, 1)` as the window, `round_half_even(1.4999999999999998)`
+/// returned 2 while R returns 1, and `round_half_even(0.35 * 90)` returned 32
+/// while R returns 31 — one extra training sample per group in `xvalDapc`
+/// (doc_v23 V23-06).
 #[must_use]
 pub fn round_half_even(x: f64) -> f64 {
     if !x.is_finite() {
@@ -24,7 +34,7 @@ pub fn round_half_even(x: f64) -> f64 {
     }
     let floor = x.floor();
     let frac = x - floor;
-    if (frac - 0.5).abs() < f64::EPSILON * x.abs().max(1.0) {
+    if frac == 0.5 {
         // Exactly halfway: pick the even neighbour.
         if (floor / 2.0).fract() == 0.0 { floor } else { floor + 1.0 }
     } else if frac < 0.5 {
@@ -149,8 +159,11 @@ fn step_for(max: usize, n: usize) -> f64 {
         return step;
     }
     // `candidate_counts` only calls this with `n == 10`; `pretty_sequence`
-    // already returned above for `max <= n`. A step of 1 is the safe answer
-    // for any other `n`, and no caller reaches it.
+    // already returned above for `max <= n`. For any other `n` the step is
+    // 1 — every integer in range — because R's `pretty()` can emit
+    // fractional steps (e.g. 0.5) that this `usize` return type cannot
+    // represent, and no caller uses another `n` (doc_v23 V23-44 pins the
+    // behaviour).
     1.0
 }
 
@@ -180,6 +193,39 @@ mod tests {
         assert_eq!(round_half_even(2.6), 3.0);
     }
 
+    /// doc_v23 V23-06: values one ulp either side of a half are *not* ties.
+    /// The old epsilon window treated them as ties, so a value R rounds down
+    /// was rounded up (or vice versa). R values were measured.
+    #[test]
+    fn values_near_a_half_are_not_ties() {
+        assert_eq!(round_half_even(1.499_999_999_999_999_8), 1.0);
+        assert_eq!(round_half_even(2.500_000_000_000_000_4), 3.0);
+        // The DAPC case: 0.35 * 90 = 31.499999999999996 in binary, so R's
+        // round() gives 31, not 32.
+        assert_eq!(round_half_even(0.35 * 90.0), 31.0);
+        // A sweep of the value R's round() sees for every `training_set` in
+        // 0.05..0.95 against group sizes 1..500: a product that is not an
+        // exact half must never be treated as one. Cross-check the exact
+        // half test directly (it is the only branch that can mis-round).
+        for tenth in 1..20 {
+            let training_set = f64::from(tenth) / 20.0;
+            for group in 1..=500_u32 {
+                let x = training_set * f64::from(group);
+                let floor = x.floor();
+                let is_tie = x - floor == 0.5;
+                let got = round_half_even(x);
+                let want = if is_tie {
+                    if (floor / 2.0).fract() == 0.0 { floor } else { floor + 1.0 }
+                } else if x - floor < 0.5 {
+                    floor
+                } else {
+                    floor + 1.0
+                };
+                assert_eq!(got, want, "training_set {training_set} group {group}");
+            }
+        }
+    }
+
     #[test]
     fn round_half_even_passes_through_non_finite() {
         assert!(round_half_even(f64::NAN).is_nan());
@@ -206,6 +252,20 @@ mod tests {
             pretty_sequence(300, 10),
             vec![50, 100, 150, 200, 250, 300]
         );
+    }
+
+    /// doc_v23 V23-44: `n != 10` is a documented, tested fallback — every
+    /// integer in range. `xval` only asks for `n == 10` (the measured R
+    /// table); R itself can return fractional steps that `usize` cannot
+    /// represent, so no attempt is made to match it for other `n`.
+    #[test]
+    fn non_ten_sample_counts_fall_back_to_every_integer() {
+        assert_eq!(pretty_sequence(20, 5), (1..=20).collect::<Vec<_>>());
+        assert_eq!(pretty_sequence(100, 3), (1..=100).collect::<Vec<_>>());
+        // `max <= n` keeps the exact range.
+        assert_eq!(pretty_sequence(5, 20), (1..=5).collect::<Vec<_>>());
+        // `n <= 1` is a single point.
+        assert_eq!(pretty_sequence(100, 1), vec![1]);
     }
 
     #[test]

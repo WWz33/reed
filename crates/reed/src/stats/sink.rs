@@ -99,6 +99,10 @@ pub(super) struct StatsSink {
     pub(super) ld_budget: ThreadBudget,
     /// The LD plan (the analysis needs the window and the bin edges).
     pub(super) ld: Option<LdPlan>,
+    /// The streaming `--ld-pairs` table ([`LdPlan::pairs_path`]): opened
+    /// lazily on the first pair and appended in contig order (doc_v23
+    /// V23-14).
+    pub(super) pairs_file: Option<std::fs::File>,
     pub(super) genome_span: u64,
     pub(super) n_windows: u64,
     pub(super) n_records: u64,
@@ -225,6 +229,40 @@ impl OrderedSink<StatsPartial> for StatsSink {
     }
 }
 
+/// Appends one contig's pair rows to the streaming table, creating the file
+/// and writing the header on the first pair. The rows and the header are the
+/// same bytes `writers::ld` writes for the in-memory report, so a streamed
+/// run and an accumulated run produce identical files (doc_v23 V23-14).
+fn write_pairs(
+    file: &mut Option<std::fs::File>,
+    path: &std::path::Path,
+    rows: &[(Vec<u8>, u64, u64, f64)],
+) -> Result<(), EngineError> {
+    use std::io::Write as _;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    if file.is_none() {
+        let mut opened = std::fs::File::create(path).map_err(EngineError::Io)?;
+        opened
+            .write_all(crate::stats::writers::ld::PAIRS_HEADER)
+            .map_err(EngineError::Io)?;
+        *file = Some(opened);
+    }
+    let sink = file.as_mut().expect("invariant: opened above");
+    let mut buf = String::with_capacity(rows.len() * 40);
+    for (contig, a, b, r2) in rows {
+        crate::stats::writers::ld::render_pair_row(
+            &mut buf,
+            &String::from_utf8_lossy(contig),
+            *a,
+            *b,
+            *r2,
+        );
+    }
+    sink.write_all(buf.as_bytes()).map_err(EngineError::Io)
+}
+
 impl StatsSink {
     /// Hands the pending contig's matrix to a decay worker: the analysis
     /// runs off the reducer thread (it overlaps the decode), and `finish`
@@ -272,14 +310,29 @@ impl StatsSink {
     /// — which starts from (and returns to) the caller's accumulator, so
     /// the mid-run capped joins and `finish` see every contig.
     ///
+    /// With [`LdPlan::pairs_path`] set, each job's rows are appended to the
+    /// final `.ld` file here instead of being merged into memory
+    /// (doc_v23 V23-14, decision C): the file is created lazily on the first
+    /// pair — an all-invariant run still writes no `.ld` — and the rows keep
+    /// the contig order, so the bytes equal the pre-v23 in-memory render.
+    ///
     /// # Errors
     ///
-    /// [`EngineError::Job`] when a decay worker panicked.
+    /// [`EngineError::Job`] when a decay worker panicked, and
+    /// [`EngineError::Io`] when the pair table cannot be written.
     pub(super) fn join_ld(&mut self, out: &mut Option<LdResult>) -> Result<(), EngineError> {
+        let pairs_path = self.ld.as_ref().and_then(|p| p.pairs_path.clone());
         for handle in self.ld_jobs.drain(..) {
             let set = handle
                 .join()
                 .map_err(|_| EngineError::job("the LD decay worker panicked"))?;
+            let mut set = set;
+            if let Some(path) = &pairs_path {
+                write_pairs(&mut self.pairs_file, path, &set.pairs)?;
+                // Streaming: the rows are already on disk, so the in-memory
+                // tail stays empty — that is the whole point of V23-14.
+                set.pairs.clear();
+            }
             match out {
                 Some(dst) => {
                     dst.cohort.merge(&set.cohort);
@@ -539,6 +592,7 @@ mod tests {
                 mem: MemBudget::from_bytes(u64::MAX),
             },
             ld: None,
+            pairs_file: None,
             grid: GridMode::Bp {
                 size: 100,
                 step: 100,

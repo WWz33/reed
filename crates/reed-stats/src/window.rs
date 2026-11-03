@@ -93,10 +93,18 @@ impl ContigBins {
 
     /// Merges another partial's bins into this one, consuming `other`.
     pub fn merge_bins(&mut self, other: &mut Self) {
-        debug_assert_eq!(self.width, other.width, "invariant: same bin width");
+        // Unconditional: a release build used to skip the assert and then
+        // `zip` silently truncated the longer accumulator list (doc_v23
+        // V23-28).
+        assert_eq!(self.width, other.width, "invariant: same bin width");
         for (bin, accs) in std::mem::take(&mut other.bins) {
             match self.bins.get_mut(&bin) {
                 Some(dst) => {
+                    assert_eq!(
+                        dst.len(),
+                        accs.len(),
+                        "invariant: same per-bin accumulator count"
+                    );
                     for (dst, src) in dst.iter_mut().zip(&accs) {
                         dst.merge(src);
                     }
@@ -271,6 +279,56 @@ mod tests {
         assert_eq!(a.counts(), b.counts());
         assert_eq!(a.value_per_pair(), b.value_per_pair());
     }
+    /// doc_v23 V23-28: a mismatched merge panics in every profile. The old
+    /// `debug_assert!` let a release build zip the shorter list and drop
+    /// accumulators.
+    #[test]
+    #[should_panic(expected = "same bin width")]
+    fn merge_bins_rejects_a_different_width() {
+        let mut a = ContigBins::new(BpBinning::new(10), &seed());
+        let mut b = ContigBins::new(BpBinning::new(20), &seed());
+        a.merge_bins(&mut b);
+    }
+
+    /// doc_v23 V23-28: same width but a different number of accumulators
+    /// (a caller bug) must not silently truncate through `zip`.
+    #[test]
+    #[should_panic(expected = "same per-bin accumulator count")]
+    fn merge_bins_rejects_a_different_accumulator_count() {
+        let mut a = ContigBins::new(BpBinning::new(10), &seed());
+        let mut b = ContigBins::new(BpBinning::new(10), &seed());
+        a.bins.insert(0, seed());
+        b.bins.insert(0, Vec::new());
+        a.merge_bins(&mut b);
+    }
+
+    /// doc_v23 V23-28: merging different accumulator kinds panics in
+    /// release too (the fall-through used to drop the data).
+    #[test]
+    #[should_panic(expected = "identical accumulator kinds")]
+    fn merge_rejects_different_accumulator_kinds() {
+        let mut pi = build_accs(
+            &[StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            &[2],
+        )
+        .expect("invariant: build")
+        .remove(0);
+        let dxy = build_accs(
+            &[StatKind::Dxy {
+                a: 0,
+                b: 1,
+                per_bp: false,
+            }],
+            &[2, 2],
+        )
+        .expect("invariant: build")
+        .remove(0);
+        pi.merge(&dxy);
+    }
+
 }
 
 /// Per-region accumulators for a `Regions` grid (`--bed-file`): one

@@ -240,6 +240,7 @@ pub fn run_popgen_opened(
         decay_max_bp: ld.decay_max_bp,
         decay_bin_bp: ld.decay_bin_bp.max(1),
         pairs: ld.pairs,
+        pairs_path: ld.pairs_path.clone(),
     });
     // `-s/-S/--keep/--remove`: the keep mask already emptied excluded
     // samples' group slots inside `resolve_groups`.
@@ -312,6 +313,7 @@ pub fn run_popgen_opened(
     let sink = StatsSink {
         sfs: None,
         fstats: None,
+        pairs_file: None,
         ld_layout,
         ld_matrix: None,
         ld_jobs: Vec::new(),

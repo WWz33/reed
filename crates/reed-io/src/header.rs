@@ -145,4 +145,28 @@ mod tests {
         assert_eq!(facts.info_keys, ["DP"]);
         assert_eq!(facts.format_keys, ["GT"]);
     }
+
+    /// doc_v23 V23-42: pruning keeps the declared order and drops exactly
+    /// the false entries.
+    #[test]
+    fn pruned_header_preserves_order_and_selection() {
+        let text = b"##fileformat=VCFv4.3\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t\
+                      s1\ts2\ts3\ts4\n";
+        let facts = HeaderFacts::parse(text).expect("invariant: valid header");
+        let out = facts.pruned_header(&[true, false, true, true]);
+        let names: Vec<String> = out.sample_names().iter().map(ToString::to_string).collect();
+        assert_eq!(names, ["s1", "s3", "s4"]);
+    }
+
+    /// doc_v23 V23-42: a `keep` shorter than the sample list treats the
+    /// missing tail as kept (the documented `unwrap_or(true)` rule).
+    #[test]
+    fn pruned_header_treats_a_short_keep_as_kept() {
+        let text = b"##fileformat=VCFv4.3\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t\
+                      s1\ts2\ts3\n";
+        let facts = HeaderFacts::parse(text).expect("invariant: valid header");
+        let out = facts.pruned_header(&[false]);
+        let names: Vec<String> = out.sample_names().iter().map(ToString::to_string).collect();
+        assert_eq!(names, ["s2", "s3"]);
+    }
 }

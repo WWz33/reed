@@ -377,6 +377,14 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
 
 /// Resolves a built-in field: INFO first for the allele-count family, then
 /// genotype-derived counts.
+///
+/// `AF`/`MAF` with `AN == 0` (every genotype at the site missing) is `NaN`,
+/// and NaN follows IEEE comparison: `NaN != 0` is **true**, while `NaN == 0`,
+/// `NaN > 0` and `NaN < 1` are false. That is bcftools' behaviour on the same
+/// input (`AF>0`, `AF<1`, `AF==0` and `AF!=0` agree record for record), so it
+/// is deliberately not changed to `Val::Missing`: the "missing values compare
+/// false" rule is about a `.` literal, not about a computed NaN (doc_v23
+/// V23-50, decision A). The parity test below pins all four operators.
 fn field_value<'a>(field: Field, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
     match field {
         Field::Qual => site.qual.map_or(Some(Val::Missing), |q| Some(Val::Num(q))),
@@ -500,11 +508,20 @@ impl<'a> Operand<'a> {
     }
 
     /// bcftools' comparison rule over two operands: any pair satisfies the
-    /// comparison, and a missing element on either side only passes for the
-    /// operators that treat missing as a value (`=`/`!=`, the
-    /// `missing_logic` table of `CMP_VECTORS`). Reed keeps the simpler
-    /// "missing makes comparisons false" rule for missing *elements* and
-    /// only implements the any-pair walk here.
+    /// comparison, and a missing element on either side follows the
+    /// `missing_logic` table of `CMP_VECTORS` (`filter.c:4449-4455`):
+    ///
+    /// | operator | one side missing | both sides missing |
+    /// |---|---|---|
+    /// | `==` | false | **true** |
+    /// | `!=` | **true** | **true** |
+    /// | `< <= > >=` | false | false |
+    ///
+    /// The `!=` row is the one that matters in practice: `-i 'DP!=3'` keeps
+    /// records whose `DP` is `.` or absent under bcftools, and reed used to
+    /// drop them (doc_v23 V23-59). The any-pair walk short-circuits on a hit,
+    /// so a single missing pair decides the whole comparison exactly when
+    /// bcftools' `nmiss` branch would set `pass_site`.
     fn any_pair(&self, other: &Self, op: CmpOp) -> bool {
         let scalars_a: Vec<Option<Val<'a>>> = match self {
             Self::Scalar(v) => vec![v.clone()],
@@ -517,7 +534,19 @@ impl<'a> Operand<'a> {
         for a in &scalars_a {
             for b in &scalars_b {
                 let (Some(a), Some(b)) = (a, b) else { continue };
-                if matches!(a, Val::Missing) || matches!(b, Val::Missing) {
+                let a_missing = matches!(a, Val::Missing);
+                let b_missing = matches!(b, Val::Missing);
+                if a_missing || b_missing {
+                    // `missing_logic[nmiss]`: index 1 = one side missing,
+                    // index 2 = both. Only `==` passes on the both-missing
+                    // index and only `!=` on the one-side index.
+                    let passes = match (a_missing, b_missing) {
+                        (true, true) => matches!(op, CmpOp::Eq | CmpOp::Ne),
+                        _ => op == CmpOp::Ne,
+                    };
+                    if passes {
+                        return true;
+                    }
                     continue;
                 }
                 if compare(op, a, b) {
@@ -770,6 +799,92 @@ mod tests {
         ));
         // Missing INFO compares false (bcftools).
         assert!(!ev("QD<4", &site(b".", Some(50.0), None), &tags));
+    }
+
+    /// doc_v23 V23-50 (decision A): with `AN == 0` every genotype is
+    /// missing, `AF`/`MAF` are NaN, and comparison is plain IEEE. bcftools
+    /// was measured on the same two-record input (all-missing site, then
+    /// `0/1 + 0/0`) and agreed record for record, so the NaN is kept rather
+    /// than mapped to `Missing`.
+    #[test]
+    fn af_and_maf_are_nan_at_an_zero_and_compare_by_ieee() {
+        let tags: [&str; 0] = [];
+        // AN = 0: every genotype missing.
+        let all_missing = GtCounts {
+            ac: 0,
+            an: 0,
+            n_missing: 8,
+            n_samples: 4,
+        };
+        let s = site(b".", Some(1.0), Some(all_missing));
+        // bcftools: AF>0 false, AF<1 false, AF==0 false, AF!=0 true.
+        assert!(!ev("AF>0", &s, &tags));
+        assert!(!ev("AF<1", &s, &tags));
+        assert!(!ev("AF==0", &s, &tags));
+        assert!(
+            ev("AF!=0", &s, &tags),
+            "NaN != 0 is true, matching bcftools"
+        );
+        assert!(ev("MAF!=0", &s, &tags));
+        assert!(!ev("MAF==0", &s, &tags));
+        // A called site is unaffected: AC=1, AN=8.
+        let called = GtCounts {
+            ac: 1,
+            an: 8,
+            n_missing: 0,
+            n_samples: 4,
+        };
+        let s = site(b".", Some(1.0), Some(called));
+        assert!(ev("AF>0", &s, &tags));
+        assert!(ev("AF<1", &s, &tags));
+        assert!(!ev("AF==0", &s, &tags));
+        assert!(ev("AF!=0", &s, &tags));
+        assert!(ev("MAF>0", &s, &tags));
+    }
+
+    /// doc_v23 V23-59 (decision A): a missing operand follows bcftools'
+    /// `missing_logic` (`filter.c:4449-4455`). Measured on bcftools 1.24-2
+    /// with `DP=.` / `DP=absent` / `DP=5`: `DP!=3` keeps all three, every
+    /// other operator keeps only the called record.
+    #[test]
+    fn missing_operands_follow_the_bcftools_operator_table() {
+        let tags = ["DP"];
+        // `.`: the tag is present with a missing value.
+        let dot = site(b"DP=.", Some(1.0), None);
+        // Absent: no DP in INFO at all.
+        let absent = site(b".", Some(1.0), None);
+        // Called.
+        let called = site(b"DP=5", Some(1.0), None);
+
+        for s in [&dot, &absent] {
+            assert!(
+                ev("DP!=3", s, &tags),
+                "`!=` passes on a missing operand (bcftools)"
+            );
+            assert!(!ev("DP=3", s, &tags), "`==` fails on a missing operand");
+            assert!(!ev("DP>3", s, &tags), "`>` fails on a missing operand");
+            assert!(!ev("DP<3", s, &tags), "`<` fails on a missing operand");
+            assert!(!ev("DP>=0", s, &tags), "`>=` fails on a missing operand");
+            assert!(!ev("DP<=9", s, &tags), "`<=` fails on a missing operand");
+        }
+        // The called record behaves normally.
+        assert!(ev("DP!=3", &called, &tags));
+        assert!(!ev("DP=3", &called, &tags));
+        assert!(ev("DP>3", &called, &tags));
+        assert!(!ev("DP<3", &called, &tags), "5 is not < 3");
+    }
+
+    /// Both operands missing is the `missing_logic[2]` case: `==` and `!=`
+    /// both pass, ordering fails (bcftools). Reed can reach it with a
+    /// literal `.` against a missing tag.
+    #[test]
+    fn both_sides_missing_pass_for_eq_and_ne_only() {
+        let tags = ["DP"];
+        let dot = site(b"DP=.", Some(1.0), None);
+        assert!(ev("DP!=.", &dot, &tags), "`!=` with a missing literal passes");
+        assert!(ev("DP=.", &dot, &tags), "`==` with a missing literal passes");
+        assert!(!ev("DP>.", &dot, &tags), "`>` with a missing literal fails");
+        assert!(!ev("DP<.", &dot, &tags), "`<` with a missing literal fails");
     }
 
     #[test]

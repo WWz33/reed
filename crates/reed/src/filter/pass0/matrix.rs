@@ -707,6 +707,35 @@ pub(crate) struct MatrixOutput {
     pub n_chunks: u64,
 }
 
+/// Admission accounting for the matrices a run keeps resident: the sketch
+/// shape holds one per contig for the mid stage, so the **sum** has to fit
+/// the budget, not each matrix alone (doc_v23 V23-10).
+///
+/// A rejected matrix is not counted, so the caller's `matrices` and the
+/// counter stay in step when the run stops at `MemBudgetExceeded`.
+struct ResidentBudget;
+
+impl ResidentBudget {
+    /// Charges `incoming` bytes against `budget`, or reports the overrun.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::MemBudgetExceeded`] when the running total would pass
+    /// the budget. Overflow saturates instead of wrapping: an absurd sum is
+    /// an overrun, never a small number.
+    fn admit(resident: &mut u64, incoming: u64, budget: u64) -> Result<(), EngineError> {
+        let total = resident.saturating_add(incoming);
+        if total > budget {
+            return Err(EngineError::MemBudgetExceeded {
+                peak_bytes: total,
+                budget_bytes: budget,
+            });
+        }
+        *resident = total;
+        Ok(())
+    }
+}
+
 /// The sink: appends stream units in chunk order, folds the funnel and the
 /// `--mind` counters, extends the per-contig matrices, and (when the mode
 /// prunes during the stream) hands each closed contig to its own prune
@@ -725,6 +754,9 @@ struct MatrixSink {
     prune_config: Option<super::prune::PruneConfig>,
     /// The memory budget the per-contig matrices are judged against.
     budget_bytes: u64,
+    /// Bytes already held by `matrices` (the sketch shape's admission
+    /// counter, doc_v23 V23-10).
+    resident_bytes: u64,
     /// Upper bound on concurrently running per-contig prune threads (doc_v7
     /// D7-19: without a cap, M contigs keep M matrices resident).
     max_prune: usize,
@@ -934,15 +966,10 @@ impl MatrixSink {
         // its matrices for the post-`--mind` mid stage.
         if self.track_chunks {
             // The sketch shape keeps every contig's matrix for the mid stage
-            // (doc_v7 D7-19); one matrix beyond the budget cannot be
-            // admitted (doc_v15 D15-16, preventive — the engine's per-chunk
-            // guard used to bind first, hiding this skip).
-            if matrix.size_bytes() > self.budget_bytes {
-                return Err(EngineError::MemBudgetExceeded {
-                    peak_bytes: matrix.size_bytes(),
-                    budget_bytes: self.budget_bytes,
-                });
-            }
+            // (doc_v7 D7-19), so the budget covers their **sum**: ten contigs
+            // each just under the limit used to be admitted one at a time and
+            // then all stayed resident (doc_v23 V23-10).
+            ResidentBudget::admit(&mut self.resident_bytes, matrix.size_bytes(), self.budget_bytes)?;
             self.matrices.push(matrix);
             return Ok(());
         }
@@ -1050,6 +1077,7 @@ pub(crate) fn run_matrix_pass(
         track_chunks: mode.rule_bits,
         prune_config,
         budget_bytes,
+        resident_bytes: 0,
         max_prune: budget.auxiliary(),
         keep_words: keep_words.into(),
         called: Vec::new(),
@@ -1081,4 +1109,61 @@ pub(crate) fn run_matrix_pass(
     output.metrics = report.metrics;
     output.n_chunks = report.n_chunks;
     Ok(output)
+}
+
+#[cfg(test)]
+mod resident_budget_tests {
+    use super::*;
+
+    /// doc_v23 V23-10: the sketch shape keeps one matrix per contig, so the
+    /// budget has to cover their sum. Three 6-byte matrices under a 10-byte
+    /// budget are admitted one and two at a time (6, 12 > 10) — the run stops
+    /// on the second, not after all three.
+    #[test]
+    fn admits_by_running_total_not_per_matrix() {
+        let mut resident = 0_u64;
+        ResidentBudget::admit(&mut resident, 6, 10).expect("first matrix fits");
+        assert_eq!(resident, 6);
+        let err = ResidentBudget::admit(&mut resident, 6, 10)
+            .expect_err("second matrix pushes the sum past the budget");
+        match err {
+            EngineError::MemBudgetExceeded {
+                peak_bytes,
+                budget_bytes,
+            } => {
+                assert_eq!(peak_bytes, 12, "the overrun reports the running total");
+                assert_eq!(budget_bytes, 10);
+            }
+            other => panic!("expected MemBudgetExceeded, got {other:?}"),
+        }
+        // A rejected matrix is not counted, so a smaller one can still fit.
+        assert_eq!(resident, 6, "the rejected charge must not stick");
+        ResidentBudget::admit(&mut resident, 4, 10).expect("4 more fills the budget exactly");
+        assert_eq!(resident, 10);
+        ResidentBudget::admit(&mut resident, 1, 10).expect_err("the budget is full");
+    }
+
+    /// An exact fill is admitted (the check is `>`, not `>=`).
+    #[test]
+    fn accepts_an_exact_fill() {
+        let mut resident = 0_u64;
+        ResidentBudget::admit(&mut resident, 5, 5).expect("5 of a 5-byte budget");
+        assert_eq!(resident, 5);
+    }
+
+    /// Saturation: an overflowing sum must not wrap to a small value that
+    /// looks affordable. `MAX - 1 + MAX` saturates at `MAX`, which still
+    /// exceeds any budget below it.
+    #[test]
+    fn overflow_saturates_instead_of_wrapping() {
+        let mut resident = u64::MAX - 1;
+        let err = ResidentBudget::admit(&mut resident, u64::MAX, u64::MAX / 2)
+            .expect_err("a saturated sum must exceed a smaller budget");
+        match err {
+            EngineError::MemBudgetExceeded { peak_bytes, .. } => {
+                assert_eq!(peak_bytes, u64::MAX, "saturated, not wrapped");
+            }
+            other => panic!("expected MemBudgetExceeded, got {other:?}"),
+        }
+    }
 }

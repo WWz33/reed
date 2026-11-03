@@ -48,7 +48,7 @@ impl Deflater {
         if input.len() > BGZF_MAX_BLOCK_DATA {
             return Err(IoError::MalformedBgzf {
                 locus: None,
-                reason: "block data exceeds the BGZF 65,280-byte member limit",
+                reason: "block data exceeds the BGZF 65,280-byte member limit".to_string(),
             });
         }
         let start = dst.len();
@@ -63,12 +63,12 @@ impl Deflater {
             .deflate_compress(input, &mut self.scratch[..bound])
             .map_err(|_| IoError::MalformedBgzf {
                 locus: None,
-                reason: "deflate output overflow (block data too large)",
+                reason: "deflate output overflow (block data too large)".to_string(),
             })?;
         let total = 18 + n_deflated + 8;
         let bsize = u16::try_from(total - 1).map_err(|_| IoError::MalformedBgzf {
             locus: None,
-            reason: "BGZF block size overflows the 16-bit BSIZE field",
+            reason: "BGZF block size overflows the 16-bit BSIZE field".to_string(),
         })?;
         // Header: gzip with FEXTRA carrying the BC subfield (XLEN = 6); the
         // BSIZE lands in the header's last two bytes (16..18).

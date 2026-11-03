@@ -278,7 +278,9 @@ impl BpBlockJackknife {
 
     /// Merges another partial (blocks keyed by `(contig, block)` add).
     pub fn merge(&mut self, other: &Self) {
-        debug_assert_eq!(self.block_bp, other.block_bp, "invariant: same block size");
+        // Unconditional: in release the old `debug_assert!` was a no-op and
+        // mismatched blocks were silently merged (doc_v23 V23-28).
+        assert_eq!(self.block_bp, other.block_bp, "invariant: same block size");
         for (key, (num, den, n)) in &other.blocks {
             let entry = self
                 .blocks
@@ -394,5 +396,15 @@ mod tests {
         jk.push(3.0, 4.0);
         assert_eq!(jk.n_blocks(), 2, "two sealed singleton blocks");
         assert!(jk.jackknife().is_some());
+    }
+
+    /// doc_v23 V23-28: merging jackknives with different block sizes panics
+    /// in release, not just debug.
+    #[test]
+    #[should_panic(expected = "same block size")]
+    fn bp_merge_rejects_a_different_block_size() {
+        let mut a = BpBlockJackknife::new(100);
+        let b = BpBlockJackknife::new(200);
+        a.merge(&b);
     }
 }

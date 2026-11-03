@@ -38,7 +38,7 @@ pub enum IoError {
         /// Where the failure was noticed.
         locus: Option<Locus>,
         /// What is wrong.
-        reason: &'static str,
+        reason: String,
     },
     /// A record line is malformed.
     #[error("malformed record at {locus}: {reason}")]
@@ -46,7 +46,7 @@ pub enum IoError {
         /// Where the failure was noticed.
         locus: Locus,
         /// What is wrong.
-        reason: &'static str,
+        reason: String,
     },
     /// A genotype violates the declared input policy.
     #[error("policy rejected genotype at {locus}: {reason}")]
@@ -73,9 +73,9 @@ impl From<libdeflater::DecompressionError> for IoError {
             locus: None,
             reason: match err {
                 libdeflater::DecompressionError::InsufficientSpace => {
-                    "inflate output buffer too small (block exceeds BGZF limits)"
+                    "inflate output buffer too small (block exceeds BGZF limits)".to_string()
                 }
-                libdeflater::DecompressionError::BadData => "corrupt deflate stream",
+                libdeflater::DecompressionError::BadData => "corrupt deflate stream".to_string(),
             },
         }
     }

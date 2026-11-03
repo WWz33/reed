@@ -123,7 +123,7 @@ pub(crate) fn region_tokens(text: &str, from_file: bool) -> Result<Vec<String>, 
 fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRegions, String> {
     let mut regions = Vec::new();
     for (list, from_file) in [(&args.regions, false), (&args.regions_file, true)] {
-        if let Some(value) = list {
+        for value in list {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
             } else {
@@ -143,7 +143,7 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
     let mut include = Vec::new();
     let mut exclude = Vec::new();
     for (list, from_file) in [(&args.targets, false), (&args.targets_file, true)] {
-        if let Some(value) = list {
+        for value in list {
             let text = if from_file {
                 std::fs::read_to_string(value).map_err(|e| format!("{value}: {e}"))?
             } else {
@@ -166,6 +166,78 @@ fn parse_regions(args: &crate::cli::filter_flags::RegionArgs) -> Result<ParsedRe
         }
     }
     Ok((regions, include, exclude))
+}
+
+/// The sample sources after validation, before any file is read.
+///
+/// Both the spec path (`filter`, no header) and the mask path
+/// (`stats`/`popg`/`pca`/`distance`, resolved against the header) need the
+/// same rules: `-s` may appear twice (keep and `^`-remove), but two sources
+/// of the same polarity are a conflict. One implementation keeps the two
+/// paths from drifting (doc_v23 V23-40).
+pub(crate) struct SampleSources<'a> {
+    /// Inline `-s` keep names.
+    pub inline_keep: Option<Vec<String>>,
+    /// Inline `-s ^...` removal names.
+    pub inline_remove: Option<Vec<String>>,
+    /// `-S`/`--keep` file.
+    pub file_keep: Option<&'a String>,
+    /// `--remove` file.
+    pub file_remove: Option<&'a String>,
+}
+
+/// Splits and validates the sample flags (no file I/O).
+///
+/// # Errors
+///
+/// Empty inline lists, a repeated `-s` of the same polarity, two keep
+/// sources, or two removal sources.
+pub(crate) fn split_sample_sources(
+    args: &crate::cli::filter_flags::SampleArgs,
+) -> Result<SampleSources<'_>, String> {
+    let mut inline_keep: Option<Vec<String>> = None;
+    let mut inline_remove: Option<Vec<String>> = None;
+    for list in &args.samples {
+        let exclude = list.trim_start().starts_with('^');
+        let names: Vec<String> = list
+            .trim_start_matches('^')
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect();
+        if names.is_empty() {
+            return Err(format!("empty sample list {list:?}"));
+        }
+        let slot = if exclude {
+            &mut inline_remove
+        } else {
+            &mut inline_keep
+        };
+        if slot.is_some() {
+            return Err(format!(
+                "repeated -s list of the same polarity ({list:?}); combine the names into one list"
+            ));
+        }
+        *slot = Some(names);
+    }
+    // doc_v21 S32: `-S k1 --keep k2` silently read only `-S`.
+    if args.samples_file.is_some() && args.keep.is_some() {
+        return Err("-S and --keep are the same flag twice: give one sample file".into());
+    }
+    let file_keep = args.samples_file.as_ref().or(args.keep.as_ref());
+    if inline_keep.is_some() && file_keep.is_some() {
+        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
+    }
+    if inline_remove.is_some() && args.remove.is_some() {
+        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
+    }
+    Ok(SampleSources {
+        inline_keep,
+        inline_remove,
+        file_keep,
+        file_remove: args.remove.as_ref(),
+    })
 }
 
 /// Parses the shared sample flags into a keep mask, with the filter's
@@ -191,42 +263,10 @@ pub(crate) fn parse_sample_keep(
             .map(str::to_string)
             .collect())
     };
-    let mut inline_keep: Option<Vec<String>> = None;
-    let mut inline_remove: Option<Vec<String>> = None;
-    for list in &args.samples {
-        let exclude = list.trim_start().starts_with('^');
-        let names: Vec<String> = list
-            .trim_start_matches('^')
-            .split(',')
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .map(str::to_string)
-            .collect();
-        if names.is_empty() {
-            return Err(format!("empty sample list {list:?}"));
-        }
-        let slot = if exclude {
-            &mut inline_remove
-        } else {
-            &mut inline_keep
-        };
-        if slot.is_some() {
-            return Err(format!("repeated -s list of the same polarity ({list:?})"));
-        }
-        *slot = Some(names);
-    }
-    // doc_v21 S32: `-S k1 --keep k2` silently read only `-S`; the sibling
-    // `-s`/`-S` pair already refuses two sources.
-    if args.samples_file.is_some() && args.keep.is_some() {
-        return Err("-S and --keep are the same flag twice: give one sample file".into());
-    }
-    let file_keep = args.samples_file.as_ref().or(args.keep.as_ref());
-    if inline_keep.is_some() && file_keep.is_some() {
-        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
-    }
-    if inline_remove.is_some() && args.remove.is_some() {
-        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
-    }
+    let sources = split_sample_sources(args)?;
+    let inline_keep = sources.inline_keep;
+    let inline_remove = sources.inline_remove;
+    let file_keep = sources.file_keep;
     let mut keep = vec![true; header_samples.len()];
     let mut touched = false;
     // A `-S`/`--keep`/`--remove` file that cannot be read is an error, not a
@@ -250,7 +290,7 @@ pub(crate) fn parse_sample_keep(
         touched = true;
     }
     let mut drop = vec![false; header_samples.len()];
-    let remove_names = match &args.remove {
+    let remove_names = match sources.file_remove {
         Some(p) => {
             let text = std::fs::read_to_string(p)
                 .map_err(|e| format!("cannot read sample file {p}: {e}"))?;
@@ -354,7 +394,11 @@ pub(crate) fn prelude(
         })
         .collect();
     if let Some(path) = contig_lengths_arg {
-        for line in std::fs::read_to_string(Path::new(path))?.lines() {
+        // Name the file: the raw `io::Error` text ("No such file or
+        // directory") does not say which flag path failed (doc_v23 V23-32).
+        let text = std::fs::read_to_string(Path::new(path))
+            .map_err(|e| reed::Error::usage(format!("{path}: {e}")))?;
+        for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -465,6 +509,31 @@ pub(crate) fn refuse_output_eq_input(
             "-o {} would overwrite the input itself; give a different output path",
             out.display()
         )));
+    }
+    Ok(())
+}
+
+/// Validates the `-o PREFIX` of the commands that write several files from a
+/// prefix (`stats`, `convert`, `pca`, `distance`, `popg`).
+///
+/// Two shapes are refused before any input is opened: `-` (there is no single
+/// stdout for a prefix's several files, and it used to create literal
+/// `-.afreq`-style files and exit 0, doc_v23 V23-21) and an empty/blank
+/// prefix (hidden `.afreq`-style files in CWD, doc_v21 S19).
+///
+/// # Errors
+///
+/// A usage error naming the offending prefix.
+pub(crate) fn require_output_prefix(prefix: &str, command: &str) -> Result<(), reed::Error> {
+    if prefix == "-" {
+        return Err(reed::Error::usage(format!(
+            "{command} writes PREFIX files: -o - is not stdout; give a file prefix"
+        )));
+    }
+    if prefix.trim().is_empty() {
+        return Err(reed::Error::usage(
+            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
+        ));
     }
     Ok(())
 }

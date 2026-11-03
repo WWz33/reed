@@ -19,6 +19,10 @@ pub struct SymEig {
 
 impl SymEig {
     /// Top-k eigenvalues (descending) and their eigenvectors as columns.
+    ///
+    /// Sign-normalized like [`crate::backend::SymEigResult::top_k`]: the
+    /// largest-magnitude component of each column is positive (doc_v23
+    /// V23-09), so the fallback and faer backends agree byte for byte.
     pub fn top_k(&self, k: usize) -> (Vec<f64>, Mat) {
         let n = self.values.len();
         let k = k.min(n);
@@ -27,8 +31,18 @@ impl SymEig {
         for c in 0..k {
             let src = n - 1 - c;
             vals.push(self.values[src]);
+            let mut best_abs = 0.0f64;
+            let mut best_val = 0.0f64;
             for r in 0..n {
-                vecs.set(r, c, self.vectors.get(r, src));
+                let x = self.vectors.get(r, src);
+                if x.abs() > best_abs {
+                    best_abs = x.abs();
+                    best_val = x;
+                }
+            }
+            let sign = if best_val < 0.0 { -1.0 } else { 1.0 };
+            for r in 0..n {
+                vecs.set(r, c, sign * self.vectors.get(r, src));
             }
         }
         (vals, vecs)
@@ -58,7 +72,14 @@ pub fn sym_eig(a: &Mat) -> SymEig {
     let mut e = vec![0.0f64; n];
 
     tred2(n, &mut v, &mut d, &mut e);
-    tql2(n, &mut v, &mut d, &mut e);
+    // A non-converged QL sweep leaves the trailing block untransformed, so
+    // the returned values/vectors would silently be wrong (doc_v23 V23-15).
+    // EISPACK's 100-iteration cap is far beyond the normal 2–5; hitting it
+    // means the input is degenerate (NaN/Inf) or the matrix is pathological.
+    assert!(
+        tql2(n, &mut v, &mut d, &mut e),
+        "tql2: eigenvalue iteration did not converge after 100 sweeps ({n}x{n})"
+    );
 
     SymEig { values: d, vectors: v }
 }
@@ -149,7 +170,13 @@ fn tred2(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64]) {
 }
 
 /// Implicit QL iteration on a tridiagonal matrix.
-fn tql2(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64]) {
+fn tql2(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64]) -> bool {
+    tql2_with_limit(n, v, d, e, 100)
+}
+
+/// [`tql2`] with an explicit sweep cap (the test forces the non-convergence
+/// branch without needing a pathological matrix).
+fn tql2_with_limit(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64], max_iter: usize) -> bool {
     for i in 1..n {
         e[i - 1] = e[i];
     }
@@ -158,6 +185,7 @@ fn tql2(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64]) {
     let mut f = 0.0;
     let mut tst1: f64 = 0.0;
     let eps = f64::EPSILON;
+    let mut converged = true;
     for l in 0..n {
         tst1 = tst1.max(d[l].abs() + e[l].abs());
         let mut m = l;
@@ -171,8 +199,10 @@ fn tql2(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64]) {
             let mut iter = 0;
             loop {
                 iter += 1;
-                if iter > 100 {
-                    // Non-convergence: leave the remaining values as they are.
+                if iter > max_iter {
+                    // Non-convergence: leave the remaining values as they are
+                    // and report it to the caller (V23-15).
+                    converged = false;
                     break;
                 }
                 let mut g = d[l];
@@ -244,6 +274,7 @@ fn tql2(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64]) {
             }
         }
     }
+    converged
 }
 
 
@@ -742,5 +773,16 @@ mod tests {
         let tr_a: f64 = (0..n).map(|i| a.get(i, i)).sum();
         let tr_e: f64 = e.values.iter().sum();
         assert!((tr_a - tr_e).abs() < 1e-9, "trace {tr_a} vs {tr_e}");
+    }
+
+    /// doc_v23 V23-15: hitting the sweep cap is reported, not swallowed.
+    /// The cap is a parameter so the test can force it with a tridiagonal
+    /// that still has a live off-diagonal.
+    #[test]
+    fn non_convergence_is_reported() {
+        let mut v = Mat::zeros(3, 3);
+        let mut d = vec![0.0; 3];
+        let mut e = vec![1.0, 1.0, 0.0];
+        assert!(!tql2_with_limit(3, &mut v, &mut d, &mut e, 0));
     }
 }

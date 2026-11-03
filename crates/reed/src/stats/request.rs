@@ -365,6 +365,14 @@ pub struct LdRequest {
     pub decay_bin_bp: u64,
     /// Write the per-pair table (`--ld-pairs`).
     pub pairs: bool,
+    /// Where the per-pair table goes. When set, the sink streams each
+    /// contig's rows straight to this file as its decay job joins (contig
+    /// order, so the bytes match the in-memory order) and the report's
+    /// [`LdReport::pairs`] stays empty — memory is O(one contig) instead of
+    /// O(every pair), which is the v23 decision C for `--ld-pairs`
+    /// (doc_v23 V23-14). `None` = accumulate in memory and return through
+    /// the report, the pre-v23 library behaviour.
+    pub pairs_path: Option<std::path::PathBuf>,
 }
 
 /// One decay bin: `(bin_start_bp, bin_end_bp, n_pairs, mean_r2)`.
@@ -393,13 +401,25 @@ pub(super) struct LdPlan {
     pub(super) decay_max_bp: Option<u64>,
     pub(super) decay_bin_bp: u64,
     pub(super) pairs: bool,
+    /// Stream the pair rows here instead of accumulating them
+    /// ([`LdRequest::pairs_path`], doc_v23 V23-14).
+    pub(super) pairs_path: Option<std::path::PathBuf>,
 }
 
 impl LdPlan {
     /// Decay bin edges: `[0, bin), [bin, 2·bin), …` up to `decay_max_bp`.
+    ///
+    /// `decay_max_bp = None` means "no decay table" and yields **no** edges
+    /// (doc_v23 V23-22). It used to synthesize `[0, bin)`, which made a
+    /// pairs-only library request carry a one-bin decay curve that looked
+    /// complete; the sink merges zero bins and `write_ld` then writes no
+    /// `.ld.decay`, which is the same convention as the CLI (it requires
+    /// `--ld-decay`).
     pub(super) fn decay_edges(&self) -> Vec<u64> {
+        let Some(max) = self.decay_max_bp else {
+            return Vec::new();
+        };
         let bin = self.decay_bin_bp.max(1);
-        let max = self.decay_max_bp.unwrap_or(bin);
         let mut edges = Vec::new();
         let mut e = 0;
         while e < max {

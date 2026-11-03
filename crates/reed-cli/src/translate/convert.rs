@@ -297,11 +297,10 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     }
 
     // ---- Open once (stdin streams) ---------------------------------------
-    // doc_v21 S19: an empty prefix wrote hidden files in CWD and exited 0.
-    if args.out.as_deref().is_some_and(|p| p.trim().is_empty()) {
-        return Err(reed::Error::usage(
-            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
-        ));
+    // doc_v21 S19 / doc_v23 V23-21: `-o -` or an empty prefix writes
+    // prefixed files and exits 0, so both are refused before any work.
+    if let Some(prefix) = args.out.as_deref() {
+        super::common::require_output_prefix(prefix, "reed convert")?;
     }
     let prefix = match &args.out {
         Some(p) => PathBuf::from(p),

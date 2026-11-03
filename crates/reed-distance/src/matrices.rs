@@ -297,40 +297,43 @@ pub fn grm(
     };
     let mut out = MatrixResult::new(n, kind, Vec::new());
 
-    // `w` already holds (dosage - mean)/sd, so the variance-standardized
-    // matrix uses it as-is. The covariance variant undoes the division by sd
-    // to get (dosage - mean).
-    let mut x = vec![0.0f64; n * m];
-    for i in 0..n {
-        for j in 0..m {
-            if !st.is_called(i, j) {
-                continue;
-            }
-            x[i * m + j] = if variance_standardize {
-                st.w.get(i, j)
-            } else {
-                st.w.get(i, j) * st.sd[j]
-            };
-        }
-    }
-
-    // One triangle row (diagonal included) per task (doc_v20 R13); the
-    // O(m) `called_both` second pass per pair keeps its math intact. The
-    // per-sample `miss` counts the serial loop kept only to silence
-    // unused warnings are gone with it: both denominators below read
-    // `called_both`/`m` directly.
+    // Read `st.w` in place. The old code copied it into an `n × m` `f64`
+    // buffer (2000 samples × 1e6 sites = 16 GB) on top of the matrix it
+    // copied *from*, and then ran a second O(m) pass per pair for
+    // `called_both` (doc_v23 V23-12). One pass now computes the inner
+    // product and the comparable-site count together, and the only extra
+    // allocation is the output.
+    //
+    // `w` already holds (dosage - mean)/sd for called cells and 0 otherwise,
+    // so the variance-standardized matrix uses it as-is; the covariance
+    // variant multiplies by the site's `sd` to undo the division. A missing
+    // cell contributes 0 to the product either way, which is exactly what
+    // the old zero-filled buffer did.
     let rows: Vec<Vec<f64>> = (0..n)
         .into_par_iter()
         .map(|i| {
             (0..=i)
                 .map(|j| {
                     let mut acc = 0.0f64;
+                    let mut both = 0_usize;
                     for s in 0..m {
-                        acc += x[i * m + s] * x[j * m + s];
+                        let ci = st.is_called(i, s);
+                        let cj = st.is_called(j, s);
+                        if !(ci && cj) {
+                            continue;
+                        }
+                        both += 1;
+                        let vi = st.w.get(i, s);
+                        let vj = st.w.get(j, s);
+                        acc += if variance_standardize {
+                            vi * vj
+                        } else {
+                            vi * vj * st.sd[s] * st.sd[s]
+                        };
                     }
                     let denom = match missing {
                         MissingPolicy::MeanImpute => m as f64,
-                        MissingPolicy::Pairwise => st.called_both(i, j) as f64,
+                        MissingPolicy::Pairwise => both as f64,
                     };
                     if denom > 0.0 { acc / denom } else { 0.0 }
                 })
@@ -899,6 +902,95 @@ mod tests {
             ];
             table[i][j]
         })
+    }
+
+    /// doc_v23 V23-12: the in-place reformulation must reproduce the old
+    /// two-buffer computation exactly. The reference below is the pre-fix
+    /// algorithm written out: an `n × m` zero-filled buffer, then a second
+    /// O(m) `called_both` scan per pair.
+    fn reference_grm(st: &Standardized, missing: MissingPolicy, variance: bool) -> Mat {
+        let n = st.n_samples();
+        let m = st.n_sites;
+        let mut x = vec![0.0f64; n * m];
+        for i in 0..n {
+            for j in 0..m {
+                if st.is_called(i, j) {
+                    x[i * m + j] = if variance {
+                        st.w.get(i, j)
+                    } else {
+                        st.w.get(i, j) * st.sd[j]
+                    };
+                }
+            }
+        }
+        let mut out = Mat::zeros(n, n);
+        for i in 0..n {
+            for j in 0..=i {
+                let mut acc = 0.0f64;
+                for s in 0..m {
+                    acc += x[i * m + s] * x[j * m + s];
+                }
+                let denom = match missing {
+                    MissingPolicy::MeanImpute => m as f64,
+                    MissingPolicy::Pairwise => st.called_both(i, j) as f64,
+                };
+                out.set(i, j, if denom > 0.0 { acc / denom } else { 0.0 });
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn in_place_grm_matches_the_two_buffer_reference() {
+        let x = fixture();
+        let st = standardize_binom2(&x);
+        for missing in [MissingPolicy::MeanImpute, MissingPolicy::Pairwise] {
+            for variance in [true, false] {
+                let got = grm(&st, missing, variance);
+                let got = &got.values;
+                let want = reference_grm(&st, missing, variance);
+                for i in 0..st.n_samples() {
+                    for j in 0..=i {
+                        let (a, b) = (got[i * st.n_samples() + j], want.get(i, j));
+                        assert!(
+                            (a - b).abs() <= 1e-12,
+                            "{missing:?} variance={variance} ({i},{j}): {a} vs {b}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Same equivalence with missing data actually present: the pairwise
+    /// denominator must still count jointly called sites, which the old code
+    /// got from a second pass and the new code accumulates in the first.
+    #[test]
+    fn in_place_grm_matches_the_reference_with_missing_data() {
+        let mut x = fixture();
+        x.set(1, 2, f64::NAN);
+        x.set(4, 5, f64::NAN);
+        x.set(0, 7, f64::NAN);
+        let st = standardize_binom2(&x);
+        for variance in [true, false] {
+            let got = grm(&st, MissingPolicy::Pairwise, variance);
+            let got = &got.values;
+            let want = reference_grm(&st, MissingPolicy::Pairwise, variance);
+            for i in 0..st.n_samples() {
+                for j in 0..=i {
+                    let (a, b) = (got[i * st.n_samples() + j], want.get(i, j));
+                    assert!(
+                        (a - b).abs() <= 1e-12,
+                        "variance={variance} ({i},{j}): {a} vs {b}"
+                    );
+                }
+            }
+            // The fixture really exercises the pairwise path.
+            assert!(
+                st.called_both(0, 1) < st.n_sites,
+                "the missing cell must reduce the comparable count"
+            );
+        }
     }
 
     #[test]
