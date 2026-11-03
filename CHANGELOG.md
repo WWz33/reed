@@ -140,8 +140,6 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
   `stats/popg/pca/distance` 共用，删除两份约 40 行的重复逻辑。
 
 #### Fixed
-- **io（FORMAT 布局缓存，V23-34）**：上限 64 → 1024；65+ 种 FORMAT 的
-  文件不再每次越过上限就整表清空，命中率不再归零。
 - **filter（`to_args` 两字符算符，V23-24）**：`<=`/`>=` 的掩码边界不再渲染成
   `"= 10"`，provenance 命令行可重放。
 - **filter（空 `sample_select`，V23-25）**：JSON 的空选择不再被当作 cohort

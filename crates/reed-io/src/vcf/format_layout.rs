@@ -106,13 +106,7 @@ pub struct FormatLayoutCache {
 }
 
 /// Distinct FORMAT strings kept before the cache clears itself.
-///
-/// 1024 (was 64): a real callset commonly carries more than 64 distinct
-/// FORMAT strings once per-sample tags vary, and the old limit cleared the
-/// whole table on every crossing, so the hit rate collapsed to zero
-/// (doc_v23 V23-34). This is a size cap, not an LRU; an adversarial input
-/// still cannot grow the cache without bound.
-pub const CACHE_LIMIT: usize = 1024;
+pub const CACHE_LIMIT: usize = 64;
 
 impl FormatLayoutCache {
     /// Creates a cache for GT plus the planned integer columns (each with
@@ -307,20 +301,5 @@ mod tests {
         assert_eq!(layout.gt_index, Some(257));
         assert_eq!(layout.float_indices, vec![None]);
         assert_eq!(layout.last_needed, 258);
-    }
-
-    /// doc_v23 V23-34: more than the old 64-entry limit is kept. Interning
-    /// an early key after filling the cache must not clear the table.
-    #[test]
-    fn cache_keeps_more_than_the_old_limit() {
-        let mut cache = FormatLayoutCache::new_with_specs(&[], &[]);
-        let keys: Vec<Vec<u8>> = (0..=64).map(|i| format!("GT:XX{i}").into_bytes()).collect();
-        for key in &keys {
-            cache.intern(key);
-        }
-        assert_eq!(cache.layouts.len(), 65, "65 distinct layouts stay resident");
-        let first = cache.intern(&keys[0]);
-        assert_eq!(first, 0, "the first layout was not evicted");
-        assert_eq!(cache.layouts.len(), 65, "a hit must not clear the table");
     }
 }
