@@ -21,13 +21,9 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             "-o PREFIX is required: PCA writes PREFIX.eigenvec, PREFIX.eigenval and PREFIX.pve",
         ));
     };
-    // doc_v21 S19: an empty prefix wrote hidden files (`.eigenvec`) in CWD
-    // and exited 0.
-    if prefix.trim().is_empty() {
-        return Err(reed::Error::usage(
-            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
-        ));
-    }
+    // doc_v21 S19 / doc_v23 V23-21: `-o -` created `-.eigenvec` and exited 0;
+    // an empty prefix created `.eigenvec`. Both are refused up front.
+    super::common::require_output_prefix(prefix, "reed pca")?;
     if args.pcs == 0 {
         return Err(reed::Error::usage("--pcs must be at least 1"));
     }

@@ -253,6 +253,27 @@ impl Expr {
     }
 }
 
+/// The deepest nesting the parser accepts, counting parentheses and `!`
+/// runs. The grammar is recursive descent, so an unbounded expression is an
+/// unbounded recursion: 10,000 nested parentheses overflowed the stack and
+/// aborted the process (doc_v23 V23-05). The same limit bounds the AST's
+/// recursive `Drop` and the evaluator's recursion.
+///
+/// The value comes from measurement, not taste: in a debug build the
+/// `parse` + `Drop` pair overflows a 2 MiB stack just past 430 levels and a
+/// 1 MiB stack past ~200 levels, so 128 leaves ~2x headroom on the smallest
+/// stack a caller is likely to hand us. Real bcftools expressions nest a
+/// handful of levels; the limit is a denial-of-service bound, not a
+/// expressiveness one.
+const MAX_NESTING: usize = 128;
+
+/// The longest single `||`/`&&` chain. Chains are parsed iteratively but
+/// build a left-deep tree, so the AST's `Drop` and the evaluator recurse once
+/// per term; a 100,000-term expression would overflow there even though the
+/// parser itself does not recurse. Measured: a 2,000-term chain parses and
+/// drops on a 512 KiB stack, so 2,000 is safely inside the same envelope.
+const MAX_CHAIN: usize = 2_000;
+
 /// Parses an expression.
 ///
 /// # Errors
@@ -263,7 +284,11 @@ pub fn parse(text: &str) -> Result<Expr, String> {
     if tokens.is_empty() {
         return Err("empty expression".to_string());
     }
-    let mut parser = Parser { tokens, pos: 0 };
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        depth: 0,
+    };
     let expr = parser.logic_or()?;
     if parser.pos != parser.tokens.len() {
         return Err(format!(
@@ -277,6 +302,8 @@ pub fn parse(text: &str) -> Result<Expr, String> {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Current nesting depth (parentheses and `!` operators).
+    depth: usize,
 }
 
 impl Parser {
@@ -292,9 +319,32 @@ impl Parser {
         token
     }
 
+    /// Runs `f` one nesting level deeper, refusing to descend past
+    /// [`MAX_NESTING`].
+    fn nested<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.depth += 1;
+        if self.depth > MAX_NESTING {
+            self.depth -= 1;
+            return Err(format!(
+                "expression nesting exceeds {MAX_NESTING} levels"
+            ));
+        }
+        let result = f(self);
+        self.depth -= 1;
+        result
+    }
+
     fn logic_or(&mut self) -> Result<Expr, String> {
         let mut left = self.logic_and()?;
+        let mut terms = 1_usize;
         while let Some(Token::Logic("||" | "|")) = self.peek() {
+            terms += 1;
+            if terms > MAX_CHAIN {
+                return Err(format!("expression has more than {MAX_CHAIN} `||` terms"));
+            }
             self.next();
             let right = self.logic_and()?;
             left = Expr::Logic(LogicOp::Or, Box::new(left), Box::new(right));
@@ -304,7 +354,12 @@ impl Parser {
 
     fn logic_and(&mut self) -> Result<Expr, String> {
         let mut left = self.unary()?;
+        let mut terms = 1_usize;
         while let Some(Token::Logic("&&" | "&")) = self.peek() {
+            terms += 1;
+            if terms > MAX_CHAIN {
+                return Err(format!("expression has more than {MAX_CHAIN} `&&` terms"));
+            }
             self.next();
             let right = self.unary()?;
             left = Expr::Logic(LogicOp::And, Box::new(left), Box::new(right));
@@ -315,7 +370,7 @@ impl Parser {
     fn unary(&mut self) -> Result<Expr, String> {
         if let Some(Token::Not) = self.peek() {
             self.next();
-            let inner = self.unary()?;
+            let inner = self.nested(Self::unary)?;
             return Ok(Expr::Not(Box::new(inner)));
         }
         self.comparison()
@@ -341,7 +396,7 @@ impl Parser {
             Token::Str(s) => Expr::Str(s),
             Token::Missing => Expr::Missing,
             Token::LParen => {
-                let inner = self.logic_or()?;
+                let inner = self.nested(Self::logic_or)?;
                 match self.next() {
                     Some(Token::RParen) => {}
                     other => return Err(format!("expected `)`, found {other:?}")),
@@ -408,5 +463,43 @@ mod tests {
 
         assert!(parse("QUAL >= 30 &&").is_err());
         assert!(parse("(QUAL >= 30").is_err());
+    }
+
+    /// doc_v23 V23-05: the grammar is recursive descent over parentheses, so
+    /// an unbounded expression is an unbounded recursion. 10,000 nested
+    /// parentheses used to abort the process with a stack overflow; the limit
+    /// must sit at 500 levels (499 and 500 parse, 501 is an error).
+    #[test]
+    fn nesting_is_bounded_at_the_limit() {
+        let at_limit = |n: usize| {
+            let mut text = "(".repeat(n);
+            text.push_str("QUAL>=30");
+            text.push_str(&")".repeat(n));
+            text
+        };
+        let e = parse(&at_limit(127)).expect("127 levels are within the limit");
+        assert!(matches!(e, Expr::Cmp(CmpOp::Ge, _, _)));
+        parse(&at_limit(128)).expect("128 levels are within the limit");
+        let err = parse(&at_limit(129)).expect_err("129 levels exceed the limit");
+        assert!(err.contains("nesting exceeds 128 levels"), "{err}");
+        // `!` runs count as nesting too (the same recursion shape).
+        let negated = format!("{}QUAL>=30", "!".repeat(128));
+        parse(&negated).expect("128 `!` are within the limit");
+        let err = parse(&format!("{}QUAL>=30", "!".repeat(129))).expect_err("129 `!` rejected");
+        assert!(err.contains("nesting exceeds"), "{err}");
+        // The original report's 10,000 levels is a clean error, not a crash.
+        let err = parse(&at_limit(10_000)).expect_err("10,000 levels are refused");
+        assert!(err.contains("nesting exceeds"), "{err}");
+    }
+
+    /// A long flat `||` chain builds a left-deep tree whose `Drop` recurses
+    /// once per term. The parser stays iterative but the limit keeps the AST
+    /// and the evaluator within the same bound.
+    #[test]
+    fn logic_chains_are_bounded() {
+        let chain = |n: usize| vec!["QUAL>=30"; n].join(" || ");
+        parse(&chain(2_000)).expect("2,000 terms are within the limit");
+        let err = parse(&chain(2_001)).expect_err("2,001 terms exceed the limit");
+        assert!(err.contains("more than 2000"), "{err}");
     }
 }

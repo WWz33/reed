@@ -923,7 +923,9 @@ impl NativeEncoder {
         edit: &EditPlan<'_>,
     ) -> Result<(), IoError> {
         let width = type_width(ty);
-        if width == 0 {
+        if width == 0 || !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
+            // A CHAR GT carries a 1-byte element; `int_element` reads four
+            // bytes and would panic (doc_v23 V23-02).
             return Err(malformed("BCF GT field is not integer-typed"));
         }
         let (_, vector_end) = super::record::int_sentinels(ty);

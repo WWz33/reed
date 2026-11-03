@@ -155,6 +155,10 @@ fn int_element_column(ty: u8, elem: &[u8]) -> u32 {
 }
 
 /// One float FORMAT element as the text scanner would parse it.
+///
+/// A descriptor that is neither FLOAT nor an integer type cannot be read as
+/// a number: a CHAR element is one byte wide, so `int_element` would index
+/// past the slice (doc_v23 V23-02). Such an element is missing.
 fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
     use super::record::{FLOAT_MISSING, FLOAT_VECTOR_END};
     if ty == value_type::FLOAT {
@@ -164,7 +168,7 @@ fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
         } else {
             f32::from_bits(bits)
         }
-    } else {
+    } else if matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
         let (missing, _) = int_sentinels(ty);
         let value = int_element(ty, elem);
         if value == missing {
@@ -172,5 +176,41 @@ fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
         } else {
             value as f32
         }
+    } else {
+        f32::NAN
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v23 V23-02: a CHAR-typed element is one byte wide; reading it as
+    /// int32 must not index past the slice. It decodes as missing.
+    #[test]
+    fn char_typed_float_column_element_is_missing_not_a_panic() {
+        // One-byte slice: the old code read elem[1..4] and panicked.
+        assert!(float_element_column(value_type::CHAR, b"0").is_nan());
+        assert!(float_element_column(value_type::NULL, b"").is_nan());
+        // Integer and FLOAT types keep their values.
+        assert_eq!(float_element_column(value_type::INT8, &[7]), 7.0);
+        assert!(float_element_column(value_type::INT8, &[i8::MIN as u8]).is_nan());
+        assert_eq!(
+            float_element_column(value_type::FLOAT, &1.5_f32.to_le_bytes()),
+            1.5
+        );
+    }
+
+    /// The integer column helper's sentinel rules stay unchanged: a
+    /// negative value is missing, a positive one is kept. The CHAR case is
+    /// gated in `decode_format_columns` (`is_int`), so it never reaches
+    /// `int_element` through the public path.
+    #[test]
+    fn integer_column_element_keeps_its_sentinel_rules() {
+        assert_eq!(int_element_column(value_type::INT8, &[5]), 5);
+        // A CHAR path never reaches `int_element_column` from
+        // `decode_format_columns` (its `is_int` gate), but the helper stays
+        // total for direct callers.
+        assert_eq!(int_element_column(value_type::INT32, &(-3_i32).to_le_bytes()), INT_MISSING);
     }
 }

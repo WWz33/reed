@@ -200,12 +200,9 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             "report mode writes files: pass -o PREFIX",
         ));
     };
-    // doc_v21 S19: an empty prefix wrote hidden files in CWD and exited 0.
-    if prefix.trim().is_empty() {
-        return Err(reed::Error::usage(
-            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
-        ));
-    }
+    // doc_v21 S19 / doc_v23 V23-21: `-o -` or an empty prefix writes
+    // prefixed files and exits 0, so both are refused before any work.
+    super::common::require_output_prefix(&prefix, "reed stats")?;
     let p = prelude(
         "reed stats",
         &args.input,

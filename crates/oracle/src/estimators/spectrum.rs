@@ -2,8 +2,17 @@
 //!
 //! All three operate on **complete-case sites only** for a fixed chromosome
 //! count `n` (sites where any sample of the group has a missing allele are
-//! skipped and counted). This keeps the spectrum definition unambiguous;
-//! missing-aware variants are a v0.2 concern.
+//! skipped whole and counted in `n_skipped_missing`). This keeps the spectrum
+//! definition unambiguous and matches the production estimator and the spec
+//! (doc_v23 V23-47, decision A).
+//!
+//! This is deliberately **not** scikit-allel's convention: allel's
+//! per-position functions delete the missing genotype and keep the site, so on
+//! the same input allel reports a larger `S` and different bin counts. A
+//! partial-site spectrum has no unambiguous denominator (`n` would change per
+//! site), and the pairwise estimators (π, Dxy) already express the
+//! pairwise-complete convention. `tests/families.rs` pins both behaviours on
+//! one fixture so the divergence cannot drift silently.
 //!
 //! "ALT" is treated as derived (no outgroup); the unfolded spectrum is the ALT
 //! count spectrum under that assumption.

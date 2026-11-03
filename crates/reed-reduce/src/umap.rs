@@ -92,7 +92,9 @@ fn smooth_knn_dist(knn_dists: &Mat, k: f64, local_connectivity: f64) -> (Vec<f64
             .map(|j| knn_dists.get(i, j))
             .filter(|v| v.is_finite() && *v > 0.0)
             .collect();
-        non_zero.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // The filter above keeps finite positives only; `total_cmp` is the
+        // house style for float ordering regardless (doc_v23 V23-08).
+        non_zero.sort_by(|a, b| a.total_cmp(b));
         if non_zero.len() as f64 >= local_connectivity {
             let index = local_connectivity.floor() as usize;
             let interpolation = local_connectivity - index as f64;

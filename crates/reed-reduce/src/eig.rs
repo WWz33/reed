@@ -19,6 +19,10 @@ pub struct SymEig {
 
 impl SymEig {
     /// Top-k eigenvalues (descending) and their eigenvectors as columns.
+    ///
+    /// Sign-normalized like [`crate::backend::SymEigResult::top_k`]: the
+    /// largest-magnitude component of each column is positive (doc_v23
+    /// V23-09), so the fallback and faer backends agree byte for byte.
     pub fn top_k(&self, k: usize) -> (Vec<f64>, Mat) {
         let n = self.values.len();
         let k = k.min(n);
@@ -27,8 +31,18 @@ impl SymEig {
         for c in 0..k {
             let src = n - 1 - c;
             vals.push(self.values[src]);
+            let mut best_abs = 0.0f64;
+            let mut best_val = 0.0f64;
             for r in 0..n {
-                vecs.set(r, c, self.vectors.get(r, src));
+                let x = self.vectors.get(r, src);
+                if x.abs() > best_abs {
+                    best_abs = x.abs();
+                    best_val = x;
+                }
+            }
+            let sign = if best_val < 0.0 { -1.0 } else { 1.0 };
+            for r in 0..n {
+                vecs.set(r, c, sign * self.vectors.get(r, src));
             }
         }
         (vals, vecs)

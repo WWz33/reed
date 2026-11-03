@@ -302,6 +302,14 @@ impl<'a> Cursor<'a> {
     /// A typed descriptor: `(type, count)`; counts of 15 read the extended
     /// typed integer that follows (§6.3.3).
     ///
+    /// Only one extension level is legal. htslib's `bcf_dec_size_safe`
+    /// (vcf.c:2013-2026) reads the extension with `bcf_dec_typed_int1_safe`,
+    /// which decodes the *type* nibble and a value and never recurses; a
+    /// second 15 is rejected there because 15 is not an integer type. Reed
+    /// previously routed the extension back through `typed`, so a run of
+    /// `0xF1` bytes recursed `typed → typed_int → typed` until the stack
+    /// overflowed (doc_v23 V23-01).
+    ///
     /// A NULL type with a nonzero count is malformed — NULL carries no
     /// payload, so its count must be zero (an INFO flag). htslib rejects it
     /// in `bcf_record_check` (vcf.c:2231-2236); without the check the empty
@@ -315,9 +323,8 @@ impl<'a> Cursor<'a> {
         let ty = desc & 0x0F;
         let mut count = usize::from(desc >> 4);
         if count == 15 {
-            let ext = self.typed_int()?;
-            count =
-                usize::try_from(ext).map_err(|_| malformed("BCF descriptor count is negative"))?;
+            let ext = self.extended_count()?;
+            count = ext;
         }
         if type_width(ty) == 0 && ty != value_type::NULL {
             return Err(malformed("BCF descriptor has an unknown type"));
@@ -328,14 +335,39 @@ impl<'a> Cursor<'a> {
         Ok((ty, count))
     }
 
+    /// The extended count after a `15` nibble: exactly one descriptor byte,
+    /// whose own count nibble must not be another extension.
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedRecord`] for a second-level extension, a
+    /// non-integer type, a count other than one or a negative value.
+    fn extended_count(&mut self) -> Result<usize, IoError> {
+        let desc = self.u8()?;
+        let ty = desc & 0x0F;
+        let count = desc >> 4;
+        if count == 15 {
+            return Err(malformed("BCF descriptor has a second-level extension"));
+        }
+        if count != 1 {
+            return Err(malformed("BCF typed integer has a count other than 1"));
+        }
+        let ext = self.int_value(ty)?;
+        usize::try_from(ext).map_err(|_| malformed("BCF descriptor count is negative"))
+    }
+
     /// A typed integer (the key/index encoding).
     ///
     /// # Errors
     ///
     /// [`IoError::MalformedRecord`] for an invalid descriptor.
     pub fn typed_int(&mut self) -> Result<i64, IoError> {
-        let (ty, count) = self.typed()?;
-        if count != 1 {
+        let desc = self.u8()?;
+        let ty = desc & 0x0F;
+        if desc >> 4 == 15 {
+            return Err(malformed("BCF descriptor has a second-level extension"));
+        }
+        if desc >> 4 != 1 {
             return Err(malformed("BCF typed integer has a count other than 1"));
         }
         self.int_value(ty)
@@ -412,6 +444,46 @@ mod tests {
             c.typed().expect("invariant: parses"),
             (value_type::CHAR, 20)
         );
+    }
+
+    #[test]
+    fn second_level_extension_is_malformed_not_a_stack_overflow() {
+        // A run of 0xF1 (count nibble 15, INT8) used to recurse
+        // typed -> typed_int -> typed until the stack overflowed (V23-01).
+        for repeat in [2_usize, 8, 64, 4096] {
+            let data = vec![0xF1_u8; repeat];
+            let mut c = Cursor::new(&data);
+            let err = c.typed().expect_err("invariant: second extension rejected");
+            assert!(err.to_string().contains("second-level extension"), "{err}");
+            // The key path has the same guard.
+            let mut c = Cursor::new(&data);
+            assert!(c.typed_int().is_err());
+        }
+    }
+
+    #[test]
+    fn extended_count_rejects_non_integer_and_non_unit() {
+        // Extension must be one integer of count 1: a CHAR type right after
+        // the 15 nibble is malformed, as is a count nibble other than 1.
+        for desc in [0x17_u8, 0x27, 0x25, 0x65] {
+            let data = [0xF7, desc, 0, 0, 0, 0];
+            let mut c = Cursor::new(&data);
+            assert!(c.typed().is_err(), "descriptor {desc:#04x} must be rejected");
+        }
+    }
+
+    #[test]
+    fn typed_int_reads_a_single_descriptor_without_extending() {
+        // htslib bcf_enc_int1: one count-1 descriptor byte then the value.
+        let data = [0x11, 0x07];
+        let mut c = Cursor::new(&data);
+        assert_eq!(c.typed_int().expect("invariant: parses"), 7);
+        // Count 2 is not a typed integer.
+        let mut c = Cursor::new(&[0x21_u8, 0x07, 0x08]);
+        assert!(c.typed_int().is_err());
+        // A 15 nibble is a size extension, never a typed integer.
+        let mut c = Cursor::new(&[0xF1_u8, 0x11, 0x07]);
+        assert!(c.typed_int().is_err());
     }
 
     #[test]

@@ -96,6 +96,7 @@ fn pairwise_r2_matches_plink2() {
             decay_max_bp: Some(100_000),
             decay_bin_bp: 1000,
             pairs: true,
+    pairs_path: None,
         }),
         &budget,
     )
@@ -297,6 +298,7 @@ fn ld_is_identical_across_thread_counts() {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,
+    pairs_path: None,
             }),
             &budget,
         )
@@ -328,6 +330,7 @@ fn ld_decay_carries_per_population_curves() {
         decay_max_bp: Some(100_000),
         decay_bin_bp: 1000,
         pairs: false,
+    pairs_path: None,
     });
     // Two populations of three samples each.
     req.populations = Populations::File(pops_two_file(dir.as_path()));
@@ -532,6 +535,7 @@ fn ld_cohort_excludes_removed_samples() {
         decay_max_bp: Some(100_000),
         decay_bin_bp: 1000,
         pairs: true,
+    pairs_path: None,
     };
 
     let mut kept = request(ld());
@@ -665,6 +669,7 @@ fn ld_sink_caps_in_flight_decay_jobs() {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,
+    pairs_path: None,
             }),
             &budget,
         )
@@ -675,5 +680,181 @@ fn ld_sink_caps_in_flight_decay_jobs() {
     }
     assert_eq!(values[0], values[1], "the cap must not change the output");
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v23 V23-14 (decision C): `--ld-pairs` streams each contig's rows to
+/// the final `PREFIX.ld` as the decay jobs join, instead of accumulating
+/// every pair in memory. The streamed file must be byte-identical to what
+/// `write_ld` renders from an accumulated report, and the report's
+/// `pairs` must be empty (the rows already left).
+#[test]
+fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, VCF).expect("invariant: fixture write");
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+
+    // Accumulated (the pre-v23 library path): rows come back in the report.
+    let accumulated = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: None,
+        }),
+        &budget,
+    )
+    .expect("invariant: run")
+    .ld
+    .expect("invariant: LD requested");
+    assert!(!accumulated.pairs.is_empty(), "control run must carry rows");
+
+    // Streamed: the sink writes the file during the run.
+    let prefix = dir.join("out");
+    let streamed = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: Some(prefix.with_extension("ld")),
+        }),
+        &budget,
+    )
+    .expect("invariant: run")
+    .ld
+    .expect("invariant: LD requested");
+    assert!(
+        streamed.pairs.is_empty(),
+        "streamed rows must not also be held in memory"
+    );
+    assert_eq!(streamed.decay, accumulated.decay, "decay is unaffected");
+
+    // Byte identity: render the accumulated report through the writer, and
+    // compare with what the sink streamed.
+    let mut expected = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
+    for (contig, a, b, r2) in &accumulated.pairs {
+        reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+    }
+    let got = std::fs::read_to_string(prefix.with_extension("ld")).expect("invariant: .ld written");
+    assert_eq!(got, expected, "streamed pairs differ from the report render");
+
+    // The decay writer must not recreate or truncate the streamed file.
+    let decay_prefix = dir.join("decay_only");
+    let mut report = accumulated.clone();
+    report.pairs.clear();
+    let files = reed::ld::write_ld(&decay_prefix, &report, &[]).expect("invariant: write");
+    assert!(files.iter().all(|p| !p.to_string_lossy().ends_with(".ld")),
+        "-.ld must not be written when the rows were streamed: {files:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run with no pair at all (a single site) must not create the `.ld` file:
+/// the sink opens it lazily on the first row.
+#[test]
+fn streamed_pairs_file_is_not_created_without_pairs() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-nopair-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=100000>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+        chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n";
+    let vcf = dir.join("one.vcf");
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let prefix = dir.join("out");
+    let path = prefix.with_extension("ld");
+    let budget = ThreadBudget {
+        threads: 1,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: Some(path.clone()),
+        }),
+        &budget,
+    )
+    .expect("invariant: run");
+    assert!(!path.exists(), "no pair means no .ld file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The streaming writer is lazy per *pair*, not per contig: a contig with a
+/// single site yields no pairs and must not create the file, while a later
+/// contig with pairs must still create it and append in contig order.
+#[test]
+fn streamed_pairs_skip_a_pairless_leading_contig() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-lead-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let text = "##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##contig=<ID=chr2,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr2\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr2\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1
+";
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    // Accumulated reference.
+    let accumulated = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: None,
+        }),
+        &budget,
+    )
+    .expect("invariant: run")
+    .ld
+    .expect("invariant: LD requested");
+    assert_eq!(
+        accumulated.pairs.len(),
+        1,
+        "only chr2's one pair exists: {:?}",
+        accumulated.pairs
+    );
+
+    let path = dir.join("out.ld");
+    let streamed = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: Some(path.clone()),
+        }),
+        &budget,
+    )
+    .expect("invariant: run")
+    .ld
+    .expect("invariant: LD requested");
+    assert_eq!(streamed.pairs.len(), 0, "streamed rows stay out of memory");
+    let mut expected = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
+    for (contig, a, b, r2) in &accumulated.pairs {
+        reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+    }
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the later contig creates the file"),
+        expected
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

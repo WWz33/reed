@@ -1351,3 +1351,72 @@ fn v22_r2_hist_dp_ad_only_and_stats_type_checks() {
     assert!(stderr.contains("DP is Float"), "{stderr}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v23 V23-21 (decision A): every prefix-writing command refuses `-o -`
+/// and an empty prefix *before* opening the input. Previously `stats`,
+/// `convert`, `distance` and `pca` created literal `-.afreq`/`-.012`/
+/// `-.mibs`/`-.eigenvec` files and exited 0, and `popg` only noticed after
+/// the whole computation.
+#[test]
+fn prefix_commands_refuse_dash_and_empty_output() {
+    let dir = temp_dir("v23-prefix");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let inp = input.to_str().expect("invariant: utf8");
+    let cwd = dir.to_str().expect("invariant: utf8");
+    let bare = dir.join("bare");
+    let bare = bare.to_str().expect("invariant: utf8");
+
+    // (subcommand arguments, an argument that makes it write a prefixed file)
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["stats"], &["--freq"]),
+        (&["convert"], &["--012"]),
+        (&["pca"], &["--pcs", "2"]),
+        (&["distance"], &["--type", "ibs"]),
+        (&["popg"], &["--pi"]),
+    ];
+    for (sub, extra) in cases {
+        for prefix in ["-", "", "   "] {
+            let mut args: Vec<&str> = sub.to_vec();
+            args.push(inp);
+            args.extend(*extra);
+            args.extend(["-o", prefix, "--verbosity", "0"]);
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_reed"))
+                .args(&args)
+                .current_dir(cwd)
+                .stdin(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .expect("invariant: spawn reed");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{sub:?} with -o {prefix:?} must be a usage error: {stderr}"
+            );
+            assert!(
+                stderr.contains("-o") || stderr.contains("prefix"),
+                "{sub:?} -o {prefix:?}: {stderr}"
+            );
+            // No literal `-`-prefixed or hidden output may appear.
+            let dash_files: Vec<_> = std::fs::read_dir(cwd)
+                .expect("invariant: dir")
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with('-') || n.starts_with('.'))
+                .collect();
+            assert!(
+                dash_files.is_empty(),
+                "{sub:?} -o {prefix:?} created {dash_files:?}"
+            );
+        }
+    }
+
+    // The control: a real prefix still works for one of them.
+    let out = run(&[
+        "stats", inp, "--freq", "-o", bare, "--verbosity", "0",
+    ]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(dir.join("bare.afreq").exists(), "control run must write its file");
+    let _ = std::fs::remove_dir_all(&dir);
+}

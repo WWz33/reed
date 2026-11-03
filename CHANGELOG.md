@@ -5,6 +5,82 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v23 复核修复：P0 崩溃/数据损坏与 6 项拍板落地（2026-11-03）
+
+仓库外全库审查（`reed-rs-review-2026-11-03.md`，9 区域约 8.9 万行）经
+`docs/rounds/v23/` 逐条实证后，8 条 Must-fix 中 7 条属实、1 条驳回；本轮把
+A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 6 项拍板全部
+落地。每条先写失败测试再修复。
+
+### Fixed
+- **io/bcf**：`Cursor::typed` 与 `typed_int` 相互递归。描述符 count 半字节为
+  15 时，旧实现把扩展描述符又送回 `typed`，连续 `0xF1` 字节（BGZF 压缩后
+  不到 100 字节）产生数万层递归，758 字节的损坏 BCF 即 SIGABRT。现在按
+  htslib `bcf_dec_size_safe` 只允许**一层**扩展，二次扩展、
+  非整数/非单元扩展均为 `MalformedRecord`（V23-01）。
+- **io/bcf**：CHAR 类型的 GT 让渲染与列解码读越界 panic（1 字节元素按 i32
+  读 4 字节）。`fmt_gt` 对非整数类型返回错误（htslib `bcf_format_gt_v2` 同样
+  报错），`float_element_column` 对非数值类型记 missing；`encode_gt_column_bcf`
+  的类型守卫一并收紧（V23-02）。
+- **io/vcf**：样本区编辑会越过 header 的样本数索引 keep/GT 掩码位集
+  （`Bitset::get` 断言），行尾多一个空样本列 + `-s`/`--min-gq` 即 panic。
+  `edit_samples` 现在以 header 样本数为上界，多余空列按扫描阶段的口径丢弃
+  （V23-03）。
+- **io/vcf**：`format_g6_into` 的科学计数分支用 `v.abs()` 格式化却不补负号，
+  负 INFO/FORMAT 浮点在 BCF→VCF 渲染时被静默改成正数（`-1.5e-07` →
+  `1.5e-07`）。现在指数分支补 `-`，与 `bcftools view -Ov` 逐字节一致
+  （V23-04）。
+- **filter**：表达式解析器无嵌套上限，10,000 层括号直接栈溢出 abort。加
+  `MAX_NESTING`（按实测标定：debug 下 2 MiB 栈在 ~430 层崩、1 MiB 在 ~200
+  层崩，取 128）与 `MAX_CHAIN`（2,000，约束左深 `||`/`&&` 树的 Drop 与求值
+  递归）；超限返回错误（V23-05）。
+- **core**：`round_half_even` 用 `EPSILON * max(|x|,1)` 判定平局，把相邻
+  可表示值误判为平局：`round_half_even(1.4999999999999998)` 得 2（R 得 1）、
+  `0.35*90` 得 32（R 得 31，DAPC 训练集大小 off-by-one）。改为精确
+  `frac == 0.5`（V23-06）。
+- **reduce**：`isomap`、`knn_from_distances`、`isomap_from_distances` 三处
+  NaN 距离排序仍用 `partial_cmp(..).unwrap()`，缺失基因型即 panic；统一
+  `total_cmp`（V23-08）。
+- **reduce**：特征向量无符号约定，同一对称矩阵 fallback 得 `-0.998…`、faer
+  得 `+0.998…`，切后端/升级 faer 会逐字节改 `.eigenvec`。`SymEigResult::top_k`
+  与 `eig::SymEig::top_k` 统一"最大 |分量| 取正"（并列取首行、全零列不动），
+  PCA/PCoA/kernel/Isomap/Laplacian/diffusion 共用（V23-09，拍板 A；接受输出
+  符号变化）。
+- **cli**：`stats`/`convert`/`pca`/`distance` 对 `-o -` 创建字面 `-.afreq`
+  一类文件并退出 0，`distance` 还漏了空前缀检查；`popg` 的检查发生在整轮
+  计算之后。四条命令与 `popg` 共用 `require_output_prefix`，在打开输入前
+  拒绝 `-`/空/空白前缀（V23-21/V23-31）。
+
+### Changed
+- **stats（`--ld-pairs` 流式化）**：`LdRequest::pairs_path`（新字段）指向最终
+  `PREFIX.ld` 时，sink 在 decay 作业 join（reducer 线程、contig 顺序）时逐
+  contig 追加，首个 pair 到达才懒创建并写表头；全无 pair 仍不建文件，内存
+  从 O(全部 pair) 降为 O(单 contig)。表头与行格式由 `writers::ld` 的
+  `PAIRS_HEADER`/`render_pair_row` 单点定义，流式与内存两条路径逐字节相同；
+  CLI 的 `--ld-pairs` 自动设置该路径；库调用方不设时行为不变
+  （V23-14，拍板 C）。
+
+### Documentation
+- **spec/cli.md** §5：`AN=0` 时 `AF`/`MAF` 为 NaN 并按 IEEE 比较
+  （`AF!=0` 为真），与 bcftools 一致，不改写为 missing；"与缺失值比较为假"
+  仅指字面 `"."`（V23-50，拍板 A）。
+- **oracle**：SFS/θ_W/Tajima 明示为**逐位点 complete-case**；记录与
+  scikit-allel 逐位点删除语义的差异（allel 对同一输入 S 更大、bin 不同），
+  并用同一 fixture 同时钉住两种口径（V23-47，拍板 A）。
+
+### Tests
+- 新增 25 项：BCF 二次扩展/非整数扩展/typed_int 边界、CHAR GT 函数级与
+  record 级、尾部空列 × `-s`/GT 掩码、负科学计数与 INFO 编辑、表达式
+  128/129 层与 2,000/2,001 项、`round_half_even` 近半值与 0.05…0.95×1…500
+  扫描、isomap/kNN NaN GRM、`top_k` 跨后端与并列/全零规则、流式 `.ld`
+  逐字节与无 pair 不建文件、五命令前缀拒绝（3 种前缀 × 5 命令 + 对照）、
+  AF/MAF NaN IEEE 四条比较、oracle 缺失 golden 两项。
+- 全量：`ci/test-parallel.sh` 893 passed / 0 failed（56 二进制，15 s）；
+  `cargo clippy --workspace --all-targets -D warnings` 0 告警；
+  `ci/check-doc-drift.sh` 97 项全 ok。真实 `subvcf.vcf.gz` 的 `--summary`
+  DP/PSC 仍与 `bcftools stats -s -` 逐行相同；真实 BCF 的负浮点
+  `reed filter -Ov` == `bcftools view -Ov`。
+
 ## [Unreleased] — doc_v22 真实 callset 的 I/O 兼容与深度回退（2026-11-03）
 
 真实 callset 复核（`bsaseq/raw.bsa.vcf.gz`：4 样本、`GT:PL:AD`、无逐样本 DP）

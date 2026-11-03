@@ -63,6 +63,16 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             "window-layout mode writes files: pass -o PREFIX",
         ));
     }
+    // doc_v23 V23-21/V23-31: the prefix checks moved here from after the run.
+    // They used to fire only once the whole computation had finished, so a
+    // large input paid for a run that could never write anything.
+    if writes_files {
+        let prefix = args
+            .out
+            .as_deref()
+            .expect("invariant: -o presence checked above");
+        super::common::require_output_prefix(prefix, "reed popg")?;
+    }
     let Prelude {
         regions,
         targets,
@@ -148,11 +158,6 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             .out
             .clone()
             .expect("invariant: -o checked before the run");
-        if prefix == "-" {
-            return Err(reed::Error::usage(
-                "window-layout mode writes PREFIX files: -o - is not stdout",
-            ));
-        }
         let command_line = std::env::args().collect::<Vec<_>>().join(" ");
         let mut files = Vec::new();
         if let Some(ld_report) = &report.ld {
@@ -476,7 +481,14 @@ pub(crate) fn build_windowed_request(
         &group_names,
     )?;
     // LD: `--ld-decay` / `--indep-pairwise` (docs/rounds/v5/05 §3.4).
-    let ld_request = build_ld_request(args.ld_decay.as_deref(), args.ld_pairs)?;
+    // The pair table streams straight to `PREFIX.ld` (doc_v23 V23-14), so the
+    // sink needs the final path; the writer below then sees no in-memory rows
+    // and does not recreate the file.
+    let ld_request = build_ld_request(
+        args.ld_decay.as_deref(),
+        args.ld_pairs,
+        args.out.as_deref(),
+    )?;
     // The SFS is genome-wide: with no windowed kind, skip the window
     // grid entirely (genome level only) and give it a nominal size.
     let sfs_only = kinds.is_empty() && fstats_request.is_none();
@@ -598,6 +610,7 @@ fn build_fstats_request(
 fn build_ld_request(
     ld_decay: Option<&str>,
     ld_pairs: bool,
+    out_prefix: Option<&str>,
 ) -> Result<Option<reed::LdRequest>, reed::Error> {
     if ld_decay.is_none() {
         if ld_pairs {
@@ -613,10 +626,22 @@ fn build_ld_request(
         Some("") => Some(100_000),
         Some(text) => Some(crate::units::parse_size(text).map_err(reed::Error::usage)?),
     };
+    // `--ld-pairs` with a prefix streams its rows during the run, which is
+    // what keeps memory O(one contig) instead of O(every pair)
+    // (doc_v23 V23-14). Without a prefix (stdout/table mode) the rows stay in
+    // memory, where there is no file to append to.
+    let pairs_path = if ld_pairs {
+        out_prefix
+            .filter(|p| !p.is_empty() && *p != "-")
+            .map(|p| std::path::PathBuf::from(format!("{p}.ld")))
+    } else {
+        None
+    };
     Ok(Some(reed::LdRequest {
         decay_max_bp,
         decay_bin_bp: 1000,
         pairs: ld_pairs,
+        pairs_path,
     }))
 }
 
@@ -782,6 +807,7 @@ mod tests {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,
+                pairs_path: None,
             }),
         };
         let mut argv: Vec<String> = vec!["reed".into(), "popg".into(), "in.vcf".into()];

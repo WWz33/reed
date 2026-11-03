@@ -161,7 +161,10 @@ fn knn_from_distances(d: &Mat, k: usize) -> Mat {
             .filter(|&j| j != i)
             .map(|j| (d.get(i, j), j))
             .collect();
-        order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // A NaN distance (missing genotype on an endpoint) must sort, not
+        // panic: `partial_cmp(..).unwrap()` aborted `isomap` and the kNN
+        // graph builders (doc_v23 V23-08).
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let sigma = order
             .get(k.min(order.len().saturating_sub(1)))
             .map(|&(v, _)| v)
@@ -204,7 +207,10 @@ fn isomap_from_distances(d_in: &Mat, k: usize, n_components: usize) -> Embedding
             .filter(|&j| j != i)
             .map(|j| (d.get(i, j), j))
             .collect();
-        order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // A NaN distance (missing genotype on an endpoint) must sort, not
+        // panic: `partial_cmp(..).unwrap()` aborted `isomap` and the kNN
+        // graph builders (doc_v23 V23-08).
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
         for &(_, j) in order.iter().take(k) {
             keep[i][j] = true;
             keep[j][i] = true;
@@ -486,6 +492,55 @@ mod tests {
                 let diff = (g1.a.get(i, j) - g2.a.get(i, j)).abs();
                 assert!(diff < 1e-10, "entry ({i},{j}) differs by {diff}");
             }
+        }
+    }
+
+    /// doc_v23 V23-08: the kNN and Isomap sorts in this module used
+    /// `partial_cmp(..).unwrap()`, which panics on a NaN distance. The GRM
+    /// entry points cannot feed them one — `grm_distances` clamps with
+    /// `.max(0.0)`, which maps NaN to 0 — but the helpers are the last line
+    /// of defence if a future distance estimator stops sanitizing. Both must
+    /// order NaN last instead of aborting.
+    #[test]
+    fn knn_and_isomap_sorts_tolerate_nan_distances() {
+        // A distance matrix with one NaN row/column, as a missing genotype
+        // used to produce through `graph::pairwise_distances`.
+        let mut d = Mat::zeros(4, 4);
+        for i in 0..4 {
+            for j in 0..i {
+                let v = if i == 3 || j == 3 { f64::NAN } else { 1.0 };
+                d.set(i, j, v);
+                d.set(j, i, v);
+            }
+        }
+        assert!(d.get(3, 0).is_nan(), "fixture must carry a NaN distance");
+        // Old code panicked inside both sorts.
+        let w = knn_from_distances(&d, 2);
+        for v in w.data.iter() {
+            assert!(v.is_finite(), "weight {v} not finite");
+        }
+        let e = isomap_from_distances(&d, 2, 2);
+        assert_eq!(e.coords.rows, 4);
+    }
+
+    /// The GRM path itself stays NaN-free: `grm_distances` clamps the
+    /// expression with `.max(0.0)`, so an all-missing sample (NaN diagonal)
+    /// yields 0 distances, not NaN.
+    #[test]
+    fn grm_distances_clamp_nan_to_zero() {
+        let mut a = Mat::zeros(3, 3);
+        for i in 0..3 {
+            a.set(i, i, 1.0);
+            for j in 0..i {
+                a.set(i, j, 0.5);
+                a.set(j, i, 0.5);
+            }
+        }
+        a.set(2, 2, f64::NAN);
+        let g = Grm { a, n_pairs: None, m: 1 };
+        let d = grm_distances(&g);
+        for v in d.data.iter() {
+            assert!(v.is_finite(), "distance {v} not finite");
         }
     }
 }

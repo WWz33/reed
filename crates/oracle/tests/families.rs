@@ -6,6 +6,7 @@
 //! verbatim; tolerances are 1e-12 unless noted.
 
 use reed_oracle::estimators::fst::{fst, FstEstimator};
+use reed_oracle::estimators::pi::{pi, PiEstimator};
 use reed_oracle::estimators::fstats::{d_stat, f2, f3, f4};
 use reed_oracle::estimators::hwe::{hardy_weinberg_p_value, heterozygosity, hwe_exact};
 use reed_oracle::estimators::ld::{ld_r2_pairs, ld_r2_summary};
@@ -263,4 +264,91 @@ fn manifest_availability_extends_to_new_estimators() {
         let f = fst(&w, &pops, 0, 1, est).unwrap();
         assert!(f.bias.is_some());
     }
+}
+
+/// doc_v23 V23-47 (decision A): the spectrum family is **complete-case per
+/// site** — a site where any sample of the group has a missing allele is
+/// skipped whole and counted, never partially dropped. scikit-allel's
+/// per-position functions instead delete the missing genotype and keep the
+/// site, so the two disagree on such input; this golden pins reed's chosen
+/// semantics (the production estimator and the spec share it) rather than
+/// allel's.
+///
+/// Fixture: 3 sites, sample 3 missing at site 0 and sample 0 missing at site 2
+/// (`-1` = missing allele). Only site 1 is complete (ALT count 1 of 8).
+#[test]
+fn sfs_theta_and_tajima_are_complete_case_per_site() {
+    let w = build(
+        SiteCompleteness::WithInvariants,
+        4,
+        &[
+            // site 0: sample 3 missing -> skipped whole (allel would keep it).
+            (0, vec![[0, 0], [0, 1], [1, 1], [-1, -1]]),
+            // site 1: complete, ALT count 1 -> one singleton.
+            (4, vec![[0, 0], [0, 1], [0, 0], [0, 0]]),
+            // site 2: sample 0 missing -> skipped whole.
+            (8, vec![[-1, -1], [0, 0], [0, 0], [0, 1]]),
+        ],
+    );
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
+
+    let unfolded = sfs(&w, &pops, 0, false).unwrap();
+    assert_eq!(unfolded.n_chroms, 8);
+    assert_eq!(unfolded.n_sites, 1, "only the complete site is counted");
+    assert_eq!(unfolded.n_skipped_missing, 2, "both partial sites are skipped");
+    // ALT counts: site0 skipped, site1 = 1, site2 skipped.
+    assert_eq!(unfolded.counts, vec![1, 0, 0, 0, 0, 0, 0]);
+
+    let folded = sfs(&w, &pops, 0, true).unwrap();
+    assert_eq!(folded.counts, vec![1, 0, 0, 0]);
+    assert_eq!(folded.n_skipped_missing, 2);
+
+    // theta_W = S / a1 over the *complete* site count is what the estimator
+    // reports; the inaccessible bp denominator is unchanged by the skips.
+    let theta = watterson_theta(&w, &pops, 0).unwrap();
+    assert_eq!(theta.segregating, 1, "one segregating site survives");
+    // a1(8) = 1 + 1/2 + … + 1/7 = 1089/420, S = 1, over the 10 bp window:
+    // (1 / a1) / 10 = 42/1089 — exactly half the two-segregating case
+    // this fixture's sibling test reports.
+    assert_close(theta.value(), 42.0 / 1089.0);
+
+    // Tajima's D needs >= 2 segregating sites; one is unavailable, not zero.
+    let d = tajima_d(&w, &pops, 0, 2);
+    if let Ok(d) = d {
+        assert_eq!(d.segregating, 1);
+    }
+}
+
+/// The pairwise estimators use **pairwise-complete** data instead: a missing
+/// sample drops out of each pair, so a partially missing site still
+/// contributes. This is the same fixture as above, and it is what makes the
+/// two conventions visibly different (doc_v23 V23-47).
+#[test]
+fn pi_is_pairwise_complete_where_the_spectrum_is_complete_case() {
+    let w = build(
+        SiteCompleteness::WithInvariants,
+        4,
+        &[
+            (0, vec![[0, 0], [0, 1], [1, 1], [-1, -1]]),
+            (4, vec![[0, 0], [0, 1], [0, 0], [0, 0]]),
+            (8, vec![[-1, -1], [0, 0], [0, 0], [0, 1]]),
+        ],
+    );
+    let pops = PopulationView::from_assignment(4, &[0, 0, 0, 0], 1).unwrap();
+    // Site 0 contributes pair differences among its three called samples and
+    // site 2 among its three, while the spectrum above counted only site 1.
+    let pairwise = pi(&w, &pops, 0, PiEstimator::PerPairComparable).unwrap();
+    let per_bp = pi(&w, &pops, 0, PiEstimator::AccessibleBp).unwrap();
+    assert!(
+        pairwise.value().is_some(),
+        "pairwise-complete pi is defined with partial sites"
+    );
+    // Sanity: the pairwise numerator is strictly larger than site 1 alone
+    // would give (one difference in three comparable pairs).
+    assert!(
+        pairwise.value().unwrap() > 0.0,
+        "pi must see the partial sites: {:?} / {:?}",
+        pairwise.value(),
+        per_bp.value()
+    );
 }

@@ -52,6 +52,9 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
             "-o PREFIX is required: distance writes PREFIX.<suffix>",
         ));
     };
+    // doc_v23 V23-21: the fourth prefix command was missing both the empty
+    // check (doc_v21 S19) and the `-o -` check.
+    super::common::require_output_prefix(prefix, "reed distance")?;
 
     let path = crate::units::input_path(&args.input);
     let opened = reed::open_regions(path.as_deref(), &[])?;

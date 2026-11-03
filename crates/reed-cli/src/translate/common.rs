@@ -469,6 +469,31 @@ pub(crate) fn refuse_output_eq_input(
     Ok(())
 }
 
+/// Validates the `-o PREFIX` of the commands that write several files from a
+/// prefix (`stats`, `convert`, `pca`, `distance`, `popg`).
+///
+/// Two shapes are refused before any input is opened: `-` (there is no single
+/// stdout for a prefix's several files, and it used to create literal
+/// `-.afreq`-style files and exit 0, doc_v23 V23-21) and an empty/blank
+/// prefix (hidden `.afreq`-style files in CWD, doc_v21 S19).
+///
+/// # Errors
+///
+/// A usage error naming the offending prefix.
+pub(crate) fn require_output_prefix(prefix: &str, command: &str) -> Result<(), reed::Error> {
+    if prefix == "-" {
+        return Err(reed::Error::usage(format!(
+            "{command} writes PREFIX files: -o - is not stdout; give a file prefix"
+        )));
+    }
+    if prefix.trim().is_empty() {
+        return Err(reed::Error::usage(
+            "-o needs a non-empty prefix (an empty one writes hidden files in the working directory)",
+        ));
+    }
+    Ok(())
+}
+
 /// Parses a sites file (`CHROM<TAB>POS`, 1-based) into per-site targets.
 ///
 /// # Errors

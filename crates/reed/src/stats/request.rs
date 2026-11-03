@@ -365,6 +365,14 @@ pub struct LdRequest {
     pub decay_bin_bp: u64,
     /// Write the per-pair table (`--ld-pairs`).
     pub pairs: bool,
+    /// Where the per-pair table goes. When set, the sink streams each
+    /// contig's rows straight to this file as its decay job joins (contig
+    /// order, so the bytes match the in-memory order) and the report's
+    /// [`LdReport::pairs`] stays empty — memory is O(one contig) instead of
+    /// O(every pair), which is the v23 decision C for `--ld-pairs`
+    /// (doc_v23 V23-14). `None` = accumulate in memory and return through
+    /// the report, the pre-v23 library behaviour.
+    pub pairs_path: Option<std::path::PathBuf>,
 }
 
 /// One decay bin: `(bin_start_bp, bin_end_bp, n_pairs, mean_r2)`.
@@ -393,6 +401,9 @@ pub(super) struct LdPlan {
     pub(super) decay_max_bp: Option<u64>,
     pub(super) decay_bin_bp: u64,
     pub(super) pairs: bool,
+    /// Stream the pair rows here instead of accumulating them
+    /// ([`LdRequest::pairs_path`], doc_v23 V23-14).
+    pub(super) pairs_path: Option<std::path::PathBuf>,
 }
 
 impl LdPlan {

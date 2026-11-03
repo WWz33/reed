@@ -377,6 +377,14 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
 
 /// Resolves a built-in field: INFO first for the allele-count family, then
 /// genotype-derived counts.
+///
+/// `AF`/`MAF` with `AN == 0` (every genotype at the site missing) is `NaN`,
+/// and NaN follows IEEE comparison: `NaN != 0` is **true**, while `NaN == 0`,
+/// `NaN > 0` and `NaN < 1` are false. That is bcftools' behaviour on the same
+/// input (`AF>0`, `AF<1`, `AF==0` and `AF!=0` agree record for record), so it
+/// is deliberately not changed to `Val::Missing`: the "missing values compare
+/// false" rule is about a `.` literal, not about a computed NaN (doc_v23
+/// V23-50, decision A). The parity test below pins all four operators.
 fn field_value<'a>(field: Field, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
     match field {
         Field::Qual => site.qual.map_or(Some(Val::Missing), |q| Some(Val::Num(q))),
@@ -770,6 +778,47 @@ mod tests {
         ));
         // Missing INFO compares false (bcftools).
         assert!(!ev("QD<4", &site(b".", Some(50.0), None), &tags));
+    }
+
+    /// doc_v23 V23-50 (decision A): with `AN == 0` every genotype is
+    /// missing, `AF`/`MAF` are NaN, and comparison is plain IEEE. bcftools
+    /// was measured on the same two-record input (all-missing site, then
+    /// `0/1 + 0/0`) and agreed record for record, so the NaN is kept rather
+    /// than mapped to `Missing`.
+    #[test]
+    fn af_and_maf_are_nan_at_an_zero_and_compare_by_ieee() {
+        let tags: [&str; 0] = [];
+        // AN = 0: every genotype missing.
+        let all_missing = GtCounts {
+            ac: 0,
+            an: 0,
+            n_missing: 8,
+            n_samples: 4,
+        };
+        let s = site(b".", Some(1.0), Some(all_missing));
+        // bcftools: AF>0 false, AF<1 false, AF==0 false, AF!=0 true.
+        assert!(!ev("AF>0", &s, &tags));
+        assert!(!ev("AF<1", &s, &tags));
+        assert!(!ev("AF==0", &s, &tags));
+        assert!(
+            ev("AF!=0", &s, &tags),
+            "NaN != 0 is true, matching bcftools"
+        );
+        assert!(ev("MAF!=0", &s, &tags));
+        assert!(!ev("MAF==0", &s, &tags));
+        // A called site is unaffected: AC=1, AN=8.
+        let called = GtCounts {
+            ac: 1,
+            an: 8,
+            n_missing: 0,
+            n_samples: 4,
+        };
+        let s = site(b".", Some(1.0), Some(called));
+        assert!(ev("AF>0", &s, &tags));
+        assert!(ev("AF<1", &s, &tags));
+        assert!(!ev("AF==0", &s, &tags));
+        assert!(ev("AF!=0", &s, &tags));
+        assert!(ev("MAF>0", &s, &tags));
     }
 
     #[test]

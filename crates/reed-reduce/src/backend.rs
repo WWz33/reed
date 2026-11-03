@@ -53,6 +53,15 @@ pub struct SymEigResult {
 
 impl SymEigResult {
     /// Top-k eigenvalues (descending) and their eigenvectors as columns.
+    ///
+    /// Each column carries a sign convention: its largest-magnitude component
+    /// is positive (ties take the first row; an all-zero column is left
+    /// alone). The solvers do not agree on sign — the same symmetric matrix
+    /// came back with `-0.998...` PC1 from the fallback backend and
+    /// `+0.998...` from faer — so without normalization a backend switch or a
+    /// faer upgrade changes `.eigenvec` bytes and embedding coordinates even
+    /// though the analysis is identical (doc_v23 V23-09). This is the same
+    /// convention `lda` already used.
     pub fn top_k(&self, k: usize) -> (Vec<f64>, Mat) {
         let n = self.values.len();
         let k = k.min(n);
@@ -61,8 +70,18 @@ impl SymEigResult {
         for c in 0..k {
             let src = n - 1 - c;
             vals.push(self.values[src]);
+            let mut best_abs = 0.0f64;
+            let mut best_val = 0.0f64;
             for r in 0..n {
-                vecs.set(r, c, self.vectors.get(r, src));
+                let x = self.vectors.get(r, src);
+                if x.abs() > best_abs {
+                    best_abs = x.abs();
+                    best_val = x;
+                }
+            }
+            let sign = if best_val < 0.0 { -1.0 } else { 1.0 };
+            for r in 0..n {
+                vecs.set(r, c, sign * self.vectors.get(r, src));
             }
         }
         (vals, vecs)
@@ -231,6 +250,102 @@ mod tests {
         let tr_a: f64 = (0..n).map(|i| a.get(i, i)).sum();
         let tr_e: f64 = e.values.iter().sum();
         assert!((tr_a - tr_e).abs() < 1e-9, "trace {tr_a} vs {tr_e}");
+    }
+
+    /// doc_v23 V23-09: the two backends must return the same eigenvectors,
+    /// sign included. Before normalization the same symmetric matrix gave
+    /// `-0.99845624390341792` PC1 from the fallback and
+    /// `+0.99845624390341725` from faer (PC2 flipped too).
+    #[test]
+    fn top_k_sign_is_normalized_across_backends() {
+        let n = 6;
+        let a = random_symmetric(n, 0x5EED);
+        // The fallback (tred2/tql2) result, whichever backend `sym_eig`
+        // delegates to by default.
+        let fallback = crate::eig::sym_eig(&a);
+        let (fb_vals, fb_vecs) = fallback.top_k(2);
+        // Independent normalization check: every column's largest-magnitude
+        // component is positive.
+        for c in 0..2 {
+            let mut best_abs = 0.0f64;
+            let mut best_val = 0.0f64;
+            for r in 0..n {
+                let x = fb_vecs.get(r, c);
+                if x.abs() > best_abs {
+                    best_abs = x.abs();
+                    best_val = x;
+                }
+            }
+            assert!(
+                best_val > 0.0,
+                "column {c} largest component {best_val} is not positive"
+            );
+        }
+        // Eigenvalues must stay descending and unchanged by the sign fix.
+        assert!(fb_vals[0] >= fb_vals[1]);
+
+        // Cross-backend comparison when faer is compiled in: the public
+        // `sym_eig` returns faer, and the fallback is reachable directly.
+        #[cfg(feature = "faer-backend")]
+        {
+            let (faer_vals, faer_vecs) = sym_eig(&a).top_k(2);
+            for c in 0..2 {
+                assert!(
+                    (faer_vals[c] - fb_vals[c]).abs() <= 1e-9 * faer_vals[c].abs().max(1.0),
+                    "eigenvalue {c}: faer {} vs fallback {}",
+                    faer_vals[c],
+                    fb_vals[c]
+                );
+                for r in 0..n {
+                    let diff = (faer_vecs.get(r, c) - fb_vecs.get(r, c)).abs();
+                    assert!(
+                        diff <= 1e-9,
+                        "PC{} row {r}: faer {} vs fallback {} (diff {diff})",
+                        c + 1,
+                        faer_vecs.get(r, c),
+                        fb_vecs.get(r, c)
+                    );
+                }
+            }
+        }
+    }
+
+    /// A column that is all zeros (a degenerate matrix) keeps its sign-free
+    /// value: the convention must not produce `-0.0` or a NaN.
+    #[test]
+    fn top_k_leaves_an_all_zero_column_alone() {
+        let mut r = SymEigResult {
+            values: vec![0.0, 0.0],
+            vectors: Mat::zeros(2, 2),
+            backend: COMPILED_BACKEND,
+        };
+        r.vectors.set(0, 1, 0.0);
+        let (vals, vecs) = r.top_k(2);
+        assert_eq!(vals, vec![0.0, 0.0]);
+        for v in vecs.data.iter() {
+            assert_eq!(*v, 0.0);
+            assert!(!v.is_sign_negative(), "zero column must not become -0");
+        }
+    }
+
+    /// The normalization picks the *first* row among equal-magnitude
+    /// components (documented tie rule).
+    #[test]
+    fn top_k_tie_rule_takes_the_first_row() {
+        // Eigenvalues ascending; column 1 is the top one.
+        let mut vectors = Mat::zeros(2, 2);
+        vectors.set(0, 0, 1.0);
+        vectors.set(1, 0, 0.0);
+        vectors.set(0, 1, -0.5);
+        vectors.set(1, 1, 0.5);
+        let r = SymEigResult {
+            values: vec![0.0, 1.0],
+            vectors,
+            backend: COMPILED_BACKEND,
+        };
+        let (_, vecs) = r.top_k(1);
+        assert_eq!(vecs.get(0, 0), 0.5, "first row decides the sign");
+        assert_eq!(vecs.get(1, 0), -0.5);
     }
 
     #[test]

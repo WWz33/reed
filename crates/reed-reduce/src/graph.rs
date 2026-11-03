@@ -169,7 +169,9 @@ pub fn auto_gamma(x: &Mat) -> f64 {
     if ds.is_empty() {
         return 1.0;
     }
-    ds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Every `d` passed the `d > 0.0` filter (NaN fails it), so this sort
+    // cannot see a NaN; `total_cmp` keeps it total anyway.
+    ds.sort_by(|a, b| a.total_cmp(b));
     let med = ds[ds.len() / 2];
     1.0 / (med * med).max(1e-12)
 }
@@ -323,7 +325,10 @@ pub fn isomap(x: &Mat, k: usize, n_components: usize) -> Embedding {
             .filter(|&j| j != i)
             .map(|j| (d.get(i, j), j))
             .collect();
-        order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // `total_cmp`, not `partial_cmp(..).unwrap()`: a genotype with a
+        // missing call makes `pairwise_distances` emit NaN, and the unwrap
+        // panicked instead of ordering the NaN last (doc_v23 V23-08).
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
         for &(_, j) in order.iter().take(k) {
             keep[i][j] = true;
             keep[j][i] = true;
@@ -520,6 +525,21 @@ mod tests {
         assert!(w.get(0, 1) > w.get(0, 2));
         assert!(w.get(0, 2) > 0.0);
         assert_eq!(w.get(0, 3), 0.0);
+    }
+
+    /// doc_v23 V23-08: the same NaN tolerance must hold for `isomap`, whose
+    /// kNN-order sort was still `partial_cmp(..).unwrap()` after S31 fixed
+    /// `knn_graph`. A missing genotype makes `pairwise_distances` emit NaN;
+    /// the sort must order it, not abort.
+    #[test]
+    fn isomap_sort_tolerates_nan_rows() {
+        let pts = [[0.0, 0.0], [1.0, 0.0], [5.0, 0.0], [f64::NAN, f64::NAN]];
+        let x = Mat::from_fn(4, 2, |i, j| pts[i][j]);
+        // Reaching the embedding at all is the regression: the old code
+        // panicked inside the kNN-order sort.
+        let e = isomap(&x, 2, 2);
+        assert_eq!(e.coords.rows, 4);
+        assert_eq!(e.coords.cols, 2);
     }
 
     #[test]

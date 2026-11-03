@@ -172,6 +172,10 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 - 未支持：`FMT/` 下标 `[0]/[*]`、通用正则、函数（`MAX/MIN/AVG/…`）。
 - `AC/AN/AF/MAC/MAF`：INFO 中存在时取 INFO 值，否则按基因型。检测到表达式使用了 INFO 中已存在的 AC/AN 时打印"陈旧 INFO"警告，提示改用 `--maf/--mac` 或先 `-x INFO/AC,INFO/AN`。
 - 与缺失值比较为假（bcftools 语义）。
+- **`AN = 0`（位点全部缺失）时 `AF`/`MAF` 为 NaN，按 IEEE 比较**：`AF!=0`/`MAF!=0`
+  为真，`AF==0`/`AF<1`/`AF>0` 为假。这与 bcftools 在同一输入上的逐记录结果一致
+  （doc_v23 V23-50 实测），因此不改成 missing——上面那条"与缺失值比较为假"只
+  指字面量 `"."`，不指计算出的 NaN。
 - 引用基因型量的表达式（`N_MISSING`、`F_MISSING`，以及 INFO 不存在时的 `AC/AN/…`）在掩码之后求值。
 - **Flag 按存在性读写**：`DB=1`/`DB=0` 测 flag 的存在/缺失（`doc/bcftools.txt:4067`），`DB!=0` 等价 `DB=1`；`DB` 单独出现不是合法表达式（bcftools 对单个裸 token 恒假，reed 在编译期报错而不是静默丢弃所有记录；doc_v12 N6）。
 - **多值 INFO 按任一元素比较**：`Number=A/R/G/.` 或 `Count(n>1)` 的标签逐对比较，任一对满足即真（bcftools `CMP_VECTORS`）；`Number=1` 却给了多个值时按 missing 处理（规范外输入，01-review §2.5-B5）。

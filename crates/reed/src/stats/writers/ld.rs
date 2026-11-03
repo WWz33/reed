@@ -12,6 +12,20 @@ use reed_engine::error::EngineError;
 
 use crate::stats::LdReport;
 
+/// The per-pair table's header line. One definition for both writers — the
+/// in-memory render below and the streaming sink
+/// (`stats::sink::write_pairs`) — so a `--ld-pairs` run is byte-identical
+/// whether its rows were accumulated or streamed (doc_v23 V23-14).
+pub const PAIRS_HEADER: &[u8] =
+    b"#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n";
+
+/// Appends one per-pair row in the table's format. The streaming writer and
+/// the in-memory renderer both call this, so the bytes cannot drift.
+pub fn render_pair_row(out: &mut String, contig: &str, a: u64, b: u64, r2: f64) {
+    writeln!(out, "{contig}\t{a}\t.\t{contig}\t{b}\t.\t{r2}")
+        .expect("invariant: writing to String");
+}
+
 /// Writes the LD files the report carries; returns the paths written.
 ///
 /// # Errors
@@ -47,10 +61,9 @@ pub fn write_ld(
         files.push(write(prefix, ".ld.decay", out)?);
     }
     if !report.pairs.is_empty() {
-        let mut out = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
+        let mut out = String::from_utf8_lossy(PAIRS_HEADER).into_owned();
         for (contig, a, b, r2) in &report.pairs {
-            writeln!(out, "{contig}\t{a}\t.\t{contig}\t{b}\t.\t{r2}")
-                .expect("invariant: writing to String");
+            render_pair_row(&mut out, contig, *a, *b, *r2);
         }
         files.push(write(prefix, ".ld", out)?);
     }
