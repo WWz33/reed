@@ -78,7 +78,7 @@
 
 | 编号 | 来源 | 判定 | 建议 |
 |---|---|---|---|
-| V23-34 | ①3 | 属实（性能） | FORMAT 缓存 64 → LRU 或提高上限；先 profile |
+| V23-34 | ①3 | 属实（性能） | FORMAT 缓存 64 → LRU 或提高上限；先 profile | **已实施**（上限 1024，硬上限非 LRU；缓存 65 项驻留测试） |
 | V23-35 | ②3/②4/②6/②7/②8 | 属实（性能/精简/潜伏） | 热路径 scratch、删死 API、leak 仅在未来逐记录容错时成问题 |
 | V23-36 | ⑤5–⑤10 | 属实（性能/精简） | mid stage 缓冲、`auto` Vec、prune 位图、`PcaScratch`、`append_sites`、rm-dup HashSet |
 | V23-37 | ⑥3/⑥6–⑥8 | 属实（性能/清理） | WcMulti scratch、PBS 冗余守卫、pair/multi 尺度统一、测试死代码 |

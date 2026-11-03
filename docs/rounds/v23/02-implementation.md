@@ -482,6 +482,20 @@ sink 的 pair 跨度缺省是 100_000，两处缺省不一致；pairs-only 的�
 - V23-34…37、39、41（profile 先行的性能/精简项）与 V23-47 的剩余 oracle
   项（WC84 全缺失实测、hobs/hexp 口径）继续挂起。
 
+## 第六批：挂起项中的安全子集（2026-11-03）
+
+> 未拍板的部分（V23-26 解析方案、V23-37 的尺度统一、LLE 稀疏化、热路径
+> scratch）仍不改。本批只做零行为变化或纯护栏项。
+
+### reed-io：FORMAT 布局缓存上限（V23-34）
+
+`CACHE_LIMIT` 64 → 1024。旧上限达到后 `layouts.clear()` + `index.clear()`，
+65+ 种 FORMAT 轮流的真实 callset 命中率归零、每 record 重新切分与分配。
+1024 仍是硬上限（防对抗输入），不是 LRU；LRU 留到 profile 证明需要时。
+
+测试：`cache_keeps_more_than_the_old_limit`（65 个不同 FORMAT 全部驻留，
+回访第一个仍是索引 0，且不清表）。
+
 ## 验收
 
 | 检查 | 结果 |
