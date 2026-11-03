@@ -232,4 +232,41 @@ mod tests {
         assert_eq!(gen_bin_lookup(b"2/2"), None);
         assert_eq!(gen_bin_lookup(b"0"), None);
     }
+
+    /// doc_v23 V23-44: every non-empty subset of {A,C,G,T} has exactly its
+    /// IUPAC letter in the table, and every table key is the sorted,
+    /// de-duplicated form the lookup documents.
+    #[test]
+    fn every_nucleotide_subset_has_its_iupac_letter() {
+        let subsets: [(&[u8], u8); 15] = [
+            (b"A", b'A'),
+            (b"C", b'C'),
+            (b"G", b'G'),
+            (b"T", b'T'),
+            (b"AC", b'M'),
+            (b"AG", b'R'),
+            (b"AT", b'W'),
+            (b"CG", b'S'),
+            (b"CT", b'Y'),
+            (b"GT", b'K'),
+            (b"ACG", b'V'),
+            (b"ACT", b'H'),
+            (b"AGT", b'D'),
+            (b"CGT", b'B'),
+            (b"ACGT", b'N'),
+        ];
+        for (set, letter) in subsets {
+            assert_eq!(ambig_lookup(set), Some(letter), "{set:?}");
+            assert!(
+                AMBIG.iter().any(|(key, got)| *key == set && *got == letter),
+                "{set:?} missing from the table"
+            );
+        }
+        for (key, _) in AMBIG {
+            let mut sorted = key.to_vec();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(&sorted[..], *key, "key {key:?} is not sorted+deduped");
+        }
+    }
 }

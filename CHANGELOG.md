@@ -132,6 +132,17 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
   文档改为 `2n−1`。
 - **reduce（diffusion，V23-33）**：平稳模式判定改为相对阈值
   `1e-9 · λ_max`；`pca::backend()` 文档改为编译期常量。
+- **reduce（PCA 的 GRM，V23-38）**：`pca` 的 mean-impute GRM 在 faer
+  构建下走 `backend::gram_divide`（此前零调用的死代码），与标量
+  `Grm::mean_impute` 逐值一致。
+- **cli（样本来源校验，V23-40）**：`common::split_sample_sources` 成为
+  `-s/-S/--keep/--remove` 冲突规则的唯一实现，`filter` 与
+  `stats/popg/pca/distance` 共用，删除两份约 40 行的重复逻辑。
+
+#### Tests
+- 护栏：`pruned_header` 保序/短 keep、IUPAC 15 个子集全表、`pretty_sequence(n≠10)`
+  固定回退、WcMulti r=3 半调用组对拍 allel 1.3.13、F2/F3/F4 拆分合并恒等、
+  faer 1/4 线程与 fallback 逐值对拍。
 
 #### Changed
 - **convert（`--reference` 流式，V23-11）**：FASTA 改为 `BufReader` 逐行

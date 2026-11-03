@@ -1618,6 +1618,7 @@ name = "reed-reduce"
 version = "0.1.0"
 dependencies = [
  "faer",
+ "rayon",
  "reed-core",
  "reed-distance",
 ]

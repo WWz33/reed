@@ -412,6 +412,45 @@ sink 的 pair 跨度缺省是 100_000，两处缺省不一致；pairs-only 的�
 测试：`stationary_tolerance_is_relative_to_the_spectrum`（λ_max=1e-6 时
 绝对 1e-9 会误跳过的模式不再被跳过）。
 
+## 第四批：性能与测试护栏（V23-38/40/42/44/46/48）
+
+### reed-reduce：PCA 的 faer GEMM（V23-38）
+
+`pca.rs` 的 mean-impute GRM 从 `Grm::mean_impute`（标量三重循环）改为
+`mean_impute_grm`：`faer-backend` 下走 `backend::gram_divide`（此前全仓
+零调用），无 faer 构建仍走标量路径。分层原因：`reed-distance` 是
+`reed-reduce` 的下游，不能反向调用 `gram_divide`，所以委托放在 PCA 层而
+不是 `Grm` 本身；`Grm::mean_impute` 的公开行为不变。
+
+测试：`faer_gram_matches_the_scalar_mean_impute`（6×4 fixture，faer 与
+标量逐值 1e-12、对称性）。
+
+### reed-cli：样本来源校验单点化（V23-40）
+
+`common::split_sample_sources` 收拢 `-s` 两种极性、`-S`/`--keep`、
+`--remove` 的解析与冲突规则（重复同极性、两个 keep、两个 remove、空
+列表）。`filter::spec_from_flags` 用它生成 `SampleSelect`，
+`common::parse_sample_keep` 用它解析文件与掩码，删除两份约 40 行的重复
+实现。错误文案统一为信息更全的一版（含 "combine the names"）。
+
+### 测试护栏（V23-42/44/46/48）
+
+- **V23-42**：`pruned_header_preserves_order_and_selection`（4 样本
+  `[T,F,T,T]` → `s1,s3,s4`）、`pruned_header_treats_a_short_keep_as_kept`
+  （`keep=[false]` 的短列表按文档保留尾部）。
+- **V23-44**：`every_nucleotide_subset_has_its_iupac_letter`——15 个非空
+  {A,C,G,T} 子集逐一断言字母且必须在 62 项表中；每个表键必须是排序去重
+  形式。`pretty_sequence` 的 `n≠10` 行为固定为逐整数（R 可给出 0.5 步长，
+  `usize` 返回类型无法表达；`xval` 只用 `n=10` 的实测表）。
+- **V23-46**：`wc84_three_populations_accept_a_half_called_group`——r=3、
+  一组为孤立 `./1`，用 allel 1.3.13 实测的 `n = an // 2` 口径对拍
+  （`ref_wc84_floored_n`），池化 Fst 为 `-0.70271714922049`；
+  `patterson_accumulators_merge_split_partials`——F2/F3/F4 按 2+2 拆分
+  后 merge，值与单遍完全一致（含 F4 的分子/分母和）。
+- **V23-48**：`faer_is_stable_across_one_and_four_threads`——10×10 随机
+  对称阵，faer 在 1/4 线程池与 fallback 的特征值/特征向量逐值 1e-9
+  一致（补充既有 `top_k_sign_is_normalized_across_backends`）。
+
 ## 验收
 
 | 检查 | 结果 |

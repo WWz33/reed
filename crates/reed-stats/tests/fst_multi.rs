@@ -341,3 +341,75 @@ fn hudson_zero_numerator_is_zero_not_na() {
     assert!(f_ac.is_none() && f_bc.is_none(), "C's pairs stay undefined");
     assert!(pbs.value(PbsKind::Yi2010).is_none());
 }
+
+/// allel's WC84 with `n = an // 2` but frequencies `p = ac / an` (the
+/// half call keeps its one allele for `p`, while `n` floors to 0).
+fn ref_wc84_floored_n(inputs: &[(f64, f64, f64)]) -> (f64, f64, f64) {
+    let r = inputs.len() as f64;
+    let n: Vec<f64> = inputs.iter().map(|(an, _, _)| (an / 2.0).floor()).collect();
+    let n_total: f64 = n.iter().sum();
+    let n_bar = n_total / r;
+    let n_c = (n_total - n.iter().map(|x| x * x).sum::<f64>() / n_total) / (r - 1.0);
+    let p: Vec<f64> = inputs.iter().map(|(an, ac, _)| ac / an).collect();
+    let ac_total: f64 = inputs.iter().map(|(_, ac, _)| ac).sum();
+    let an_total: f64 = inputs.iter().map(|(an, _, _)| an).sum();
+    let p_bar = ac_total / an_total;
+    let s2 = n
+        .iter()
+        .zip(&p)
+        .map(|(&ni, &pi)| ni * (pi - p_bar) * (pi - p_bar))
+        .sum::<f64>()
+        / (n_bar * (r - 1.0));
+    let h_bar = inputs.iter().map(|(_, _, h)| h).sum::<f64>() / n_total;
+    let a = (n_bar / n_c)
+        * (s2 - (1.0 / (n_bar - 1.0)) * (p_bar * (1.0 - p_bar) - (r - 1.0) * s2 / r - h_bar / 4.0));
+    let b = (n_bar / (n_bar - 1.0))
+        * (p_bar * (1.0 - p_bar)
+            - (r - 1.0) * s2 / r
+            - (2.0 * n_bar - 1.0) * h_bar / (4.0 * n_bar));
+    let c = h_bar / 2.0;
+    (a, b, c)
+}
+
+/// doc_v23 V23-46: the r≥3 half-call path. scikit-allel 1.3.13 uses
+/// `n = an // 2` (an odd `an` from a lone `./1` floors to 0), and the
+/// accumulator mirrors it. The fixture below is the same genotype matrix
+/// measured with `allel.weir_cockerham_fst` (three populations of three
+/// samples, one lone half call); allel's pooled estimate is
+/// `-0.70271714922049`.
+#[test]
+fn wc84_three_populations_accept_a_half_called_group() {
+    let sites = [
+        (vec![6_u32, 1, 6], vec![3_u32, 1, 2], vec![1_u32, 0, 2]),
+        (vec![6, 1, 6], vec![1, 1, 3], vec![1, 0, 1]),
+        (vec![6, 1, 6], vec![1, 1, 2], vec![1, 0, 0]),
+    ];
+    let mut acc = WcMultiAcc::new(vec![0, 1, 2]);
+    let (mut ra, mut rb, mut rc) = (0.0, 0.0, 0.0);
+    for (ans, alts, hets) in &sites {
+        acc.push(&row(ans, alts, hets));
+        // allel's `n = an // 2`, not `an / 2`: the lone half call has n = 0.
+        let inputs: Vec<(f64, f64, f64)> = ans
+            .iter()
+            .zip(alts)
+            .zip(hets)
+            .map(|((&an, &alt), &het)| {
+                (f64::from(an), f64::from(an - alt), f64::from(het))
+            })
+            .collect();
+        let (a, b, c) = ref_wc84_floored_n(&inputs);
+        ra += a;
+        rb += b;
+        rc += c;
+    }
+    assert_eq!(acc.site_tally(), (3, 0));
+    let (a_sum, b_sum, c_sum) = acc.components();
+    assert!((a_sum.value() - ra).abs() < 1e-12, "a: {} vs {ra}", a_sum.value());
+    assert!((b_sum.value() - rb).abs() < 1e-12);
+    assert!((c_sum.value() - rc).abs() < 1e-12);
+    assert!(
+        (acc.value().expect("invariant: sites") - (-0.70271714922049)).abs() < 1e-12,
+        "allel pooled Fst: {}",
+        acc.value().expect("invariant: sites")
+    );
+}

@@ -94,11 +94,27 @@ pub fn pca_dense(x: &Mat, k: usize) -> Pca {
     pca_dense_with(x, k, Stand::Binom2)
 }
 
+/// Mean-imputed GRM `W Wᵀ / m`.
+///
+/// With the faer backend the product is the blocked GEMM
+/// (`backend::gram_divide`, previously dead code); the dependency-free build
+/// keeps the scalar path in `reed_distance::Grm` (doc_v23 V23-38).
+fn mean_impute_grm(w: &Mat) -> Mat {
+    #[cfg(feature = "faer-backend")]
+    {
+        crate::backend::gram_divide(w, w.cols).0
+    }
+    #[cfg(not(feature = "faer-backend"))]
+    {
+        Grm::mean_impute(w).a
+    }
+}
+
 /// Dense PCA with an explicit standardization convention.
 pub fn pca_dense_with(x: &Mat, k: usize, stand: Stand) -> Pca {
     let st = standardize(x, stand);
-    let grm = Grm::mean_impute(&st.w);
-    pack(sym_eig(&grm.a), Some(k))
+    let grm = mean_impute_grm(&st.w);
+    pack(sym_eig(&grm), Some(k))
 }
 
 /// The eigendecomposition backend this build was **compiled** with:
@@ -118,10 +134,10 @@ pub fn pca_top_k(x: &Mat, k: usize) -> Pca {
 /// Partial-spectrum PCA with an explicit standardization convention.
 pub fn pca_top_k_with(x: &Mat, k: usize, stand: Stand) -> Pca {
     let st = standardize(x, stand);
-    let grm = Grm::mean_impute(&st.w);
-    let n = grm.a.rows;
-    let (values, vectors, _backend) = sym_eig_top_k(&grm.a, k);
-    let total: f64 = (0..n).map(|i| grm.a.get(i, i)).sum();
+    let grm = mean_impute_grm(&st.w);
+    let n = grm.rows;
+    let (values, vectors, _backend) = sym_eig_top_k(&grm, k);
+    let total: f64 = (0..n).map(|i| grm.get(i, i)).sum();
     let pve = values
         .iter()
         .map(|v| if total != 0.0 { v / total } else { 0.0 })
@@ -214,5 +230,25 @@ mod tests {
         // Sample 5 has one missing call (SNP 2), so pair (5,5) sees 3 SNPs.
         assert_eq!(counts.get(5, 5), 3.0);
         assert_eq!(counts.get(0, 0), 4.0);
+    }
+
+    /// doc_v23 V23-38: the faer GEMM path and the scalar `Grm::mean_impute`
+    /// must agree value by value (and the result stays symmetric).
+    #[test]
+    fn faer_gram_matches_the_scalar_mean_impute() {
+        let st = standardize_binom2(&toy());
+        let fast = mean_impute_grm(&st.w);
+        let slow = Grm::mean_impute(&st.w).a;
+        assert_eq!(fast.rows, slow.rows);
+        for i in 0..fast.rows {
+            for j in 0..fast.cols {
+                let (a, b) = (fast.get(i, j), slow.get(i, j));
+                assert!(
+                    (a - b).abs() <= 1e-12 * b.abs().max(1.0),
+                    "({i},{j}): faer {a} vs scalar {b}"
+                );
+                assert_eq!(a, fast.get(j, i), "asymmetric at ({i},{j})");
+            }
+        }
     }
 }

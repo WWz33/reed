@@ -202,7 +202,7 @@ pub fn sym_eig_top_k(a: &Mat, k: usize) -> (Vec<f64>, Mat, Backend) {
 mod tests {
     use super::*;
 
-    fn random_symmetric(n: usize, seed: u64) -> Mat {
+    pub(super) fn random_symmetric(n: usize, seed: u64) -> Mat {
         let mut state = seed | 1;
         let mut next = || {
             state ^= state << 13;
@@ -385,5 +385,51 @@ mod tests {
         let a = random_symmetric(n, 7);
         let e = sym_eig(&a);
         assert_eq!(e.backend, COMPILED_BACKEND);
+    }
+}
+
+#[cfg(all(test, feature = "faer-backend"))]
+mod v23_cross_backend_threads {
+    use super::*;
+
+    /// doc_v23 V23-48: faer with one and four worker threads, and the
+    /// fallback, must agree value by value. The 1e-9 tolerance is the same
+    /// one the existing sign test uses; a parallel reduction may reorder
+    /// sums but not change the result at this scale.
+    #[test]
+    fn faer_is_stable_across_one_and_four_threads() {
+        let a = super::tests::random_symmetric(10, 0xA11CE);
+        let run = |threads: usize| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("invariant: pool")
+                .install(|| sym_eig(&a).top_k(4))
+        };
+        let (v1, x1) = run(1);
+        let (v4, x4) = run(4);
+        let fb = crate::eig::sym_eig(&a).top_k(4);
+        for c in 0..4 {
+            for (label, other) in [("1-thread", &v1), ("4-thread", &v4)] {
+                assert!(
+                    (other[c] - fb.0[c]).abs() <= 1e-9 * fb.0[c].abs().max(1.0),
+                    "{label} eigenvalue {c}: {} vs fallback {}",
+                    other[c],
+                    fb.0[c]
+                );
+            }
+            for r in 0..a.rows {
+                for (label, other) in [("1-thread", &x1), ("4-thread", &x4)] {
+                    let diff = (other.get(r, c) - fb.1.get(r, c)).abs();
+                    assert!(
+                        diff <= 1e-9,
+                        "{label} PC{} row {r}: {} vs fallback {} (diff {diff})",
+                        c + 1,
+                        other.get(r, c),
+                        fb.1.get(r, c)
+                    );
+                }
+            }
+        }
     }
 }

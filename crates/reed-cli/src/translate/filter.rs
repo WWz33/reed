@@ -266,60 +266,18 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
         _ => reed::spec::PloidyPolicy::RequireDiploid,
     };
 
-    // ---- samples: the static subset (04 §C0b). `-s` may appear twice —
-    // once with names to keep, once with a `^`-prefixed removal list — but
-    // two sources of the same polarity are a conflict, not a silent pick.
-    let parse_list = |list: &str| -> Result<(bool, Vec<String>), String> {
-        let exclude = list.trim_start().starts_with('^');
-        let names: Vec<String> = list
-            .trim_start_matches('^')
-            .split(',')
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .map(str::to_string)
-            .collect();
-        if names.is_empty() {
-            return Err(format!("empty sample list {list:?}"));
-        }
-        Ok((exclude, names))
-    };
-    let mut inline_keep: Option<Vec<String>> = None;
-    let mut inline_remove: Option<Vec<String>> = None;
-    for list in &cli.sample_args.samples {
-        let (exclude, names) = parse_list(list)?;
-        let slot = if exclude {
-            &mut inline_remove
-        } else {
-            &mut inline_keep
-        };
-        if slot.is_some() {
-            return Err(format!(
-                "repeated -s list of the same polarity ({list:?}); combine the names into one list"
-            ));
-        }
-        *slot = Some(names);
-    }
-    // doc_v21 S32: `-S k1 --keep k2` silently read only `-S`.
-    if cli.sample_args.samples_file.is_some() && cli.sample_args.keep.is_some() {
-        return Err("-S and --keep are the same flag twice: give one sample file".into());
-    }
-    let file_keep = cli
-        .sample_args
-        .samples_file
-        .as_ref()
-        .or(cli.sample_args.keep.as_ref());
-    if inline_keep.is_some() && file_keep.is_some() {
-        return Err("-s and -S/--keep are mutually exclusive: give one sample source".into());
-    }
-    if inline_remove.is_some() && cli.sample_args.remove.is_some() {
-        return Err("-s ^… and --remove are mutually exclusive: give one removal source".into());
-    }
-    let keep = inline_keep
+    // ---- samples: the static subset (04 §C0b). The validation lives in
+    // `common::split_sample_sources` so `filter` and the header-resolved
+    // commands cannot drift (doc_v23 V23-40).
+    let sources = super::common::split_sample_sources(&cli.sample_args)?;
+    let keep = sources
+        .inline_keep
         .map(SampleList::Names)
-        .or_else(|| file_keep.map(|p| SampleList::File(p.clone())));
-    let remove = inline_remove
+        .or_else(|| sources.file_keep.map(|p| SampleList::File(p.clone())));
+    let remove = sources
+        .inline_remove
         .map(SampleList::Names)
-        .or_else(|| cli.sample_args.remove.clone().map(SampleList::File));
+        .or_else(|| sources.file_remove.map(|p| SampleList::File(p.clone())));
     if keep.is_some() || remove.is_some() {
         spec.sample_select = Some(SampleSelect { keep, remove });
     }

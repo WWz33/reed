@@ -81,23 +81,23 @@
 | V23-35 | ②3/②4/②6/②7/②8 | 属实（性能/精简/潜伏） | 热路径 scratch、删死 API、leak 仅在未来逐记录容错时成问题 |
 | V23-36 | ⑤5–⑤10 | 属实（性能/精简） | mid stage 缓冲、`auto` Vec、prune 位图、`PcaScratch`、`append_sites`、rm-dup HashSet |
 | V23-37 | ⑥3/⑥6–⑥8 | 属实（性能/清理） | WcMulti scratch、PBS 冗余守卫、pair/multi 尺度统一、测试死代码 |
-| V23-38 | ⑧5 | 属实（性能） | `Grm::mean_impute` 在 faer 下委托 `gram_divide`；补 backend 对拍 |
+| V23-38 | ⑧5 | 属实（性能） | `Grm::mean_impute` 在 faer 下委托 `gram_divide`；补 backend 对拍 | **已实施**：`pca::mean_impute_grm` 走 `gram_divide`，与标量 `Grm::mean_impute` 逐值对拍（分层原因：reed-distance 不能反向依赖 reed-reduce） |
 | V23-39 | ⑧7/⑧12 | 属实（性能） | 矩阵输出 BufWriter；LLE 稀疏化 |
-| V23-40 | ⑨ Lean | 属实（精简） | `filter.rs` 与 `common.rs` 的样本来源冲突逻辑合并 |
+| V23-40 | ⑨ Lean | 属实（精简） | `filter.rs` 与 `common.rs` 的样本来源冲突逻辑合并 | **已实施**：`common::split_sample_sources` 单点校验，两条路径共用 |
 | V23-41 | ⑨6/⑨10 | 基准方法 | vs-noodles 的 BCF 分支改 `select`；脚本 warmup/交替顺序/保留 stderr |
 
 ## E. 测试缺口（修代码前/后补护栏）
 
 | 编号 | 来源 | 内容 |
 |---|---|---|
-| V23-42 | ①4 | `pruned_header` 保序 + 短 keep |
+| V23-42 | ①4 | `pruned_header` 保序 + 短 keep。**已实施**：`pruned_header_preserves_order_and_selection`、`pruned_header_treats_a_short_keep_as_kept` |
 | V23-43 | ②5 | BCF 畸形类型/扩展计数的失败测试 |
-| V23-44 | ③9/③10 | IUPAC 全表断言；`pretty_sequence(n≠10)` 行为 |
+| V23-44 | ③9/③10 | IUPAC 全表断言；`pretty_sequence(n≠10)` 行为。**已实施**：15 个子集全表 + 表键有序去重；`n≠10` 固定为逐整数回退（R 的分数步长无法用 `usize` 表示，仅 xval 用 n=10） |
 | V23-45 | ④9 | reed-filter 的 `TAG=.`、`to_args`、深度上限（AC 向量测试随 V23-07 丢弃） |
-| V23-46 | ⑥5 | WcMulti r≥3 半调用组、F2/F3/F4 merge 律 |
+| V23-46 | ⑥5 | WcMulti r≥3 半调用组、F2/F3/F4 merge 律。**已实施**：r=3 半调用 fixture 对拍 allel 1.3.13（`n = an // 2`，Fst `-0.70271714922049`）；F2/F3/F4 拆分合并恒等 |
 | V23-47 | ⑦1–⑦5 | 拍板：oracle 保持 complete-case（与生产/spec 一致）；补含缺失位点 golden；文档记录与 allel 的逐位点删除差异。其余 oracle 项（WC84 全缺失实测、hobs/hexp 口径）仍待处理 |
-| V23-48 | ⑧8 | faer vs fallback、1/4 线程逐值对拍 |
-| V23-49 | ⑨1/⑨2 | `-r/-R/-t/-T` 组合矩阵 |
+| V23-48 | ⑧8 | faer vs fallback、1/4 线程逐值对拍。**已实施**：`faer_is_stable_across_one_and_four_threads`（10×10，1/4 线程与 fallback 逐值 1e-9） |
+| V23-49 | ⑨1/⑨2 | `-r/-R/-t/-T` 组合矩阵。**已实施**：`region_flag_combinations_match_bcftools`（9 组 + 同族并集） |
 
 ## F. 驳回 / 不建议改
 

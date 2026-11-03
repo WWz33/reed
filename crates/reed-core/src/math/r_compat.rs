@@ -159,8 +159,11 @@ fn step_for(max: usize, n: usize) -> f64 {
         return step;
     }
     // `candidate_counts` only calls this with `n == 10`; `pretty_sequence`
-    // already returned above for `max <= n`. A step of 1 is the safe answer
-    // for any other `n`, and no caller reaches it.
+    // already returned above for `max <= n`. For any other `n` the step is
+    // 1 — every integer in range — because R's `pretty()` can emit
+    // fractional steps (e.g. 0.5) that this `usize` return type cannot
+    // represent, and no caller uses another `n` (doc_v23 V23-44 pins the
+    // behaviour).
     1.0
 }
 
@@ -249,6 +252,20 @@ mod tests {
             pretty_sequence(300, 10),
             vec![50, 100, 150, 200, 250, 300]
         );
+    }
+
+    /// doc_v23 V23-44: `n != 10` is a documented, tested fallback — every
+    /// integer in range. `xval` only asks for `n == 10` (the measured R
+    /// table); R itself can return fractional steps that `usize` cannot
+    /// represent, so no attempt is made to match it for other `n`.
+    #[test]
+    fn non_ten_sample_counts_fall_back_to_every_integer() {
+        assert_eq!(pretty_sequence(20, 5), (1..=20).collect::<Vec<_>>());
+        assert_eq!(pretty_sequence(100, 3), (1..=100).collect::<Vec<_>>());
+        // `max <= n` keeps the exact range.
+        assert_eq!(pretty_sequence(5, 20), (1..=5).collect::<Vec<_>>());
+        // `n <= 1` is a single point.
+        assert_eq!(pretty_sequence(100, 1), vec![1]);
     }
 
     #[test]

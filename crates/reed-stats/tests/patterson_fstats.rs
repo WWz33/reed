@@ -250,3 +250,55 @@ fn neumaier_is_what_the_sums_hold() {
     assert_eq!(a.value(), 2.0);
     assert_eq!(b.value(), 2.0);
 }
+
+/// doc_v23 V23-46: F2/F3/F4 are mergeable across partitions. Splitting the
+/// site sequence and merging must reproduce the single-pass sums.
+#[test]
+fn patterson_accumulators_merge_split_partials() {
+    let sites = [
+        ([10_u32, 12, 8, 14], [4_u32, 6, 2, 8]),
+        ([6, 10, 12, 8], [1, 5, 7, 3]),
+        ([12, 8, 10, 10], [6, 2, 4, 6]),
+        ([8, 6, 14, 10], [2, 4, 5, 7]),
+    ];
+
+    let mut f2_whole = F2Acc::new(0, 1);
+    let mut f2_a = F2Acc::new(0, 1);
+    let mut f2_b = F2Acc::new(0, 1);
+    let mut f3_whole = F3Acc::new(2, 0, 1);
+    let mut f3_a = F3Acc::new(2, 0, 1);
+    let mut f3_b = F3Acc::new(2, 0, 1);
+    let mut f4_whole = F4Acc::new(0, 1, 2, 3);
+    let mut f4_a = F4Acc::new(0, 1, 2, 3);
+    let mut f4_b = F4Acc::new(0, 1, 2, 3);
+    for (i, (an, alt)) in sites.iter().enumerate() {
+        let row = row(*an, *alt);
+        f2_whole.push(&row);
+        f3_whole.push(&row);
+        f4_whole.push(&row);
+        if i < 2 {
+            f2_a.push(&row);
+            f3_a.push(&row);
+            f4_a.push(&row);
+        } else {
+            f2_b.push(&row);
+            f3_b.push(&row);
+            f4_b.push(&row);
+        }
+    }
+    f2_a.merge(&f2_b);
+    f3_a.merge(&f3_b);
+    f4_a.merge(&f4_b);
+
+    assert_eq!(f2_a.site_tally(), f2_whole.site_tally());
+    assert!((f2_a.value().expect("invariant: sites") - f2_whole.value().expect("invariant: sites")).abs() < 1e-12);
+    assert_eq!(f3_a.site_tally(), f3_whole.site_tally());
+    assert!((f3_a.value().expect("invariant: sites") - f3_whole.value().expect("invariant: sites")).abs() < 1e-12);
+    assert!((f3_a.value_normalized().expect("invariant: sites") - f3_whole.value_normalized().expect("invariant: sites")).abs() < 1e-12);
+    assert_eq!(f4_a.site_tally(), f4_whole.site_tally());
+    assert!((f4_a.value_f4().expect("invariant: sites") - f4_whole.value_f4().expect("invariant: sites")).abs() < 1e-12);
+    let (an, ad) = f4_a.sums();
+    let (wn, wd) = f4_whole.sums();
+    assert_eq!(an.value(), wn.value());
+    assert_eq!(ad.value(), wd.value());
+}
