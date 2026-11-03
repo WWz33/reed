@@ -162,6 +162,13 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
   （9 组 + 同族并集）、驻留预算 3 项单测 + 多 contig e2e、流式 FASTA
   （CRLF/空行/多记录）、GRM 四组逐值对拍。
 
+## [Unreleased] — doc_v24 结构性清理（2026-11-04）
+
+### Documentation
+- **oracle 契约**：新增 `docs/rounds/v24/02-oracle-contract.md`，逐估计器
+  固定位点集、半呼叫、缺失与 allel 分歧；WC84 全缺失与 hobs/hexp 半呼叫
+  补命名 golden（V24-01）。
+
 ## [Unreleased] — doc_v22 真实 callset 的 I/O 兼容与深度回退（2026-11-03）
 
 真实 callset 复核（`bsaseq/raw.bsa.vcf.gz`：4 样本、`GT:PL:AD`、无逐样本 DP）

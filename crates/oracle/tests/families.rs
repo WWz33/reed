@@ -352,3 +352,58 @@ fn pi_is_pairwise_complete_where_the_spectrum_is_complete_case() {
         per_bp.value()
     );
 }
+
+/// doc_v24 V24-01: a group with no called alleles keeps `c` (allel `nansum`
+/// semantics) and contributes `Fst = 0`. Measured with scikit-allel 1.3.13
+/// on the same genotype matrix: `a = b = NaN`, `c = 1/3`, `nansum` Fst = 0.
+/// Contract: `docs/rounds/v24/02-oracle-contract.md` §2.
+#[test]
+fn weir_cockerham_keeps_c_for_an_all_missing_group() {
+    let w = build(
+        SiteCompleteness::WithInvariants,
+        6,
+        &[(
+            0,
+            vec![
+                [0, 0],
+                [0, 1],
+                [1, 1],
+                [-1, -1],
+                [-1, -1],
+                [-1, -1],
+            ],
+        )],
+    );
+    let pops = PopulationView::from_assignment(6, &[0, 0, 0, 1, 1, 1], 2).unwrap();
+    let f = fst(&w, &pops, 0, 1, FstEstimator::WeirCockerham84).unwrap();
+    let wc = f.wc.expect("WC84 components");
+    assert_eq!(wc.n_sites, 1);
+    assert_eq!(wc.n_skipped, 0);
+    assert!((wc.a - 0.0).abs() < EPS, "a = {}", wc.a);
+    assert!((wc.b - 0.0).abs() < EPS, "b = {}", wc.b);
+    assert!((wc.c - 1.0 / 3.0).abs() < EPS, "c = {}", wc.c);
+    assert_close(f.value(), 0.0);
+}
+
+/// doc_v24 V24-01: the Ho/He sample-set contract on a half call.
+/// `[0/1, ./1]`: one diploid called individual (one het), three called
+/// alleles (ref 1, alt 2) -> hobs 1, hexp 4/9, Fis 1 - 1/(4/9) = -1.25.
+/// Contract: `docs/rounds/v24/02-oracle-contract.md` §4.
+#[test]
+fn heterozygosity_declares_the_half_call_contract() {
+    let w = build(
+        SiteCompleteness::WithInvariants,
+        2,
+        &[(0, vec![[0, 1], [-1, 1]])],
+    );
+    let pops = PopulationView::from_assignment(2, &[0, 0], 1).unwrap();
+    let rows = heterozygosity(&w, &pops, 0).unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.n_called, 1, "the half call is not a diploid call");
+    assert_eq!(row.n_het, 1);
+    assert!((row.hobs - 1.0).abs() < EPS, "hobs = {}", row.hobs);
+    assert!((row.hexp - 4.0 / 9.0).abs() < EPS, "hexp = {}", row.hexp);
+    let fis = row.fis.expect("hexp > 0");
+    assert!((fis - (-1.25)).abs() < EPS, "Fis = {fis}");
+}
