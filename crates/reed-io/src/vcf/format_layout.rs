@@ -91,22 +91,49 @@ pub struct Layout {
     pub last_needed: usize,
 }
 
-/// Per-worker cache of [`Layout`]s, keyed by the raw FORMAT text.
+/// A handle to one interned layout. The generation makes ids from a replaced
+/// generation detectably stale instead of aliasing a newer entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LayoutId {
+    epoch: u32,
+    index: u32,
+}
+
+/// One cache generation: its own key map and layout storage.
+#[derive(Default)]
+struct Generation {
+    epoch: u32,
+    layouts: Vec<Layout>,
+    index: HashMap<Box<[u8]>, usize>,
+}
+
+/// Per-worker, two-generation cache of [`Layout`]s keyed by the raw FORMAT
+/// text.
 ///
-/// The cache clears itself at [`CACHE_LIMIT`] distinct FORMAT strings so an
-/// adversarial input cannot grow it without bound; a returned index is valid
-/// until the next [`FormatLayoutCache::intern`].
+/// Each generation holds [`CACHE_LIMIT`] distinct FORMAT strings. When the
+/// current generation is full it becomes the previous one and a fresh
+/// current starts (`doc_v24 V24-06`); the old previous is dropped. The
+/// cache therefore holds at most `2 * CACHE_LIMIT` layouts and never
+/// "clears everything" on crossing a threshold — a one-shot scan of
+/// 65+ distinct FORMAT strings keeps its recent working set instead of
+/// losing the hit rate entirely.
+///
+/// A lookup checks current, then previous. Previous hits are served but not
+/// promoted (no per-hit allocation); an id stays valid until the generation
+/// holding it is replaced, i.e. at most two rotations.
 pub struct FormatLayoutCache {
     int_specs: Vec<IntSpec>,
     float_keys: Vec<Box<[u8]>>,
-    layouts: Vec<Layout>,
-    index: HashMap<Box<[u8]>, usize>,
+    current: Generation,
+    previous: Generation,
     /// Last-hit cache: consecutive records share their FORMAT string.
-    last: (Vec<u8>, usize),
+    last: (Vec<u8>, Option<LayoutId>),
+    /// Generation number for the next rotation (starts at 1).
+    next_generation: u32,
 }
 
-/// Distinct FORMAT strings kept before the cache clears itself.
-pub const CACHE_LIMIT: usize = 64;
+/// Distinct FORMAT strings per generation (two generations are resident).
+pub const CACHE_LIMIT: usize = 256;
 
 impl FormatLayoutCache {
     /// Creates a cache for GT plus the planned integer columns (each with
@@ -119,9 +146,10 @@ impl FormatLayoutCache {
                 .iter()
                 .map(|k| k.to_vec().into_boxed_slice())
                 .collect(),
-            layouts: Vec::new(),
-            index: HashMap::new(),
-            last: (Vec::new(), usize::MAX),
+            current: Generation::default(),
+            previous: Generation::default(),
+            last: (Vec::new(), None),
+            next_generation: 1,
         }
     }
 
@@ -137,23 +165,42 @@ impl FormatLayoutCache {
         self.float_keys.len()
     }
 
-    /// Interns `format` and returns the layout index.
+    /// Interns `format` and returns the layout handle.
     ///
-    /// The index is valid until the next call that interns a *new* FORMAT
-    /// string at [`CACHE_LIMIT`] (which clears the table).
-    pub fn intern(&mut self, format: &[u8]) -> usize {
-        // The seed sentinel is `(empty, usize::MAX)`: an empty FORMAT column
-        // must not match it (doc_v20 R2) — it interns as a GT-less layout.
-        if self.last.1 != usize::MAX && self.last.0 == format {
-            return self.last.1;
+    /// The handle is valid while its generation is resident (current or
+    /// previous); after two further rotations [`Self::get`] panics rather
+    /// than returning another entry.
+    pub fn intern(&mut self, format: &[u8]) -> LayoutId {
+        // The seed sentinel is `(empty, None)`: an empty FORMAT column must
+        // not match it (doc_v20 R2) — it interns as a GT-less layout.
+        if let Some(id) = self.last.1
+            && self.last.0 == format
+        {
+            return id;
         }
-        if let Some(&ix) = self.index.get(format) {
-            self.last = (format.to_vec(), ix);
-            return ix;
+        if let Some(&ix) = self.current.index.get(format) {
+            let id = LayoutId {
+                epoch: self.current.epoch,
+                index: u32::try_from(ix).expect("invariant: bounded by CACHE_LIMIT"),
+            };
+            self.last = (format.to_vec(), Some(id));
+            return id;
         }
-        if self.layouts.len() >= CACHE_LIMIT {
-            self.layouts.clear();
-            self.index.clear();
+        if let Some(&ix) = self.previous.index.get(format) {
+            let id = LayoutId {
+                epoch: self.previous.epoch,
+                index: u32::try_from(ix).expect("invariant: bounded by CACHE_LIMIT"),
+            };
+            self.last = (format.to_vec(), Some(id));
+            return id;
+        }
+        if self.current.layouts.len() >= CACHE_LIMIT {
+            self.previous = std::mem::take(&mut self.current);
+            self.current = Generation {
+                epoch: self.next_generation,
+                ..Generation::default()
+            };
+            self.next_generation = self.next_generation.wrapping_add(1);
         }
         let keys: Vec<&[u8]> = format.split(|&b| b == b':').collect();
         let index_of = |key: &[u8]| -> Option<usize> { keys.iter().position(|k| *k == key) };
@@ -179,26 +226,40 @@ impl FormatLayoutCache {
             .map(|i| i + 1)
             .max()
             .unwrap_or(0);
-        let ix = self.layouts.len();
-        self.layouts.push(Layout {
+        let ix = self.current.layouts.len();
+        self.current.layouts.push(Layout {
             gt_index,
             ints,
             float_indices,
             last_needed,
         });
-        self.index.insert(format.to_vec().into_boxed_slice(), ix);
-        self.last = (format.to_vec(), ix);
-        ix
+        self.current
+            .index
+            .insert(format.to_vec().into_boxed_slice(), ix);
+        let id = LayoutId {
+            epoch: self.current.epoch,
+            index: u32::try_from(ix).expect("invariant: bounded by CACHE_LIMIT"),
+        };
+        self.last = (format.to_vec(), Some(id));
+        id
     }
 
     /// The interned layout.
     ///
     /// # Panics
     ///
-    /// Panics for an index this cache never returned.
+    /// Panics for a handle whose generation has been replaced (stale id), or
+    /// one this cache never returned.
     #[must_use]
-    pub fn get(&self, ix: usize) -> &Layout {
-        &self.layouts[ix]
+    pub fn get(&self, id: LayoutId) -> &Layout {
+        let layouts = if id.epoch == self.current.epoch {
+            &self.current.layouts
+        } else if id.epoch == self.previous.epoch {
+            &self.previous.layouts
+        } else {
+            unreachable!("invariant: stale layout id from a replaced generation");
+        };
+        &layouts[id.index as usize]
     }
 }
 
@@ -301,5 +362,62 @@ mod tests {
         assert_eq!(layout.gt_index, Some(257));
         assert_eq!(layout.float_indices, vec![None]);
         assert_eq!(layout.last_needed, 258);
+    }
+
+    /// doc_v24 V24-06: crossing the old 64-entry cliff no longer clears the
+    /// table. A 65th distinct FORMAT rotates; the first 64 stay resident in
+    /// the previous generation and are still served.
+    #[test]
+    fn rotation_keeps_the_previous_generation() {
+        let mut cache = FormatLayoutCache::new_with_specs(&[], &[]);
+        let keys: Vec<Vec<u8>> = (0..CACHE_LIMIT)
+            .map(|i| format!("GT:XX{i}").into_bytes())
+            .collect();
+        let ids: Vec<LayoutId> = keys.iter().map(|k| cache.intern(k)).collect();
+        // One more distinct FORMAT rotates current -> previous.
+        let extra = cache.intern(b"GT:NEW");
+        assert_eq!(cache.current.layouts.len(), 1);
+        assert_eq!(cache.previous.layouts.len(), CACHE_LIMIT);
+        // Every old id is still readable, and the byte lookup hits too.
+        for (key, id) in keys.iter().zip(&ids) {
+            assert_eq!(cache.intern(key), *id, "previous-generation hit");
+            assert_eq!(cache.get(*id).gt_index, Some(0));
+        }
+        assert_eq!(cache.get(extra).gt_index, Some(0));
+    }
+
+    /// The structure is bounded: many more distinct FORMAT strings than two
+    /// generations keep at most `2 * CACHE_LIMIT` layouts resident.
+    #[test]
+    fn cache_is_bounded_under_distinct_formats() {
+        let mut cache = FormatLayoutCache::new_with_specs(&[], &[]);
+        for i in 0..(CACHE_LIMIT * 8) {
+            let key = format!("GT:MANY{i}");
+            cache.intern(key.as_bytes());
+        }
+        assert!(cache.current.layouts.len() <= CACHE_LIMIT);
+        assert!(cache.previous.layouts.len() <= CACHE_LIMIT);
+        assert!(cache.current.index.len() <= CACHE_LIMIT);
+        assert!(cache.previous.index.len() <= CACHE_LIMIT);
+    }
+
+    /// doc_v24 V24-06: ids from a dropped generation are loudly stale, not
+    /// silently aliased to a newer layout at the same index.
+    #[test]
+    #[should_panic(expected = "stale layout id")]
+    fn stale_ids_do_not_alias_a_new_generation() {
+        let mut cache = FormatLayoutCache::new_with_specs(&[], &[]);
+        let old = cache.intern(b"GT:FIRST");
+        // Rotation 1: generation 0 becomes previous.
+        for i in 0..CACHE_LIMIT {
+            let key = format!("GT:A{i}");
+            cache.intern(key.as_bytes());
+        }
+        // Rotation 2: generation 0 is dropped.
+        for i in 0..CACHE_LIMIT {
+            let key = format!("GT:B{i}");
+            cache.intern(key.as_bytes());
+        }
+        let _ = cache.get(old);
     }
 }

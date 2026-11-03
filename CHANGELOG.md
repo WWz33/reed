@@ -165,6 +165,9 @@ A 组 6 条 P0/正确性项、两条 P1（NaN 排序、特征向量符号）与 
 ## [Unreleased] — doc_v24 结构性清理（2026-11-04）
 
 ### Changed
+- **io（FORMAT 双代缓存，V24-06）**：`FormatLayoutCache` 改为 current +
+  previous 两代（各 256），满时轮换而不是整表清空；`intern` 返回带 epoch
+  的 `LayoutId`，旧代句柄在 `get` 处显式失败，不会别名到新 layout。
 - **stats（WC84 唯一公式，V24-05）**：pair 与 multi 路径合并到
   `wc84_site`（pair = r=2，multi = r=N）；pair 分量从 2× 归一为 multi
   尺度，`Fst` 比值不变；新增 `FstAcc::wc_components()`。删除 PBS 三重
