@@ -62,9 +62,23 @@ fn parse_hist(
             // The built-ins ride fields the header must declare too; without
             // this the run wrote an all-zero histogram and exited 0
             // (doc_v14 02 §3.3 promises a usage error).
+            //
+            // `--hist dp` is the depth column (V22-R2-4): FORMAT/DP when
+            // declared, else the AD-sum fallback, matching `--summary`,
+            // `--depth` and the filter's `--min-dp` (doc_v22 D22-1). The
+            // type checks live in `reed::reports::validate_report_tags`, so
+            // the CLI and library callers share them.
             let required: Option<(&str, &str)> = match metric {
                 HistMetric::Gq => Some(("FORMAT", "GQ")),
-                HistMetric::Dp => Some(("FORMAT", "DP")),
+                HistMetric::Dp => {
+                    if tags.format("DP").is_none() && tags.format("AD").is_none() {
+                        return Err(reed::Error::usage(format!(
+                            "--hist {element:?}: the header declares no FORMAT/DP or FORMAT/AD \
+                             (the depth histogram falls back to the AD sum)"
+                        )));
+                    }
+                    None
+                }
                 HistMetric::DpSite => Some(("INFO", "DP")),
                 _ => None,
             };

@@ -1407,7 +1407,7 @@ mod tests {
     fn reference_encode(
         line: &[u8],
         plan: &EditPlan<'_>,
-        gt_idx: Option<u8>,
+        gt_idx: Option<usize>,
         n_out: usize,
     ) -> Vec<u8> {
         let lr = LineRef::parse(line).expect("invariant: line");

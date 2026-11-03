@@ -80,7 +80,7 @@ pub fn render_info_value(value: &InfoValueOut, out: &mut Vec<u8>) {
 pub fn edit_vcf_line(
     line: &LineRef<'_>,
     plan: &EditPlan<'_>,
-    gt_subfield_index: Option<u8>,
+    gt_subfield_index: Option<usize>,
     out: &mut Vec<u8>,
 ) {
     // Columns 1–7 (CHROM .. FILTER) with their tabs: the bytes before INFO.
@@ -192,7 +192,7 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
 fn edit_samples(
     samples: &[u8],
     plan: &EditPlan<'_>,
-    gt_subfield_index: Option<u8>,
+    gt_subfield_index: Option<usize>,
     out: &mut Vec<u8>,
 ) {
     let keep = plan.keep_samples;
@@ -243,12 +243,11 @@ fn edit_samples(
 
 /// Copies `field`, replacing the GT subfield with `./.` when the row is
 /// long enough; a row without that subfield stays verbatim.
-fn replace_gt_subfield(field: &[u8], gt_index: Option<u8>, out: &mut Vec<u8>) {
+fn replace_gt_subfield(field: &[u8], gt_index: Option<usize>, out: &mut Vec<u8>) {
     let Some(gt_index) = gt_index else {
         out.extend_from_slice(field);
         return;
     };
-    let gt_index = usize::from(gt_index);
     let mut subfield_start = 0;
     let mut index = 0_usize;
     loop {
@@ -443,7 +442,7 @@ mod tests {
             .expect("invariant: valid mask")
     }
 
-    fn edit(line: &[u8], plan: &EditPlan<'_>, gt_idx: Option<u8>) -> String {
+    fn edit(line: &[u8], plan: &EditPlan<'_>, gt_idx: Option<usize>) -> String {
         let lr = LineRef::parse(line).expect("invariant: full line");
         let mut out = Vec::new();
         edit_vcf_line(&lr, plan, gt_idx, &mut out);
@@ -525,6 +524,28 @@ mod tests {
         };
         let got = edit(LINE, &plan, Some(0));
         assert!(got.ends_with("0/1:15:99\t./.:0:9\t0/0:8:44"), "{got}");
+
+        // V22-R2-1: GT past the 256th FORMAT key is still replaced. With a
+        // `u8` position the caller passed `None` and the mask silently did
+        // nothing to the GT column.
+        let mut keys: Vec<String> = (0..256).map(|i| format!("K{i}")).collect();
+        keys.push("GT".into());
+        let mut values = vec!["."; 256];
+        values.push("0/1");
+        let line = format!(
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\t{}\t{}\n",
+            keys.join(":"),
+            values.join(":")
+        );
+        let mut bits = Bitset::new(4);
+        bits.set(0, true);
+        let plan = EditPlan {
+            mask_gt: Some(&bits),
+            ..EditPlan::default()
+        };
+        let got = edit(line.as_bytes(), &plan, Some(256));
+        assert!(got.ends_with(":./."), "{got}");
+        assert!(!got.contains(":0/1"), "{got}");
 
         // Mask sample 0 (GT subfield 0 → ./.), DP/GQ stay verbatim.
         let mut bits = Bitset::new(4);

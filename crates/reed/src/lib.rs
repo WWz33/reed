@@ -122,7 +122,7 @@ pub use crate::rename::{
 // `run_stats` and the types in its signature belong beside them rather
 // than only under the writers.
 pub use crate::stats::writers::reports::{
-    StatsReportRequest, StatsOutcome, run_stats, run_stats_opened,
+    StatsReportRequest, StatsOutcome, run_stats, run_stats_opened, validate_report_tags,
 };
 pub use reed_filter::funnel::FilterReport;
 // The accumulator and report types that appear in the facade's public

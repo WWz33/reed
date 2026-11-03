@@ -191,7 +191,7 @@ impl GenotypeScanner {
             let field = &samples[field_start..field_end];
             split_needed(subfields, field, last_needed);
 
-            let code = match gt_index.and_then(|gi| subfields.get(usize::from(gi))) {
+            let code = match gt_index.and_then(|gi| subfields.get(gi)) {
                 Some(range) => decode_gt(&field[range.clone()], site, policies, counters, token)?,
                 None => {
                     *token = [None, None];
@@ -214,12 +214,12 @@ impl GenotypeScanner {
                 // `calc_sample_depth`).
                 let value = if let Some(ki) = int_layout.index {
                     subfields
-                        .get(usize::from(ki))
+                        .get(ki)
                         .map_or(INT_MISSING, |range| parse_int(&field[range.clone()]))
                 } else {
                     int_layout
                         .fallback_index
-                        .and_then(|fi| subfields.get(usize::from(fi)))
+                        .and_then(|fi| subfields.get(fi))
                         .map_or(INT_MISSING, |range| parse_int_sum(&field[range.clone()]))
                 };
                 column.push(value);
@@ -231,7 +231,7 @@ impl GenotypeScanner {
                 .zip(float_columns.iter_mut())
             {
                 column.push(
-                    key.and_then(|ki| subfields.get(usize::from(ki)))
+                    key.and_then(|ki| subfields.get(ki))
                         .map_or(f32::NAN, |range| parse_float(&field[range.clone()])),
                 );
             }
@@ -448,41 +448,69 @@ fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, I
     Ok(Some(value))
 }
 
-/// Integer FORMAT value; `.`, empty or non-digit text is [`INT_MISSING`].
-#[must_use]
-pub fn parse_int(text: &[u8]) -> u32 {
-    if text == b"." || text.is_empty() {
-        return INT_MISSING;
-    }
-    let mut value: u32 = 0;
-    for &b in text {
-        if !b.is_ascii_digit() {
-            return INT_MISSING;
-        }
-        value = value.saturating_mul(10).saturating_add(u32::from(b - b'0'));
-    }
-    value
+/// One integer FORMAT element under the strict VCF Integer grammar
+/// ([`crate::vcf::info::parse_info_int`]: optional `+`/`-`, digits only),
+/// mapped to the column's unsigned domain.
+///
+/// htslib stores FORMAT integers in `int32`; text outside `i32` (and a
+/// negative value, which the `u32` column cannot carry) is missing. The old
+/// saturating `u32` parser turned `4294967295` and every overflowing value
+/// into [`INT_MISSING`] by coincidence and `5000000000` into a saturated
+/// `u32::MAX` *value* — silently disagreeing with htslib (V22-R2-2).
+/// Negative FORMAT Integers are a representation limit of the `u32` columns,
+/// deferred to the signed-column round (V22-R2-8).
+fn parse_field_int(text: &[u8]) -> Option<u32> {
+    let value = crate::vcf::info::parse_info_int(text)?;
+    let value = u32::try_from(value).ok()?;
+    (value <= i32::MAX.unsigned_abs()).then_some(value)
 }
 
-/// Comma-separated integer FORMAT value (`AD`): the sum of its non-missing
+/// Integer FORMAT value; `.`, empty, non-numeric, negative or outside
+/// `i32` is [`INT_MISSING`].
+#[must_use]
+pub fn parse_int(text: &[u8]) -> u32 {
+    parse_field_int(text).unwrap_or(INT_MISSING)
+}
+
+/// Comma-separated integer FORMAT value (`AD`): the sum of its readable
 /// values. `INT_MISSING` when no value is present — htslib's text parse maps
 /// `.`/unparsable tokens to missing and pads a short vector with vector-end,
 /// which the comma split represents by the token simply ending.
+///
+/// The sum is accumulated in `u64` and clamped to `INT_MISSING - 1`, so a
+/// vector of large (but individually valid) elements can never collide with
+/// the missing sentinel: three `i32::MAX` elements sum to `INT_MISSING - 1`
+/// rather than disappearing as missing (V22-R2-2).
 #[must_use]
 pub fn parse_int_sum(text: &[u8]) -> u32 {
-    let mut sum = 0_u32;
+    let mut sum = 0_u64;
     let mut any = false;
     for value in text.split(|&b| b == b',') {
-        let v = parse_int(value);
-        if v != INT_MISSING {
-            sum = sum.saturating_add(v);
+        if let Some(v) = parse_field_int(value) {
+            sum = sum.saturating_add(u64::from(v));
             any = true;
         }
     }
-    if any { sum } else { INT_MISSING }
+    if any { clamp_int_sum(sum) } else { INT_MISSING }
+}
+
+/// Clamps an `AD`-style sum to the largest representable non-missing value.
+#[must_use]
+pub fn clamp_int_sum(sum: u64) -> u32 {
+    u32::try_from(sum.min(u64::from(INT_MISSING - 1))).unwrap_or(INT_MISSING - 1)
 }
 
 /// Float FORMAT value; `.`, empty or unparsable text is `NaN`.
+///
+/// The grammar is Rust's `f32` parser, which matches htslib's `strtod`
+/// acceptance for the VCF Float regex: `inf`/`-inf` are values, `nan` is a
+/// NaN value (V22-R2-3 — this is a compatibility choice, not a bug).
+///
+/// `NaN` is also the column's missing sentinel: a literal `nan` cannot be
+/// told apart from a missing value downstream (V22-R2-7). Fixing that needs
+/// `Option<f32>` columns or the BCF bit patterns and is deferred to its own
+/// round; the BCF reader's `float_element_column` collapses its missing and
+/// vector-end patterns the same way, so both input paths agree.
 #[must_use]
 pub fn parse_float(text: &[u8]) -> f32 {
     if text == b"." || text.is_empty() {
@@ -640,6 +668,91 @@ mod tests {
         assert_eq!(parse_int_sum(b""), INT_MISSING);
         assert_eq!(parse_int_sum(b".,."), INT_MISSING);
         assert_eq!(parse_int_sum(b"7"), 7);
+    }
+
+    /// V22-R2-2/R2-5: one integer grammar (optional sign, htslib's `i32`
+    /// domain). Saturating `u32` used to turn `4294967295` into the missing
+    /// sentinel coincidentally and `5000000000` into a valid saturated value.
+    #[test]
+    fn parse_int_uses_the_htslib_i32_domain() {
+        assert_eq!(parse_int(b"0"), 0);
+        assert_eq!(parse_int(b"+50"), 50);
+        assert_eq!(parse_int(b"0007"), 7);
+        assert_eq!(parse_int(b"2147483647"), 2_147_483_647);
+        assert_eq!(parse_int(b"2147483648"), INT_MISSING);
+        assert_eq!(parse_int(b"4294967295"), INT_MISSING);
+        assert_eq!(parse_int(b"5000000000"), INT_MISSING);
+        // Negative FORMAT integers need signed columns (V22-R2-8).
+        assert_eq!(parse_int(b"-5"), INT_MISSING);
+        assert_eq!(parse_int(b"+"), INT_MISSING);
+        assert_eq!(parse_int(b"-"), INT_MISSING);
+        assert_eq!(parse_int(b"1.5"), INT_MISSING);
+        assert_eq!(parse_int(b" 5"), INT_MISSING);
+        assert_eq!(parse_int(b"5x"), INT_MISSING);
+    }
+
+    /// V22-R2-2: the `AD` sum clamps to the largest non-missing value and
+    /// skips out-of-domain elements instead of either wrapping or vanishing.
+    #[test]
+    fn int_sum_never_collides_with_the_missing_sentinel() {
+        // 2 × i32::MAX is exactly INT_MISSING - 1.
+        assert_eq!(parse_int_sum(b"2147483647,2147483647"), INT_MISSING - 1);
+        assert_eq!(
+            parse_int_sum(b"2147483647,2147483647,2147483647"),
+            INT_MISSING - 1
+        );
+        // Out-of-domain and negative elements are missing elements.
+        assert_eq!(parse_int_sum(b"2147483648,5"), 5);
+        assert_eq!(parse_int_sum(b"-5,7"), 7);
+        assert_eq!(parse_int_sum(b"+5,+0"), 5);
+        assert_eq!(clamp_int_sum(u64::MAX), INT_MISSING - 1);
+        assert_eq!(clamp_int_sum(0), 0);
+    }
+
+    /// V22-R2-3: `inf`/`nan` are accepted exactly like htslib's `strtod`
+    /// (this pins the decision; the GQ example in the review used the
+    /// integer parser, which rejects both). V22-R2-7: `NaN` is also the
+    /// missing sentinel, so a literal `nan` is indistinguishable from a
+    /// missing value.
+    #[test]
+    fn parse_float_accepts_htslib_inf_and_nan() {
+        assert_eq!(parse_float(b"1.5"), 1.5);
+        assert!(parse_float(b"inf").is_infinite() && parse_float(b"inf") > 0.0);
+        assert!(parse_float(b"-inf").is_infinite() && parse_float(b"-inf") < 0.0);
+        assert!(parse_float(b"nan").is_nan());
+        assert!(parse_float(b"NaN").is_nan());
+        // Not numbers under the VCF Float grammar.
+        assert!(parse_float(b"0x10").is_nan());
+        assert!(parse_float(b"1,5").is_nan());
+        assert!(parse_float(b"").is_nan());
+        assert!(parse_float(b".").is_nan());
+        // The GQ path is Integer, so `inf` is missing there, not a value.
+        assert_eq!(parse_int(b"inf"), INT_MISSING);
+    }
+
+    /// V22-R2-1: positions at and past index 256 are ordinary subfields.
+    /// The `u8` layout index used to make GQ/AD/GT silently absent there.
+    #[test]
+    fn keys_past_index_255_decode() {
+        use crate::vcf::format_layout::IntSpec;
+        let mut keys: Vec<String> = (0..256).map(|i| format!("K{i}")).collect();
+        keys.extend(["GQ".to_string(), "AD".to_string(), "GT".to_string()]);
+        let format = keys.join(":");
+        let mut values = vec!["."; 256];
+        values.extend(["7", "10,20", "0/1"]);
+        let sample = values.join(":");
+        let text = format!("c\t1\t.\tA\tG\t.\tPASS\t.\t{format}\t{sample}\n");
+        let mut scanner = GenotypeScanner::new_with_specs(
+            1,
+            &[IntSpec::scalar(b"GQ"), IntSpec::depth()],
+            &[],
+            permissive(),
+        );
+        let (out, _) = scan(&mut scanner, text.as_bytes());
+        assert_eq!(out.int_columns[0], vec![7], "GQ at index 256");
+        assert_eq!(out.int_columns[1], vec![30], "AD sum at index 257");
+        assert!(out.has_gt, "GT at index 258");
+        assert_eq!(out.codes[0], GtCode::from_states(0, 1, false, false));
     }
 
     #[test]

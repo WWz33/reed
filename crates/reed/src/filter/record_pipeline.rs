@@ -728,12 +728,12 @@ fn attribute_hit(
 }
 
 /// Index of `GT` among the colon-separated FORMAT keys.
+///
+/// Positions are `usize`: a `u8` conversion used to hide every GT past the
+/// 256th key (V22-R2-1).
 #[must_use]
-pub(super) fn gt_subfield_index(format_text: &[u8]) -> Option<u8> {
-    format_text
-        .split(|&b| b == b':')
-        .position(|k| k == b"GT")
-        .and_then(|i| u8::try_from(i).ok())
+pub(crate) fn gt_subfield_index(format_text: &[u8]) -> Option<usize> {
+    format_text.split(|&b| b == b':').position(|k| k == b"GT")
 }
 
 #[cfg(test)]
