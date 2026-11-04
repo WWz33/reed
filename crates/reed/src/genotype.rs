@@ -58,6 +58,27 @@ fn malformed_line(line: &[u8], reason: impl Into<String>) -> EngineError {
     })
 }
 
+/// One sample's dosage from its raw sample column: resolve the GT subfield
+/// through the shared FORMAT layout (never assume it is the first subfield —
+/// doc_v25 V25-02), then parse it. `line` names the record for the
+/// allele-domain error (doc_v25 V25-01). Both the body and seam paths call
+/// this, so the two copies cannot drift.
+fn dosage_from_column(
+    line: &[u8],
+    column: &[u8],
+    gt_index: Option<usize>,
+    n_alt: usize,
+) -> Result<f64, EngineError> {
+    let raw = reed_io::vcf::format_layout::gt_subfield(column, gt_index).unwrap_or(&b"."[..]);
+    match PcaJob::dosage(raw, n_alt) {
+        Ok(v) => Ok(v.unwrap_or(f64::NAN)),
+        Err(allele) => Err(malformed_line(
+            line,
+            format!("GT allele index {allele} exceeds ALT count {n_alt}"),
+        )),
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct PcaScratch {
     /// Per-sample dosages of the current record, reused across records
@@ -166,6 +187,7 @@ impl ChunkJob for PcaJob {
             if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
                 continue;
             }
+            let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
             let samples = lr.samples_text();
             let mut start = 0usize;
             scratch.values.clear();
@@ -181,18 +203,9 @@ impl ChunkJob for PcaJob {
                     continue;
                 }
                 let column = &samples[begin..end];
-                // The GT is the first colon-separated field.
-                let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
-                let raw = &column[..colon];
-                match PcaJob::dosage(raw, n_alt) {
-                    Ok(v) => scratch.values.push(v.unwrap_or(f64::NAN)),
-                    Err(allele) => {
-                        return Err(malformed_line(
-                            line,
-                            format!("GT allele index {allele} exceeds ALT count {n_alt}"),
-                        ))
-                    }
-                }
+                scratch
+                    .values
+                    .push(dosage_from_column(line, column, gt_index, n_alt)?);
             }
             if scratch.values.is_empty() {
                 continue;
@@ -250,6 +263,7 @@ impl ChunkJob for PcaJob {
         if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
             return Ok(out);
         }
+        let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
         let samples = lr.samples_text();
         let mut start = 0usize;
         scratch.values.clear();
@@ -265,16 +279,9 @@ impl ChunkJob for PcaJob {
                 continue;
             }
             let column = &samples[begin..end];
-            let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
-            match PcaJob::dosage(&column[..colon], n_alt) {
-                Ok(v) => scratch.values.push(v.unwrap_or(f64::NAN)),
-                Err(allele) => {
-                    return Err(malformed_line(
-                        line,
-                        format!("GT allele index {allele} exceeds ALT count {n_alt}"),
-                    ))
-                }
-            }
+            scratch
+                .values
+                .push(dosage_from_column(line, column, gt_index, n_alt)?);
         }
         let mut any_alt = false;
         for v in &scratch.values {

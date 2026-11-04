@@ -668,6 +668,22 @@ mod tests {
     /// record used to decode as a plain ALT call under `CollapseAlt` and
     /// flow into every consumer — the `-Ob` encoder wrote `(9+1)<<1`,
     /// which htslib then refuses to read back.
+    /// doc_v25 V25-02: GT is found by FORMAT key order, never assumed to be
+    /// the first subfield. `DP:GT` used to hand `30` to the genotype parser
+    /// in convert/pca (the scanner's layout was already correct; this pins
+    /// the shared lookup).
+    #[test]
+    fn gt_position_follows_the_format_order() {
+        let mut scanner = GenotypeScanner::new(1, &[], &[], permissive());
+        let (out, _) = scan(&mut scanner, b"c\t1\t.\tA\tG\t.\tPASS\t.\tDP:GT\t30:0/1\n");
+        assert_eq!(out.codes[0].state(), 0b0100, "DP:GT decodes the 0/1");
+        let (out, _) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG,T\t.\tPASS\t.\tAD:DP:GQ:GT\t5,6:10:40:1|2\n",
+        );
+        assert_eq!(out.codes[0].state(), 0b0101, "GT in the last position");
+    }
+
     #[test]
     fn gt_allele_beyond_the_alt_count_is_malformed() {
         // (ALT, GT) the scanner must refuse.

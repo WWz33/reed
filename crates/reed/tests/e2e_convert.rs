@@ -374,6 +374,50 @@ chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\t0/0\t0/0\n";
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v25 V25-02: `FORMAT=DP:GT` (GT not first) parses like `GT:DP` on the
+/// count-matrix target — the old `memchr(b':')` handed the DP value to the
+/// genotype parser, so every sample was malformed (or, once V25-01 rejects
+/// the phantom allele, the whole site vanished).
+#[test]
+fn v25_02_gt_position_follows_the_format_order() {
+    let dir = fixture_dir("v25-gtpos");
+    let run = |name: &str, format: &str, cells: &[&str]| -> String {
+        let text = format!(
+            "##fileformat=VCFv4.2\n##contig=<ID=chr1,length=100>\n\
+             ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+             ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+             chr1\t1\t.\tA\tG\t50\tPASS\t.\t{format}\t{}\n",
+            cells.join("\t")
+        );
+        let vcf = write_fixture(&dir, &format!("{name}.vcf"), &text);
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::CountMatrix],
+            prefix: dir.join(name),
+            ..ConvertRequest::default()
+        };
+        run_convert(Some(&vcf), &request, &budget()).expect("convert");
+        read(&dir.join(format!("{name}.012")))
+    };
+    let gt_first = run(
+        "gt-first",
+        "GT:DP",
+        &["0/0:9", "0/1:8", "1/1:7", "./.:."],
+    );
+    let dp_first = run(
+        "dp-first",
+        "DP:GT",
+        &["9:0/0", "8:0/1", "7:1/1", ".:./."],
+    );
+    assert_eq!(gt_first, dp_first, "DP:GT must encode like GT:DP");
+    assert_eq!(
+        read(&dir.join("dp-first.012.pos")),
+        "chr1\t1\n",
+        "the record must not be dropped"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The hapmap layout: 11 fixed columns, declared REF/ALT alleles, IUPAC
 /// cells restricted to TASSEL's diploid alphabet.
 #[test]

@@ -817,6 +817,43 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t0/9:30:99\t0/1:30
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v25 V25-02: `FORMAT=DP:GT` decodes the second subfield as the GT on
+/// the text and `-Ob` paths alike. Reading the first subfield (`30`) would
+/// be a called haploid and the default policy would refuse the record.
+#[test]
+fn v25_02_filter_decodes_gt_after_dp() {
+    let body = format!(
+        "{HEADER}\
+Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tDP:GT:GQ\t30:0/1:99\t30:0/0:99\t30:1/1:99\t30:./.:99\n"
+    );
+    let dir = std::env::temp_dir().join(format!("reed-v25-gtpos-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
+
+    let out = dir.join("out.vcf.gz");
+    let report = run_filter(Some(&path), &FilterSpec::default(), &options(None, &out))
+        .expect("DP:GT must decode the 0/1, not the 30");
+    assert_eq!(report.n_output_records, 1);
+    let text = inflate_to_string(&out);
+    assert!(
+        text.contains("\t30:0/1:99"),
+        "the untouched genotype must be written back: {text}"
+    );
+
+    // The `-Ob` encoder locates GT the same way.
+    let out_bcf = dir.join("out.bcf");
+    let mut opts_bcf = options(None, &out_bcf);
+    opts_bcf.output_bcf = Some(6);
+    run_filter(Some(&path), &FilterSpec::default(), &opts_bcf)
+        .expect("the -Ob encoder must find GT after DP");
+    assert!(
+        std::fs::metadata(&out_bcf).expect("invariant: bcf written").len() > 0,
+        "the BCF output must not be empty"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// R5: the bounds added with the flag set — `-V/--exclude-types`,
 /// `--max-maf`, `--max-mac` — filter the same sites as their mirrors.
 #[test]

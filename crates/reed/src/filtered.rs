@@ -172,9 +172,7 @@ impl<J: ChunkJob> FilteredJob<J> {
                 info_remove: &[],
                 info_set: &[],
             };
-            let gt_index = crate::filter::record_pipeline::gt_subfield_index(
-                view.line.format_text(),
-            );
+            let gt_index = reed_io::vcf::format_layout::gt_index(view.line.format_text());
             edit_vcf_line(view.line, &edit, gt_index, buffer);
             Ok(())
         })?;

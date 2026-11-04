@@ -603,6 +603,65 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// doc_v25 V25-02: `FORMAT=DP:GT` reads the same dosages as `GT:DP`.
+    /// The old first-colon lookup parsed the DP value (`9`) as the genotype,
+    /// so every sample became NaN; the two runs' `.eigenvec` files differ.
+    #[test]
+    fn v25_02_pca_reads_gt_after_dp() {
+        use std::fmt::Write as _;
+        let dir = temp_dir("v25-gtpos");
+        let make = |name: &str, format: &str, rows: &[&[&str]]| -> Vec<u8> {
+            let mut text = String::from(
+                "##fileformat=VCFv4.3\n##contig=<ID=1,length=1000000>\n\
+                 ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+                 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n\
+                 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+            );
+            for (i, row) in rows.iter().enumerate() {
+                writeln!(
+                    text,
+                    "1\t{}\t.\tA\tG\t50\tPASS\t.\t{format}\t{}",
+                    100 + i,
+                    row.join("\t")
+                )
+                .expect("invariant: writing to a String");
+            }
+            let input = dir.join(format!("{name}.vcf"));
+            std::fs::write(&input, text).expect("invariant: fixture");
+            let request = PcaRequest {
+                pcs: 2,
+                prefix: dir.join(name).to_string_lossy().into_owned(),
+                ..PcaRequest::default()
+            };
+            let budget = ThreadBudget {
+                threads: 2,
+                mem: MemBudget::from_bytes(u64::MAX),
+            };
+            run_pca(Some(&input), &request, &budget).expect("invariant: pca");
+            std::fs::read(dir.join(format!("{name}.eigenvec"))).expect("invariant: eigenvec")
+        };
+        let gt_first = make(
+            "gt-first",
+            "GT:DP",
+            &[
+                &["0/0:9", "0/1:8", "1/1:7", "./.:."],
+                &["0/1:9", "1/1:8", "0/1:7", "0/0:."],
+                &["1/1:9", "0/0:8", "0/1:7", "0/0:."],
+            ],
+        );
+        let dp_first = make(
+            "dp-first",
+            "DP:GT",
+            &[
+                &["9:0/0", "8:0/1", "7:1/1", ".:./."],
+                &["9:0/1", "8:1/1", "7:0/1", ".:0/0"],
+                &["9:1/1", "8:0/0", "7:0/1", ".:0/0"],
+            ],
+        );
+        assert_eq!(gt_first, dp_first, "DP:GT must yield the same eigenvec");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// doc_v20 R10: the stream solver mean-imputes; `--missing pairwise`
     /// asked for with it explicitly must be a usage error, not a silent
     /// downgrade to mean imputation.

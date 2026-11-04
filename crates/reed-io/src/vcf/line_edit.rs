@@ -70,7 +70,7 @@ pub fn render_info_value(value: &InfoValueOut, out: &mut Vec<u8>) {
 
 /// Edits one record line into `out` (newline-terminated).
 ///
-/// `gt_subfield_index` is the GT position among the FORMAT keys of this
+/// `gt_index` is the GT position among the FORMAT keys of this
 /// record (resolved by the caller; `None` = the record has no GT column).
 ///
 /// Infallible by construction: the `LineRef` argument can only be built by
@@ -80,7 +80,7 @@ pub fn render_info_value(value: &InfoValueOut, out: &mut Vec<u8>) {
 pub fn edit_vcf_line(
     line: &LineRef<'_>,
     plan: &EditPlan<'_>,
-    gt_subfield_index: Option<usize>,
+    gt_index: Option<usize>,
     out: &mut Vec<u8>,
 ) {
     // Columns 1–7 (CHROM .. FILTER) with their tabs: the bytes before INFO.
@@ -126,7 +126,7 @@ pub fn edit_vcf_line(
     // Sample region.
     let samples = line.samples_text();
     if plan.samples_edited() {
-        edit_samples(samples, plan, gt_subfield_index, out);
+        edit_samples(samples, plan, gt_index, out);
     } else {
         out.extend_from_slice(samples);
     }
@@ -201,7 +201,7 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
 fn edit_samples(
     samples: &[u8],
     plan: &EditPlan<'_>,
-    gt_subfield_index: Option<usize>,
+    gt_index: Option<usize>,
     out: &mut Vec<u8>,
 ) {
     let keep = plan.keep_samples;
@@ -242,7 +242,7 @@ fn edit_samples(
                 if wrote_column {
                     out.push(b'\t');
                 }
-                replace_gt_subfield(&samples[field_start..field_end], gt_subfield_index, out);
+                replace_gt_subfield(&samples[field_start..field_end], gt_index, out);
                 wrote_column = true;
             }
         }

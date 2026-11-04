@@ -19,8 +19,9 @@ use reed_io::vcf::line_edit::{EditPlan, InfoValueOut, edit_vcf_line};
 use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
 use super::job_err;
+use reed_io::vcf::format_layout::gt_index;
 use super::record_pipeline::{
-    NativeScan, NativeScratch, PipelineOptions, RecordPipeline, RecordView, gt_subfield_index,
+    NativeScan, NativeScratch, PipelineOptions, RecordPipeline, RecordView,
 };
 
 /// The BCF encoders a worker may use: the native B4 encoder by default,
@@ -398,7 +399,7 @@ impl FilterJob {
                 unreachable!("invariant: the BCF caller renders for text output")
             }
         };
-        let gt_index = gt_subfield_index(edit_line.format_text());
+        let gt_index = gt_index(edit_line.format_text());
         emit.edit_buf.clear();
         edit_vcf_line(edit_line, &edit_plan, gt_index, emit.edit_buf);
         match emit.bcf {

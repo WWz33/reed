@@ -17,7 +17,7 @@ use reed_io::write::block_writer::{BlockWriter, IndexKey};
 
 use super::job_err;
 use super::mid_stage::{ChunkDecision, SiteEmit};
-use super::record_pipeline::gt_subfield_index;
+use reed_io::vcf::format_layout::gt_index;
 use super::single_pass::FilterPartial;
 
 pub(super) struct EmitJob {
@@ -178,7 +178,7 @@ impl EmitJob {
         edit_vcf_line(
             &lr,
             &edit_plan,
-            gt_subfield_index(lr.format_text()),
+            gt_index(lr.format_text()),
             &mut scratch.edit_buf,
         );
         // Byte-boundary cutting, records may span blocks (as in

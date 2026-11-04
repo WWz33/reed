@@ -9,6 +9,36 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+/// Index of `key` among `format_text`'s colon-separated keys.
+///
+/// The one key-position primitive (doc_v25 V25-02): the layout cache and the
+/// non-cache consumers (encoder, convert, pca) all resolve a FORMAT key
+/// through it instead of writing their own `split`/`position` loop.
+#[must_use]
+pub fn key_index(format_text: &[u8], key: &[u8]) -> Option<usize> {
+    format_text.split(|&b| b == b':').position(|k| k == key)
+}
+
+/// Index of `GT` among the FORMAT keys; `None` when the record has no GT.
+///
+/// This is the single GT-position lookup (doc_v25 V25-02): the scanner, the
+/// filter's edit path, the `-Ob` encoder, `convert` and `pca` all call it.
+#[must_use]
+pub fn gt_index(format_text: &[u8]) -> Option<usize> {
+    key_index(format_text, b"GT")
+}
+
+/// The GT subfield of one sample column, resolved by the record's
+/// [`gt_index`].
+///
+/// `None` when the column has fewer subfields than the GT position — the
+/// genotype is absent, which consumers treat as missing (never as the first
+/// subfield: `FORMAT=DP:GT` with a `30`-only column has no GT text).
+#[must_use]
+pub fn gt_subfield(sample_col: &[u8], gt_index: Option<usize>) -> Option<&[u8]> {
+    gt_index.and_then(|i| sample_col.split(|&b| b == b':').nth(i))
+}
+
 /// One planned integer FORMAT column. The policy is **explicit**: the
 /// fallback is chosen by the consumer (a plan's depth mask, a stats report),
 /// never inferred from the key's name (doc_v22 D22-1).
@@ -202,8 +232,7 @@ impl FormatLayoutCache {
             };
             self.next_generation = self.next_generation.wrapping_add(1);
         }
-        let keys: Vec<&[u8]> = format.split(|&b| b == b':').collect();
-        let index_of = |key: &[u8]| -> Option<usize> { keys.iter().position(|k| *k == key) };
+        let index_of = |key: &[u8]| -> Option<usize> { key_index(format, key) };
         let gt_index = index_of(b"GT");
         let ints: Vec<IntLayout> = self
             .int_specs
@@ -399,6 +428,26 @@ mod tests {
         assert!(cache.previous.layouts.len() <= CACHE_LIMIT);
         assert!(cache.current.index.len() <= CACHE_LIMIT);
         assert!(cache.previous.index.len() <= CACHE_LIMIT);
+    }
+
+    /// doc_v25 V25-02: one GT-position lookup and one subfield resolver.
+    /// `DP:GT` must find the second subfield, and a short column must not
+    /// fall back to the first subfield (the `30:0/1` bug).
+    #[test]
+    fn gt_index_and_subfield_follow_the_format_order() {
+        assert_eq!(gt_index(b"GT:DP:GQ"), Some(0));
+        assert_eq!(gt_index(b"DP:GT"), Some(1));
+        assert_eq!(gt_index(b"AD:DP:GQ:GT"), Some(3));
+        assert_eq!(gt_index(b"DP:GQ"), None);
+        assert_eq!(gt_index(b""), None);
+
+        assert_eq!(gt_subfield(b"0/1:30", Some(0)), Some(&b"0/1"[..]));
+        assert_eq!(gt_subfield(b"30:0/1", Some(1)), Some(&b"0/1"[..]));
+        assert_eq!(gt_subfield(b"5,6:10:40:1|2", Some(3)), Some(&b"1|2"[..]));
+        assert_eq!(gt_subfield(b".", Some(0)), Some(&b"."[..]));
+        // A short column has no GT — never fall back to the first subfield.
+        assert_eq!(gt_subfield(b"30", Some(1)), None);
+        assert_eq!(gt_subfield(b"30", None), None);
     }
 
     /// doc_v24 V24-06: ids from a dropped generation are loudly stale, not

@@ -440,7 +440,7 @@ impl NativeEncoder {
             let samples = lr.samples_text();
             let keys: Vec<&[u8]> = format.split(|&b| b == b':').collect();
             let n_keys = keys.len();
-            let gt_index = keys.iter().position(|k| *k == b"GT");
+            let gt_index = crate::vcf::format_layout::gt_index(format);
             // One pass over the sample text: every subfield's byte range.
             self.cells.clear();
             self.cells.resize(n_samples_in * n_keys, ABSENT);
@@ -1451,6 +1451,26 @@ mod tests {
         assert_eq!(
             got, want,
             "encode_bcf vs edit+noodles\n got: {got:02x?}\nwant: {want:02x?}"
+        );
+    }
+
+    /// doc_v25 V25-02: the GT column is located by FORMAT key order, not
+    /// "the first subfield". `DP:GT` must encode exactly like noodles'
+    /// independent encoder (a wrong index would encode the DP integer as
+    /// the GT column and the genotype as an integer).
+    #[test]
+    fn encode_text_finds_gt_after_dp() {
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9;AF=0.5;QD=4.5\tDP:GT\t30:0/1\t.:1|1\t7:./.\t.:0/0\n";
+        let lr = LineRef::parse(line).expect("invariant: line");
+        let site = SiteView::parse(&lr).expect("invariant: site");
+        let mut enc = NativeEncoder::new(&header()).expect("invariant: encoder");
+        let mut got = Vec::new();
+        enc.encode_text(&lr, &site, 4, &EditPlan::default(), &mut got)
+            .expect("invariant: encode");
+        let want = reference_encode(line, &EditPlan::default(), Some(1), 4);
+        assert_eq!(
+            got, want,
+            "encode_text vs edit+noodles on FORMAT=DP:GT\n got: {got:02x?}\nwant: {want:02x?}"
         );
     }
 

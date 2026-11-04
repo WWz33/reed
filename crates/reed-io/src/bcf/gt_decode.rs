@@ -8,7 +8,11 @@
 //! table-based *decoder* and `vcf/genotype_scan.rs` the text scanner.
 //!
 //! Pure move: the functions are byte-for-byte the ones from
-//! `encode_native.rs` (doc_v25 08 §3 ①).
+//! `encode_native.rs` (doc_v25 08 §3 ①), including its
+//! `cast_possible_truncation` allowance: `push_gt_code` guards the range
+//! before narrowing to i32.
+
+#![allow(clippy::cast_possible_truncation)]
 
 /// `(ploidy, largest allele index)` of one text genotype.
 pub(crate) fn gt_shape(sub: &[u8]) -> (usize, i64) {

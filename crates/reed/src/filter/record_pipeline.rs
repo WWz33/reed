@@ -727,27 +727,11 @@ fn attribute_hit(
     }
 }
 
-/// Index of `GT` among the colon-separated FORMAT keys.
-///
-/// Positions are `usize`: a `u8` conversion used to hide every GT past the
-/// 256th key (V22-R2-1).
-#[must_use]
-pub(crate) fn gt_subfield_index(format_text: &[u8]) -> Option<usize> {
-    format_text.split(|&b| b == b':').position(|k| k == b"GT")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(debug_assertions)]
     use reed_core::tag_table::{TagNumber, TagTable, TagType};
-
-    #[test]
-    fn gt_index_found_or_none() {
-        assert_eq!(gt_subfield_index(b"GT:DP:GQ"), Some(0));
-        assert_eq!(gt_subfield_index(b"DP:GT"), Some(1));
-        assert_eq!(gt_subfield_index(b"DP:GQ"), None);
-    }
 
     /// The empty plan (no head/mask/tail rules, GT declared) — the
     /// construction pattern from `filtered.rs`'s tests. Only the

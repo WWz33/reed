@@ -952,6 +952,10 @@ impl ConvertJob {
         } else {
             u32::try_from(memchr::memchr_iter(b',', lr.alts()).count() + 1).unwrap_or(u32::MAX)
         };
+        // One GT-position lookup per record (doc_v25 V25-02): the old
+        // `memchr(b':')` took the first subfield, so `FORMAT=DP:GT` handed
+        // the DP value to the genotype parser.
+        let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
         scratch.gts.clear();
         scratch.gts.resize(self.n_samples, GtSlots::default());
         let mut start = 0_usize;
@@ -961,8 +965,10 @@ impl ConvertJob {
                 memchr::memchr(b'\t', &samples[begin..]).map_or(samples.len(), |rel| begin + rel);
             let column = &samples[begin..end];
             start = end + 1;
-            let colon = memchr::memchr(b':', column).unwrap_or(column.len());
-            let raw = &column[..colon];
+            // A column shorter than the GT position has no GT text; treat it
+            // as missing, never as the first subfield.
+            let raw = reed_io::vcf::format_layout::gt_subfield(column, gt_index)
+                .unwrap_or(&b"."[..]);
             gt.raw_start = begin as u32;
             gt.raw_len = raw.len() as u32;
             gt.present = !raw.starts_with(b".");
