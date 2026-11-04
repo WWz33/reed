@@ -60,7 +60,7 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
         )?,
     };
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
-    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+    let command_line = crate::params::command_line();
     let write_index = reed::WriteIndex::parse(args.write_index.as_deref())?;
     // doc_v21 S16: `-W` with no possible index target used to be a silent
     // no-op. Checked here, not in the library, so library callers are

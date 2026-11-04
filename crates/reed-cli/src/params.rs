@@ -8,6 +8,31 @@
 
 use reed::Error;
 
+/// The recorded command line: `std::env::args()` joined, with each argument
+/// shell-quoted when needed (doc_v25 V25-08c). The old
+/// `collect().join(" ")` recorded `-o "my out"` as `-o my out`, which does
+/// not replay.
+#[must_use]
+pub(crate) fn command_line() -> String {
+    std::env::args()
+        .map(|arg| shell_quote(&arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Quotes one argument for a POSIX shell when it contains anything outside
+/// the safe set; a single quote becomes `'\''`.
+fn shell_quote(arg: &str) -> String {
+    let safe = |c: char| {
+        c.is_ascii_alphanumeric() || "-_./:=,+%@^".contains(c)
+    };
+    if !arg.is_empty() && arg.chars().all(safe) {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
+}
+
 /// One parsed `-O` spelling: the type letter and a 1–9 compression level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OutputType {
@@ -105,6 +130,15 @@ mod tests {
             let err = parse_output_type(bad, "v, z, b or u").expect_err(bad);
             assert_eq!(err.kind(), ErrorKind::Usage, "{bad}: {err}");
         }
+    }
+
+    #[test]
+    fn argv_is_shell_quoted_for_replay() {
+        assert_eq!(shell_quote("plain"), "plain");
+        assert_eq!(shell_quote("-o"), "-o");
+        assert_eq!(shell_quote("my out"), "'my out'");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert_eq!(shell_quote(""), "''");
     }
 
     #[test]

@@ -138,7 +138,8 @@ impl FilterReport {
             let _ = writeln!(text, "phase.{phase}_ms\t{:.3}", secs * 1e3);
         }
         let _ = writeln!(text, "total_ms\t{:.3}", t.total_secs * 1e3);
-        let _ = writeln!(text, "chunks\t{}", t.chunks);
+        // The engine block uses the canonical key set (doc_v25 V25-08b):
+        // `chunks_read`, not a second `chunks` spelling.
         let _ = writeln!(text, "chunks_read\t{}", t.chunks_read);
         let _ = writeln!(text, "worker_busy_ms\t{:.3}", t.worker_busy_secs * 1e3);
         let _ = writeln!(text, "reader_ms\t{:.3}", t.reader_secs * 1e3);
@@ -149,9 +150,11 @@ impl FilterReport {
         let _ = writeln!(text, "job_ms\t{:.3}", t.job_secs * 1e3);
         let _ = writeln!(text, "deflate_ms\t{:.3}", t.deflate_secs * 1e3);
         let _ = writeln!(text, "chain_wait_ms\t{:.3}", t.chain_wait_secs * 1e3);
-        if let Some(peak) = t.in_flight_peak_bytes {
-            let _ = writeln!(text, "in_flight_peak_bytes\t{peak}");
-        }
+        let _ = writeln!(
+            text,
+            "in_flight_peak_bytes\t{}",
+            t.in_flight_peak_bytes.unwrap_or(0)
+        );
         text
     }
 }

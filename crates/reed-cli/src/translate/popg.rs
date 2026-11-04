@@ -158,7 +158,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             .out
             .clone()
             .expect("invariant: -o checked before the run");
-        let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+        let command_line = crate::params::command_line();
         let mut files = Vec::new();
         if let Some(ld_report) = &report.ld {
             files.extend(reed::ld::write_ld(
@@ -213,7 +213,6 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
             eprintln!("n_records\t{}", report.n_records);
             eprintln!("n_windows\t{}", report.n_windows);
-            eprintln!("chunks\t{}", report.n_chunks);
             print_engine_metrics(&report.metrics);
         }
         return Ok(());
@@ -273,7 +272,6 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
         eprintln!("n_records\t{}", report.n_records);
         eprintln!("n_windows\t{}", report.n_windows);
-        eprintln!("chunks\t{}", report.n_chunks);
         print_engine_metrics(&report.metrics);
     }
     let text = reed::windows::render_tsv(&report.windows, &kinds, false);

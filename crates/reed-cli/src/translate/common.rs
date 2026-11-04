@@ -13,14 +13,8 @@ use crate::units::input_path;
 /// and frame-chain cumulative times without which "reader-bound" is only an
 /// inference.
 pub(crate) fn print_engine_metrics(m: &reed::metrics::StageMetrics) {
-    eprintln!("chunks_read\t{}", m.n_chunks_read);
-    eprintln!("engine.reader_ms\t{:.3}", m.reader_time.as_secs_f64() * 1e3);
-    eprintln!("engine.reduce_ms\t{:.3}", m.reduce_time.as_secs_f64() * 1e3);
-    eprintln!(
-        "engine.chain_wait_ms\t{:.3}",
-        m.chain_wait.as_secs_f64() * 1e3
-    );
-    eprintln!("worker_busy_ms\t{:.3}", m.worker_busy.as_secs_f64() * 1e3);
+    // One renderer for every command (doc_v25 V25-08b).
+    eprint!("{}", m.render_tsv());
 }
 
 /// Whether the shared site flags left the spec at its defaults (no

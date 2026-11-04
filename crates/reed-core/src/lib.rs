@@ -6,6 +6,7 @@
 //! [`group`]. Estimator definitions live in reed-stats.
 
 pub mod linalg;
+pub mod provenance;
 
 pub mod args;
 pub mod bitset;

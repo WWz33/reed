@@ -383,7 +383,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
             other => Err(reed::Error::usage(format!("unknown strategy {other:?}"))),
         })
         .transpose()?;
-    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+    let command_line = crate::params::command_line();
     let budget = ThreadBudget::from_cli(*threads, *memory);
     // -O v|z|b|u[level]: explicit output type, `-o` names the file (the
     // extension is only inferred when -O is absent).

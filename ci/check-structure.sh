@@ -45,6 +45,17 @@ check "the dead reed-reduce linalg file is gone (doc_v25 V25-10, R12)" \
 check "no STREAM_DEBUG env back door remains (doc_v25 V25-10)" \
     bash -c '! grep -rq "STREAM_DEBUG" crates --include=*.rs'
 
+# V25-08b: one StageMetrics renderer; the CLI no longer spells the keys.
+check "StageMetrics has the one timing renderer (doc_v25 V25-08b)" \
+    bash -c 'grep -q "fn render_tsv" crates/reed-engine/src/metrics.rs && ! grep -rq "engine.reader_ms\\|engine.reduce_ms\\|engine.chain_wait_ms" crates --include=*.rs'
+
+# V25-08c: provenance lives in core and argv is captured (and quoted) once.
+check "provenance lives in reed-core (doc_v25 V25-08c)" \
+    bash -c 'grep -q "pub struct Provenance" crates/reed-core/src/provenance.rs && test ! -e crates/reed-filter/src/plan/provenance.rs'
+
+check "argv is captured once, shell-quoted (doc_v25 V25-08c)" \
+    bash -c '[ "$(grep -rn "std::env::args()" crates/reed-cli/src --include=*.rs | grep -v "src/params.rs" | wc -l)" -eq 0 ]'
+
 # V25-09: every on-disk spill goes through the exclusive TempSpill; no
 # private name builder may grow back.
 check "spills use the shared TempSpill (doc_v25 V25-09)" \

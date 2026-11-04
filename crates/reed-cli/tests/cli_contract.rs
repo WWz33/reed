@@ -1897,3 +1897,116 @@ fn stats_usage_errors_precede_a_missing_input() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v25 V25-08b: every command's `--timing` carries the same engine key
+/// set, so one performance-regression parser works across subcommands.
+#[test]
+fn timing_engine_keys_are_the_same_on_every_command() {
+    let dir = temp_dir("timing");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let input = input.to_str().expect("utf8");
+    let prefix = dir.join("out");
+    let prefix = prefix.to_str().expect("utf8");
+
+    let pops = dir.join("pops.tsv");
+    std::fs::write(&pops, "s0\tpop1\ns1\tpop1\n").expect("invariant: pops");
+    let pops = pops.to_str().expect("utf8");
+    let filter_out = format!("{prefix}.vcf");
+    let index_out = format!("{prefix}.csi");
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        (
+            "filter",
+            vec![
+                "filter",
+                input,
+                "-o",
+                &filter_out,
+                "--verbosity",
+                "2",
+            ],
+        ),
+        (
+            "popg",
+            vec![
+                "popg",
+                input,
+                "--pi",
+                "--pop",
+                pops,
+                "--variant-only",
+                "--window",
+                "1000",
+                "-o",
+                prefix,
+                "--verbosity",
+                "2",
+            ],
+        ),
+        (
+            "stats",
+            vec![
+                "stats",
+                input,
+                "--freq",
+                "-o",
+                prefix,
+                "--verbosity",
+                "2",
+            ],
+        ),
+        (
+            "convert",
+            vec![
+                "convert",
+                input,
+                "--phylip",
+                "-o",
+                prefix,
+                "--verbosity",
+                "2",
+            ],
+        ),
+        (
+            "index",
+            vec![
+                "index",
+                input,
+                "--csi",
+                "-o",
+                &index_out,
+                "--verbosity",
+                "2",
+            ],
+        ),
+    ];
+    const ENGINE_KEYS: &[&str] = &[
+        "chunks_read",
+        "worker_busy_ms",
+        "reader_ms",
+        "reduce_ms",
+        "chain_wait_ms",
+        "reader_wait_ms",
+        "reduce_wait_ms",
+        "inflate_ms",
+        "job_ms",
+        "deflate_ms",
+        "in_flight_peak_bytes",
+    ];
+    for (command, args) in &cases {
+        let out = run(args);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{command}: {stderr}");
+        let keys: Vec<&str> = stderr
+            .lines()
+            .filter_map(|line| line.split_once('\t').map(|(key, _)| key))
+            .collect();
+        for key in ENGINE_KEYS {
+            assert!(
+                keys.contains(key),
+                "{command}: missing timing key {key}; keys: {keys:?}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

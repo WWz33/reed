@@ -124,7 +124,7 @@ fn run_vcf_cli(args: ConvertCli) -> Result<(), reed::Error> {
     let command_line = if args.no_command {
         String::new()
     } else {
-        std::env::args().collect::<Vec<_>>().join(" ")
+        crate::params::command_line()
     };
     let request = ConvertRequest {
         targets: vec![ConvertTarget::Vcf {
@@ -156,16 +156,8 @@ fn run_vcf_cli(args: ConvertCli) -> Result<(), reed::Error> {
     if args.verbosity.shows_timing() {
         eprintln!("# reed convert timing");
         eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
-        eprintln!("n_records\t{}", report.n_records);
-        eprintln!("chunks\t{}", report.metrics.n_chunks_read);
-        eprintln!(
-            "engine.reader_ms\t{:.3}",
-            report.metrics.reader_time.as_secs_f64() * 1e3
-        );
-        eprintln!(
-            "engine.reduce_ms\t{:.3}",
-            report.metrics.reduce_time.as_secs_f64() * 1e3
-        );
+        eprintln!("n_records_in\t{}", report.n_records);
+        super::common::print_engine_metrics(&report.metrics);
     }
     if let Some(counters) = &report.counters
         && counters.malformed > 0
@@ -370,7 +362,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         let _ = writeln!(
             log,
             "command: {}",
-            std::env::args().collect::<Vec<_>>().join(" ")
+            crate::params::command_line()
         );
         let _ = writeln!(
             log,
@@ -423,22 +415,11 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     }
     if args.verbosity.shows_timing() {
         eprintln!("# reed convert timing");
-        eprintln!("phase.open_ms\t{:.3}", 0.0);
+        // `run_convert` opens the input itself, so there is no separate open
+        // phase; the old `phase.open_ms 0.0` line was a placeholder.
         eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
-        eprintln!("n_records\t{}", report.n_records);
-        eprintln!("chunks\t{}", report.metrics.n_chunks_read);
-        eprintln!(
-            "engine.reader_ms\t{:.3}",
-            report.metrics.reader_time.as_secs_f64() * 1e3
-        );
-        eprintln!(
-            "engine.reduce_ms\t{:.3}",
-            report.metrics.reduce_time.as_secs_f64() * 1e3
-        );
-        eprintln!(
-            "worker_busy_ms\t{:.3}",
-            report.metrics.worker_busy.as_secs_f64() * 1e3
-        );
+        eprintln!("n_records_in\t{}", report.n_records);
+        super::common::print_engine_metrics(&report.metrics);
     }
     let _ = started;
     Ok(())

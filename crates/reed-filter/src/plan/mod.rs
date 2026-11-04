@@ -6,7 +6,7 @@
 // Casts in this file are bounded by construction: The `-q/-Q` threshold is deliberately the f32 bcftools parses.
 #![allow(clippy::cast_possible_truncation)]
 
-pub mod provenance;
+pub use reed_core::provenance;
 pub mod strategy;
 
 use reed_core::tag_table::{TagNumber, TagTable, TagType};
@@ -990,8 +990,11 @@ pub fn compile(
     };
     let stale_tags = spec.recompute.stale_bytes();
 
-    // ---- ascertainment (§11.7) + provenance (§11.8) ----
-    let provenance = provenance::Provenance::new(spec, command_line)?;
+    // ---- ascertainment (§11.7) + provenance (§11.8; the type lives in
+    // reed-core, doc_v25 V25-08c) ----
+    let provenance = provenance::Provenance::new(command_line)
+        .with_spec(spec, spec.to_args().join(" "))
+        .map_err(|e| FilterError::Spec(format!("spec serialization failed: {e}")))?;
 
     let policies = reed_core::genotype::GenotypePolicies {
         ploidy: match spec.policy.ploidy {

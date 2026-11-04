@@ -41,6 +41,8 @@ pub struct IndexOutcome {
     pub path: PathBuf,
     /// Records indexed.
     pub n_records: u64,
+    /// The engine run's stage metrics (the `--timing` renderer, V25-08b).
+    pub metrics: reed_engine::metrics::StageMetrics,
 }
 
 /// One record start (in chunk order).
@@ -652,13 +654,17 @@ pub fn run_index(
         };
         run(opened.source.as_mut(), &job, sink, &budget, &abort)?
     };
-    let _ = report;
+    let metrics = report.metrics;
     let n_records = out
         .lock()
         .expect("invariant: index slot not poisoned")
         .take()
         .expect("invariant: sink finish stored the count");
-    Ok(IndexOutcome { path, n_records })
+    Ok(IndexOutcome {
+        path,
+        n_records,
+        metrics,
+    })
 }
 
 #[cfg(test)]
