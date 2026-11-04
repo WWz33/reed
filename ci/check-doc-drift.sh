@@ -333,9 +333,10 @@ check "--fill-tags validates its tags (doc_v12 D12-11)" \
 check "the default -x list is in the help (doc_v12 D12-12)" \
     bash -c 'grep -q "InbreedingCoeff,DP" crates/reed-cli/src/cli/mod.rs'
 
-# N12: AC/AN reading is one implementation.
+# N12: AC/AN reading is one implementation (doc_v12 D12-13; the reader moved
+# to reed-filter's semantics module in doc_v25 V25-04).
 check "AC/AN INFO reading is one implementation (doc_v12 D12-13)" \
-    bash -c '[ "$(grep -rn "fn allele_counts_info" crates --include=*.rs | wc -l)" -eq 1 ]'
+    bash -c '[ "$(grep -rn "fn info_af(info" crates --include=*.rs | wc -l)" -eq 1 ]'
 
 # N13: one INFO number grammar.
 check "INFO number parsing is one grammar (doc_v12 D12-14)" \

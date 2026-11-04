@@ -773,6 +773,46 @@ mod tests {
         assert!(err.to_string().contains("invalid -O ''"), "{err}");
     }
 
+    /// doc_v25 V25-04 (R2): a closed mask bound replays as the equivalent
+    /// strict CLI bound. `DP <= 3` masks DP 1..=3 and keeps DP >= 4, so the
+    /// rendered flag is `--min-dp 4`; before the fix it was `--min-dp 3`,
+    /// which keeps DP=3 — the two spellings disagreed on the boundary.
+    #[test]
+    fn closed_mask_bounds_replay_without_changing_the_mask() {
+        use reed::spec::{GenotypeMaskRule, GenotypeRules, OnMissing};
+        let spec = FilterSpec {
+            genotype: GenotypeRules {
+                mask_if: vec![GenotypeMaskRule {
+                    field: "DP".into(),
+                    when: "<= 3".into(),
+                    on_missing: OnMissing::Keep,
+                    depth: true,
+                }],
+                ..GenotypeRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let rendered = spec.to_args();
+        let pairs: Vec<(&str, &str)> = rendered
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
+        assert!(pairs.contains(&("--min-dp", "4")), "{rendered:?}");
+
+        let replayed = spec_from_flags(&cli_from(&rendered)).expect("the rendered flags translate");
+        let before = spec.genotype.mask_if[0].parsed().expect("parsed");
+        let after = replayed.genotype.mask_if[0].parsed().expect("parsed");
+        for dp in 0..=6 {
+            assert_eq!(
+                before.apply_i64(dp),
+                after.apply_i64(dp),
+                "DP={dp}: the replay changed the mask"
+            );
+            // The mask fires exactly for DP <= 3 on both sides.
+            assert_eq!(before.apply_i64(dp), dp <= 3, "DP={dp}");
+        }
+    }
+
     /// The rendered flags are also what `##reed_filterCommand` reports, so
     /// the provenance line and the CLI agree on one spelling.
     #[test]

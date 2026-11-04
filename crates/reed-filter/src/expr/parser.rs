@@ -235,12 +235,21 @@ impl Expr {
         }
     }
 
-    /// Whether the expression reads genotype-derived quantities.
+    /// Whether the expression reads genotype-derived quantities, i.e. must
+    /// run after the mask stage (`-i/-e` routing).
+    ///
+    /// The spelling decides nothing: `AC` and `INFO/AC` are the same
+    /// built-in, resolved through the same INFO-or-genotype helper, so both
+    /// route the same way (doc_v25 V25-04). `INFO/AC` used to fall through
+    /// to `false`, which sent it to the head stage where INFO was assumed
+    /// trusted.
     #[must_use]
     pub fn references_genotypes(&self) -> bool {
         match self {
             Self::Field(f) => f.is_genotype_derived(),
-            Self::Bare(name) => Field::from_name(name).is_some_and(Field::is_genotype_derived),
+            Self::Bare(name) | Self::Info(name) => {
+                Field::from_name(name).is_some_and(Field::is_genotype_derived)
+            }
             Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
                 a.references_genotypes() || b.references_genotypes()
             }
@@ -248,6 +257,29 @@ impl Expr {
             // expression (`--set-gts .`, 02-cli.md §3.3).
             Self::Fmt(_) => true,
             Self::Not(e) | Self::Subscript(e, _) => e.references_genotypes(),
+            _ => false,
+        }
+    }
+
+    /// Whether the expression reads a genotype-derived **site** field (as
+    /// opposed to a `FORMAT` column, which `--set-gts .` evaluates per
+    /// sample). A `--set-gts` mask decision must not depend on the
+    /// post-mask counts, so the compiler rejects these.
+    ///
+    /// This is the one definition the plan and the parser share; the copy in
+    /// `plan/mod.rs` had the `Info` arm first and drifted from
+    /// [`Self::references_genotypes`] (doc_v25 V25-04).
+    #[must_use]
+    pub fn reads_gt_fields(&self) -> bool {
+        match self {
+            Self::Field(f) => f.is_genotype_derived(),
+            Self::Bare(name) | Self::Info(name) => {
+                Field::from_name(name).is_some_and(Field::is_genotype_derived)
+            }
+            Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
+                a.reads_gt_fields() || b.reads_gt_fields()
+            }
+            Self::Not(e) | Self::Subscript(e, _) => e.reads_gt_fields(),
             _ => false,
         }
     }

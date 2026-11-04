@@ -15,6 +15,7 @@
 
 use reed_core::args::push_flag as flag;
 
+use super::predicate::{Op, Typed};
 use super::{AfKind, FilterSpec, HweMode, OnMissing, PloidyPolicy, SampleList};
 
 /// Renders `value` the way the CLI parses floats back (`{}` round-trips).
@@ -118,28 +119,37 @@ impl FilterSpec {
 
         // ---- genotype masking (the three CLI spellings) ----
         for rule in &self.genotype.mask_if {
-            let when = rule.when.trim();
             // `depth` is part of the CLI spelling: `--min-dp/--max-dp` carry
             // the AD fallback, an explicit `FMT/DP` mask does not. A
             // depth-less DP mask has no flag spelling and is skipped rather
-            // than silently replayed as `--min-dp` (doc_v22 V22-R6).
-            let name = match (&*rule.field, when.starts_with('<'), when.starts_with('>')) {
-                ("DP", true, _) if rule.depth && rule.on_missing == OnMissing::Keep => "--min-dp",
-                ("DP", _, true) if rule.depth && rule.on_missing == OnMissing::Keep => "--max-dp",
-                ("GQ", true, _) if !rule.depth && rule.on_missing == OnMissing::Keep => "--min-gq",
-                // Not one of the CLI spellings (a JSON-only mask).
+            // than silently replayed as `--min-dp` (doc_v22 V22-R6); the
+            // same holds for an explicit `on_missing`.
+            if rule.on_missing != OnMissing::Keep {
+                continue;
+            }
+            let (lower_flag, upper_flag) = match (&*rule.field, rule.depth) {
+                ("DP", true) => ("--min-dp", "--max-dp"),
+                ("GQ", false) => ("--min-gq", "--max-gq"),
                 _ => continue,
             };
-            // Strip the whole operator: `trim_start_matches(['<', '>'])`
-            // left the `=` of `<=`/`>=` in the value, so the provenance
-            // line was not replayable (doc_v23 V23-24).
-            let value = when
-                .strip_prefix("<=")
-                .or_else(|| when.strip_prefix(">="))
-                .or_else(|| when.strip_prefix('<'))
-                .or_else(|| when.strip_prefix('>'))
-                .unwrap_or(when)
-                .trim();
+            // The comparison is parsed, not inferred from the first
+            // character: a closed interval masks one more value than the
+            // strict bound, so `DP <= 3` replays as `--min-dp 4` (keep
+            // DP > 3), never as `--min-dp 3` (doc_v25 V25-04, R2).
+            let Ok(cmp) = rule.parsed() else { continue };
+            let (name, value) = match (cmp.op, cmp.value) {
+                (Op::Lt, Typed::Int(v)) => (lower_flag, v),
+                (Op::Le, Typed::Int(v)) => (lower_flag, v.saturating_add(1)),
+                (Op::Gt, Typed::Int(v)) => (upper_flag, v),
+                (Op::Ge, Typed::Int(v)) => (upper_flag, v.saturating_sub(1)),
+                // `==`/`!=` and non-integer bounds have no exact u32 flag
+                // spelling: omit the rule instead of replaying a different
+                // mask (the V22-R6 policy for JSON-only masks).
+                _ => continue,
+            };
+            if value < 0 {
+                continue;
+            }
             flag(&mut args, name, value);
         }
 
@@ -268,6 +278,8 @@ mod tests {
         };
         let spec = FilterSpec {
             genotype: crate::spec::GenotypeRules {
+                // Closed bounds mask one extra value: `DP <= 10` is
+                // "keep DP >= 11", i.e. `--min-dp 11` (doc_v25 V25-04).
                 mask_if: vec![rule("<= 10"), rule(">= 20")],
                 ..Default::default()
             },
@@ -278,8 +290,45 @@ mod tests {
             .windows(2)
             .map(|w| (w[0].as_str(), w[1].as_str()))
             .collect();
+        assert!(pairs.contains(&("--min-dp", "11")), "{args:?}");
+        assert!(pairs.contains(&("--max-dp", "19")), "{args:?}");
+    }
+
+    /// Strict bounds replay unchanged; a spelling with no exact flag
+    /// (`==`, a fractional bound) is omitted rather than degraded into a
+    /// different mask (doc_v25 V25-04, R2).
+    #[test]
+    fn strict_bounds_replay_unchanged_and_inexact_forms_are_omitted() {
+        let rule = |when: &str| crate::spec::GenotypeMaskRule {
+            field: "DP".into(),
+            when: when.into(),
+            on_missing: OnMissing::Keep,
+            depth: true,
+        };
+        let spec = FilterSpec {
+            genotype: crate::spec::GenotypeRules {
+                mask_if: vec![rule("== 7"), rule("<= 3.5")],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let args = args_of(&spec);
+        assert!(args.is_empty(), "no rule is replayable exactly: {args:?}");
+
+        let spec = FilterSpec {
+            genotype: crate::spec::GenotypeRules {
+                mask_if: vec![rule("< 10"), rule("> 2")],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let args = args_of(&spec);
+        let pairs: Vec<(&str, &str)> = args
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
         assert!(pairs.contains(&("--min-dp", "10")), "{args:?}");
-        assert!(pairs.contains(&("--max-dp", "20")), "{args:?}");
+        assert!(pairs.contains(&("--max-dp", "2")), "{args:?}");
     }
 
     #[test]

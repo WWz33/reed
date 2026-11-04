@@ -4,7 +4,7 @@
 
 use reed_core::site::{VariantClass, classify_variant};
 use reed_io::vcf::fixed::parse_qual;
-use reed_io::vcf::info::{InfoIndex, info_fragments};
+use reed_io::vcf::info::InfoIndex;
 use reed_io::vcf::line::LineRef;
 
 use crate::plan::{HeadRule, InfoRule};
@@ -34,6 +34,11 @@ impl HeadScratch {
 /// Evaluates the head rules in order; increments `hits[i]` for every rule
 /// the record passes (cumulative funnel semantics) and returns whether the
 /// record survived the head stage.
+///
+/// `info_trusted` is the plan's single field (doc_v20 S58): once the cohort
+/// changed, the built-in AC/AN/AF/MAF/MAC readers fall back to the genotype
+/// values instead of the stale INFO. It used to be hard-coded `true` here,
+/// which read a full-cohort `INFO/AC` on a subset run (doc_v25 V25-04).
 pub fn eval_head(
     line: &LineRef<'_>,
     pos1: u64,
@@ -41,6 +46,7 @@ pub fn eval_head(
     hits: &mut [u64],
     scratch: &mut HeadScratch,
     tags: &reed_core::tag_table::TagTable,
+    info_trusted: bool,
 ) -> bool {
     // The counters are aligned with the rule list; a short slice would make
     // the zip below silently skip rules (a caller invariant violation).
@@ -127,12 +133,11 @@ pub fn eval_head(
             }
             HeadRule::Info(rule) => eval_info(line, rule, scratch),
             HeadRule::Expr { include, expr, .. } => {
-                // Head rules decide on the input cohort, where the record's
-                // INFO is trusted: the genotype-dependent built-ins are
-                // rejected at compile time and the `-q/-Q` INFO
-                // short-circuits are dropped when the cohort changes
-                // (doc_v20 S58), so `true` is exact here.
-                let mut values = crate::expr::SiteValues::from_line(line, pos1, None, true);
+                // The cohort-trust decision is the plan's field, not a
+                // constant: `INFO/AC` used to be routed here by spelling and
+                // read the full-cohort value on a subset run (V25-04).
+                let mut values =
+                    crate::expr::SiteValues::from_line(line, pos1, None, info_trusted);
                 values.info_index = Some(&scratch.index);
                 values.tags = Some(tags);
                 let truth = crate::expr::eval(expr, &values);
@@ -147,52 +152,6 @@ pub fn eval_head(
     true
 }
 
-/// Per-allele INFO/AC counts and INFO/AN (bcftools' `bcf_calc_ac` prefers
-/// them over the genotype tallies; docs/rounds/v5/02-cli.md §3.2). Returns
-/// `(counts, an)` with the counts in allele order (REF first), or `None`
-/// when either tag is absent, malformed, or when the AC vector does not
-/// have one value per ALT allele.
-///
-/// The length check is htslib's: `bcf_calc_ac` refuses a record whose
-/// `ac_len != n_allele - 1` and lets the caller fall back to the genotype
-/// counts (`vcfutils.c:56-64`, with a once-per-run warning; doc_v12 D12-13).
-/// `n_alt` is the record's ALT count.
-#[must_use]
-pub fn allele_counts_info(info: &[u8], n_alt: u32) -> Option<(Vec<u64>, u64)> {
-    let mut ac: Option<Vec<u64>> = None;
-    let mut an: Option<u64> = None;
-    for (tag, value) in info_fragments(info) {
-        let Some(value) = value else { continue };
-        match tag {
-            b"AC" => {
-                let text = std::str::from_utf8(value).ok()?;
-                let mut counts = Vec::new();
-                for part in text.split(',') {
-                    if part == "." {
-                        return None;
-                    }
-                    counts.push(part.parse::<u64>().ok()?);
-                }
-                ac = Some(counts);
-            }
-            b"AN" => {
-                an = std::str::from_utf8(value).ok()?.parse::<u64>().ok();
-            }
-            _ => {}
-        }
-    }
-    match (ac, an) {
-        (Some(ac), Some(an)) if an > 0 => {
-            if ac.len() != n_alt as usize {
-                warn_ac_length_once(ac.len(), n_alt);
-                return None;
-            }
-            Some((ac, an))
-        }
-        _ => None,
-    }
-}
-
 /// The record's ALT count from its ALT column (`.` = zero, the same rule
 /// as `SiteView::n_alt`; doc_v12 D12-10).
 fn n_alt_of(alts: &[u8]) -> u32 {
@@ -202,30 +161,16 @@ fn n_alt_of(alts: &[u8]) -> u32 {
     u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX)
 }
 
-/// htslib warns once per run about a mismatched AC vector and then stays
-/// quiet (`bcf_calc_ac`'s `warned` static, vcfutils.c:58-63).
-fn warn_ac_length_once(got: usize, want: u32) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static WARNED: AtomicBool = AtomicBool::new(false);
-    if !WARNED.swap(true, Ordering::Relaxed) {
-        tracing::warn!(
-            "Incorrect number of AC fields ({got} values for {want} ALT alleles); \
-             falling back to the genotype counts (further occurrences are not reported)"
-        );
-    }
-}
-
 /// `AC` (summed over ALTs) / `AN` from the INFO text; `None` when either is
 /// missing or malformed (the record then defers to the tail rule, matching
 /// bcftools' per-record fallback to genotype counts).
+///
+/// The reader is [`crate::semantics::info_af`]: head and tail now share the
+/// malformed-record guard (`ΣAC > AN` reads as "no usable INFO" on both).
 #[must_use]
 pub fn non_reference_af_info(info: &[u8], n_alt: u32) -> Option<f64> {
-    let (counts, an) = allele_counts_info(info, n_alt)?;
-    let sum: u64 = counts.iter().sum();
-    if an == 0 {
-        return None;
-    }
-    Some(sum as f64 / an as f64)
+    let counts = crate::semantics::info_af(info, n_alt)?;
+    Some((counts.an - counts.per_allele[0]) as f64 / counts.an as f64)
 }
 
 fn class_matches(class: VariantClass, wanted: &str) -> bool {
@@ -291,25 +236,19 @@ fn eval_info(line: &LineRef<'_>, rule: &InfoRule, scratch: &mut HeadScratch) -> 
     }
 }
 
-/// bcftools' `missing_logic` for a comparison with a missing observation
-/// (`filter.c:4449-4455`): `!=` passes, `==` needs *both* sides missing —
-/// which a missing observation with a concrete threshold never is — and the
-/// ordering operators fail.
-///
+/// A missing observation in an INFO rule: [`crate::semantics::compare_missing`]
+/// with the [`InfoRule`](crate::semantics::MissingCtx::InfoRule) context.
 /// `on_missing` still overrides the decision when the caller asked for it:
 /// an explicit `pass`/`fail` in the spec wins over the parity default.
 fn missing_value_passes(rule: &InfoRule) -> bool {
-    match rule.on_missing {
-        // `pass` is the INFO-rule default and means "do not drop"; within it,
-        // bcftools' operator table decides (`!=` passes, everything else
-        // fails). `plan/mod.rs` rejects `keep`/`mask` on INFO rules, so the
-        // genotype spellings cannot reach here; if one ever did, "do not
-        // drop" is the same reading.
-        crate::spec::OnMissing::Pass | crate::spec::OnMissing::Keep => {
-            rule.cmp.op == crate::spec::predicate::Op::Ne
-        }
-        crate::spec::OnMissing::Fail | crate::spec::OnMissing::Mask => false,
-    }
+    // The shared truth table (doc_v25 V25-04): the explicit `on_missing`
+    // overrides bcftools' `!=`-passes row; the operator table itself is not
+    // spelled out here any more.
+    crate::semantics::compare_missing(
+        rule.cmp.op.into(),
+        crate::semantics::MissingSides::Lhs,
+        crate::semantics::MissingCtx::InfoRule(rule.on_missing),
+    )
 }
 
 /// Parses an INFO value as f64 (Integer widened; `.`/malformed → None).
@@ -346,6 +285,7 @@ mod tests {
             &mut hits,
             &mut scratch,
             &reed_core::tag_table::TagTable::new(),
+            true,
         )
     }
 
@@ -353,6 +293,15 @@ mod tests {
     /// *contains* any listed value, not when the whole column equals one
     /// entry — `bcftools filter` routinely writes `LowQual;LowMQ`, and
     /// `-f LowQual` silently dropped such records.
+    /// doc_v25 V25-04: a record with `ΣAC > AN` is malformed in the same
+    /// way on the head and the tail — the head's `-q/-Q` reader returns
+    /// `None` (the bound passes) instead of computing an AF above 1.
+    #[test]
+    fn malformed_ac_an_is_no_usable_info_for_the_head() {
+        assert_eq!(non_reference_af_info(b"AC=200;AN=100", 1), None);
+        assert_eq!(non_reference_af_info(b"AC=2;AN=4", 1), Some(0.5));
+    }
+
     #[test]
     fn r1_filter_list_matches_any_semicolon_separated_value() {
         // The reported bug: a two-value column dropped by a listed member.
@@ -409,6 +358,7 @@ mod tests {
             &mut hits,
             &mut scratch,
             &reed_core::tag_table::TagTable::new(),
+            true,
         )
     }
 

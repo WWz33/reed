@@ -201,6 +201,7 @@ impl RecordPipeline {
             &mut funnel.head_hits,
             &mut self.head,
             &plan.tags,
+            plan.info_trusted,
         );
         if !head_passed {
             return Ok(Processed::default());
@@ -295,6 +296,7 @@ impl RecordPipeline {
             &mut funnel.head_hits,
             &mut self.head,
             &plan.tags,
+            plan.info_trusted,
         );
         if !head_passed {
             return Ok(Processed::default());
@@ -535,17 +537,29 @@ where
     // field, DP<5 and DP>100 both read DP).
     for (local, rule) in field_rules.iter().enumerate() {
         let rule_index = field_rule_map[local];
-        let mask_on_missing = rule.on_missing == reed_filter::spec::OnMissing::Mask;
+        // The shared missing-value table (doc_v25 V25-04): a missing value
+        // fires only when the rule opted in with `on_missing = mask`.
+        let mask_ctx =
+            reed_filter::semantics::MissingCtx::ColumnarMask(rule.on_missing);
+        let missing_fires = reed_filter::semantics::compare_missing(
+            rule.cmp.op.into(),
+            reed_filter::semantics::MissingSides::Lhs,
+            mask_ctx,
+        );
         if let Some(j) = rule.float_column {
             let Some(column) = scan.float_columns.get(j) else {
                 continue;
             };
             for (i, &x) in column.iter().enumerate() {
-                if masked.get(i)
-                    || !evaluated(i)
-                    || (x.is_nan() && !mask_on_missing)
-                    || (!x.is_nan() && !rule.cmp.apply_f64(f64::from(x)))
-                {
+                if masked.get(i) || !evaluated(i) {
+                    continue;
+                }
+                let fires = if x.is_nan() {
+                    missing_fires
+                } else {
+                    rule.cmp.apply_f64(f64::from(x))
+                };
+                if !fires {
                     continue;
                 }
                 attribute_hit(
@@ -569,11 +583,15 @@ where
                 reed_filter::spec::Typed::Int(threshold) => {
                     let op = rule.cmp.op;
                     for (i, &x) in column.iter().enumerate() {
-                        if masked.get(i)
-                            || !evaluated(i)
-                            || (x == INT_MISSING && !mask_on_missing)
-                            || (x != INT_MISSING && !op.apply_i64(i64::from(x), threshold))
-                        {
+                        if masked.get(i) || !evaluated(i) {
+                            continue;
+                        }
+                        let fires = if x == INT_MISSING {
+                            missing_fires
+                        } else {
+                            op.apply_i64(i64::from(x), threshold)
+                        };
+                        if !fires {
                             continue;
                         }
                         attribute_hit(
@@ -589,11 +607,15 @@ where
                 }
                 reed_filter::spec::Typed::Float(_) => {
                     for (i, &x) in column.iter().enumerate() {
-                        if masked.get(i)
-                            || !evaluated(i)
-                            || (x == INT_MISSING && !mask_on_missing)
-                            || (x != INT_MISSING && !rule.cmp.apply_f64(f64::from(x)))
-                        {
+                        if masked.get(i) || !evaluated(i) {
+                            continue;
+                        }
+                        let fires = if x == INT_MISSING {
+                            missing_fires
+                        } else {
+                            rule.cmp.apply_f64(f64::from(x))
+                        };
+                        if !fires {
                             continue;
                         }
                         attribute_hit(

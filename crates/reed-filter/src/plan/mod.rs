@@ -189,30 +189,6 @@ fn warn_stale_af() {
     );
 }
 
-/// Whether an expression reads a genotype-derived site field (forbidden in
-/// `--set-gts .` expressions, whose mask decision must not depend on the
-/// post-mask counts).
-fn expr_reads_gt_fields(expr: &crate::expr::Expr) -> bool {
-    use crate::expr::Expr;
-    match expr {
-        Expr::Field(f) => f.is_genotype_derived(),
-        // doc_v20 review of S58: `INFO/AC` (and the other built-ins spelled
-        // with the `INFO/` prefix) resolve through the same INFO-or-genotype
-        // helper as the bare names, so with an untrusted cohort they need the
-        // genotype values — which a `--set-gts` mask stage does not have.
-        // Treat them as genotype-derived so the compiler rejects them instead
-        // of silently evaluating to Missing.
-        Expr::Bare(name) | Expr::Info(name) => {
-            crate::expr::Field::from_name(name).is_some_and(crate::expr::Field::is_genotype_derived)
-        }
-        Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
-            expr_reads_gt_fields(a) || expr_reads_gt_fields(b)
-        }
-        Expr::Not(e) | Expr::Subscript(e, _) => expr_reads_gt_fields(e),
-        _ => false,
-    }
-}
-
 /// A compiled INFO predicate.
 #[derive(Clone, Debug)]
 pub struct InfoRule {
@@ -902,7 +878,7 @@ pub fn compile(
                 "{flag} {text:?} reads FORMAT values: they are masks, not site rules — add --set-gts ."
             )));
         }
-        if expr_reads_gt_fields(&expr) {
+        if expr.reads_gt_fields() {
             return Err(FilterError::Spec(format!(
                 "{flag} {text:?} mixes FORMAT values with genotype-derived fields; \
                  --set-gts . expressions may read FORMAT and site fields only"
@@ -1480,5 +1456,70 @@ mod region_contig_tests {
             }
         }
         assert!(seen, "expected HLA-A*01:01:10-20: {:?}", plan.head);
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    use crate::spec::{SiteRules, TailRules};
+
+    fn tags() -> TagTable {
+        let mut table = TagTable::new();
+        table.add_format("GT", TagType::Character, TagNumber::Count(1));
+        table.add_info("AC", TagType::Integer, TagNumber::A);
+        table.add_info("DP", TagType::Integer, TagNumber::Count(1));
+        table
+    }
+
+    /// doc_v25 V25-04: `INFO/AC` is the same built-in as the bare `AC`, so
+    /// the two spellings must route the same way. `INFO/AC` used to fall
+    /// through `references_genotypes` and reach the head stage, where INFO
+    /// was assumed to describe the output cohort.
+    #[test]
+    fn info_spelling_routes_like_the_bare_builtin() {
+        let table = tags();
+        for text in ["AC>1", "INFO/AC>1"] {
+            let spec = FilterSpec {
+                site: SiteRules {
+                    include: vec![text.into()],
+                    ..SiteRules::default()
+                },
+                ..FilterSpec::default()
+            };
+            let err = compile(&spec, &table, "", false)
+                .expect_err("a genotype-derived built-in belongs after the mask");
+            assert!(
+                err.to_string().contains("site_after_mask"),
+                "{text}: {err}"
+            );
+        }
+        // A plain INFO tag is not genotype-derived: it stays in the head.
+        let spec = FilterSpec {
+            site: SiteRules {
+                include: vec!["INFO/DP>10".into()],
+                ..SiteRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let plan = compile(&spec, &table, "", false).expect("INFO/DP is a head rule");
+        assert_eq!(plan.head.len(), 1);
+        assert!(plan.tail.is_empty());
+    }
+
+    /// The after-mask stage accepts the `INFO/` spelling and compiles it as
+    /// a tail expression (the routed half of the same rule).
+    #[test]
+    fn info_spelling_compiles_in_the_after_mask_stage() {
+        let spec = FilterSpec {
+            site_after_mask: TailRules {
+                include: vec!["INFO/AC>1".into()],
+                ..TailRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let plan = compile(&spec, &tags(), "", false).expect("after-mask expression");
+        assert!(plan.head.is_empty());
+        assert_eq!(plan.tail.len(), 1);
     }
 }

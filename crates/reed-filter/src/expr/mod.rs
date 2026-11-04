@@ -22,6 +22,8 @@ pub mod parser;
 
 use reed_io::vcf::info::info_fragments;
 
+use crate::semantics::{MissingCtx, MissingSides};
+
 pub use parser::{CmpOp, Expr, Field, LogicOp, Subscript};
 
 /// Genotype-derived counts for a site (available after the mask stage).
@@ -508,14 +510,9 @@ impl<'a> Operand<'a> {
     }
 
     /// bcftools' comparison rule over two operands: any pair satisfies the
-    /// comparison, and a missing element on either side follows the
-    /// `missing_logic` table of `CMP_VECTORS` (`filter.c:4449-4455`):
-    ///
-    /// | operator | one side missing | both sides missing |
-    /// |---|---|---|
-    /// | `==` | false | **true** |
-    /// | `!=` | **true** | **true** |
-    /// | `< <= > >=` | false | false |
+    /// comparison, and a missing element on either side asks
+    /// [`crate::semantics::compare_missing`] (the one copy of the
+    /// `missing_logic` table, doc_v25 V25-04).
     ///
     /// The `!=` row is the one that matters in practice: `-i 'DP!=3'` keeps
     /// records whose `DP` is `.` or absent under bcftools, and reed used to
@@ -537,14 +534,16 @@ impl<'a> Operand<'a> {
                 let a_missing = matches!(a, Val::Missing);
                 let b_missing = matches!(b, Val::Missing);
                 if a_missing || b_missing {
-                    // `missing_logic[nmiss]`: index 1 = one side missing,
-                    // index 2 = both. Only `==` passes on the both-missing
-                    // index and only `!=` on the one-side index.
-                    let passes = match (a_missing, b_missing) {
-                        (true, true) => matches!(op, CmpOp::Eq | CmpOp::Ne),
-                        _ => op == CmpOp::Ne,
+                    // The one implementation of bcftools' `missing_logic`
+                    // (doc_v25 V25-04): `!=` passes on one side, `==`/`!=`
+                    // on both.
+                    let sides = match (a_missing, b_missing) {
+                        (true, true) => MissingSides::Both,
+                        (true, false) => MissingSides::Lhs,
+                        (false, true) => MissingSides::Rhs,
+                        (false, false) => unreachable!("invariant: a side is missing"),
                     };
-                    if passes {
+                    if crate::semantics::compare_missing(op, sides, MissingCtx::Expr) {
                         return true;
                     }
                     continue;
@@ -1045,6 +1044,27 @@ mod tests {
             !parser::parse("FILTER=\"PASS\"")
                 .expect("inv")
                 .references_genotypes()
+        );
+        // doc_v25 V25-04: the `INFO/` spelling of a genotype-derived
+        // built-in routes like the bare name; a plain INFO tag stays in the
+        // head stage.
+        assert!(
+            parser::parse("INFO/AC>1")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(parser::parse("INFO/AC>1").expect("inv").reads_gt_fields());
+        assert!(
+            !parser::parse("INFO/DP>10")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(!parser::parse("INFO/DP>10").expect("inv").reads_gt_fields());
+        assert!(
+            !parser::parse("FMT/DP>10")
+                .expect("inv")
+                .reads_gt_fields(),
+            "FORMAT reads are the mask stage's business, not a site field"
         );
     }
 }

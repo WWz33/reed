@@ -476,6 +476,63 @@ fn sketch_funnel_matches_the_single_pass_funnel() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v25 V25-04 (R10): a sample can fire a field mask rule and an
+/// expression mask rule at once. If the two strategies attributed the hit
+/// differently, the funnels would diverge on this fixture; both run the one
+/// shared pipeline, so the first-fired rule (expressions evaluate before the
+/// columnar field pass) is the attribution on both sides.
+#[test]
+fn mask_attribution_is_strategy_invariant_with_overlapping_rules() {
+    use reed_filter::spec::{GenotypeMaskRule, GenotypeRules, OnMissing, TailRules};
+
+    let dir_path = write_fixture("mask-order", 3_000);
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
+    // The fixture's s1 has DP=3 and s0 DP=150 at some records: DP=3 fires
+    // both `DP < 5` and `FMT/DP < 10`.
+    let spec = FilterSpec {
+        genotype: GenotypeRules {
+            set_gts: Some(".".into()),
+            mask_if: vec![GenotypeMaskRule {
+                field: "DP".into(),
+                when: "< 5".into(),
+                on_missing: OnMissing::Keep,
+                depth: true,
+            }],
+        },
+        site_after_mask: TailRules {
+            exclude: vec!["FMT/DP<10".into()],
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let single = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SinglePass),
+            &dir.join("single.vcf.gz"),
+        ),
+    )
+    .expect("invariant: single pass");
+    let sketch = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
+            &dir.join("sketch.vcf.gz"),
+        ),
+    )
+    .expect("invariant: sketch");
+    assert!(single.n_masked_gt > 0, "the fixture must mask something");
+    assert_eq!(single.funnel, sketch.funnel, "funnel is strategy-invariant");
+    assert_eq!(single.n_masked_gt, sketch.n_masked_gt);
+    assert_eq!(single.masked_by_rule, sketch.masked_by_rule);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Regression (01-review D4): tid must stay u32 past 65,535 contigs, the
 /// CSI index must address positions past the TBI 2^29 ceiling, and an
 /// undeclared contig must fail instead of landing on tid 0.
@@ -1822,5 +1879,287 @@ fn v25_03_filter_rejects_blank_record_lines() {
             "{tag}: {err}"
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-04 acceptance: the INFO built-ins and the missing-value
+/// comparisons must produce the same output on all three strategies.
+/// `INFO/AC` used to route by spelling (to the head, with trusted INFO) while
+/// the bare `AC` went to the tail; a missing `DP` compared `!=` differently
+/// in the expression and mask paths. Both now go through one semantics
+/// module.
+#[test]
+fn three_strategies_agree_on_info_builtins_and_missing_comparisons() {
+    use reed_filter::spec::{GenotypeRules, TailRules};
+
+    let dir = std::env::temp_dir().join(format!("reed-filter-v25-04-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=Chr01,length=100000>
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"af\">
+##INFO=<ID=MAF,Number=A,Type=Float,Description=\"maf\">
+##INFO=<ID=MAC,Number=A,Type=Integer,Description=\"mac\">
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"dp\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
+";
+    let records = "\
+Chr01\t1\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:3\t0/0:.\t1/1:10\t0/1:3
+Chr01\t2\t.\tA\tG\t50\tPASS\tAC=1;AN=8;AF=0.125;MAF=0.125;MAC=1\tGT:DP\t0/0:4\t0/1:.\t0/0:20\t0/0:4
+Chr01\t3\t.\tA\tG\t50\tPASS\tAC=3;AN=8;AF=0.375;MAF=0.375;MAC=3\tGT:DP\t0/1:3\t0/1:5\t1/1:30\t0/0:.
+Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0/1:2\t1/1:40\t0/0:2
+";
+    let input = dir.join("in.vcf");
+    std::fs::write(&input, format!("{header}{records}")).expect("invariant: fixture");
+
+    // Every INFO built-in in one after-mask expression: each is
+    // genotype-derived, so the compiler requires the after-mask stage.
+    let info_spec = FilterSpec {
+        site_after_mask: TailRules {
+            include: vec![
+                "INFO/AC>1".into(),
+                "INFO/AN>=4".into(),
+                "INFO/AF>0.2".into(),
+                "INFO/MAF<=0.5".into(),
+                "INFO/MAC>=1".into(),
+            ],
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+
+    // Every comparison with a missing observation (s1 has DP=`.` in the
+    // first two records): the mask context's `keep` default and the
+    // expression `!=` row must not diverge across strategies.
+    let missing_spec = FilterSpec {
+        genotype: GenotypeRules {
+            set_gts: Some(".".into()),
+            ..GenotypeRules::default()
+        },
+        site_after_mask: TailRules {
+            exclude: ["==", "!=", "<", "<=", ">", ">="]
+                .iter()
+                .map(|op| format!("FMT/DP{op}3"))
+                .collect(),
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+
+    // The two re-parsing strategies evaluate the tail on the record bytes.
+    // The sketch cannot: its mid stage has no record bytes, which is why the
+    // driver refuses (or falls back from) that shape — asserted below rather
+    // than papered over with a different INFO source.
+    let record_strategies = [
+        ("single", reed_filter::plan::ExecStrategy::SinglePass),
+        ("two-pass", reed_filter::plan::ExecStrategy::TwoPassReparse),
+    ];
+    let all_strategies = [
+        ("single", reed_filter::plan::ExecStrategy::SinglePass),
+        ("two-pass", reed_filter::plan::ExecStrategy::TwoPassReparse),
+        ("sketch", reed_filter::plan::ExecStrategy::SketchThenEmit),
+    ];
+    for (tag, spec, strategies) in [
+        ("info", &info_spec, &record_strategies[..]),
+        ("missing", &missing_spec, &all_strategies[..]),
+    ] {
+        let mut outputs = Vec::new();
+        for &(strategy_tag, strategy) in strategies {
+            let out = dir.join(format!("{tag}-{strategy_tag}.vcf"));
+            run_filter(
+                Some(input.as_path()),
+                spec,
+                &options(Some(strategy), &out),
+            )
+            .unwrap_or_else(|e| panic!("{tag}/{strategy_tag}: {e}"));
+            outputs.push((strategy_tag, std::fs::read(&out).expect("invariant: output")));
+        }
+        for (strategy_tag, bytes) in &outputs[1..] {
+            assert_eq!(
+                bytes, &outputs[0].1,
+                "{tag}: {strategy_tag} differs from single-pass"
+            );
+        }
+        let text = String::from_utf8(outputs[0].1.clone()).expect("invariant: utf8");
+        assert!(
+            text.lines().filter(|l| !l.starts_with('#')).count() > 0,
+            "{tag}: the fixture must survive"
+        );
+    }
+
+    // The sketch refuses a record-reading tail instead of evaluating it
+    // from a different source (the documented limitation; the auto strategy
+    // falls back to TwoPassReparse for `--mind`).
+    let Err(err) = run_filter(
+        Some(input.as_path()),
+        &info_spec,
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
+            &dir.join("info-sketch.vcf"),
+        ),
+    ) else {
+        panic!("the sketch must refuse a record-reading tail expression");
+    };
+    assert!(err.to_string().contains("no record bytes"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-04 (R3): the expression and mask contexts treat a missing
+/// observation differently **by contract**. `-e 'FMT/DP!=3'` is bcftools'
+/// `missing_logic`: a missing DP satisfies `!=`, so it masks. A `mask_if`
+/// field rule defaults to `on_missing = keep`: a missing DP never fires.
+/// The two paths now share one truth table and differ only where the
+/// context says they should.
+#[test]
+fn missing_dp_masks_in_the_expression_context_but_not_by_default_in_mask_if() {
+    use reed_filter::spec::{GenotypeMaskRule, GenotypeRules, OnMissing, TailRules};
+
+    let dir = std::env::temp_dir().join(format!("reed-filter-v25-r3-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=Chr01,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"dp\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+";
+    // s0 DP=3 (the boundary), s1 DP=. (missing), s2 DP=4.
+    let input = dir.join("in.vcf");
+    std::fs::write(
+        &input,
+        format!("{header}Chr01\t1\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:3\t0/1:.\t0/1:4\n"),
+    )
+    .expect("invariant: fixture");
+
+    // `-e 'FMT/DP!=3'` masks when the comparison is true: DP=4 and the
+    // missing DP (the `!=` row), not DP=3.
+    let expr_spec = FilterSpec {
+        genotype: GenotypeRules {
+            set_gts: Some(".".into()),
+            ..GenotypeRules::default()
+        },
+        site_after_mask: TailRules {
+            exclude: vec!["FMT/DP!=3".into()],
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let expr_out = dir.join("expr.vcf");
+    run_filter(Some(&input), &expr_spec, &options(None, &expr_out))
+        .expect("invariant: expression run");
+
+    // The same predicate as a `mask_if` field rule: the default `keep`
+    // leaves the missing DP alone; only DP=4 fires.
+    let mask_spec = FilterSpec {
+        genotype: GenotypeRules {
+            mask_if: vec![GenotypeMaskRule {
+                field: "DP".into(),
+                when: "!= 3".into(),
+                on_missing: OnMissing::Keep,
+                depth: true,
+            }],
+            ..GenotypeRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let mask_out = dir.join("mask.vcf");
+    run_filter(Some(&input), &mask_spec, &options(None, &mask_out))
+        .expect("invariant: mask run");
+
+    let gts = |path: &std::path::Path| -> Vec<String> {
+        let text = std::fs::read_to_string(path).expect("invariant: read");
+        let record = text.lines().find(|l| !l.starts_with('#')).expect("record");
+        record
+            .split('\t')
+            .skip(9)
+            .map(|cell| cell.split(':').next().unwrap_or("").to_string())
+            .collect()
+    };
+    assert_eq!(
+        gts(&expr_out),
+        ["0/1".to_string(), "./.".to_string(), "./.".to_string()],
+        "-e 'FMT/DP!=3' masks the missing DP too"
+    );
+    assert_eq!(
+        gts(&mask_out),
+        ["0/1".to_string(), "0/1".to_string(), "./.".to_string()],
+        "mask_if keeps the missing DP by default"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-04 acceptance: after a cohort change, the bare `AC` and the
+/// `INFO/AC` spelling decide on the recomputed counts, not the stale INFO.
+/// The two spellings now route identically (both to the after-mask stage),
+/// so their surviving sets are identical and differ from the full-cohort
+/// run exactly where the INFO would have been stale.
+#[test]
+fn info_spelling_and_bare_ac_agree_after_a_subset() {
+    use reed_filter::spec::{SampleList, SampleSelect, TailRules};
+
+    let dir = std::env::temp_dir().join(format!("reed-filter-v25-s58-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=Chr01,length=1000>
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
+";
+    // Full cohort: AC=4, AN=8. Subset {s0,s1}: AC=1, AN=4 — INFO/AC=4 is
+    // stale, so `AC>2` must fail on the recomputed count.
+    let input = dir.join("in.vcf");
+    std::fs::write(
+        &input,
+        format!("{header}Chr01\t1\t.\tA\tG\t50\tPASS\tAC=4;AN=8\tGT\t0/1\t0/0\t1/1\t0/1\n"),
+    )
+    .expect("invariant: fixture");
+
+    let spec = |text: &str, subset: bool| FilterSpec {
+        sample_select: subset.then(|| SampleSelect {
+            keep: Some(SampleList::Names(vec!["s0".into(), "s1".into()])),
+            remove: None,
+        }),
+        site_after_mask: TailRules {
+            include: vec![text.into()],
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let run = |text: &str, subset: bool, tag: &str| -> String {
+        let out = dir.join(format!("{tag}.vcf"));
+        run_filter(Some(&input), &spec(text, subset), &options(None, &out))
+            .unwrap_or_else(|e| panic!("{tag}: {e}"));
+        std::fs::read_to_string(&out).expect("invariant: output")
+    };
+    let bare_subset = run("AC>2", true, "bare-subset");
+    let info_subset = run("INFO/AC>2", true, "info-subset");
+    let full = run("INFO/AC>2", false, "full");
+
+    // The provenance line echoes the spelling, so compare the record sets.
+    let records = |text: &str| -> String {
+        text.lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(records(&bare_subset), "", "subset AC=1 must not pass AC>2");
+    assert_eq!(
+        records(&info_subset),
+        records(&bare_subset),
+        "the INFO/ spelling must decide on the same cohort"
+    );
+    assert_eq!(
+        records(&full).lines().count(),
+        1,
+        "full-cohort INFO/AC=4 passes AC>2"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
