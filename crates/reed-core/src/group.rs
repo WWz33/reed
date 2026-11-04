@@ -168,28 +168,30 @@ impl GroupTable {
     /// Restricts every group mask to the kept samples (cohort filtering);
     /// group ids are unchanged and emptied groups are kept so existing
     /// `GroupId`s stay valid (statistics over them will yield `None`).
-    #[must_use]
-    pub fn restrict(&self, keep: &SampleMask) -> GroupTable {
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::LengthMismatch`] when the table and the keep mask were
+    /// built for different sample counts. The old fallback kept the original
+    /// (unfiltered) group masks and reported success, so every statistic ran
+    /// on the wrong cohort without a diagnostic (doc_v25 V25-07b).
+    pub fn restrict(&self, keep: &SampleMask) -> Result<GroupTable, CoreError> {
         let groups = self
             .groups
             .iter()
             .map(|group| {
-                let mask = group.mask.and(keep).unwrap_or_else(|_| {
-                    // Table and keep mask disagree on the sample count: keep
-                    // the original group untouched rather than fabricate one.
-                    group.mask.clone()
-                });
-                Group {
+                let mask = group.mask.and(keep)?;
+                Ok(Group {
                     id: group.id,
                     name: group.name.clone(),
                     mask,
-                }
+                })
             })
-            .collect();
-        Self {
+            .collect::<Result<Vec<_>, CoreError>>()?;
+        Ok(Self {
             groups,
             n_samples: self.n_samples,
-        }
+        })
     }
 
     /// Number of groups.
@@ -277,12 +279,26 @@ mod tests {
     fn restrict_keeps_group_ids() {
         let (_, groups) = table();
         let keep = SampleMask::from_ids(4, [SampleId(0), SampleId(2)]).unwrap();
-        let reduced = groups.restrict(&keep);
+        let reduced = groups.restrict(&keep).expect("same sample count");
         assert_eq!(reduced.n_groups(), groups.n_groups());
         let a = reduced.by_name("A").unwrap();
         let b = reduced.by_name("B").unwrap();
         assert_eq!(reduced.get(a).unwrap().n_samples(), 1);
         assert_eq!(reduced.get(b).unwrap().n_samples(), 1);
+    }
+
+    /// doc_v25 V25-07b: a mask built for a different sample count is an
+    /// error, not a silently unfiltered table.
+    #[test]
+    fn restrict_rejects_a_mask_of_a_different_length() {
+        let (_, groups) = table();
+        let keep = SampleMask::all(groups.n_samples() + 1);
+        let err = groups.restrict(&keep).expect_err("length mismatch");
+        assert!(matches!(
+            err,
+            CoreError::LengthMismatch { expected, got }
+                if expected == groups.n_samples() && got == groups.n_samples() + 1
+        ));
     }
 
     #[test]

@@ -909,6 +909,11 @@ fn build_keep(
     header: &vcf::Header,
 ) -> Result<(Arc<[bool]>, Option<SampleMask>), FilterError> {
     let n = header.sample_names().len();
+    // The keep mask's one length check (doc_v25 V25-07b): the filter used
+    // to accept a short mask here and only the mid-stage width assert saw
+    // it.
+    let keep = reed_core::sample::KeepMask::try_new(n, keep)
+        .map_err(|e| FilterError::Spec(e.to_string()))?;
     let ids: Vec<u32> = keep
         .iter()
         .enumerate()
@@ -923,7 +928,7 @@ fn build_keep(
                 .map_err(|e| FilterError::Spec(e.to_string()))?,
         )
     };
-    Ok((Arc::from(keep), mask))
+    Ok((Arc::from(keep.as_slice()), mask))
 }
 
 /// Reads a keep/remove list (one sample per line, `#` comments). Unknown

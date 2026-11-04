@@ -28,6 +28,24 @@ const PHASED: u8 = 0x10;
 /// Bit 5: the genotype text held one allele (haploid).
 const HAPLOID: u8 = 0x20;
 
+/// The counting shape of one decoded genotype (doc_v25 V25-07a).
+///
+/// `SiteCounts::from_codes` and `SiteGroupCounts::add_code` both match on
+/// this, so the half-call and missing rules exist once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GtClass {
+    /// Both slots called REF.
+    HomRef,
+    /// Both slots called, exactly one ALT.
+    Het,
+    /// Both slots called ALT.
+    HomAlt,
+    /// Exactly one slot called (one allele, no genotype class).
+    HalfCall,
+    /// Both slots missing.
+    Missing,
+}
+
 /// One sample's decoded genotype.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
@@ -106,6 +124,36 @@ impl GtCode {
     #[must_use]
     pub const fn is_called_any(self) -> bool {
         !self.is_fully_missing()
+    }
+
+    /// Called REF alleles.
+    #[must_use]
+    pub const fn n_ref(self) -> u32 {
+        (self.slot_state(0) == STATE_REF) as u32 + (self.slot_state(1) == STATE_REF) as u32
+    }
+
+    /// Called ALT alleles.
+    #[must_use]
+    pub const fn n_alt(self) -> u32 {
+        self.slot_alt(0) as u32 + self.slot_alt(1) as u32
+    }
+
+    /// The counting class of this genotype (doc_v25 V25-07a): the one
+    /// classification `SiteCounts::from_codes` and
+    /// `SiteGroupCounts::add_code` consume, so half-call and missing
+    /// semantics cannot drift between them.
+    #[must_use]
+    pub const fn class(self) -> GtClass {
+        let missing = self.slot_missing(0) as u8 + self.slot_missing(1) as u8;
+        match (missing, self.n_alt()) {
+            (1, _) => GtClass::HalfCall,
+            (0, 0) => GtClass::HomRef,
+            (0, 1) => GtClass::Het,
+            (0, _) => GtClass::HomAlt,
+            // Both slots missing (`missing == 2`; the state is 2 bits, so
+            // no other value reaches here).
+            _ => GtClass::Missing,
+        }
     }
 
     /// The masked form: both slots missing, the haploid flag preserved

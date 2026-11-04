@@ -9,7 +9,7 @@
 
 use reed_core::Bitset;
 use reed_core::count::SiteCounts;
-use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
+use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters};
 use reed_core::math::hwe::HweCache;
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{HeadScratch, eval_head};
@@ -214,7 +214,7 @@ impl RecordPipeline {
             .scanner
             .scan(&lr, &site, &mut self.counters)
             .map_err(job_err)?;
-        funnel.policy.add_decode(&self.counters);
+        funnel.policy.merge(&self.counters);
 
         run_stages(
             &lr,
@@ -301,7 +301,7 @@ impl RecordPipeline {
         if !head_passed {
             return Ok(Processed::default());
         }
-        funnel.policy.add_decode(native.counters);
+        funnel.policy.merge(native.counters);
         let scan = ScanOutput {
             codes: native.codes,
             int_columns: native.int_columns,
@@ -468,7 +468,7 @@ where
 {
     // doc_v20 S68: the sketch path's mid stage packs the same mask into
     // bitmap words sized by the header's sample count; tolerating a short
-    // mask here (`keep.get(i).copied().unwrap_or(true)`) kept the tail
+    // mask here (the old short-mask `unwrap_or` default) kept the tail
     // samples while the mid stage dropped them, so the two strategies
     // counted different sample sets. Full length is the contract.
     debug_assert_eq!(
@@ -633,34 +633,15 @@ where
         }
     }
 
-    // `count_site` semantics from the decoded slots: masked calls count as
-    // missing (the attribution the single pass reports).
+    // The shared counting semantic (doc_v25 V25-07a): masked calls count as
+    // missing. The called→missing transition counter stays here — it is the
+    // filter's attribution, not part of the count definition.
     if opts.counts {
+        *counts = reed_core::count::SiteCounts::from_codes_kept(scan.codes, keep, Some(masked));
+        counts.has_gt = scan.has_gt;
         for (i, &code) in scan.codes.iter().enumerate() {
-            if !keep[i] {
-                continue;
-            }
-            if !code.is_called_any() {
-                counts.n_missing += 1;
-            } else if masked.get(i) {
+            if keep[i] && masked.get(i) && code.is_called_any() {
                 funnel.masked_gt += 1;
-                counts.n_missing += 1;
-            } else {
-                let (s0, s1) = (code.slot_state(0), code.slot_state(1));
-                let n_alt = u64::from(s0 == STATE_ALT) + u64::from(s1 == STATE_ALT);
-                let n_miss = u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
-                counts.ns += 1;
-                counts.an += 2 - n_miss;
-                counts.ac += n_alt;
-                match (n_miss, n_alt) {
-                    (0, 0) => counts.hom_ref += 1,
-                    (0, 1) => counts.het += 1,
-                    (0, _) => counts.hom_alt += 1,
-                    // Half-calls feed AN/AC/NS but no genotype class; the
-                    // `-g/--genotype` rule reads them as missing (bcftools
-                    // `bcf_gt_type` UNKN).
-                    _ => counts.n_half_called += 1,
-                }
             }
         }
     }
@@ -783,7 +764,7 @@ mod tests {
 
     /// doc_v20 S68: `keep` must be FULL LENGTH — one entry per sample
     /// column. A short mask used to be silently tolerated as "keep the
-    /// tail samples" here (`keep.get(i).copied().unwrap_or(true)`) while
+    /// tail samples" here (the old short-mask `unwrap_or` default) while
     /// the sketch path's mid stage DROPPED them, so the two strategies
     /// counted different sample sets; the pinned contract is that a short
     /// keep is a programming error, caught in debug builds by the length

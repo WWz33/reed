@@ -38,4 +38,18 @@ check "--ld-decay is not re-parsed outside its value_parser (doc_v25 V25-06)" \
 check "GT syntax helpers live only in reed-io/src/bcf/gt_decode.rs (doc_v25 V25-02)" \
     bash -c '! grep -rq "fn gt_codes_into\|fn gt_shape" crates --include=*.rs | grep -v "gt_decode.rs"'
 
+# V25-07a: one counting implementation; the frozen oracle keeps its own
+# parity reference on purpose.
+check "counting semantics live in reed-core only (doc_v25 V25-07a)" \
+    bash -c '[ "$(grep -rn "fn count_site\b" crates --include=*.rs | grep -v "/oracle/" | wc -l)" -eq 0 ]'
+
+# V25-07b: no implicit short-mask default survives.
+check "no short-keep default remains (doc_v25 V25-07b)" \
+    bash -c '! grep -rEn "keep\.get\([^)]*\)\.copied\(\)\.unwrap_or\(true\)" crates --include=*.rs'
+
+# V25-07c: the ghost trigger is gone and the trigger bits come from the
+# canonical field table.
+check "the ghost haploid-as-missing trigger is gone (doc_v25 V25-07c)" \
+    bash -c '! grep -rq "n_haploid_as_missing\|TRIG_HAPLOID_MISSING" crates --include=*.rs'
+
 exit "$fail"

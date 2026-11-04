@@ -564,3 +564,105 @@ mod tests {
         );
     }
 }
+
+/// The bit-plane word kernel is the one counting implementation allowed to
+/// differ from `SiteCounts::from_codes` for speed (doc_v25 V25-07a). This
+/// proptest is its cross-check: random genotypes, keep masks and genotype
+/// masks must produce identical counts.
+#[cfg(test)]
+mod kernel_equivalence {
+    use super::*;
+    use proptest::prelude::*;
+    use reed_core::Bitset;
+    use reed_core::count::SiteCounts;
+    use reed_core::genotype::{GtCode, STATE_ALT, STATE_MISSING, STATE_REF};
+
+    fn state(raw: u8) -> u8 {
+        match raw % 3 {
+            0 => STATE_REF,
+            1 => STATE_ALT,
+            _ => STATE_MISSING,
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn word_kernel_matches_from_codes(
+            raw in proptest::collection::vec(0u8..9, 1..=40),
+            keep in proptest::collection::vec(any::<bool>(), 1..=40),
+            masked in proptest::collection::vec(any::<bool>(), 1..=40),
+        ) {
+            let n = raw.len().min(keep.len()).min(masked.len());
+            let raw = &raw[..n];
+            let keep = &keep[..n];
+            let masked = &masked[..n];
+            let codes: Vec<GtCode> = raw
+                .iter()
+                .map(|&r| GtCode::from_states(state(r), state(r / 3), false, false))
+                .collect();
+
+            let w = n.div_ceil(64);
+            let mut planes = vec![vec![0_u64; w]; 4];
+            let mut rule = vec![0_u64; w];
+            let mut mask_set = Bitset::new(n);
+            for (i, &code) in codes.iter().enumerate() {
+                let (word, bit) = (i / 64, 1_u64 << (i % 64));
+                if code.slot_alt(0) {
+                    planes[0][word] |= bit;
+                }
+                if code.slot_missing(0) {
+                    planes[1][word] |= bit;
+                }
+                if code.slot_alt(1) {
+                    planes[2][word] |= bit;
+                }
+                if code.slot_missing(1) {
+                    planes[3][word] |= bit;
+                }
+                if masked[i] {
+                    mask_set.set(i, true);
+                    rule[word] |= bit;
+                }
+            }
+            let mut keep_words = vec![0_u64; w];
+            for (i, &kept) in keep.iter().enumerate() {
+                if kept {
+                    keep_words[i / 64] |= 1_u64 << (i % 64);
+                }
+            }
+
+            let refs = [
+                planes[0].as_slice(),
+                planes[1].as_slice(),
+                planes[2].as_slice(),
+                planes[3].as_slice(),
+            ];
+            let rules = [rule.as_slice()];
+            let kernel = count_site_planes(refs, &rules, &keep_words);
+            let counts = SiteCounts::from_codes_kept(&codes, keep, Some(&mask_set));
+
+            prop_assert_eq!(
+                (
+                    counts.ac,
+                    counts.an,
+                    counts.ns,
+                    counts.n_missing,
+                    counts.hom_ref,
+                    counts.het,
+                    counts.hom_alt,
+                    counts.n_half_called
+                ),
+                (
+                    kernel.ac,
+                    kernel.an,
+                    kernel.ns,
+                    kernel.n_missing,
+                    kernel.hom_ref,
+                    kernel.het,
+                    kernel.hom_alt,
+                    kernel.n_half_called
+                )
+            );
+        }
+    }
+}

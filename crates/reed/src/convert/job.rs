@@ -1697,21 +1697,19 @@ pub fn run_convert_opened(
     }
 
     // The kept-sample view (deterministic header order).
-    let keep: Vec<bool> = request
-        .keep_samples
-        .clone()
-        .unwrap_or_else(|| vec![true; n_samples]);
-    if keep.len() != n_samples {
-        return Err(crate::Error::usage(format!(
-            "sample keep mask has {} entries but the header declares {n_samples}",
-            keep.len()
-        )));
-    }
+    let keep = reed_core::sample::KeepMask::try_new(
+        n_samples,
+        request
+            .keep_samples
+            .clone()
+            .unwrap_or_else(|| vec![true; n_samples]),
+    )
+    .map_err(|e| crate::Error::usage(e.to_string()))?;
     if !keep.iter().any(|&k| k) {
         return Err(crate::Error::usage("the sample subset selects no samples"));
     }
-    let n_kept = keep.iter().filter(|&&k| k).count();
-    let keep: Arc<[bool]> = keep.into();
+    let n_kept = keep.n_selected();
+    let keep: Arc<[bool]> = Arc::from(keep.as_slice());
 
     // Resolve the targets.
     let mut phylo: Option<PhyloPlan> = None;

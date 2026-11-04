@@ -114,12 +114,19 @@ impl HeaderFacts {
     /// the kept ones, everything else untouched.
     #[must_use]
     pub fn pruned_header(&self, keep: &[bool]) -> noodles::vcf::Header {
+        // A full-length mask is the contract (doc_v25 V25-07b): the old
+        // `unwrap_or(true)` kept the tail of a short mask, silently.
+        assert_eq!(
+            keep.len(),
+            self.sample_names.len(),
+            "invariant: keep mask length differs from the header's sample count"
+        );
         let mut out = self.header.clone();
         let kept: Vec<String> = self
             .sample_names
             .iter()
             .enumerate()
-            .filter(|(i, _)| keep.get(*i).copied().unwrap_or(true))
+            .filter(|(i, _)| keep[*i])
             .map(|(_, name)| name.clone())
             .collect();
         let names = out.sample_names_mut();
@@ -161,15 +168,19 @@ mod tests {
         assert_eq!(names, ["s1", "s3", "s4"]);
     }
 
-    /// doc_v23 V23-42: a `keep` shorter than the sample list treats the
-    /// missing tail as kept (the documented `unwrap_or(true)` rule).
+    /// doc_v25 V25-07b: the keep mask must be full length; the old
+    /// short-mask default kept the tail and hid a caller bug.
     #[test]
-    fn pruned_header_treats_a_short_keep_as_kept() {
+    fn pruned_header_requires_a_full_length_keep() {
         let text = b"##fileformat=VCFv4.3\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t\
                       s1\ts2\ts3\n";
         let facts = HeaderFacts::parse(text).expect("invariant: valid header");
-        let out = facts.pruned_header(&[false]);
+        let out = facts.pruned_header(&[false, true, true]);
         let names: Vec<String> = out.sample_names().iter().map(ToString::to_string).collect();
         assert_eq!(names, ["s2", "s3"]);
+        let short = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = facts.pruned_header(&[false]);
+        }));
+        assert!(short.is_err(), "a short keep mask must panic");
     }
 }

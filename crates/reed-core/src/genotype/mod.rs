@@ -12,7 +12,7 @@ pub mod policy;
 
 use crate::error::CoreError;
 
-pub use gt_code::{GtCode, STATE_ALT, STATE_MISSING, STATE_REF};
+pub use gt_code::{GtClass, GtCode, STATE_ALT, STATE_MISSING, STATE_REF};
 pub use planes::{
     N_BASE_PLANES, PLANE_PHASED, PLANE_SLOT0_ALT, PLANE_SLOT0_MISS, PLANE_SLOT1_ALT,
     PLANE_SLOT1_MISS, PlaneBlock, SitePlanes,

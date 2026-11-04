@@ -110,22 +110,19 @@ pub fn read_genotype_matrix(
         ));
     }
     let n_samples = sample_names.len();
-    let keep: Vec<bool> = match keep {
-        Some(mask) => {
-            if mask.len() != n_samples {
-                return Err(crate::Error::usage(format!(
-                    "sample keep mask has {} entries but the header declares {n_samples}",
-                    mask.len()
-                )));
-            }
-            mask.to_vec()
-        }
-        None => vec![true; n_samples],
-    };
+    let keep = reed_core::sample::KeepMask::try_new(
+        n_samples,
+        keep.map_or_else(|| vec![true; n_samples], <[bool]>::to_vec),
+    )
+    .map_err(|e| crate::Error::usage(e.to_string()))?;
     if !keep.iter().any(|&k| k) {
         return Err(crate::Error::usage("the sample subset selects no samples"));
     }
-    let job = PcaJob { n_samples, keep: keep.clone(), allow_multiallelic: false };
+    let job = PcaJob {
+        n_samples,
+        keep: keep.as_slice().to_vec(),
+        allow_multiallelic: false,
+    };
     let abort = reed_engine::abort::abort_for(budget);
     // doc_v20 review of S76: cap the collection itself, not just the final
     // matrix, so a 120 GB run refuses while scanning instead of after.

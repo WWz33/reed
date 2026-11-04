@@ -60,14 +60,10 @@ pub fn site_header(record: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
     })
 }
 
-/// A policy trigger fired by a table entry (one bit per counter).
-const TRIG_HAPLOID_HALF: u8 = 1 << 0;
-const TRIG_HAPLOID_HOMOZYGOUS: u8 = 1 << 1;
-const TRIG_HAPLOID_MISSING: u8 = 1 << 2;
-const TRIG_HALF_CALL_MISSING: u8 = 1 << 3;
-const TRIG_MULTIALLELIC: u8 = 1 << 4;
 /// The entry's policies reject this pair; the decoder re-runs the text path
-/// to recover the exact error.
+/// to recover the exact error. Trigger bits 0..`FIELDS.len()` come from
+/// [`PolicyCounters::FIELDS`] (doc_v25 V25-07c), so this is the only bit
+/// defined here.
 const TRIG_ERROR: u8 = 1 << 7;
 
 /// One table entry.
@@ -222,39 +218,19 @@ impl GtTable {
 /// field is 0 or 1).
 fn pack_triggers(c: &PolicyCounters) -> u8 {
     let mut t = 0_u8;
-    if c.n_haploid_as_half_call > 0 {
-        t |= TRIG_HAPLOID_HALF;
-    }
-    if c.n_haploid_as_homozygous > 0 {
-        t |= TRIG_HAPLOID_HOMOZYGOUS;
-    }
-    if c.n_haploid_as_missing > 0 {
-        t |= TRIG_HAPLOID_MISSING;
-    }
-    if c.n_half_call_as_missing > 0 {
-        t |= TRIG_HALF_CALL_MISSING;
-    }
-    if c.n_multiallelic_collapsed > 0 {
-        t |= TRIG_MULTIALLELIC;
+    for (bit, field) in PolicyCounters::FIELDS.iter().enumerate() {
+        if (field.get)(c) > 0 {
+            t |= 1 << bit;
+        }
     }
     t
 }
 
 fn apply_triggers(t: u8, c: &mut PolicyCounters) {
-    if t & TRIG_HAPLOID_HALF != 0 {
-        c.n_haploid_as_half_call += 1;
-    }
-    if t & TRIG_HAPLOID_HOMOZYGOUS != 0 {
-        c.n_haploid_as_homozygous += 1;
-    }
-    if t & TRIG_HAPLOID_MISSING != 0 {
-        c.n_haploid_as_missing += 1;
-    }
-    if t & TRIG_HALF_CALL_MISSING != 0 {
-        c.n_half_call_as_missing += 1;
-    }
-    if t & TRIG_MULTIALLELIC != 0 {
-        c.n_multiallelic_collapsed += 1;
+    for (bit, field) in PolicyCounters::FIELDS.iter().enumerate() {
+        if t & (1 << bit) != 0 {
+            *(field.get_mut)(c) += 1;
+        }
     }
 }
 

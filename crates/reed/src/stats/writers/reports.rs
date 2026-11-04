@@ -19,10 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use reed_core::ChunkId;
 use reed_core::count::SiteGroupCounts;
-use reed_core::genotype::{
-    GenotypePolicies, MultiallelicPolicy, PlaneBlock, PloidyPolicy, PolicyCounters, STATE_ALT,
-    STATE_MISSING,
-};
+use reed_core::genotype::{GenotypePolicies, PlaneBlock, PolicyCounters};
 use reed_core::math::hwe::HweCache;
 use reed_core::sample::SampleMask;
 use reed_engine::budget::ThreadBudget;
@@ -569,23 +566,15 @@ impl ReportJob {
                 if g >= n_groups {
                     continue;
                 }
-                // The same per-code tally `SiteGroupCounts::add_code` runs,
-                // scoped to one group.
-                let states = (code.slot_state(0), code.slot_state(1));
-                if states == (STATE_MISSING, STATE_MISSING) {
+                // The same counting class `SiteCounts::from_codes` uses,
+                // scoped to one group (doc_v25 V25-07a).
+                use reed_core::genotype::GtClass;
+                if code.class() == GtClass::Missing {
                     pop.missing[g] += 1;
                     continue;
                 }
-                for state in [states.0, states.1] {
-                    match state {
-                        STATE_ALT => {
-                            pop.an[g] += 1;
-                            pop.alt[g] += 1;
-                        }
-                        STATE_MISSING => {}
-                        _ => pop.an[g] += 1,
-                    }
-                }
+                pop.an[g] += code.n_ref() + code.n_alt();
+                pop.alt[g] += code.n_alt();
             }
         }
         // plink `--het` moment components at biallelic sites.
@@ -1375,11 +1364,9 @@ pub fn run_stats_opened(
         hist: request.hist.clone(),
         sample_names: opened.facts.sample_names.clone(),
         groups,
-        policies: GenotypePolicies {
-            ploidy: PloidyPolicy::HaploidAsHalfCall,
-            multiallelic: MultiallelicPolicy::CollapseAlt,
-            ..GenotypePolicies::default()
-        },
+        // The one stats decode policy (doc_v25 V25-07): the report job used
+        // to hand-copy it, so a policy change had to touch two files.
+        policies: crate::stats::run::stats_policies(),
         targets: request.targets.clone(),
         targets_exclude: request.targets_exclude.clone(),
     };

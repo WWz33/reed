@@ -1510,6 +1510,7 @@ dependencies = [
  "flate2",
  "memchr",
  "noodles",
+ "proptest",
  "rayon",
  "reed-core",
  "reed-engine",

@@ -814,8 +814,8 @@ Chr01\t2\t.\tA\tG,T\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:
     };
     let report = run_filter(Some(&path), &spec, &options(None, &out)).expect("invariant: run");
     assert_eq!(report.n_output_records, 2);
-    assert_eq!(report.policy_counters.haploid_as_half_call, 1);
-    assert_eq!(report.policy_counters.multiallelic_collapsed, 1);
+    assert_eq!(report.policy_counters.n_haploid_as_half_call, 1);
+    assert_eq!(report.policy_counters.n_multiallelic_collapsed, 1);
     // The policy governs decoding, not the record text: an untouched
     // genotype is written back byte for byte.
     let text = {
