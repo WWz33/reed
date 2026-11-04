@@ -455,7 +455,7 @@ check "the convert renderers use no temp files (doc_v13 D13-2)" \
 # (seek-based), never whole frames (doc_v13 D13-2's no-repeated-IO decision,
 # refined by doc_v15 D15-7).
 check "the MSA renderer seeks per sample instead of re-reading frames (doc_v15 D15-7)" \
-    bash -c 'grep -q "fn next_frame_for_sample" crates/reed/src/convert/job.rs \
+    bash -c 'grep -q "fn next_frame_for_sample" crates/reed/src/convert/spill.rs \
         && ! grep -q "next_frame(" crates/reed/src/convert/writers.rs'
 
 # Guard 11: the row-level GT view is one implementation (D13-3/D13-7).
