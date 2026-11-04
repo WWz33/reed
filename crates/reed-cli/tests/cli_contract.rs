@@ -1665,3 +1665,46 @@ fn hla_contig_regions_use_the_header_vocabulary() {
     assert!(stderr.contains("not declared in the header"), "{stderr}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v25 V25-06: parameter domains are usage errors (exit 2), not a panic
+/// (`--threads 0` on distance used to mean all cores while every budget path
+/// meant sequential) and not a runtime failure (`--memory 0` used to fail at
+/// the first chunk). Each case also names the expected message fragment.
+#[test]
+fn parameter_domains_are_usage_errors() {
+    let cases: &[(&[&str], &str)] = &[
+        (&["filter", "--threads", "0", "-"], "must be >= 1"),
+        (&["stats", "--threads", "0", "-"], "must be >= 1"),
+        (&["popg", "--threads", "0", "-"], "must be >= 1"),
+        (&["pca", "--threads", "0", "-"], "must be >= 1"),
+        (&["distance", "--threads", "0", "-"], "must be >= 1"),
+        (&["convert", "--threads", "0", "-"], "must be >= 1"),
+        (&["rename", "--threads", "0", "-"], "must be >= 1"),
+        (&["index", "--threads", "0", "in.vcf.gz"], "must be >= 1"),
+        (&["filter", "--memory", "0", "-"], "must be >= 1 MiB"),
+        (&["popg", "--memory", "0", "-"], "must be >= 1 MiB"),
+        (&["filter", "-O", "", "in.vcf"], "invalid -O ''"),
+        (&["filter", "-O", "z0", "in.vcf"], "want 1-9"),
+        (&["filter", "-O", "z10", "in.vcf"], "want 1-9"),
+        (&["rename", "-O", "", "in.vcf"], "invalid -O ''"),
+        (&["rename", "-O", "b", "in.vcf"], "accepts v or z"),
+        (&["popg", "--ld-decay", "0", "in.vcf"], "must be >= 1"),
+        (
+            &["filter", "-W", "-o", "-", "in.vcf"],
+            "-W needs",
+        ),
+    ];
+    for (args, want) in cases {
+        let out = run(args);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?} must be a usage error; stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains(want),
+            "{args:?}: expected {want:?} in stderr, got: {stderr}"
+        );
+    }
+}

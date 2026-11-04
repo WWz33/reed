@@ -2,7 +2,7 @@
 //! [`reed::PcaRequest`]; the driver owns the semantics.
 
 use reed::PcaRequest;
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::budget::ThreadBudget;
 
 use crate::cli::PcaCli;
 
@@ -35,19 +35,7 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
     let sample_names = opened.facts().sample_names.clone();
     let keep = parse_sample_keep(&args.samples, &sample_names).map_err(reed::Error::usage)?;
 
-    let threads = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
-    let budget = ThreadBudget {
-        threads,
-        mem: args
-            .memory
-            .map_or_else(MemBudget::default_half_memory, |m| {
-                MemBudget::from_bytes(m.saturating_mul(1 << 20))
-            }),
-    };
+    let budget = ThreadBudget::from_cli(args.threads, args.memory);
 
     // `--dapc` turns the run into a discriminant analysis on the components.
     if args.dapc {
@@ -95,8 +83,8 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             prefix: prefix.to_string(),
             keep_samples: keep,
             force_samples: args.force_samples,
-            threads: Some(threads),
-            memory: args.memory,
+            threads: Some(budget.threads),
+            memory: args.memory.map(|m| u64::from(m.get())),
             xval,
         };
         let report = reed::run_dapc_opened(opened, &request, &budget)?;
@@ -144,8 +132,8 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
         solver: args.solver,
         prefix: prefix.to_string(),
         keep_samples: keep,
-        threads: Some(threads),
-        memory: args.memory,
+        threads: Some(budget.threads),
+        memory: args.memory.map(|m| u64::from(m.get())),
     };
 
     let report = reed::run_pca_opened(opened, &request, &budget)?;

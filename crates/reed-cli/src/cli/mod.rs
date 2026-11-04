@@ -5,12 +5,18 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::units::parse_size;
 
-/// `--ld-decay` accepts a bare flag (the default span) or a size.
-fn parse_optional_size(text: &str) -> Result<String, String> {
+/// `--ld-decay [MAX_BP]`: a bare flag means the default 100 kb span; `0`
+/// is rejected at parse time (it used to produce an empty decay table and
+/// exit 0 — doc_v25 V25-06).
+fn parse_ld_decay(text: &str) -> Result<u64, String> {
     if text.is_empty() {
-        return Ok(String::new());
+        return Ok(100_000);
     }
-    parse_size(text).map(|_| text.to_string())
+    let value = parse_size(text)?;
+    if value == 0 {
+        return Err("--ld-decay: must be >= 1 bp".to_string());
+    }
+    Ok(value)
 }
 
 /// The shared `<INPUT>` help text (doc_v4 03-architecture.md §3.6): one
@@ -220,10 +226,10 @@ pub(crate) struct PcaCli {
     pub samples: filter_flags::SampleArgs,
     /// Worker threads (default: available parallelism)
     #[arg(long, value_name = "INT")]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -292,10 +298,10 @@ pub(crate) struct DistanceCli {
     pub samples: filter_flags::SampleArgs,
     /// Worker threads (default: available parallelism)
     #[arg(long, value_name = "INT")]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -382,10 +388,10 @@ pub(crate) struct FilterCli {
     pub strategy: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Directory for temporary files (the stdin spill of multi-pass runs)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
@@ -421,7 +427,7 @@ pub(crate) struct IndexCli {
     pub force: bool,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -509,14 +515,14 @@ pub(crate) struct StatsCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// Directory for temporary files (accepted for compatibility; single-pass
     /// report runs never spill — doc_v15 D15-23)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -569,7 +575,7 @@ pub(crate) struct StatsCli {
     pub block_size: Option<String>,
     /// Moved to `reed popg`.
     #[arg(long = "ld-decay", hide = true, num_args = 0..=1, default_missing_value = "")]
-    pub ld_decay: Option<String>,
+    pub ld_decay: Option<u64>,
     /// Moved to `reed popg`.
     #[arg(long = "ld-pairs", hide = true)]
     pub ld_pairs: bool,
@@ -684,8 +690,8 @@ pub(crate) struct PopgCli {
     pub block_size: Option<u64>,
     /// LD decay: pairwise r² within MAX_BP (default 100k), 1 kb bins
     #[arg(long = "ld-decay", value_name = "MAX_BP", num_args = 0..=1,
-          default_missing_value = "", value_parser = parse_optional_size)]
-    pub ld_decay: Option<String>,
+          default_missing_value = "", value_parser = parse_ld_decay)]
+    pub ld_decay: Option<u64>,
     /// Also write the per-pair LD table (PREFIX.ld)
     #[arg(long = "ld-pairs")]
     pub ld_pairs: bool,
@@ -752,10 +758,10 @@ pub(crate) struct PopgCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -871,10 +877,10 @@ pub(crate) struct ConvertCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -963,10 +969,10 @@ pub(crate) struct RenameCli {
     pub help: Option<bool>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<usize>,
+    pub threads: Option<reed::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<u64>,
+    pub memory: Option<reed::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]

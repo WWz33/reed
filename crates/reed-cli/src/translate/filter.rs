@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::cli::FilterCli;
 use crate::units::input_path;
+use reed::budget::ThreadBudget;
 
 /// Translates the shared site/threshold flags (`SiteFilterArgs`) into the
 /// typed spec — the same flags serve `reed filter` and `reed stats`
@@ -383,51 +384,32 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         })
         .transpose()?;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-    let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
+    let budget = ThreadBudget::from_cli(*threads, *memory);
     // -O v|z|b|u[level]: explicit output type, `-o` names the file (the
     // extension is only inferred when -O is absent).
     let mut output_bcf = None;
     let (output, compress_level, output_compressed) = match output_type.as_deref() {
         None => (out.as_deref().and_then(crate::units::output_path), *compress_level, None),
         Some(spec) => {
-            let (kind, level) = super::common::split_output_type(
+            // One `-O` parser for every subcommand (doc_v25 V25-06): the
+            // letter/level grammar and its 1-9 domain live in `params`.
+            let parsed = crate::params::parse_output_type(
                 spec,
                 "v, z, b or u with an optional 1-9 level, e.g. z6",
             )?;
-            // doc_v21 S15: an out-of-range level must be a usage error here,
-            // not a runtime "invalid compression level" from the writer (exit
-            // 1 with a doubled `io error:` prefix); `convert` already
-            // validated 1-9.
-            let level = if level.is_empty() {
-                *compress_level
-            } else {
-                let parsed = level
-                    .parse::<u8>()
-                    .map_err(|_| reed::Error::usage(format!("invalid -O level in {spec:?}")))?;
-                if !(1..=9).contains(&parsed) {
-                    return Err(reed::Error::usage(format!(
-                        "invalid -O level in {spec:?}: the level must be 1-9"
-                    )));
-                }
-                parsed
-            };
-            match kind {
-                "v" => (out.as_deref().and_then(crate::units::output_path), level, Some(false)),
-                "z" => (out.as_deref().and_then(crate::units::output_path), level, Some(true)),
-                "b" => {
-                    output_bcf = Some(level);
-                    (out.as_deref().and_then(crate::units::output_path), level, None)
+            let path = out.as_deref().and_then(crate::units::output_path);
+            match parsed.kind {
+                'v' => (path, parsed.level, Some(false)),
+                'z' => (path, parsed.level, Some(true)),
+                'b' => {
+                    output_bcf = parsed.bcf_level();
+                    (path, parsed.level, None)
                 }
                 // `-Ou`: BGZF level-0 blocks (htslib's uncompressed BCF).
-                "u" => {
-                    output_bcf = Some(0);
-                    (out.as_deref().and_then(crate::units::output_path), 0, None)
+                _ => {
+                    output_bcf = parsed.bcf_level();
+                    (path, 0, None)
                 }
-                other => return Err(reed::Error::usage(format!("unknown output type {other:?}"))),
             }
         }
     };
@@ -468,7 +450,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         }
     }
     let opts = reed::FilterOptions {
-        threads,
+        threads: budget.threads,
         output,
         write_index: reed::WriteIndex::parse(write_index.as_deref())?,
         compress_level,
@@ -481,11 +463,11 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
         output_compressed,
         output_bcf,
-        mem_bytes: memory.map(|m| m.saturating_mul(1 << 20)),
+        mem_bytes: memory.map(reed::budget::MemMiB::bytes),
         no_version: *no_version,
         no_command: cli.no_command,
     };
-    tracing::debug!(threads, strategy = ?strategy, "reed filter starting");
+    tracing::debug!(threads = budget.threads, strategy = ?strategy, "reed filter starting");
     let report = reed::run_filter(input_file.as_deref(), &spec, &opts)?;
     if verbosity.shows_summary() {
         eprint_report(&report);

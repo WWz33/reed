@@ -79,19 +79,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     let keep = super::common::parse_sample_keep(&args.samples, &sample_names)
         .map_err(reed::Error::usage)?;
 
-    let threads = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
-    let budget = ThreadBudget {
-        threads,
-        mem: args
-            .memory
-            .map_or_else(reed::budget::MemBudget::default_half_memory, |m| {
-                reed::budget::MemBudget::from_bytes(m.saturating_mul(1 << 20))
-            }),
-    };
+    let budget = ThreadBudget::from_cli(args.threads, args.memory);
 
     // doc_v20 S37: R13's reed-distance estimators join whatever rayon pool
     // is ambient, so `--threads` takes effect only through a scoped pool
@@ -100,9 +88,9 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     // `run_auxiliary`; unlike those, the estimators are unconditionally
     // parallel, so the pool is installed even for a single thread.
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
+        .num_threads(budget.threads)
         .build()
-        .map_err(|e| reed::Error::usage(format!("--threads {threads}: {e}")))?;
+        .map_err(|e| reed::Error::usage(format!("--threads {}: {e}", budget.threads)))?;
 
     let (x, ids) = reed::read_genotype_matrix(
         opened,

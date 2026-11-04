@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::budget::ThreadBudget;
 use reed::{
     ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions, Populations, run_convert,
     run_convert_opened,
@@ -53,29 +53,11 @@ fn parse_msa_region(text: &str) -> Result<MsaRegion, reed::Error> {
 ///
 /// An unsupported type letter or an out-of-range level.
 fn parse_vcf_output_type(spec: &str) -> Result<(bool, u8), reed::Error> {
-    let (kind, rest) =
-        super::common::split_output_type(spec, "v or z with an optional 1-9 level, e.g. z6")?;
-    match kind {
-        "v" if rest.is_empty() => Ok((false, 6)),
-        "z" => {
-            let level = if rest.is_empty() {
-                6
-            } else {
-                rest.parse::<u8>().map_err(|_| {
-                    reed::Error::usage(format!("invalid -O {spec:?}: the level must be 1-9"))
-                })?
-            };
-            if !(1..=9).contains(&level) {
-                return Err(reed::Error::usage(format!(
-                    "invalid -O {spec:?}: the level must be 1-9"
-                )));
-            }
-            Ok((true, level))
-        }
-        _ => Err(reed::Error::usage(
-            "hapmap→VCF supports -O v or -O z only (no BCF output)",
-        )),
-    }
+    crate::params::parse_text_output_type(
+        spec,
+        "v or z with an optional 1-9 level, e.g. z6",
+        "hapmap→VCF supports -O v or -O z only (no BCF output)",
+    )
 }
 
 /// Runs the hapmap→VCF reverse conversion (`reed convert --vcf`, doc_v13
@@ -155,19 +137,7 @@ fn run_vcf_cli(args: ConvertCli) -> Result<(), reed::Error> {
         ..ConvertRequest::default()
     };
 
-    let threads = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
-    let budget = ThreadBudget {
-        threads,
-        mem: args
-            .memory
-            .map_or_else(MemBudget::default_half_memory, |m| {
-                MemBudget::from_bytes(m.saturating_mul(1 << 20))
-            }),
-    };
+    let budget = ThreadBudget::from_cli(args.threads, args.memory);
 
     let input_file = crate::units::input_path(&args.input);
     let run_start = std::time::Instant::now();
@@ -384,19 +354,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         seed: 0,
     };
 
-    let threads = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
-    let budget = ThreadBudget {
-        threads,
-        mem: args
-            .memory
-            .map_or_else(MemBudget::default_half_memory, |m| {
-                MemBudget::from_bytes(m.saturating_mul(1 << 20))
-            }),
-    };
+    let budget = ThreadBudget::from_cli(args.threads, args.memory);
 
     let source = opened.take().expect("invariant: convert reads once");
     let run_start = std::time::Instant::now();

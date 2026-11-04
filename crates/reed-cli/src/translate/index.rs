@@ -52,11 +52,8 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
             index_path.display()
         )));
     }
-    let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
+    // The one available-parallelism fallback lives in ThreadBudget.
+    let threads = reed::budget::ThreadBudget::from_cli(threads, None).threads;
     tracing::debug!(
         flavor = flavor.suffix(),
         threads,
