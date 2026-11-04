@@ -114,7 +114,9 @@ impl GtTable {
                 .expect("invariant: INT8 is integer-typed");
             let mut counters = PolicyCounters::default();
             let mut token = [None; 2];
-            if let Ok(code) = decode_gt_text(&text, &locus, &policies, &mut counters, &mut token) {
+            // The table spans every allele an int8 pair can name (0..=127);
+            // each record's own bound is applied at lookup (doc_v25 V25-01).
+            if let Ok(code) = decode_gt_text(&text, &locus, 127, &policies, &mut counters, &mut token) {
                 entries[pair as usize] = GtEntry {
                     code,
                     triggers: pack_triggers(&counters),
@@ -135,34 +137,65 @@ impl GtTable {
 
     /// Decodes one int8 two-element genotype.
     ///
+    /// `n_allele` is the record's allele count (REF included, from the
+    /// shared-block header). The stored values are the BCF GT codes: `0`/`1`
+    /// are the missing allele (bare phasing bit), `>= 2` is
+    /// `(allele + 1) << 1 | phased` (htslib's `bcf_format_gt_v2`). An encoded
+    /// allele at or above `n_allele` is malformed input, refused before the
+    /// table lookup (doc_v25 V25-01).
+    ///
     /// # Errors
     ///
-    /// The entries' policies reject this genotype (`Reject`-style ploidy or
-    /// multiallelic policies).
+    /// [`IoError::MalformedRecord`] for an allele index beyond the record's
+    /// alleles; the entries' policies reject this genotype (`Reject`-style
+    /// ploidy or multiallelic policies).
     pub fn decode_pair<S: LocusSource>(
         &self,
         b0: u8,
         b1: u8,
         locus: &S,
+        n_allele: usize,
         counters: &mut PolicyCounters,
     ) -> Result<GtCode, IoError> {
+        for b in [b0, b1] {
+            let v = b as i8;
+            if v < 2 {
+                // 0/1: missing allele (bare phasing bit). Negatives are
+                // invalid encodings the table itself rejects (TRIG_ERROR).
+                continue;
+            }
+            let allele = usize::from((v as u8 >> 1) - 1);
+            if allele >= n_allele {
+                return Err(IoError::MalformedRecord {
+                    locus: locus.error_locus(),
+                    reason: format!(
+                        "GT allele index {allele} exceeds ALT count {}",
+                        n_allele.saturating_sub(1)
+                    ),
+                });
+            }
+        }
         let entry = self.entries[usize::from(b0) | (usize::from(b1) << 8)];
         if entry.triggers == TRIG_ERROR {
             // Recover the exact error (and locus) through the text path.
+            // The pair's bytes were domain-checked above, so the slow path
+            // can run unbounded (its errors here are syntax or policy).
             let mut text = Vec::new();
-            return self.decode_slow(value_type::INT8, &[b0, b1], locus, counters, &mut text);
+            return self.decode_slow(value_type::INT8, &[b0, b1], locus, u32::MAX, counters, &mut text);
         }
         apply_triggers(entry.triggers, counters);
         Ok(entry.code)
     }
 
     /// Decodes one sample's GT field of any integer encoding through the
-    /// text path (render, then parse).
+    /// text path (render, then parse). `n_alt` bounds the allele domain
+    /// (`u32::MAX` = unbounded; doc_v25 V25-01).
     fn decode_slow<S: LocusSource>(
         &self,
         ty: u8,
         data: &[u8],
         locus: &S,
+        n_alt: u32,
         counters: &mut PolicyCounters,
         text: &mut Vec<u8>,
     ) -> Result<GtCode, IoError> {
@@ -181,7 +214,7 @@ impl GtTable {
                 reason: reason.to_string(),
             })?;
         let mut token = [None; 2];
-        decode_gt_text(text, locus, &self.policies, counters, &mut token)
+        decode_gt_text(text, locus, n_alt, &self.policies, counters, &mut token)
     }
 }
 
@@ -311,16 +344,20 @@ pub fn decode_record_gt(
     let locus = (contig_name, pos1);
     let mut text = Vec::new();
     let stride = type_width(ty) * count;
+    // The record's allele bound (REF included → ALT count is one less):
+    // an allele index at or above it names an allele the record does not
+    // declare (doc_v25 V25-01).
+    let n_alt = u32::try_from(header.n_allele.saturating_sub(1)).unwrap_or(u32::MAX);
     if ty == value_type::INT8 && count == 2 {
         for s in 0..header.n_sample {
             let b = &record.indiv[start + s * 2..start + s * 2 + 2];
-            codes.push(table.decode_pair(b[0], b[1], &locus, counters)?);
+            codes.push(table.decode_pair(b[0], b[1], &locus, header.n_allele, counters)?);
         }
     } else {
         for s in 0..header.n_sample {
             let off = start + s * stride;
             let data = &record.indiv[off..off + stride];
-            codes.push(table.decode_slow(ty, data, &locus, counters, &mut text)?);
+            codes.push(table.decode_slow(ty, data, &locus, n_alt, counters, &mut text)?);
         }
     }
     Ok(true)
@@ -359,7 +396,9 @@ mod tests {
             let b0 = u8::try_from(pair & 0xFF).expect("invariant: low byte");
             let b1 = u8::try_from(pair >> 8).expect("invariant: high byte");
             let mut native_counters = PolicyCounters::default();
-            let got = table.decode_pair(b0, b1, &locus, &mut native_counters);
+            // The int8 domain: every allele a byte pair can name is legal,
+            // so the comparison exercises the table, not the record bound.
+            let got = table.decode_pair(b0, b1, &locus, 128, &mut native_counters);
             // The text path: render the same two bytes and decode.
             let mut rendered = Vec::new();
             fmt_gt(&mut rendered, value_type::INT8, 2, &[b0, b1], false)
@@ -369,6 +408,7 @@ mod tests {
             let want = decode_gt_text(
                 &rendered,
                 &locus,
+                127,
                 &policies(),
                 &mut text_counters,
                 &mut token,
@@ -386,5 +426,71 @@ mod tests {
                 (a, b) => panic!("pair {b0:#04x},{b1:#04x}: native {a:?} vs text {b:?}"),
             }
         }
+    }
+
+    /// doc_v25 V25-01 (F1): the BCF decode applies the same allele-domain
+    /// rule as the text scanner. A framed record naming allele 9 on a
+    /// single-ALT site must be refused at decode, not handed to consumers
+    /// (the phantom allele then reaches the `-Ob` re-encode as `(9+1)<<1`,
+    /// which htslib refuses to read back).
+    #[test]
+    fn decode_record_gt_rejects_alleles_beyond_the_record() {
+        use crate::bcf::{BcfDict, BcfEncoder, bcf_header_text, record_ref};
+
+        let header_text = b"##fileformat=VCFv4.2\n\
+            ##FILTER=<ID=PASS,Description=\"All\">\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n";
+        let header: noodles::vcf::Header = std::str::from_utf8(header_text)
+            .expect("invariant: utf8")
+            .parse()
+            .expect("invariant: header");
+        let dict_text = bcf_header_text(&header).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+
+        // Frame the record through the noodles encoder: it does not check
+        // the allele domain, which is exactly how such a record reaches reed.
+        let mut enc = BcfEncoder::new().expect("invariant: noodles");
+        enc.write_header(&header).expect("invariant: header");
+        let mut framed = Vec::new();
+        enc.encode_record(
+            &header,
+            b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\n",
+            &mut framed,
+        )
+        .expect("invariant: noodles accepts the out-of-domain pair");
+        let rec = record_ref(&framed).expect("invariant: framed");
+        let site = site_header(&rec).expect("invariant: site header");
+
+        let table = GtTable::new(GenotypePolicies {
+            ploidy: PloidyPolicy::HaploidAsHalfCall,
+            multiallelic: reed_core::genotype::MultiallelicPolicy::CollapseAlt,
+            ..GenotypePolicies::default()
+        });
+        let mut codes = Vec::new();
+        let mut counters = PolicyCounters::default();
+        let err = decode_record_gt(
+            &rec,
+            &site,
+            &GtQuery {
+                gt_key: format_key(&dict, b"GT"),
+                n_samples: 1,
+                contig_name: b"Chr01",
+                pos1: 100,
+            },
+            &table,
+            &mut codes,
+            &mut counters,
+        )
+        .expect_err("allele 9 on a single-ALT record must be refused at decode");
+        assert!(
+            matches!(err, IoError::MalformedRecord { .. }),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string().contains("exceeds ALT count 1"),
+            "unexpected error: {err}"
+        );
     }
 }

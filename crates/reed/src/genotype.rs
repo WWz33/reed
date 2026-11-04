@@ -37,7 +37,7 @@ impl GenotypeBlock {
 /// (`genotype_scan.rs`). The locus is built from whatever columns are
 /// present, with `pos1 = 0` when POS does not parse (the `parse_pos1`
 /// convention) — the whole line is not re-parsed just to name it.
-fn malformed_line(line: &[u8], reason: &'static str) -> EngineError {
+fn malformed_line(line: &[u8], reason: impl Into<String>) -> EngineError {
     let chrom_end = line.iter().position(|&b| b == b'\t').unwrap_or(line.len());
     let chrom = &line[..chrom_end];
     let pos_start = (chrom_end + 1).min(line.len());
@@ -54,7 +54,7 @@ fn malformed_line(line: &[u8], reason: &'static str) -> EngineError {
             contig_name: String::from_utf8_lossy(chrom).into_owned(),
             pos1,
         },
-        reason: reason.to_string(),
+        reason: reason.into(),
     })
 }
 
@@ -76,25 +76,38 @@ pub(crate) struct PcaJob {
 impl PcaJob {
     /// Parses the GT column of one sample into `0/1/2` or `NaN`.
     ///
-    /// Returns `None` when the genotype is not a diploid biallelic call
-    /// (missing, haploid, or an allele index beyond ALT).
-    pub(crate) fn dosage(raw: &[u8], n_alt: usize) -> Option<f64> {
+    /// Returns `Ok(None)` when the genotype is not a diploid biallelic call
+    /// (missing, haploid, polyploid). `Err` carries the allele index when
+    /// it names an allele beyond the record's ALT count: that is malformed
+    /// input, not missing data (doc_v25 V25-01) — the caller fails the run
+    /// like the scanner does.
+    pub(crate) fn dosage(raw: &[u8], n_alt: usize) -> Result<Option<f64>, u32> {
         let mut a = 0u32;
         let mut b = 0u32;
         let mut seen = 0usize;
         for token in raw.split(|&c| c == b'/' || c == b'|') {
             if seen >= 2 {
-                return None;
+                return Ok(None);
             }
             if token == b"." || token.is_empty() {
-                return None;
+                return Ok(None);
             }
             let mut value = 0u32;
             for &c in token {
                 if !c.is_ascii_digit() {
-                    return None;
+                    return Ok(None);
                 }
-                value = value.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
+                let Some(next) =
+                    value.checked_mul(10).and_then(|v| v.checked_add(u32::from(c - b'0')))
+                else {
+                    // An index that no longer fits u32 names no allele any
+                    // record declares; report it at the u32 ceiling.
+                    return Err(u32::MAX);
+                };
+                value = next;
+            }
+            if value as usize > n_alt {
+                return Err(value);
             }
             if seen == 0 {
                 a = value;
@@ -103,10 +116,10 @@ impl PcaJob {
             }
             seen += 1;
         }
-        if seen != 2 || a as usize > n_alt || b as usize > n_alt {
-            return None;
+        if seen != 2 {
+            return Ok(None);
         }
-        Some(f64::from(a + b))
+        Ok(Some(f64::from(a + b)))
     }
 }
 
@@ -171,7 +184,15 @@ impl ChunkJob for PcaJob {
                 // The GT is the first colon-separated field.
                 let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
                 let raw = &column[..colon];
-                scratch.values.push(PcaJob::dosage(raw, n_alt).unwrap_or(f64::NAN));
+                match PcaJob::dosage(raw, n_alt) {
+                    Ok(v) => scratch.values.push(v.unwrap_or(f64::NAN)),
+                    Err(allele) => {
+                        return Err(malformed_line(
+                            line,
+                            format!("GT allele index {allele} exceeds ALT count {n_alt}"),
+                        ))
+                    }
+                }
             }
             if scratch.values.is_empty() {
                 continue;
@@ -245,7 +266,15 @@ impl ChunkJob for PcaJob {
             }
             let column = &samples[begin..end];
             let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
-            scratch.values.push(PcaJob::dosage(&column[..colon], n_alt).unwrap_or(f64::NAN));
+            match PcaJob::dosage(&column[..colon], n_alt) {
+                Ok(v) => scratch.values.push(v.unwrap_or(f64::NAN)),
+                Err(allele) => {
+                    return Err(malformed_line(
+                        line,
+                        format!("GT allele index {allele} exceeds ALT count {n_alt}"),
+                    ))
+                }
+            }
         }
         let mut any_alt = false;
         for v in &scratch.values {
@@ -449,5 +478,52 @@ mod tests {
             err.to_string().contains("chr1:103"),
             "error must name the locus: {err}"
         );
+    }
+
+    /// doc_v25 V25-01 (F1): an allele index beyond the record's ALT count is
+    /// malformed input for PCA too, not missing data. `0/9` on a single-ALT
+    /// record used to become NaN and silently drop the sample (and a
+    /// haploid `9` dropped the whole site via the no-variation skip).
+    #[test]
+    fn v25_01_run_chunk_rejects_gt_allele_beyond_the_alt_count() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let body = b"chr1\t104\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\n";
+        let Err(err) = job.run_chunk(&chunk_bytes(), body, &mut scratch) else {
+            panic!("an out-of-domain GT allele must fail the chunk (doc_v25 V25-01)")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("chr1:104"), "error must name the locus: {msg}");
+        assert!(msg.contains("exceeds ALT count 1"), "{msg}");
+    }
+
+    /// doc_v25 V25-01 (F1): the haploid shape reaches the same refusal —
+    /// `GT 9` used to return `-1`-style missing (NaN) instead of an error.
+    #[test]
+    fn v25_01_run_chunk_rejects_haploid_gt_allele_beyond_the_alt_count() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let body = b"chr1\t105\t.\tA\tG\t50\tPASS\t.\tGT\t9\t0/1\n";
+        let Err(err) = job.run_chunk(&chunk_bytes(), body, &mut scratch) else {
+            panic!("a haploid out-of-domain GT allele must fail the chunk (doc_v25 V25-01)")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("chr1:105"), "error must name the locus: {msg}");
+        assert!(msg.contains("exceeds ALT count 1"), "{msg}");
+    }
+
+    /// doc_v25 V25-01 (F1): the seam path (a record spanning a chunk
+    /// boundary) rejects the same record as the body path.
+    #[test]
+    fn v25_01_run_seam_rejects_gt_allele_beyond_the_alt_count() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let line = b"chr1\t106\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1";
+        let Err(err) = job.run_seam(ChunkId(1), line, &mut scratch) else {
+            panic!("an out-of-domain GT allele must fail the seam (doc_v25 V25-01)")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("chr1:106"), "error must name the locus: {msg}");
+        assert!(msg.contains("exceeds ALT count 1"), "{msg}");
     }
 }

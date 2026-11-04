@@ -567,6 +567,42 @@ mod tests {
         dir
     }
 
+    /// doc_v25 V25-01 (F1): `reed pca` fails on a GT allele beyond the ALT
+    /// count instead of silently turning the sample into missing data —
+    /// `0/9` on a single-ALT record used to become NaN, and a file of such
+    /// records ran PCA on an empty matrix.
+    #[test]
+    fn v25_01_pca_rejects_out_of_domain_gt() {
+        let dir = temp_dir("v25-domain");
+        let mut text = String::from(
+            "##fileformat=VCFv4.3\n##contig=<ID=1,length=1000000>\n\
+             ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n",
+        );
+        text.push_str("1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\n");
+        text.push_str("1\t101\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\n");
+        let input = dir.join("in.vcf");
+        std::fs::write(&input, text).expect("invariant: fixture");
+        let request = PcaRequest {
+            pcs: 1,
+            prefix: dir.join("out").to_string_lossy().into_owned(),
+            ..PcaRequest::default()
+        };
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let Err(e) = run_pca(Some(&input), &request, &budget) else {
+            panic!("an out-of-domain GT allele must fail the run (doc_v25 V25-01)")
+        };
+        assert_eq!(e.kind(), crate::ErrorKind::Runtime, "{e}");
+        assert!(
+            e.to_string().contains("exceeds ALT count 1"),
+            "unexpected error: {e}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// doc_v20 R10: the stream solver mean-imputes; `--missing pairwise`
     /// asked for with it explicitly must be a usage error, not a silent
     /// downgrade to mean imputation.

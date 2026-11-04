@@ -940,8 +940,18 @@ impl ConvertJob {
     }
 
     /// Parses every sample's GT tokens into `scratch.gts` (the D13-7 view).
+    /// An allele index above the record's ALT count marks the genotype bad
+    /// (doc_v25 V25-01): every target then counts the record as malformed —
+    /// the `--012` path used to code a haploid out-of-domain call as `-1`
+    /// silently.
     fn parse_gts(&self, lr: &LineRef<'_>, scratch: &mut ConvertScratch) {
         let samples = lr.samples_text();
+        // The record's ALT count (0 for `ALT=.`): legal indices are 0..=n_alt.
+        let n_alt: u32 = if lr.alts() == b"." {
+            0
+        } else {
+            u32::try_from(memchr::memchr_iter(b',', lr.alts()).count() + 1).unwrap_or(u32::MAX)
+        };
         scratch.gts.clear();
         scratch.gts.resize(self.n_samples, GtSlots::default());
         let mut start = 0_usize;
@@ -969,8 +979,8 @@ impl ConvertJob {
                         .ok()
                         .and_then(|t| t.parse::<u32>().ok())
                     {
-                        Some(idx) => gt.slots[tokens] = Some(idx),
-                        None => gt.bad = true,
+                        Some(idx) if idx <= n_alt => gt.slots[tokens] = Some(idx),
+                        _ => gt.bad = true,
                     }
                 } else {
                     gt.bad = true;

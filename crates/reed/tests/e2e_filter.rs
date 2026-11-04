@@ -737,7 +737,7 @@ fn relaxed_policy_counts_half_calls_and_collapsed_alleles() {
     let body = format!(
         "{HEADER}\
 Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1:30:99\t0/. :30:99\t0/0:30:99\t0/0:30:99\n\
-Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30:99\t0/0:30:99\t0/0:30:99\n"
+Chr01\t2\t.\tA\tG,T\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30:99\t0/0:30:99\t0/0:30:99\n"
     )
     .replace("0/. :", "0/.:");
     let dir = std::env::temp_dir().join(format!("reed-policy-relaxed-{}", std::process::id()));
@@ -748,7 +748,10 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
     let spec = FilterSpec {
         policy: PolicyRules {
             ploidy: PloidyPolicy::AllowHaploid,
-            ..PolicyRules::default()
+            // The ALT=G,T record must pass the biallelic gate (doc_v25
+            // V25-01: an allele index >= 2 now requires the record to
+            // declare that allele).
+            multiallelic: reed_filter::spec::MultiallelicPolicy::Allow,
         },
         ..FilterSpec::default()
     };
@@ -771,6 +774,46 @@ Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:30
         text.contains("\t1/2:30:99"),
         "multi-allelic text preserved: {text}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-01 (F1): a GT allele index beyond the record's ALT count is
+/// malformed input on both decode paths. The filter decodes under
+/// `CollapseAlt`, so `0/9` on a biallelic record used to decode as a plain
+/// ALT call, and the `-Ob` encoder wrote `(9+1)<<1` — codes htslib refuses
+/// to read back.
+#[test]
+fn v25_01_filter_rejects_out_of_domain_gt() {
+    let body = format!(
+        "{HEADER}\
+Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t0/9:30:99\t0/1:30:99\t0/0:30:99\t0/0:30:99\n"
+    );
+    let dir = std::env::temp_dir().join(format!("reed-v25-domain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
+    // Text path: the scanner must refuse the record.
+    let out = dir.join("text.vcf.gz");
+    let err = run_filter(Some(&path), &FilterSpec::default(), &options(None, &out))
+        .expect_err("an out-of-domain GT allele must fail the run (doc_v25 V25-01)");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("exceeds ALT count 1"),
+        "unexpected error: {msg}"
+    );
+    assert!(msg.contains("Chr01:1"), "error must name the locus: {msg}");
+    // BCF output path: the encoder must refuse it too (no corrupt file).
+    let out_bcf = dir.join("out.bcf");
+    let mut opts_bcf = options(None, &out_bcf);
+    opts_bcf.output_bcf = Some(6);
+    let err = run_filter(Some(&path), &FilterSpec::default(), &opts_bcf)
+        .expect_err("the -Ob encoder must refuse the out-of-domain allele");
+    assert!(
+        err.to_string().contains("exceeds ALT count 1"),
+        "unexpected error: {err}"
+    );
+    // The writer has already opened the output when the decode fails, so a
+    // partial file may remain; atomic cleanup is R13 (v26), not this round.
     let _ = std::fs::remove_dir_all(&dir);
 }
 

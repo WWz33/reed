@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 4c436c7b10ff7a761b6c24f1ff67ae275d4fb780c7f5c4a2a27417b97757bef2 # shrinks to samples = ["./.:.:."], format = "DP:GQ"
+cc b96b927bee6e9e1d10b39e3d7bc361cf92194483d607d3edb83b9898ac1cddec # shrinks to samples = ["./.:2:."], format = "GQ:GT"

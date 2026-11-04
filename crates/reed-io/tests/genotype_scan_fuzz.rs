@@ -27,8 +27,9 @@ fn policies() -> GenotypePolicies {
 }
 
 /// Text-level reference for one GT subfield: `None` = the text is not a
-/// decodable GT (the scanner must error).
-fn reference_gt(gt: &str) -> Option<(GtCode, [Option<u16>; 2])> {
+/// decodable GT (the scanner must error). `n_alt` is the record's ALT count:
+/// an allele index above it is malformed input (doc_v25 V25-01).
+fn reference_gt(gt: &str, n_alt: u16) -> Option<(GtCode, [Option<u16>; 2])> {
     if gt.is_empty() {
         return None;
     }
@@ -56,6 +57,9 @@ fn reference_gt(gt: &str) -> Option<(GtCode, [Option<u16>; 2])> {
             None
         } else {
             let value: u16 = token.parse().ok()?;
+            if value > n_alt {
+                return None; // allele beyond the record's ALT count
+            }
             Some(value)
         };
         n += 1;
@@ -130,12 +134,15 @@ proptest! {
         let out = scanner.scan(&line, &site, &mut counters);
 
         let gt_key_at: Option<usize> = format.split(':').position(|k| k == "GT");
+        // The record declares one ALT (`A G` in the line above), so
+        // reference alleles above 1 are out of domain (doc_v25 V25-01).
+        const N_ALT: u16 = 1;
         // The reference decides whether the record is decodable at all.
         let mut expected_ok = true;
         for sample in &samples {
             let subfields: Vec<&str> = sample.split(':').collect();
             let gt = gt_key_at.and_then(|i| subfields.get(i)).copied().unwrap_or(".");
-            if reference_gt(gt).is_none() {
+            if reference_gt(gt, N_ALT).is_none() {
                 expected_ok = false;
             }
         }
@@ -154,7 +161,7 @@ proptest! {
                         prop_assert_eq!(&alleles[2 * i..2 * i + 2], &[None, None]);
                         continue;
                     };
-                    let (code, slots) = reference_gt(gt).expect("reference decodes");
+                    let (code, slots) = reference_gt(gt, N_ALT).expect("reference decodes");
                     prop_assert_eq!(out.codes[i].state(), code.state(), "sample {} state", i);
                     prop_assert_eq!(out.codes[i].is_haploid(), code.is_haploid(), "sample {} ploidy", i);
                     prop_assert_eq!(&alleles[2 * i..2 * i + 2], &slots[..], "sample {} alleles", i);
@@ -206,8 +213,12 @@ fn reference_and_scanner_agree_on_the_documented_edge_cases() {
         ("10/11", 0b0101),
         ("1|0", 0b0001),
     ];
+    // Twelve ALTs keep `10/11` inside the allele domain (doc_v25 V25-01);
+    // the collapse assertion below is about allele indices, not ALT count.
+    let alts = "A,A,A,A,A,A,A,A,A,A,A,A";
+    const N_ALT: u16 = 12;
     let line_text = format!(
-        "c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t{}\n",
+        "c\t1\t.\tA\t{alts}\t.\tPASS\t.\tGT\t{}\n",
         cases.iter().map(|(g, _)| *g).collect::<Vec<_>>().join("\t")
     );
     let line = LineRef::parse(line_text.as_bytes()).expect("invariant: 10 columns");
@@ -220,7 +231,7 @@ fn reference_and_scanner_agree_on_the_documented_edge_cases() {
     for (i, (gt, expected)) in cases.iter().enumerate() {
         assert_eq!(out.codes[i].state(), *expected, "GT {gt}");
         // The text reference agrees with the pinned expectation.
-        let (code, _) = reference_gt(gt).expect("invariant: reference decodes");
+        let (code, _) = reference_gt(gt, N_ALT).expect("invariant: reference decodes");
         assert_eq!(code.state(), *expected, "reference GT {gt}");
     }
     assert_eq!(

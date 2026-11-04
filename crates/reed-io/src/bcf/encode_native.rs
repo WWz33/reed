@@ -161,7 +161,7 @@ impl NativeEncoder {
         self.shared.clear();
         self.indiv.clear();
         self.encode_shared(line, site, edit)?;
-        self.encode_indiv(line, n_samples_in, edit)?;
+        self.encode_indiv(line, site, n_samples_in, edit)?;
         self.finish(out)?;
         Ok(())
     }
@@ -202,7 +202,7 @@ impl NativeEncoder {
         self.encode_shared_bcf(
             rec, dict, edit, in_chrom, pos0, rlen, qual, n_allele, n_info,
         )?;
-        self.encode_indiv_bcf(rec, dict, edit, n_fmt, n_sample_in)?;
+        self.encode_indiv_bcf(rec, dict, edit, n_fmt, n_sample_in, n_allele)?;
         self.finish(out)?;
         Ok(())
     }
@@ -425,6 +425,7 @@ impl NativeEncoder {
     fn encode_indiv(
         &mut self,
         lr: &LineRef<'_>,
+        site: &SiteView<'_>,
         n_samples_in: usize,
         edit: &EditPlan<'_>,
     ) -> Result<(), IoError> {
@@ -479,7 +480,7 @@ impl NativeEncoder {
                     .unwrap_or(value_type::CHAR);
                 encode_typed_int(&mut self.indiv, i64::from(idx));
                 if Some(k) == gt_index {
-                    self.encode_gt_column(samples, k, n_keys, n_samples_in, edit);
+                    self.encode_gt_column(samples, k, n_keys, n_samples_in, edit, site)?;
                 } else {
                     match ty {
                         value_type::FLOAT => {
@@ -514,6 +515,10 @@ impl NativeEncoder {
         }
     }
 
+    /// The GT column of the text source. `site` names the record for the
+    /// allele-domain error: an index above the record's ALT count is
+    /// malformed input and must not be encoded as `(a+1)<<1` codes htslib
+    /// refuses to read back (doc_v25 V25-01).
     fn encode_gt_column(
         &mut self,
         samples: &[u8],
@@ -521,7 +526,9 @@ impl NativeEncoder {
         n_keys: usize,
         n_samples_in: usize,
         edit: &EditPlan<'_>,
-    ) {
+        site: &SiteView<'_>,
+    ) -> Result<(), IoError> {
+        let n_alt = site.n_alt();
         let mut max_ploidy = 0_usize;
         let mut max_allele = 0_i64;
         for s in 0..n_samples_in {
@@ -536,6 +543,12 @@ impl NativeEncoder {
             let (ploidy, allele) = gt_shape(Self::cell(&self.cells, samples, s, k, n_keys));
             max_ploidy = max_ploidy.max(ploidy);
             max_allele = max_allele.max(allele);
+        }
+        if max_allele > i64::from(n_alt) {
+            return Err(IoError::MalformedRecord {
+                locus: site.locus(),
+                reason: format!("GT allele index {max_allele} exceeds ALT count {n_alt}"),
+            });
         }
         let max_ploidy = max_ploidy.max(1);
         let (ty, width) = gt_width(max_allele);
@@ -566,6 +579,7 @@ impl NativeEncoder {
                 );
             }
         }
+        Ok(())
     }
 
     fn encode_int_column(
@@ -856,6 +870,7 @@ impl NativeEncoder {
         edit: &EditPlan<'_>,
         n_fmt: usize,
         n_sample_in: usize,
+        n_allele: usize,
     ) -> Result<(), IoError> {
         let indiv = rec.indiv;
         let mut ci = Cursor::new(indiv);
@@ -882,7 +897,7 @@ impl NativeEncoder {
             let width = type_width(ty);
             let payload = &indiv[start..start + width * count * n_sample_in];
             if name == b"GT" {
-                self.encode_gt_column_bcf(payload, ty, count, n_sample_in, edit)?;
+                self.encode_gt_column_bcf(payload, ty, count, n_sample_in, edit, n_allele)?;
             } else {
                 encode_size(&mut self.indiv, count, ty);
                 if edit.keep_samples.is_none() {
@@ -907,7 +922,9 @@ impl NativeEncoder {
 
     /// The GT column of a BCF source record: codes copy through (the width
     /// follows the largest allele, as the text path's does), masked samples
-    /// become two missing alleles, dropped samples are skipped.
+    /// become two missing alleles, dropped samples are skipped. An allele
+    /// at or above the record's `n_allele` is refused instead of copied as
+    /// `(a+1)<<1` (doc_v25 V25-01).
     fn encode_gt_column_bcf(
         &mut self,
         payload: &[u8],
@@ -915,6 +932,7 @@ impl NativeEncoder {
         count: usize,
         n_sample_in: usize,
         edit: &EditPlan<'_>,
+        n_allele: usize,
     ) -> Result<(), IoError> {
         let width = type_width(ty);
         if width == 0 || !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
@@ -947,6 +965,18 @@ impl NativeEncoder {
                 }
             }
             max_ploidy = max_ploidy.max(ploidy);
+        }
+        if max_allele >= n_allele as i64 {
+            return Err(IoError::MalformedRecord {
+                locus: Locus {
+                    contig_name: "<bcf-encode>".into(),
+                    pos1: 0,
+                },
+                reason: format!(
+                    "GT allele index {max_allele} exceeds ALT count {}",
+                    n_allele.saturating_sub(1)
+                ),
+            });
         }
         let count_out = max_ploidy.max(1);
         let (ty_out, width_out) = gt_width(max_allele);
@@ -1517,6 +1547,64 @@ mod tests {
         );
     }
 
+    /// doc_v25 V25-01 (F1): the text->BCF encoder refuses a GT allele beyond
+    /// the record's ALT count instead of writing `(a+1)<<1` codes htslib
+    /// cannot read back.
+    #[test]
+    fn encode_text_rejects_gt_alleles_beyond_the_alt_count() {
+        let line =
+            b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9\tGT\t0/9\t0/1\t0/0\t0/0\n";
+        let lr = LineRef::parse(line).expect("invariant: line");
+        let site = SiteView::parse(&lr).expect("invariant: site");
+        let mut enc = NativeEncoder::new(&header()).expect("invariant: encoder");
+        let mut out = Vec::new();
+        let err = enc
+            .encode_text(&lr, &site, 4, &EditPlan::default(), &mut out)
+            .expect_err("allele 9 on a single-ALT record must be refused");
+        assert!(
+            matches!(err, IoError::MalformedRecord { .. }),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string().contains("exceeds ALT count 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// doc_v25 V25-01 (F1): the BCF->BCF re-encode refuses the same record —
+    /// a framed source naming allele 9 on a single-ALT site must not copy
+    /// through as `(9+1)<<1`.
+    #[test]
+    fn encode_bcf_rejects_gt_alleles_beyond_the_alt_count() {
+        // Frame through the noodles encoder (it does not domain-check),
+        // which is exactly how such a record reaches the re-encode path.
+        let mut enc = BcfEncoder::new().expect("invariant: noodles");
+        enc.write_header(&header()).expect("invariant: header");
+        let mut framed = Vec::new();
+        enc.encode_record(
+            &header(),
+            b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9\tGT\t0/9\t0/1\t0/0\t0/0\n",
+            &mut framed,
+        )
+        .expect("invariant: noodles accepts the out-of-domain pair");
+        let rec = record_ref(&framed).expect("invariant: framed");
+        let dict_text = bcf_header_text(&header()).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut enc = NativeEncoder::new(&header()).expect("invariant: encoder");
+        let mut out = Vec::new();
+        let err = enc
+            .encode_bcf(&rec, &dict, &EditPlan::default(), &mut out)
+            .expect_err("allele 9 on a single-ALT record must be refused");
+        assert!(
+            matches!(err, IoError::MalformedRecord { .. }),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string().contains("exceeds ALT count 1"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn gt_codes_follow_the_htslib_parser() {
         let cases: &[(&[u8], &[i32])] = &[
@@ -1734,7 +1822,7 @@ mod tests {
             401
         );
         assert_eq!(
-            rlen_of(b"Chr01\t100\t.\tA\t.\t50\tPASS\tEND=500\tGT\t0/1\n"),
+            rlen_of(b"Chr01\t100\t.\tA\t.\t50\tPASS\tEND=500\tGT\t0/0\n"),
             401
         );
         assert_eq!(
@@ -1795,7 +1883,18 @@ mod tests {
             (32767, value_type::INT32, 65536),
         ];
         for &(allele, want_ty, want_code) in cases {
-            let line = format!("Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t{allele}/{allele}\n");
+            // The ALT list declares every index the GT names (doc_v25
+            // V25-01): the width test is about the encoded value domain,
+            // not about out-of-domain alleles sneaking through.
+            let mut alts = String::with_capacity(2 * allele as usize);
+            for i in 1..=allele {
+                if i > 1 {
+                    alts.push(',');
+                }
+                use std::fmt::Write as _;
+                write!(alts, "A{i}").expect("invariant: writing to a String");
+            }
+            let line = format!("Chr01\t100\t.\tA\t{alts}\t50\tPASS\t.\tGT\t{allele}/{allele}\n");
             let lr = LineRef::parse(line.as_bytes()).expect("invariant: 10 columns");
             let site = SiteView::parse(&lr).expect("invariant: site");
             let mut out = Vec::new();

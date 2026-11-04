@@ -39,12 +39,21 @@ fn make_fixture(dir: &str) -> PathBuf {
             1000 + i * 7
         );
         for s in 0..8 {
-            let gt = match (i + s) % 5 {
-                0 => "0/0",
-                1 => "0/1",
-                2 => "1/1",
-                3 => "./.",
-                _ => "1|0",
+            // `ALT='.'` declares no ALT allele: only REF and missing calls
+            // exist there (doc_v25 V25-01 rejects an allele-1 GT on it).
+            let gt = if alt == "." {
+                match (i + s) % 2 {
+                    0 => "0/0",
+                    _ => "./.",
+                }
+            } else {
+                match (i + s) % 5 {
+                    0 => "0/0",
+                    1 => "0/1",
+                    2 => "1/1",
+                    3 => "./.",
+                    _ => "1|0",
+                }
             };
             let _ = write!(text, "\t{gt}");
         }

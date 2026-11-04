@@ -343,6 +343,37 @@ fn count_matrix_matches_vcftools_and_flags_half_calls() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v25 V25-01 (F1): convert counts a GT allele beyond the ALT count as
+/// malformed on every target (the B13-9 skip path). The `--012` target
+/// used to code a *haploid* out-of-domain call (`GT 9`) as `-1` silently —
+/// only the diploid shape reached the malformed counter.
+#[test]
+fn v25_01_count_matrix_counts_out_of_domain_gt_as_malformed() {
+    let dir = fixture_dir("v25-012");
+    let text = "\
+##fileformat=VCFv4.2\n\
+##contig=<ID=chr1,length=100>\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t./.\n\
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t9\t0/1\t0/0\t0/0\n\
+chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\t0/0\t0/0\n";
+    let vcf = write_fixture(&dir, "in.vcf", text);
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::CountMatrix],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    let report = run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let counters = report.counters.expect("counters");
+    assert_eq!(counters.total_records, 3);
+    assert_eq!(counters.malformed, 2, "the haploid 9 and the diploid 0/9");
+    // Only chr1:1 survives (`accepted` is the phylo-stream counter; the
+    // count-matrix target's evidence is the written positions).
+    assert_eq!(read(&dir.join("out.012.pos")), "chr1\t1\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The hapmap layout: 11 fixed columns, declared REF/ALT alleles, IUPAC
 /// cells restricted to TASSEL's diploid alphabet.
 #[test]
