@@ -81,6 +81,7 @@ mod filtered;
 mod index;
 mod input;
 mod rename;
+mod spill;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).

@@ -243,20 +243,18 @@ pub(crate) struct HmpPartial {
 #[derive(Debug)]
 pub(crate) enum RowsBlob {
     Memory(Vec<u8>),
-    Spilled { path: PathBuf, len: u64 },
+    /// The rows past the memory threshold, in a [`TempSpill`] that removes
+    /// the file on drop (doc_v25 V25-09: the same O_EXCL machinery as the
+    /// stdin replay, so a pre-planted symlink cannot redirect the spill).
+    Spilled {
+        spill: crate::spill::TempSpill,
+        len: u64,
+    },
 }
 
 impl Default for RowsBlob {
     fn default() -> Self {
         Self::Memory(Vec::new())
-    }
-}
-
-impl Drop for RowsBlob {
-    fn drop(&mut self) {
-        if let Self::Spilled { path, .. } = self {
-            let _ = std::fs::remove_file(&*path);
-        }
     }
 }
 
@@ -278,10 +276,10 @@ impl RowsBlob {
         rows: &mut Vec<u8>,
         threshold: usize,
     ) -> Result<(), EngineError> {
-        if let Self::Spilled { path, len } = self {
+        if let Self::Spilled { spill, len } = self {
             let mut file = OpenOptions::new()
                 .append(true)
-                .open(&*path)
+                .open(spill.path())
                 .map_err(EngineError::Io)?;
             file.write_all(rows).map_err(EngineError::Io)?;
             *len = len.saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
@@ -289,22 +287,23 @@ impl RowsBlob {
         }
         // A `Drop` type cannot be destructured by move: fill the buffer,
         // then flip the variant once the borrow has ended.
-        let mut spilled: Option<(PathBuf, u64)> = None;
+        let mut spilled: Option<(crate::spill::TempSpill, u64)> = None;
         if let Self::Memory(buf) = self {
             if buf.len() + rows.len() <= threshold {
                 buf.append(rows);
                 return Ok(());
             }
             buf.append(rows);
-            let path = spill_path();
-            let mut file = File::create(&path).map_err(EngineError::Io)?;
+            let (mut file, spill) =
+                crate::spill::TempSpill::create(None, "convert", "spill")
+                    .map_err(EngineError::Io)?;
             file.write_all(buf).map_err(EngineError::Io)?;
             file.flush().map_err(EngineError::Io)?;
             let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
-            spilled = Some((path, len));
+            spilled = Some((spill, len));
         }
-        if let Some((path, len)) = spilled {
-            *self = Self::Spilled { path, len };
+        if let Some((spill, len)) = spilled {
+            *self = Self::Spilled { spill, len };
         }
         Ok(())
     }
@@ -317,8 +316,9 @@ impl RowsBlob {
     ) -> Result<(), EngineError> {
         match self {
             Self::Memory(bytes) => f(bytes).map_err(EngineError::Io),
-            Self::Spilled { path, .. } => {
-                let mut src = std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?);
+            Self::Spilled { spill, .. } => {
+                let mut src =
+                    std::io::BufReader::new(File::open(spill.path()).map_err(EngineError::Io)?);
                 let mut buf = vec![0_u8; 64 << 10];
                 loop {
                     let n = src.read(&mut buf).map_err(EngineError::Io)?;
@@ -343,19 +343,20 @@ impl RowsBlob {
     /// Forces the in-memory buffer to a spill file (no-op when empty or
     /// already spilled).
     pub(crate) fn spill_now(&mut self) -> Result<(), EngineError> {
-        let mut spilled: Option<(PathBuf, u64)> = None;
+        let mut spilled: Option<(crate::spill::TempSpill, u64)> = None;
         if let Self::Memory(buf) = self
             && !buf.is_empty()
         {
-            let path = spill_path();
-            let mut file = File::create(&path).map_err(EngineError::Io)?;
+            let (mut file, spill) =
+                crate::spill::TempSpill::create(None, "convert", "spill")
+                    .map_err(EngineError::Io)?;
             file.write_all(buf).map_err(EngineError::Io)?;
             file.flush().map_err(EngineError::Io)?;
             let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
-            spilled = Some((path, len));
+            spilled = Some((spill, len));
         }
-        if let Some((path, len)) = spilled {
-            *self = Self::Spilled { path, len };
+        if let Some((spill, len)) = spilled {
+            *self = Self::Spilled { spill, len };
         }
         Ok(())
     }
@@ -364,9 +365,9 @@ impl RowsBlob {
     pub(crate) fn write_to(&self, out: &mut impl std::io::Write) -> Result<(), EngineError> {
         match self {
             Self::Memory(bytes) => out.write_all(bytes).map_err(EngineError::Io),
-            Self::Spilled { path, len } => {
+            Self::Spilled { spill, len } => {
                 let mut src =
-                    std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?);
+                    std::io::BufReader::new(File::open(spill.path()).map_err(EngineError::Io)?);
                 let copied = std::io::copy(&mut src, out).map_err(EngineError::Io)?;
                 debug_assert_eq!(copied, *len, "invariant: the spill length tracks writes");
                 Ok(())
@@ -375,13 +376,6 @@ impl RowsBlob {
     }
 }
 
-/// A unique per-process temp path for one spilled blob (`TMPDIR` is
-/// respected through `std::env::temp_dir`).
-fn spill_path() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("reed-convert-{}-{n}.spill", std::process::id()))
-}
 
 /// The MSA sites, one frame stream per contig run (the `runs` merge rule is
 /// preserved: a run continues while the contig does not change). Each frame
@@ -409,8 +403,10 @@ impl<'a> MsaFrameReader<'a> {
     pub(crate) fn open(blob: &'a RowsBlob, n_samples: usize) -> Result<Self, EngineError> {
         let source = match blob {
             RowsBlob::Memory(bytes) => MsaFrameSource::Memory { bytes, cursor: 0 },
-            RowsBlob::Spilled { path, .. } => MsaFrameSource::Spilled {
-                file: std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?),
+            RowsBlob::Spilled { spill, .. } => MsaFrameSource::Spilled {
+                file: std::io::BufReader::new(
+                    File::open(spill.path()).map_err(EngineError::Io)?,
+                ),
             },
         };
         Ok(Self { source, n_samples })
@@ -1995,13 +1991,16 @@ mod spill_tests {
 
     fn spill_path_of(blob: &RowsBlob) -> PathBuf {
         match blob {
-            RowsBlob::Spilled { path, .. } => path.clone(),
+            RowsBlob::Spilled { spill, .. } => spill.path().to_path_buf(),
             RowsBlob::Memory(_) => panic!("expected a spilled blob"),
         }
     }
 
     #[test]
     fn rows_blob_spills_and_cleans_up() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut blob = RowsBlob::default();
         let mut first = b"aaaa".to_vec();
         blob.append(&mut first, 8).expect("append");
@@ -2023,14 +2022,21 @@ mod spill_tests {
 
     #[test]
     fn write_hapmap_streams_a_spilled_blob() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("reed-convert-spill-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
         let row: &[u8] = b"chr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
-        let spill = dir.join("rows.spill");
-        std::fs::write(&spill, row).expect("invariant: spill file");
+        // A real TempSpill, so the drop path is the production one.
+        let (mut file, spill) =
+            crate::spill::TempSpill::create(Some(&dir), "convert", "spill")
+                .expect("invariant: spill file");
+        file.write_all(row).expect("invariant: spill write");
+        let spill_path = spill.path().to_path_buf();
         let rows = RowsBlob::Spilled {
-            path: spill.clone(),
+            spill,
             len: row.len() as u64,
         };
         let names = vec!["s0".to_string()];
@@ -2039,12 +2045,18 @@ mod spill_tests {
         let expected = "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\nchr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
         assert_eq!(text, expected);
         drop(rows);
-        assert!(!spill.exists(), "the spill file must be removed on drop");
+        assert!(
+            !spill_path.exists(),
+            "the spill file must be removed on drop"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rows_blob_visit_sees_the_whole_stream() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut blob = RowsBlob::default();
         let mut head = vec![1_u8, 2, 255];
         blob.append(&mut head, 2).expect("append"); // 3 > 2: spills at once
@@ -2062,15 +2074,20 @@ mod spill_tests {
 
     #[test]
     fn write_count_matrix_streams_spilled_cells() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("reed-convert-cells-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
-        let cells_path = dir.join("cells.spill");
         let raw: Vec<u8> = vec![1, 2, 0xFF, 0]; // 0/1, 1/1, ./., 0/0
-        std::fs::write(&cells_path, &raw).expect("invariant: spill file");
+        let (mut cell_file, cells_spill) =
+            crate::spill::TempSpill::create(Some(&dir), "convert", "spill")
+                .expect("invariant: spill file");
+        cell_file.write_all(&raw).expect("invariant: spill write");
         let count = SpilledCount {
             cells: vec![RowsBlob::Spilled {
-                path: cells_path,
+                spill: cells_spill,
                 len: raw.len() as u64,
             }],
             pos: RowsBlob::Memory(b"chr1\t1\nchr1\t2\nchr1\t3\nchr1\t4\n".to_vec()),
