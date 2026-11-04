@@ -737,6 +737,126 @@ fn convert_sfs_equals_stats_sfs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A BGZF stream with one member per call, so a test can place a line on a
+/// chunk boundary. `deflate_block` is deterministic, which is what makes the
+/// boundary placement below predictable.
+fn push_block(
+    deflater: &mut reed_io::bgzf::deflate::Deflater,
+    out: &mut Vec<u8>,
+    bytes: &[u8],
+) -> u64 {
+    let before = out.len();
+    deflater
+        .deflate_block(bytes, out)
+        .expect("invariant: the block fits");
+    (out.len() - before) as u64
+}
+
+/// A two-sample `--sfs` fixture whose second chunk starts with `blank`
+/// (doc_v25 V25-03).
+///
+/// Chunk boundaries follow the input bytes: a chunk is whole BGZF members up
+/// to the 1 MiB compressed target. Filling chunk 0 until the next record
+/// block would cross that target, then emitting `blank` as its own member,
+/// makes the engine's seam line exactly `blank` (chunk 1's head fragment).
+fn seam_blank_vcf(blank: Option<&[u8]>) -> Vec<u8> {
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let mut deflater =
+        reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
+    let mut out = Vec::new();
+    let mut total = push_block(&mut deflater, &mut out, header.as_bytes());
+    let mut pos = 1_u64;
+    while total < reed_io::chunk::CHUNK_TARGET_COMPRESSED {
+        let record = format!("chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n");
+        total += push_block(&mut deflater, &mut out, record.as_bytes());
+        pos += 1;
+    }
+    if let Some(blank) = blank {
+        push_block(&mut deflater, &mut out, blank);
+    }
+    for _ in 0..3 {
+        let record = format!("chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n");
+        push_block(&mut deflater, &mut out, record.as_bytes());
+        pos += 1;
+    }
+    out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+    out
+}
+
+/// Runs the two-sample SFS target and returns the spectra bytes.
+fn sfs_spectra(dir: &Path, input: &Path, tag: &str) -> Vec<u8> {
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Sfs {
+            request: SfsRequest {
+                // Two samples = four chromosomes under `Populations::All`.
+                projections: vec![4],
+                folded: false,
+            },
+            int_dtype: false,
+        }],
+        prefix: dir.join(tag),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(input), &request, &budget()).expect("convert --sfs");
+    read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs"))).into_bytes()
+}
+
+/// A blank line straddling a chunk seam reached the statistics job as the
+/// seam record `"\n"`: `line_is_sane` called it sane (the blanket-true
+/// branch), then `StatsJob::run_seam` rejected it as fewer than eight
+/// columns, failing `convert --sfs` for one chunk layout only
+/// (doc_v25 V25-03, F3).
+#[test]
+fn v25_03_convert_sfs_skips_a_blank_line_at_a_chunk_seam() {
+    for (tag, blank) in [("lf", b"\n".as_slice()), ("crlf", b"\r\n")] {
+        let dir = fixture_dir(&format!("seam-blank-{tag}"));
+        let with = dir.join("with.vcf.gz");
+        std::fs::write(&with, seam_blank_vcf(Some(blank))).expect("invariant: fixture");
+        let without = dir.join("without.vcf.gz");
+        std::fs::write(&without, seam_blank_vcf(None)).expect("invariant: fixture");
+        let got = sfs_spectra(&dir, &with, "with");
+        let want = sfs_spectra(&dir, &without, "without");
+        assert_eq!(got, want, "{tag}: the blank line changed the spectrum");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A CRLF blank line (`"\r"` after the body split) is not a record: the SFS
+/// body path skips it instead of handing it to the statistics job, which
+/// used to fail the run (doc_v25 V25-03).
+#[test]
+fn v25_03_convert_sfs_skips_a_crlf_blank_line_in_the_body() {
+    let dir = fixture_dir("crlf-blank");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let clean_body = "\
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+";
+    // The same three records with a CRLF blank after the first one.
+    let blanked_body = "\
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\r\n\r\n\
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+";
+    let clean = write_fixture(&dir, "clean.vcf", &format!("{header}{clean_body}"));
+    let blanked = write_fixture(&dir, "blank.vcf", &format!("{header}{blanked_body}"));
+    let want = sfs_spectra(&dir, &clean, "clean");
+    let got = sfs_spectra(&dir, &blanked, "blank");
+    assert_eq!(got, want, "the CRLF blank line changed the spectrum");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `--samples` equals pre-subsetting the file: the locus gate counts the
 /// kept samples, and the alignment carries only them.
 #[test]

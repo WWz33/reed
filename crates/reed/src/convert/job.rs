@@ -25,7 +25,7 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::metrics::StageMetrics;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
 
 use crate::convert::writers;
 use crate::convert::{ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions};
@@ -719,27 +719,25 @@ impl ChunkJob for ConvertJob {
                 stats: stats_scratch,
                 ..
             } = scratch;
-            // A pure SFS run hands the body through untouched (exact
-            // `stats --sfs` behavior); a mixed run drops the structurally
-            // malformed lines the row targets skip (B13-2).
-            let sfs_body = if self.has_row_targets() {
-                sanitize_body(body, self.n_samples, sanitized)
-            } else {
-                body
-            };
+            // The SFS target skips blank and malformed lines alike — the
+            // same statistics a row target produces (B13-2, doc_v25 V25-03).
+            // `sanitize_body` returns the input untouched when nothing must
+            // be dropped, so a clean run is still zero-copy and byte-equal to
+            // `stats --sfs`.
+            let sfs_body = sanitize_body(body, self.n_samples, sanitized);
             partial.sfs = Some(stats.run_chunk(chunk, sfs_body, stats_scratch)?);
         }
         let mut line_no: u32 = 0;
         for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
             let key = DrawKey {
                 chunk: chunk.id.get(),
                 line: line_no,
             };
-            self.push_line(line, key, &mut partial, scratch);
-            line_no += 1;
+            // Blank lines are not records: they do not consume a draw slot
+            // (the key must stay aligned with the emitted rows).
+            if self.push_line(line, key, &mut partial, scratch) {
+                line_no += 1;
+            }
         }
         Ok(partial)
     }
@@ -756,13 +754,14 @@ impl ChunkJob for ConvertJob {
                 stats: stats_scratch,
                 ..
             } = scratch;
-            let sfs_line = if self.has_row_targets() && !line_is_sane(line, self.n_samples) {
-                b"".as_slice()
-            } else {
-                line
-            };
-            if !sfs_line.is_empty() {
-                partial.sfs = Some(stats.run_seam(id, sfs_line, stats_scratch)?);
+            // The seam line carries its terminator; classify it exactly as a
+            // body line. Blank and malformed lines are skipped (the SFS
+            // target's policy), so the statistics job never sees them.
+            if matches!(
+                classify_line(line, self.n_samples),
+                RecordClass::Record(_)
+            ) {
+                partial.sfs = Some(stats.run_seam(id, line, stats_scratch)?);
             }
         }
         // The seam record belongs to the previous chunk's stream.
@@ -780,36 +779,37 @@ impl ConvertJob {
         self.phylo.is_some() || self.count || self.hmp || self.msa.is_some()
     }
 
+    /// Folds one line into every row target. Returns whether the line was a
+    /// record slot (non-blank): malformed lines still consume one, exactly as
+    /// vcf2phylip counts them; blank lines do not exist for it.
     fn push_line(
         &self,
         line: &[u8],
         key: DrawKey,
         partial: &mut ConvertPartial,
         scratch: &mut ConvertScratch,
-    ) {
-        // vcf2phylip counts every non-empty, non-`#` line as processed,
-        // malformed ones included (`snp_num` increments before its checks).
+    ) -> bool {
+        let lr = match classify_line(line, self.n_samples) {
+            RecordClass::Record(lr) => lr,
+            // `line_is_sane` used to call a blank seam line sane and hand it
+            // to the statistics job; a blank line is now simply not a record
+            // (doc_v25 V25-03).
+            RecordClass::Blank => return false,
+            RecordClass::Malformed(why) => {
+                // vcf2phylip counts every non-empty, non-`#` line as
+                // processed, malformed ones included (`snp_num` increments
+                // before its checks).
+                partial.counters.total_records += 1;
+                self.bump_malformed(partial, scratch, why.label());
+                return true;
+            }
+        };
         partial.counters.total_records += 1;
-        let Some(lr) = LineRef::parse(line) else {
-            self.bump_malformed(partial, scratch, "fewer than 8 columns");
-            return;
-        };
-        if lr.validate_sample_cols(self.n_samples).is_err() {
-            self.bump_malformed(
-                partial,
-                scratch,
-                "a sample-column count differing from the header",
-            );
-            return;
-        }
-        let Ok(pos1) = reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom()) else {
-            self.bump_malformed(partial, scratch, "an unparsable POS");
-            return;
-        };
-        let Some(pos0) = pos1.checked_sub(1) else {
-            self.bump_malformed(partial, scratch, "POS 0 (VCF positions are 1-based)");
-            return;
-        };
+        let pos1 = reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom())
+            .expect("invariant: classify_line validated POS");
+        let pos0 = pos1
+            .checked_sub(1)
+            .expect("invariant: classify_line rejects POS 0");
 
         // The single per-sample GT parse (D13-7).
         self.parse_gts(&lr, scratch);
@@ -898,6 +898,7 @@ impl ConvertJob {
         self.push_count_matrix(&lr, present, partial, scratch);
         self.push_hapmap(&lr, present, partial, scratch);
         self.push_msa(&lr, pos0, partial, scratch);
+        true
     }
 
     /// The phylogenetic partial, created with the shape both branches agree
@@ -1362,35 +1363,19 @@ impl ConvertJob {
 /// A malformed record for one target (skipped with a counter).
 struct Malformed;
 
-/// Whether one complete record line is structurally sane for the composed
-/// statistics job (`LineRef` parses it, its sample columns match the header
-/// and POS parses).
-fn line_is_sane(line: &[u8], n_samples: usize) -> bool {
-    if line.iter().all(|&b| b == b'\n' || b == b'\r') {
-        return true;
-    }
-    LineRef::parse(line).is_some_and(|lr| {
-        lr.validate_sample_cols(n_samples).is_ok()
-            && reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom()).is_ok()
-    })
-}
-
-/// Copies `body`, dropping lines [`line_is_sane`] rejects; returns the input
-/// untouched when nothing must be dropped (the common case).
+/// Copies `body`, dropping every line `classify_line` does not call a record
+/// (blank and malformed alike — the SFS target's policy, doc_v25 V25-03);
+/// returns the input untouched when nothing must be dropped (the common
+/// case, and what keeps `convert --sfs` byte-equal to `stats --sfs` on clean
+/// input).
 fn sanitize_body<'a>(body: &'a [u8], n_samples: usize, out: &'a mut Vec<u8>) -> &'a [u8] {
-    let mut clean = true;
-    for line in body.split_inclusive(|&b| b == b'\n') {
-        if !line_is_sane(line, n_samples) {
-            clean = false;
-            break;
-        }
-    }
-    if clean {
+    let is_record = |line: &[u8]| matches!(classify_line(line, n_samples), RecordClass::Record(_));
+    if body.split_inclusive(|&b| b == b'\n').all(is_record) {
         return body;
     }
     out.clear();
     for line in body.split_inclusive(|&b| b == b'\n') {
-        if line_is_sane(line, n_samples) {
+        if is_record(line) {
             out.extend_from_slice(line);
         }
     }

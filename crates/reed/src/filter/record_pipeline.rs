@@ -20,7 +20,7 @@ use reed_filter::plan::FilterPlan;
 use reed_io::vcf::format_layout::IntSpec;
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::info::InfoIndex;
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
 use reed_io::vcf::site::{ContigTable, SiteView};
 
 use super::job_err;
@@ -78,6 +78,8 @@ pub(crate) struct Processed {
 /// reusable mask/count state.
 pub(crate) struct RecordPipeline {
     scanner: GenotypeScanner,
+    /// The header's sample count, for the line classifier (V25-03).
+    n_samples: usize,
     contigs: ContigTable,
     counters: PolicyCounters,
     head: HeadScratch,
@@ -107,6 +109,7 @@ impl RecordPipeline {
     ) -> Self {
         Self {
             scanner: GenotypeScanner::new_with_specs(n_samples, int_specs, float_keys, policies),
+            n_samples,
             contigs: ContigTable::new(contig_names.iter().cloned()),
             counters: PolicyCounters::default(),
             head: HeadScratch::new(),
@@ -143,6 +146,21 @@ impl RecordPipeline {
             .collect();
     }
 
+    /// The filter's line policy (doc_v25 V25-03): blank and malformed lines
+    /// are both errors, and `classify_line` owns the judgement. Before the
+    /// split, a blank LF line inside a chunk body was skipped while the same
+    /// line at a seam (or with CRLF) failed as "fewer than 8 columns".
+    fn record_line<'a>(&self, line: &'a [u8]) -> Result<LineRef<'a>, EngineError> {
+        match classify_line(line, self.n_samples) {
+            RecordClass::Record(lr) => Ok(lr),
+            RecordClass::Blank => Err(EngineError::job("blank record line")),
+            RecordClass::Malformed(why) => Err(EngineError::job(format!(
+                "record line is malformed ({})",
+                why.label()
+            ))),
+        }
+    }
+
     /// Runs head → decode → mask → count → tail for one record and calls
     /// `body` when the strategy gets the record.
     ///
@@ -166,9 +184,7 @@ impl RecordPipeline {
         F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
     {
         funnel.n_input += 1;
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 8 columns"));
-        };
+        let lr = self.record_line(line)?;
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
         } else {
@@ -264,9 +280,7 @@ impl RecordPipeline {
         F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
     {
         funnel.n_input += 1;
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 8 columns"));
-        };
+        let lr = self.record_line(line)?;
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
         } else {

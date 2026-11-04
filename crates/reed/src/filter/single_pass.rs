@@ -147,10 +147,10 @@ impl ChunkJob for FilterJob {
         // One build per chunk, not per surviving record (A6-15, V24-07).
         let stale = self.stale_refs();
         let auto = self.auto_refs();
-        for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
+        // `body_lines` drops only the empty piece after the body's final
+        // newline; a genuine blank line stays and reaches the pipeline, whose
+        // policy makes it an error (doc_v25 V25-03).
+        for line in reed_io::vcf::line::body_lines(body) {
             self.push_line(line, scratch, &stale, &auto)?;
         }
         let output = scratch.writer.finish_chunk().map_err(job_err)?;

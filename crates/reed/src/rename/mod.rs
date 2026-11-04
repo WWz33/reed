@@ -19,7 +19,7 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::chunk::ChunkBytes;
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
 
 use crate::input::OpenedInput;
 
@@ -706,6 +706,7 @@ pub fn run_rename_opened(
 
     let job = RenameJob {
         plan: Arc::clone(&plan),
+        n_samples,
         level: output.level,
         compressed: output.compressed,
         need_key,
@@ -1042,6 +1043,8 @@ fn header_contig_names(header: &str) -> Vec<Vec<u8>> {
 /// only appends ordered blocks.
 struct RenameJob {
     plan: Arc<CompiledPlan>,
+    /// The header's sample count, for the line classifier (V25-03).
+    n_samples: usize,
     level: u8,
     compressed: bool,
     /// An index is being written, so the block writer consumes the record
@@ -1139,6 +1142,13 @@ impl RenameJob {
         // Normalizing here keeps the rewrite and the dedup text on exactly
         // one terminator per record.
         let line = line.strip_suffix(b"\n").unwrap_or(line);
+        // A blank line is not a record: dropping it in the body and emitting
+        // it from a seam was the same split this round removes (doc_v25
+        // V25-03). Non-blank malformed lines still pass through byte for byte
+        // (`rewrite_line` returns None) — a byte editor never drops one.
+        if matches!(classify_line(line, self.n_samples), RecordClass::Blank) {
+            return Ok(());
+        }
         let mut rewritten = self
             .rewrite_line(line, partial)
             .unwrap_or_else(|| line.to_vec());

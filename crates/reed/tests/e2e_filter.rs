@@ -1797,3 +1797,30 @@ fn sketch_budget_covers_the_sum_of_every_resident_contig() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The filter's line policy has one entry (doc_v25 V25-03): a blank LF line
+/// and a CRLF blank are both errors, exactly like the same line arriving at
+/// a chunk seam. Before the split, the LF body line was skipped silently
+/// while the CRLF/seam forms failed as "fewer than 8 columns".
+#[test]
+fn v25_03_filter_rejects_blank_record_lines() {
+    let dir = std::env::temp_dir().join(format!("reed-filter-blank-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let record = "Chr01\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/0\n";
+    for (tag, blank) in [("lf", "\n"), ("crlf", "\r\n")] {
+        let input = dir.join(format!("{tag}.vcf"));
+        std::fs::write(&input, format!("{HEADER}{record}{blank}{record}"))
+            .expect("invariant: fixture");
+        let out = dir.join(format!("{tag}.out.vcf"));
+        let result = run_filter(Some(&input), &FilterSpec::default(), &options(None, &out));
+        let Err(err) = result else {
+            panic!("{tag}: a blank record line must fail the run");
+        };
+        assert!(
+            err.to_string().contains("blank record line"),
+            "{tag}: {err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

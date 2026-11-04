@@ -402,10 +402,9 @@ impl ChunkJob for ReportJob {
             )
         });
         let mut partial = self.new_partial();
+        // `push_line` classifies: blank lines are skipped (a seam can hand
+        // the report job `"\n"`), malformed lines stay fatal (doc_v25 V25-03).
         for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
             self.push_line(line, scratch, &mut partial)?;
         }
         self.drain_qc(scratch, &mut partial);
@@ -475,8 +474,15 @@ impl ReportJob {
         scratch: &mut ReportScratch,
         partial: &mut ReportPartial,
     ) -> Result<(), EngineError> {
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 8 columns"));
+        let lr = match reed_io::vcf::line::classify_line(line, self.n_samples) {
+            reed_io::vcf::line::RecordClass::Record(lr) => lr,
+            reed_io::vcf::line::RecordClass::Blank => return Ok(()),
+            reed_io::vcf::line::RecordClass::Malformed(why) => {
+                return Err(EngineError::job(format!(
+                    "record line is malformed ({})",
+                    why.label()
+                )));
+            }
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let pos1 = site.pos1;

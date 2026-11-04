@@ -296,10 +296,9 @@ impl<J: ChunkJob> ChunkJob for FilteredJob<J> {
             return self.inner.run_chunk(chunk, body, &mut scratch.inner);
         }
         self.start_chunk(scratch);
-        for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
+        // Only the terminator artifact is dropped; a blank line reaches the
+        // wrapper's pipeline, whose policy makes it an error (doc_v25 V25-03).
+        for line in reed_io::vcf::line::body_lines(body) {
             if self.records.is_some() {
                 self.scan_line(line, scratch)?;
             } else {

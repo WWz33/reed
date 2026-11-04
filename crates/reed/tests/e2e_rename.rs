@@ -802,3 +802,99 @@ fn r11_set_missing_var_ids_keeps_update_name_reachable() {
     assert!(err.to_string().contains("nosuchid"), "{err}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// One BGZF member per call, so the blank line below starts a chunk.
+fn push_block(
+    deflater: &mut reed_io::bgzf::deflate::Deflater,
+    out: &mut Vec<u8>,
+    bytes: &[u8],
+) -> u64 {
+    let before = out.len();
+    deflater
+        .deflate_block(bytes, out)
+        .expect("invariant: the block fits");
+    (out.len() - before) as u64
+}
+
+/// A BGZF input whose second chunk starts with `blank` (doc_v25 V25-03);
+/// returns the bytes and the record count.
+fn seam_blank_vcf(blank: &[u8]) -> (Vec<u8>, u64) {
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let mut deflater =
+        reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
+    let mut out = Vec::new();
+    let mut total = push_block(&mut deflater, &mut out, header.as_bytes());
+    let mut pos = 1_u64;
+    while total < reed_io::chunk::CHUNK_TARGET_COMPRESSED {
+        let record = format!("chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n");
+        total += push_block(&mut deflater, &mut out, record.as_bytes());
+        pos += 1;
+    }
+    push_block(&mut deflater, &mut out, blank);
+    for _ in 0..3 {
+        let record = format!("chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n");
+        push_block(&mut deflater, &mut out, record.as_bytes());
+        pos += 1;
+    }
+    out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+    (out, pos - 1)
+}
+
+/// Blank lines are not records (doc_v25 V25-03): the body dropped LF blanks
+/// but passed CRLF ones through, and a blank seam line was emitted as an
+/// extra empty output line. All three forms now disappear together.
+#[test]
+fn v25_03_blank_lines_are_dropped_in_body_and_seam() {
+    let d = dir("blanks");
+    let input = d.join("in.vcf");
+    write(
+        &input,
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\trs1\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+
+chr1\t2\trs2\tA\tG\t60\tPASS\t.\tGT\t0/0\t1/1\r\n\r\nchr1\t3\trs3\tA\tG\t70\tPASS\t.\tGT\t0/1\t0/1\n",
+    );
+    let spec = RenameSpec {
+        clear_ids: true,
+        ..RenameSpec::default()
+    };
+    let out = d.join("out.vcf");
+    let report = run(&spec, &input, &out, 2);
+    assert_eq!(report.n_records, 3);
+    let text = read(&out);
+    let body: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    assert_eq!(
+        body,
+        [
+            "chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0",
+            "chr1\t2\t.\tA\tG\t60\tPASS\t.\tGT\t0/0\t1/1",
+            "chr1\t3\t.\tA\tG\t70\tPASS\t.\tGT\t0/1\t0/1",
+        ]
+    );
+
+    for (tag, blank) in [("lf", b"\n".as_slice()), ("crlf", b"\r\n")] {
+        let (bytes, records) = seam_blank_vcf(blank);
+        let seam_in = d.join(format!("seam-{tag}.vcf.gz"));
+        std::fs::write(&seam_in, bytes).expect("invariant: fixture");
+        let seam_out = d.join(format!("seam-{tag}.vcf"));
+        let report = run(&spec, &seam_in, &seam_out, 4);
+        assert_eq!(report.n_records, records, "{tag}: records");
+        let text = read(&seam_out);
+        let body: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(body.len() as u64, records, "{tag}: one line per record");
+        assert!(
+            body.iter().all(|l| !l.is_empty()),
+            "{tag}: no blank line from the seam"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
