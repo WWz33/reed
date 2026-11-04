@@ -42,6 +42,7 @@ pub mod dict;
 pub mod encode_native;
 pub mod encode_noodles;
 pub mod gt;
+pub(crate) mod gt_decode;
 pub mod record;
 pub mod render;
 
