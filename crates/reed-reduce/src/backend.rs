@@ -70,21 +70,38 @@ impl SymEigResult {
         for c in 0..k {
             let src = n - 1 - c;
             vals.push(self.values[src]);
-            let mut best_abs = 0.0f64;
-            let mut best_val = 0.0f64;
             for r in 0..n {
-                let x = self.vectors.get(r, src);
-                if x.abs() > best_abs {
-                    best_abs = x.abs();
-                    best_val = x;
-                }
-            }
-            let sign = if best_val < 0.0 { -1.0 } else { 1.0 };
-            for r in 0..n {
-                vecs.set(r, c, sign * self.vectors.get(r, src));
+                vecs.set(r, c, self.vectors.get(r, src));
             }
         }
+        fix_column_signs(&mut vecs);
         (vals, vecs)
+    }
+}
+
+/// Applies the backend-independent sign convention in place (doc_v23 V23-09):
+/// each column's largest-magnitude component is positive, the first row wins
+/// ties, and an all-zero column is left alone.
+///
+/// The dense eigensolvers and the Lanczos path both end here, so a backend
+/// switch or a solver change cannot flip `.eigenvec` bytes for the same
+/// analysis (doc_v25 V25-10, R1).
+pub fn fix_column_signs(vectors: &mut Mat) {
+    for c in 0..vectors.cols {
+        let mut best_abs = 0.0f64;
+        let mut best_val = 0.0f64;
+        for r in 0..vectors.rows {
+            let x = vectors.get(r, c);
+            if x.abs() > best_abs {
+                best_abs = x.abs();
+                best_val = x;
+            }
+        }
+        if best_val < 0.0 {
+            for r in 0..vectors.rows {
+                vectors.set(r, c, -vectors.get(r, c));
+            }
+        }
     }
 }
 

@@ -233,6 +233,10 @@ pub struct PcaReport {
     pub eigenvalues: Vec<f64>,
     /// Solver actually used (`dense` or `stream`).
     pub solver: String,
+    /// The stream solver's final relative residual (`None` for dense); a
+    /// value above the solver tolerance means the components did not
+    /// converge and the run logged a warning (doc_v25 V25-10).
+    pub stream_max_residual: Option<f64>,
     /// Wall time.
     pub elapsed: std::time::Duration,
 }
@@ -326,6 +330,7 @@ pub fn run_pca_opened(
     let c = solve(&x, request.pcs, stand, missing, solver, budget)?;
     let (values, vectors, pve) = (c.values, c.vectors, c.pve);
     let chosen = c.solver;
+    let stream_max_residual = c.max_residual;
     let elapsed = started.elapsed();
 
     write_outputs(
@@ -343,6 +348,7 @@ pub fn run_pca_opened(
         n_pcs: values.len(),
         eigenvalues: values,
         solver: chosen.to_string(),
+        stream_max_residual,
         elapsed,
     })
 }
@@ -360,6 +366,10 @@ pub(crate) struct Components {
     pub pve: Vec<f64>,
     /// Solver actually used (`dense` or `stream`).
     pub solver: &'static str,
+    /// The stream solver's final relative residual (`None` for dense): a
+    /// value above `tol` means the requested components did not converge
+    /// (doc_v25 V25-10).
+    pub max_residual: Option<f64>,
 }
 
 /// Runs the PCA step over a samples x sites dosage matrix.
@@ -403,6 +413,15 @@ pub(crate) fn solve(
             ..Default::default()
         };
         let r = lanczos_top_k(&st.w, &cfg);
+        if r.max_residual > cfg.tol {
+            tracing::warn!(
+                residual = r.max_residual,
+                tol = cfg.tol,
+                cycles = r.cycles,
+                "PCA stream solver did not converge; the written components may be \
+                 inaccurate (raise --pcs headroom or use --solver dense)"
+            );
+        }
         // The stream solver has no full spectrum, but the trace of `W W' / m`
         // is the eigenvalue sum, so the normalisation is still the whole
         // spectrum rather than the retained part.
@@ -423,6 +442,7 @@ pub(crate) fn solve(
             vectors: r.vectors,
             pve,
             solver: "stream",
+            max_residual: Some(r.max_residual),
         })
     } else {
         let p = if missing == "pairwise" {
@@ -435,6 +455,7 @@ pub(crate) fn solve(
             vectors: p.vectors,
             pve: p.pve,
             solver: "dense",
+            max_residual: None,
         })
     }
 }
@@ -826,5 +847,38 @@ mod tests {
         assert_eq!(report.n_samples, 8);
         assert_eq!(report.n_sites, 60);
         assert_eq!(report.eigenvalues.len(), 2);
+    }
+
+    /// doc_v25 V25-10: the rank-deficient stream solve converges (it used
+    /// to burn max_cycles) and reports its residual in the report.
+    #[test]
+    fn v25_10_stream_reports_a_converged_residual_on_a_rank_deficient_input() {
+        let dir = temp_dir("v25-residual");
+        let input = dir.join("in.vcf");
+        // 20 samples, 5 sites: W W' has rank at most 5, so pcs=8 asks for
+        // components beyond the rank.
+        std::fs::write(&input, fixture_text(20, 5)).expect("invariant: fixture");
+        let request = PcaRequest {
+            pcs: 8,
+            missing: "meanimpute".into(),
+            solver: "stream".into(),
+            prefix: dir.join("out").to_string_lossy().into_owned(),
+            ..PcaRequest::default()
+        };
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let report = run_pca(Some(&input), &request, &budget).expect("stream pca");
+        assert_eq!(report.solver, "stream");
+        let residual = report
+            .stream_max_residual
+            .expect("the stream solver records its residual");
+        assert!(residual.is_finite(), "{residual}");
+        assert!(
+            residual <= 1e-10,
+            "rank-deficient input did not converge: {residual}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

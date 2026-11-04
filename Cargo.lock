@@ -1620,6 +1620,7 @@ dependencies = [
  "rayon",
  "reed-core",
  "reed-distance",
+ "tracing",
 ]
 
 [[package]]

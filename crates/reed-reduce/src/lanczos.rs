@@ -449,6 +449,7 @@ pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
             }
         }
 
+        let lambda_max = vals.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
         let mut worst: f64 = 0.0;
         for c in 0..vals.len() {
             let col: Vec<f64> = (0..n).map(|i| v.get(i, c)).collect();
@@ -458,16 +459,26 @@ pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
                 let d = av[i] - vals[c] * col[i];
                 num += d * d;
             }
-            worst = worst.max(num.sqrt() / vals[c].abs().max(1e-300));
+            // Mixed-scale denominator (doc_v25 V25-10): the requested k can
+            // exceed the rank of W W' / m (duplicate samples, fewer sites
+            // than PCs). The rank-deficient eigenvalue is ~lambda_max*eps,
+            // so a pure relative denominator never reaches tol and every
+            // run burns max_cycles; tying the floor to lambda_max*eps keeps
+            // those components from blocking convergence.
+            let floor = lambda_max * f64::EPSILON;
+            worst = worst.max(num.sqrt() / vals[c].abs().max(floor));
         }
 
-        if std::env::var("STREAM_DEBUG").is_ok() {
-            eprintln!(
-                "cycle {}: used={} k_keep={} krylov_dim={} block={} vals[0]={:.9} worst={:.3e}",
-                cycle, used, k_keep, krylov_dim, block,
-                vals.first().copied().unwrap_or(f64::NAN), worst
-            );
-        }
+        tracing::debug!(
+            cycle,
+            used,
+            k_keep,
+            krylov_dim,
+            block,
+            lambda0 = vals.first().copied().unwrap_or(f64::NAN),
+            worst,
+            "lanczos cycle"
+        );
 
         if worst < max_residual || cycle == 0 {
             for (i, &val) in vals.iter().enumerate().take(k) {
@@ -518,6 +529,10 @@ pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
         q0 = nb;
     }
 
+    // The stream path shares the dense solvers' sign convention (doc_v25
+    // V25-10, R1): without it `--solver stream` and `--solver dense` can
+    // write opposite .eigenvec columns for the same analysis.
+    crate::backend::fix_column_signs(&mut vectors);
     StreamEig { values, vectors, cycles, max_residual }
 }
 
@@ -561,6 +576,45 @@ mod tests {
             let rel = (a - b).abs() / b.abs().max(1e-12);
             assert!(rel < 1e-7, "PC{i}: stream {a} vs dense {b} (rel {rel})");
         }
+        // R1 (doc_v25 V25-10): both paths apply the same column-sign
+        // convention, so the vectors are directly comparable — a sign flip
+        // here would change .eigenvec bytes between --solver stream/dense.
+        for c in 0..s.vectors.cols {
+            let mut worst = 0.0_f64;
+            for r in 0..s.vectors.rows {
+                worst = worst.max((s.vectors.get(r, c) - dense.vectors.get(r, c)).abs());
+            }
+            assert!(worst < 1e-5, "PC{c} vector differs by {worst} (sign?)");
+        }
+    }
+
+    /// doc_v25 V25-10: `k` beyond the matrix rank (n_samples > sites) makes
+    /// the trailing eigenvalues ~lambda_max*eps. The old purely relative
+    /// residual never reached tol there and every run burned max_cycles; the
+    /// mixed-scale denominator converges.
+    #[test]
+    fn rank_deficient_input_converges_before_max_cycles() {
+        let (n, m) = (1000, 8);
+        let mut w = Mat::zeros(n, m);
+        for i in 0..n {
+            for j in 0..m {
+                let v = (((i * 31 + j * 17) % 97) as f64 / 97.0) - 0.5;
+                w.set(i, j, v);
+            }
+        }
+        let cfg = StreamConfig {
+            k: 10,
+            tol: 1e-10,
+            max_cycles: 200,
+            ..Default::default()
+        };
+        let s = lanczos_top_k(&w, &cfg);
+        assert!(
+            s.cycles < 200,
+            "rank-deficient input burned {} cycles (residual {:.3e})",
+            s.cycles,
+            s.max_residual
+        );
     }
 
     #[test]
