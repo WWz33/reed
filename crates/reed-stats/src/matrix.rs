@@ -238,9 +238,14 @@ impl LdDecaySet {
     /// the site order for a deterministic result).
     pub fn merge(&mut self, other: &Self) {
         self.cohort.merge(&other.cohort);
-        for (dst, src) in self.groups.iter_mut().zip(&other.groups) {
-            dst.merge(src);
-        }
+        crate::merge_zip_eq(
+            "FstMatrix groups",
+            &mut self.groups,
+            &other.groups,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
         self.pairs.extend_from_slice(&other.pairs);
     }
 }

@@ -41,9 +41,9 @@ impl IntHistogram {
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
         debug_assert_eq!(self.max, other.max, "invariant: same histogram range");
-        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
+        crate::merge_zip_eq("HistAcc bins", &mut self.bins, &other.bins, |dst, src| {
             *dst += src;
-        }
+        });
     }
 
     /// Total observations.

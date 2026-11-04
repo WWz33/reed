@@ -100,14 +100,14 @@ impl ContigBins {
         for (bin, accs) in std::mem::take(&mut other.bins) {
             match self.bins.get_mut(&bin) {
                 Some(dst) => {
-                    assert_eq!(
-                        dst.len(),
-                        accs.len(),
-                        "invariant: same per-bin accumulator count"
+                    crate::merge_zip_eq(
+                        "BpWindow bin accumulators",
+                        dst,
+                        &accs,
+                        |dst, src| {
+                            dst.merge(src);
+                        },
                     );
-                    for (dst, src) in dst.iter_mut().zip(&accs) {
-                        dst.merge(src);
-                    }
                 }
                 None => {
                     self.bins.insert(bin, accs);
@@ -134,9 +134,9 @@ impl ContigBins {
     /// (the contig/genome aggregation of §8.7).
     pub fn fold(&self, totals: &mut [StatAcc]) {
         for accs in self.bins.values() {
-            for (dst, src) in totals.iter_mut().zip(accs) {
+            crate::merge_zip_eq("BpWindow fold totals", totals, accs, |dst, src| {
                 dst.merge(src);
-            }
+            });
         }
     }
 
@@ -161,9 +161,9 @@ impl ContigBins {
     pub fn finish_bins(&self, bins: std::ops::Range<u64>) -> Vec<StatAcc> {
         let mut out = self.seed.clone();
         for (_, accs) in self.bins.range(bins) {
-            for (dst, src) in out.iter_mut().zip(accs) {
+            crate::merge_zip_eq("BpWindow finish_bins", &mut out, accs, |dst, src| {
                 dst.merge(src);
-            }
+            });
         }
         out
     }
@@ -290,10 +290,11 @@ mod tests {
         a.merge_bins(&mut b);
     }
 
-    /// doc_v23 V23-28: same width but a different number of accumulators
-    /// (a caller bug) must not silently truncate through `zip`.
+    /// doc_v23 V23-28 / doc_v25 V25-05: same width but a different number
+    /// of accumulators (a caller bug) must not silently truncate through
+    /// `zip`; `merge_zip_eq` names the accumulator in the panic.
     #[test]
-    #[should_panic(expected = "same per-bin accumulator count")]
+    #[should_panic(expected = "BpWindow bin accumulators")]
     fn merge_bins_rejects_a_different_accumulator_count() {
         let mut a = ContigBins::new(BpBinning::new(10), &seed());
         let mut b = ContigBins::new(BpBinning::new(10), &seed());
@@ -406,20 +407,22 @@ impl RegionAccs {
             std::sync::Arc::ptr_eq(&self.regions, &other.regions),
             "invariant: one RegionSet per contig"
         );
-        for ((dst, src), (dt, st)) in self
-            .accs
-            .iter_mut()
-            .zip(&other.accs)
-            .zip(self.touched.iter_mut().zip(&other.touched))
-        {
-            for (d, s) in dst.iter_mut().zip(src) {
+        crate::merge_zip_eq("RegionAccs accs", &mut self.accs, &other.accs, |dst, src| {
+            crate::merge_zip_eq("RegionAccs per-region accs", dst, src, |d, s| {
                 d.merge(s);
-            }
-            *dt |= *st;
-        }
-        for (d, s) in self.totals.iter_mut().zip(&other.totals) {
+            });
+        });
+        crate::merge_zip_eq(
+            "RegionAccs touched",
+            &mut self.touched,
+            &other.touched,
+            |d, s| {
+                *d |= *s;
+            },
+        );
+        crate::merge_zip_eq("RegionAccs totals", &mut self.totals, &other.totals, |d, s| {
             d.merge(s);
-        }
+        });
         self.n_sites += other.n_sites;
     }
 
@@ -437,9 +440,9 @@ impl RegionAccs {
 
     /// Merges the contig totals into `totals` (each site counted once).
     pub fn fold(&self, totals: &mut [StatAcc]) {
-        for (dst, src) in totals.iter_mut().zip(&self.totals) {
+        crate::merge_zip_eq("RegionAccs fold", totals, &self.totals, |dst, src| {
             dst.merge(src);
-        }
+        });
     }
 
     /// The region set.

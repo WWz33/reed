@@ -70,9 +70,9 @@ impl SfsAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
+        crate::merge_zip_eq("SfsAcc bins", &mut self.bins, &other.bins, |dst, src| {
             *dst += src;
-        }
+        });
         self.n_sites += other.n_sites;
         self.n_skipped_missing += other.n_skipped_missing;
     }
@@ -288,9 +288,14 @@ impl ProjectedSfsAcc {
     pub fn merge(&mut self, other: &Self) {
         debug_assert_eq!(self.n, other.n, "invariant: same projection size");
         debug_assert_eq!(self.folded, other.folded, "invariant: same folding");
-        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
-            dst.merge(src);
-        }
+        crate::merge_zip_eq(
+            "ProjectedSfsAcc bins",
+            &mut self.bins,
+            &other.bins,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
         self.n_sites += other.n_sites;
         self.n_skipped_m_lt_n += other.n_skipped_m_lt_n;
     }
@@ -476,9 +481,14 @@ impl JointProjectedAcc {
             (other.n1, other.n2, other.folded),
             "invariant: same shape and folding"
         );
-        for (dst, src) in self.bins.iter_mut().zip(&other.bins) {
-            dst.merge(src);
-        }
+        crate::merge_zip_eq(
+            "JointProjectedAcc bins",
+            &mut self.bins,
+            &other.bins,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
         self.n_sites += other.n_sites;
         self.n_skipped += other.n_skipped;
     }
