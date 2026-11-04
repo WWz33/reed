@@ -56,6 +56,10 @@ check "provenance lives in reed-core (doc_v25 V25-08c)" \
 check "argv is captured once, shell-quoted (doc_v25 V25-08c)" \
     bash -c '[ "$(grep -rn "std::env::args()" crates/reed-cli/src --include=*.rs | grep -v "src/params.rs" | wc -l)" -eq 0 ]'
 
+# doc_v25 08 ④: compile() is four private section modules, not one function.
+check "compile() is split into section modules (doc_v25 08 ④)" \
+    bash -c 'test -e crates/reed-filter/src/plan/compile/head.rs && test -e crates/reed-filter/src/plan/compile/mask.rs && test -e crates/reed-filter/src/plan/compile/tail.rs && test -e crates/reed-filter/src/plan/compile/finish.rs && ! grep -q "pub fn compile(" crates/reed-filter/src/plan/mod.rs'
+
 # doc_v25 08 ③: convert's spill blobs live in their own module.
 check "convert spill types live in convert/spill.rs (doc_v25 08 ③)" \
     bash -c 'test -e crates/reed/src/convert/spill.rs && ! grep -q "enum RowsBlob" crates/reed/src/convert/job.rs'
