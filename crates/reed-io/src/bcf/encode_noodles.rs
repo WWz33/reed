@@ -159,6 +159,29 @@ impl Default for BcfEncoder {
     }
 }
 
+/// The complete BCF file header bytes: `BCF\x02\x02`, the little-endian
+/// length of the header text (NUL included), and the text itself
+/// (doc_v3 02-bcf.md §3.2).
+///
+/// One implementation for every BCF writer: `reed filter -Ob` used to
+/// assemble the magic and length prefix by hand (doc_v25 08 §3 ②).
+///
+/// # Errors
+///
+/// [`bcf_header_text`]'s rendering errors, or a header text beyond `u32`.
+pub fn bcf_file_header(header: &vcf::Header) -> Result<Vec<u8>, IoError> {
+    let text = bcf_header_text(header)?;
+    let mut out = Vec::with_capacity(text.len() + 9);
+    out.extend_from_slice(b"BCF\x02\x02");
+    out.extend_from_slice(
+        &u32::try_from(text.len())
+            .map_err(|_| IoError::Io("BCF header exceeds 4 GiB".into()))?
+            .to_le_bytes(),
+    );
+    out.extend_from_slice(&text);
+    Ok(out)
+}
+
 /// Renders the BCF file header text (NUL-terminated) with an explicit
 /// `IDX=` on every FILTER/INFO/FORMAT line (doc_v3 02-bcf.md §3.3).
 ///
@@ -209,4 +232,24 @@ pub fn bcf_header_text(header: &vcf::Header) -> Result<Vec<u8>, IoError> {
     }
     out.push(b'\0');
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_header_prepends_the_magic_and_counts_the_nul() {
+        let header: vcf::Header = "##fileformat=VCFv4.2\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+            .parse()
+            .expect("invariant: header");
+        let text = bcf_header_text(&header).expect("invariant: text");
+        let bytes = bcf_file_header(&header).expect("invariant: bytes");
+        assert_eq!(&bytes[..5], b"BCF\x02\x02");
+        let len = u32::from_le_bytes(bytes[5..9].try_into().expect("invariant: 4 bytes"));
+        assert_eq!(len as usize, text.len());
+        assert_eq!(&bytes[9..], text.as_slice());
+        assert_eq!(bytes.last(), Some(&0), "the text is NUL-terminated");
+    }
 }

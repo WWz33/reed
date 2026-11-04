@@ -154,6 +154,68 @@ fn ferr(err: EngineError) -> FilterError {
     FilterError::Io(std::io::Error::other(err.to_string()))
 }
 
+/// The output sink both pass1 strategies use (doc_v25 08 §3 ②).
+fn output_sink(
+    writer: Box<dyn Write + Send>,
+    compressed: bool,
+    level: u8,
+    indexer: Option<Indexer>,
+    index_path: Option<PathBuf>,
+    contig_names: Arc<[Vec<u8>]>,
+    slot: Arc<Mutex<Option<FunnelPartial>>>,
+) -> OutputSink {
+    OutputSink {
+        out: OrderedOutput::new(
+            writer,
+            compressed,
+            level,
+            indexer,
+            index_path,
+            contig_names,
+        ),
+        funnel: FunnelPartial::default(),
+        slot,
+    }
+}
+
+/// The per-run inputs every pass1 stream shares (the strategy supplies the
+/// job and the sink).
+struct Pass1Context<'a> {
+    budget: &'a ThreadBudget,
+    abort: &'a reed_engine::abort::Abort,
+    seek_regions: &'a [reed_io::chunk::region::Region],
+}
+
+/// Runs one pass1 stream and folds its timing and engine metrics into the
+/// report — the tail the sketch and streaming strategies used to spell out
+/// twice (header write excluded: the caller owns the sink).
+fn drive_pass1<J>(
+    opened: &mut crate::input::OpenedInput,
+    job: crate::bcf_input::InputJob<J>,
+    sink: OutputSink,
+    ctx: Pass1Context<'_>,
+    timing_phases: &mut Vec<(&'static str, f64)>,
+    timing_engine: &mut reed_engine::metrics::StageMetrics,
+) -> Result<u64, FilterError>
+where
+    J: reed_engine::pipeline::ChunkJob<Partial = FilterPartial> + Sync + 'static,
+{
+    let started = Instant::now();
+    let report = run(
+        opened.source.as_mut(),
+        &job,
+        sink,
+        ctx.budget,
+        ctx.abort,
+    )
+    .map_err(ferr)?;
+    timing_phases.push(("pass1", started.elapsed().as_secs_f64()));
+    timing_engine.merge(&report.metrics);
+    job.finish(report.n_chunks, ctx.seek_regions.is_empty())
+        .map_err(ferr)?;
+    Ok(report.n_chunks)
+}
+
 /// Runs the filter.
 ///
 /// # Errors
@@ -605,17 +667,10 @@ pub fn run_filter(
     }
     match bcf_level {
         Some(_) => {
-            // BCF file header: magic + l_text + NUL-terminated text
-            // (02-bcf.md §3.2); the records then ride BGZF blocks like any
-            // other payload.
-            let text = reed_io::bcf::bcf_header_text(&out_header).map_err(io_err)?;
-            header_bytes.extend_from_slice(b"BCF\x02\x02");
-            header_bytes.extend_from_slice(
-                &u32::try_from(text.len())
-                    .map_err(|_| FilterError::Spec("BCF header exceeds 4 GiB".into()))?
-                    .to_le_bytes(),
-            );
-            header_bytes.extend_from_slice(&text);
+            // The BCF file header lives in reed-io (magic + l_text +
+            // NUL-terminated text, 02-bcf.md §3.2); the records then ride
+            // BGZF blocks like any other payload.
+            header_bytes = reed_io::bcf::bcf_file_header(&out_header).map_err(io_err)?;
         }
         None => {
             vcf::io::Writer::new(&mut header_bytes)
@@ -700,30 +755,32 @@ pub fn run_filter(
             site_keep: site_keep.clone(),
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
-        let mut sink = OutputSink {
-            out: OrderedOutput::new(
-                writer,
-                compressed,
-                opts.compress_level,
-                indexer,
-                index_path,
-                Arc::clone(&contig_names),
-            ),
-            funnel: FunnelPartial::default(),
-            slot: Arc::clone(&slot),
-        };
+        let mut sink = output_sink(
+            writer,
+            compressed,
+            opts.compress_level,
+            indexer,
+            index_path,
+            Arc::clone(&contig_names),
+            Arc::clone(&slot),
+        );
         // Header first (as BGZF block(s) on the compressed path).
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
         let abort = reed_engine::abort::abort_for(&budget);
         let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
-        let pass1_start = Instant::now();
-        let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
-        timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
-        timing_engine.merge(&report.metrics);
-        timing_chunks = report.n_chunks;
-        job.finish(report.n_chunks, seek_regions.is_empty())
-            .map_err(ferr)?;
+        timing_chunks = drive_pass1(
+            &mut opened,
+            job,
+            sink,
+            Pass1Context {
+                budget: &budget,
+                abort: &abort,
+                seek_regions: &seek_regions,
+            },
+            &mut timing_phases,
+            &mut timing_engine,
+        )?;
         sketch_funnel
     } else {
         let bcf = bcf_level.map(|_| Arc::new(out_header.clone()));
@@ -754,18 +811,15 @@ pub fn run_filter(
             float_keys: Arc::from(float_keys.into_boxed_slice()),
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
-        let mut sink = OutputSink {
-            out: OrderedOutput::new(
-                writer,
-                compressed,
-                opts.compress_level,
-                indexer,
-                index_path,
-                Arc::clone(&contig_names),
-            ),
-            funnel: FunnelPartial::default(),
-            slot: Arc::clone(&slot),
-        };
+        let mut sink = output_sink(
+            writer,
+            compressed,
+            bcf_level.unwrap_or(opts.compress_level),
+            indexer,
+            index_path,
+            Arc::clone(&contig_names),
+            Arc::clone(&slot),
+        );
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
         let abort = reed_engine::abort::abort_for(&budget);
@@ -781,13 +835,18 @@ pub fn run_filter(
         } else {
             crate::bcf_input::InputJob::new(job, &opened, &abort)
         };
-        let pass1_start = Instant::now();
-        let report = run(opened.source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
-        timing_phases.push(("pass1", pass1_start.elapsed().as_secs_f64()));
-        timing_engine.merge(&report.metrics);
-        timing_chunks = report.n_chunks;
-        job.finish(report.n_chunks, seek_regions.is_empty())
-            .map_err(ferr)?;
+        timing_chunks = drive_pass1(
+            &mut opened,
+            job,
+            sink,
+            Pass1Context {
+                budget: &budget,
+                abort: &abort,
+                seek_regions: &seek_regions,
+            },
+            &mut timing_phases,
+            &mut timing_engine,
+        )?;
         slot.lock()
             .expect("invariant: funnel slot not poisoned")
             .take()
