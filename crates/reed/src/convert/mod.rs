@@ -11,6 +11,7 @@
 
 mod hapmap;
 mod job;
+mod spill;
 pub(crate) mod writers;
 
 pub use job::{ConvertCounters, ConvertReport, run_convert, run_convert_opened};

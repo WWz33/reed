@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::PhyloFormats;
-use super::job::{MsaFrameReader, MsaOutput, RowsBlob, SpilledCount, SpilledMsa, SpilledPhylo};
+use super::job::{MsaOutput, SpilledCount, SpilledPhylo};
+use super::spill::{MsaFrameReader, RowsBlob, SpilledMsa};
 
 /// `PREFIX` + suffix appended to the full path (no extension juggling).
 fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
@@ -423,7 +424,8 @@ fn flush_msa_site(
 mod tests {
     use super::*;
 
-    use super::super::job::{MsaOutput, RowsBlob, SpilledMsa};
+    use super::super::job::MsaOutput;
+    use super::super::spill::{RowsBlob, SpilledMsa};
 
     /// One frame for a single sample, one byte wide (the on-disk layout the
     /// sink writes: `pos0: u64 LE || width: u32 LE || vals`).

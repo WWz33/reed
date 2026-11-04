@@ -472,3 +472,38 @@ fn write_xval(prefix: &str, xv: &XvalOutcome) -> Result<(), crate::Error> {
 fn io_err(e: std::io::Error) -> crate::Error {
     crate::Error::from(e)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v25 V25-08: numeric/data failures are runtime; request-shape
+    /// failures the operator can fix are usage.
+    #[test]
+    fn lda_failures_split_into_usage_and_runtime() {
+        for err in [
+            LdaError::Degenerate,
+            LdaError::ConstantWithinGroups { column: 3 },
+        ] {
+            let label = format!("{err:?}");
+            assert_eq!(
+                map_lda_err(err).kind(),
+                crate::ErrorKind::Runtime,
+                "{label}"
+            );
+        }
+        for err in [
+            LdaError::NoObservations,
+            LdaError::TooFewGroups(1),
+            LdaError::ZeroDimen,
+            LdaError::EmptyGroup { group: 0 },
+        ] {
+            let label = format!("{err:?}");
+            assert_eq!(
+                map_lda_err(err).kind(),
+                crate::ErrorKind::Usage,
+                "{label}"
+            );
+        }
+    }
+}

@@ -413,3 +413,39 @@ fn write_table(path: &std::path::Path, m: &MatrixResult) -> Result<(), reed::Err
     f.flush().map_err(reed::Error::from)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reed::ErrorKind;
+    use reed::graph::error::GraphError;
+
+    /// doc_v25 V25-08: the exit class is decided by the shape of the failure,
+    /// not by the crate that produced it. A NaN/asymmetric distance or an
+    /// unusable tree is data-driven (runtime, exit 1); a too-small or
+    /// non-square request is command-line-fixable (usage, exit 2).
+    #[test]
+    fn graph_failures_split_into_usage_and_runtime() {
+        let usage = [
+            GraphError::TooFewTaxa { got: 1, need: 3 },
+            GraphError::NotSquare { rows: 2, cols: 3 },
+        ];
+        for err in usage {
+            assert_eq!(graph_error(err.clone()).kind(), ErrorKind::Usage, "{err}");
+        }
+        let runtime = [
+            GraphError::NonFiniteDistance { row: 0, col: 1 },
+            GraphError::Asymmetric { row: 0, col: 1 },
+            GraphError::NonZeroDiagonal { index: 0 },
+            GraphError::BadBranchLength { edge: 0 },
+            GraphError::TreeTooDeep { depth: 10_001 },
+        ];
+        for err in runtime {
+            assert_eq!(
+                graph_error(err.clone()).kind(),
+                ErrorKind::Runtime,
+                "{err}"
+            );
+        }
+    }
+}

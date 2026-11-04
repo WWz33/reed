@@ -56,6 +56,10 @@ check "provenance lives in reed-core (doc_v25 V25-08c)" \
 check "argv is captured once, shell-quoted (doc_v25 V25-08c)" \
     bash -c '[ "$(grep -rn "std::env::args()" crates/reed-cli/src --include=*.rs | grep -v "src/params.rs" | wc -l)" -eq 0 ]'
 
+# doc_v25 08 ③: convert's spill blobs live in their own module.
+check "convert spill types live in convert/spill.rs (doc_v25 08 ③)" \
+    bash -c 'test -e crates/reed/src/convert/spill.rs && ! grep -q "enum RowsBlob" crates/reed/src/convert/job.rs'
+
 # V25-09: every on-disk spill goes through the exclusive TempSpill; no
 # private name builder may grow back.
 check "spills use the shared TempSpill (doc_v25 V25-09)" \
