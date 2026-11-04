@@ -16,7 +16,8 @@ reed-engine.workspace = true
 rayon.workspace = true
 reed-stats.workspace = true
 reed-filter.workspace = true
-reed-reduce = { path = "../reed-reduce" }
+reed-distance.workspace = true
+reed-reduce.workspace = true
 reed-graph.workspace = true
 sha2.workspace = true
 noodles.workspace = true

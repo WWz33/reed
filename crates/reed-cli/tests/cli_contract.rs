@@ -1708,3 +1708,192 @@ fn parameter_domains_are_usage_errors() {
         );
     }
 }
+
+/// A small plain VCF with the given sample names, one record per POS.
+fn plain_vcf(samples: &[&str]) -> String {
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n##contig=<ID=Chr01,length=100000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n",
+    );
+    text.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+    for s in samples {
+        text.push('\t');
+        text.push_str(s);
+    }
+    text.push('\n');
+    for i in 0..8_u32 {
+        let gts: Vec<&str> = if samples.len() == 1 {
+            vec!["0/1"]
+        } else {
+            ["0/1", "0/0", "1/1", "0/0"]
+                .iter()
+                .copied()
+                .cycle()
+                .skip(i as usize)
+                .take(samples.len())
+                .collect()
+        };
+        let _ = writeln!(
+            text,
+            "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t{}",
+            i + 1,
+            gts.join("\t")
+        );
+    }
+    text
+}
+
+/// doc_v25 V25-08 (R14): the piHat table writes the sample name in both the
+/// FID and IID columns; a name containing `_` is no longer split at a
+/// guessed boundary.
+#[test]
+fn pihat_table_writes_the_sample_name_in_both_columns() {
+    let dir = temp_dir("pihat");
+    let input = dir.join("in.vcf");
+    std::fs::write(
+        &input,
+        plain_vcf(&["fam_a", "fam_b", "fam_c"]),
+    )
+    .expect("invariant: fixture");
+    let prefix = dir.join("out");
+    let out = run(&[
+        "distance",
+        "--type",
+        "pihat",
+        "-o",
+        prefix.to_str().expect("utf8"),
+        input.to_str().expect("utf8"),
+    ]);
+    assert!(
+        out.status.success(),
+        "distance failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(dir.join("out.genome")).expect("invariant: table");
+    let mut checked = 0;
+    for line in text.lines().skip(1) {
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert_eq!(cols[0], cols[1], "FID1 != IID1: {line}");
+        assert_eq!(cols[2], cols[3], "FID2 != IID2: {line}");
+        assert!(cols[0].contains('_'), "the name was split: {line}");
+        checked += 1;
+    }
+    assert_eq!(checked, 3, "three pairs");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-08: a request-shaped tree failure is usage (exit 2); the
+/// data-shaped ones are runtime (exit 1). Too few taxa is the CLI-fixable
+/// side and must not be confused with a missing input file.
+#[test]
+fn tree_with_too_few_taxa_is_a_usage_error() {
+    let dir = temp_dir("taxa");
+    let input = dir.join("one.vcf");
+    std::fs::write(&input, plain_vcf(&["only"])).expect("invariant: fixture");
+    let out = run(&[
+        "distance",
+        "--tree",
+        "nj",
+        "-o",
+        dir.join("out").to_str().expect("utf8"),
+        input.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("need at least"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-08: an unwritable output is a runtime failure (exit 1) on
+/// both rename and filter — it used to depend on the subcommand.
+#[test]
+fn output_create_failure_is_runtime_on_rename_and_filter() {
+    let dir = temp_dir("badout");
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let bad = dir.join("missing").join("out.vcf");
+    for command in ["rename", "filter"] {
+        let mut args = vec![command, input.to_str().expect("utf8")];
+        if command == "rename" {
+            args.push("--clear-ids");
+        }
+        args.extend(["-o", bad.to_str().expect("utf8")]);
+        let out = run(&args);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{command}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-08 (R11): report-mode usage validation runs before the input
+/// opens, so a missing file cannot turn a bad command line into exit 1.
+#[test]
+fn stats_usage_errors_precede_a_missing_input() {
+    let dir = temp_dir("r11");
+    let missing = dir.join("missing.vcf");
+    let prefix = dir.join("out");
+
+    // Missing input + invalid sample filter: usage wins.
+    let out = run(&[
+        "stats",
+        missing.to_str().expect("utf8"),
+        "--freq",
+        "-s",
+        "s0",
+        "-o",
+        prefix.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Missing input + valid flags: the missing file is runtime.
+    let out = run(&[
+        "stats",
+        missing.to_str().expect("utf8"),
+        "--freq",
+        "-o",
+        prefix.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Existing input + the same invalid sample filter: still usage.
+    let input = dir.join("in.vcf.gz");
+    std::fs::write(&input, fixture()).expect("invariant: fixture");
+    let out = run(&[
+        "stats",
+        input.to_str().expect("utf8"),
+        "--freq",
+        "-s",
+        "s0",
+        "-o",
+        prefix.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

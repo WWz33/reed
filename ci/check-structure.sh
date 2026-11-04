@@ -38,6 +38,11 @@ check "--ld-decay is not re-parsed outside its value_parser (doc_v25 V25-06)" \
 check "GT syntax helpers live only in reed-io/src/bcf/gt_decode.rs (doc_v25 V25-02)" \
     bash -c '! grep -rq "fn gt_codes_into\|fn gt_shape" crates --include=*.rs | grep -v "gt_decode.rs"'
 
+# V25-08: the CLI depends on the facade only; distance/reduce/graph are
+# reachable through reed's re-exports.
+check "reed-cli depends on the facade, not the model crates (doc_v25 V25-08)" \
+    bash -c '! grep -qE "^reed-(distance|reduce|graph)" crates/reed-cli/Cargo.toml'
+
 # V25-07a: one counting implementation; the frozen oracle keeps its own
 # parity reference on purpose.
 check "counting semantics live in reed-core only (doc_v25 V25-07a)" \

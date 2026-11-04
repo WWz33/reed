@@ -203,6 +203,30 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
     // doc_v21 S19 / doc_v23 V23-21: `-o -` or an empty prefix writes
     // prefixed files and exits 0, so both are refused before any work.
     super::common::require_output_prefix(&prefix, "reed stats")?;
+    // R11 (doc_v25 V25-08): every command-line check before the input opens.
+    // The `-s/-S` and site/threshold rejections used to run after `prelude`,
+    // so a missing input file turned the same bad command into exit 1.
+    let sample_flags = !args.sample_args.samples.is_empty()
+        || args.sample_args.samples_file.is_some()
+        || args.sample_args.keep.is_some()
+        || args.sample_args.remove.is_some();
+    let site_spec = super::filter::site_spec(&args.site_args).map_err(reed::Error::usage)?;
+    if sample_flags || !super::common::site_spec_is_empty(&site_spec) {
+        return Err(reed::Error::usage(
+            "report mode (--freq/--hardy/--het/--missing/--depth/--summary) does not \
+             apply -s/-S/--keep/--remove or site/threshold filters yet; run \
+             `reed filter` first and feed its output to reed stats",
+        ));
+    }
+    // The empty `--hist` list is decidable from the text alone; tag checks
+    // (which need the header) stay after the open.
+    if args.hist.as_deref().is_some_and(|hist| {
+        hist.split(',').map(str::trim).all(str::is_empty)
+    }) {
+        return Err(reed::Error::usage(
+            "--hist: the list is empty (want qual/dp/dp-site/gq/idl/af or INFO/<TAG>/FMT/<TAG>)",
+        ));
+    }
     let p = prelude(
         "reed stats",
         &args.input,
@@ -214,15 +238,6 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         args.threads,
         args.memory,
     )?;
-    // doc_v7 D7-6: report mode does not apply the sample subset or the
-    // site/threshold filters; refuse instead of silently ignoring them.
-    if p.keep_samples.is_some() || p.site.is_some() {
-        return Err(reed::Error::usage(
-            "report mode (--freq/--hardy/--het/--missing/--depth/--summary) does not \
-             apply -s/-S/--keep/--remove or site/threshold filters yet; run \
-             `reed filter` first and feed its output to reed stats",
-        ));
-    }
     let facts_header = p
         .opened
         .as_ref()
@@ -231,13 +246,6 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         .header
         .clone();
     let hist = parse_hist(args.hist.as_deref(), &reed::tag_table(&facts_header))?;
-    // An all-empty list (`--hist ""`, `--hist ",,"`) used to pass the guard
-    // above (it tested `is_none`) and then write nothing while exiting 0.
-    if args.hist.is_some() && hist.is_empty() {
-        return Err(reed::Error::usage(
-            "--hist: the list is empty (want qual/dp/dp-site/gq/idl/af or INFO/<TAG>/FMT/<TAG>)",
-        ));
-    }
     let request = reed::reports::StatsReportRequest {
         hist,
         freq: args.freq,

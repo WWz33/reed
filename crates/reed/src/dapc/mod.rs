@@ -385,7 +385,14 @@ pub fn run_dapc_opened(
 }
 
 fn map_lda_err(e: LdaError) -> crate::Error {
-    crate::Error::usage(e.to_string())
+    // Data-shaped failures are runtime; a request/group-shape problem is
+    // usage (doc_v25 V25-08).
+    match e {
+        LdaError::Degenerate | LdaError::ConstantWithinGroups { .. } => {
+            crate::Error::foreign(e)
+        }
+        _ => crate::Error::usage(e.to_string()),
+    }
 }
 
 /// Writes `.dapc.ind`, `.dapc.eig` and `.dapc.var` next to `prefix`.

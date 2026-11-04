@@ -25,7 +25,7 @@ pub(crate) fn print_engine_metrics(m: &reed::metrics::StageMetrics) {
 
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
-fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
+pub(crate) fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
     spec.site == reed::spec::SiteRules::default()
         && spec.genotype == reed::spec::GenotypeRules::default()
         && spec.site_after_mask == reed::spec::TailRules::default()

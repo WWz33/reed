@@ -3,18 +3,30 @@
 use std::io::{BufWriter, Write as _};
 
 use reed::budget::ThreadBudget;
-use reed_distance::matrices::{
+use reed::distance::matrices::{
     ajk, allele_ct_distance, discordance, grm, ibs, king, one_minus_ibs, phi, pi_hat,
     AjkOptions, DistanceOptions, DiscordanceMode, DiscordanceOptions, MatrixKind, MatrixResult,
     MissingPolicy, PiHatOptions,
 };
-use reed_distance::output::{is_matrix_kind, write_ids, write_matrix};
-use reed_distance::{standardize, MatrixFormat, Stand};
-use reed_graph as graph;
+use reed::distance::output::{is_matrix_kind, write_ids, write_matrix};
+use reed::distance::{standardize, MatrixFormat, Stand};
+use reed::graph;
 
 use crate::cli::DistanceCli;
 
 /// Which matrix the user asked for.
+/// Exit-code classification for graph failures (doc_v25 V25-08): a request
+/// the command line can fix is usage; a matrix the data made unusable
+/// (NaN/asymmetric distances, non-finite branches, too-deep trees) is
+/// runtime, so a retry loop does not spin on exit 2.
+fn graph_error(e: reed::graph::error::GraphError) -> reed::Error {
+    use reed::graph::error::GraphError as G;
+    match e {
+        G::NotSquare { .. } | G::TooFewTaxa { .. } => reed::Error::usage(e.to_string()),
+        _ => reed::Error::foreign(e),
+    }
+}
+
 fn parse_kind(s: &str) -> Result<MatrixKind, String> {
     Ok(match s {
         "allele-ct" | "dist" => MatrixKind::AlleleCountDistance,
@@ -198,7 +210,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
                 )));
             }
         };
-        let tree = built.map_err(|e| reed::Error::usage(e.to_string()))?;
+        let tree = built.map_err(graph_error)?;
         let mut tree = tree;
         tree.tip_labels.clone_from(&ids);
 
@@ -243,7 +255,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
             // pool too, so `--threads` bounds the bootstrap as well.
             let report = pool
                 .install(|| graph::support(&tree, &x, tree_method, dist_fn, &cfg))
-                .map_err(|e| reed::Error::usage(e.to_string()))?;
+                .map_err(graph_error)?;
             // Support is per internal node, ascending id; `to_newick` writes
             // node labels in that order.
             tree.node_labels = Some(
@@ -268,8 +280,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
             }
         }
 
-        let nwk = graph::to_newick(&tree, args.digits)
-            .map_err(|e| reed::Error::usage(e.to_string()))?;
+        let nwk = graph::to_newick(&tree, args.digits).map_err(graph_error)?;
         std::fs::write(format!("{prefix}.nwk"), nwk).map_err(reed::Error::from)?;
         if args.verbosity.shows_summary() {
             eprintln!(
@@ -377,14 +388,10 @@ fn write_table(path: &std::path::Path, m: &MatrixResult) -> Result<(), reed::Err
             .map_err(reed::Error::from)?;
             let aux = m.aux.as_ref();
             // plink writes FID and IID as separate columns; reed's ids are
-            // the combined "FID_IID" sample names, so split on the last '_'
-            // when it is present.
-            let split = |id: &str| -> (String, String) {
-                match id.rsplit_once('_') {
-                    Some((fid, iid)) => (fid.to_string(), iid.to_string()),
-                    None => (id.to_string(), id.to_string()),
-                }
-            };
+            // single sample names. Writing the name in both columns keeps a
+            // name containing `_` intact instead of guessing a FID/IID
+            // boundary (doc_v25 V25-08, R14).
+            let split = |id: &str| -> (String, String) { (id.to_string(), id.to_string()) };
             for i in 0..n {
                 for j in 0..i {
                     let (f1, i1) = split(&m.ids[i]);

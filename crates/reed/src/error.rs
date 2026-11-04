@@ -32,6 +32,10 @@ enum ErrorInner {
     /// combination, a missing population, a failed invariant-site
     /// declaration (cli.md §9, exit 2).
     Usage(String),
+    /// A lower-layer failure the facade does not re-wrap: graph, reduce and
+    /// other optional backends (doc_v25 V25-08). Always runtime (exit 1) —
+    /// the data decided it, so replaying the command line cannot fix it.
+    Foreign(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// The exit-code class of an [`Error`] (cli.md §9: 2 = usage, 1 = runtime).
@@ -50,6 +54,13 @@ impl Error {
         Self(Box::new(ErrorInner::Usage(msg.into())))
     }
 
+    /// Wraps a backend error as a runtime failure (exit 1): the data, not
+    /// the command line, decided the outcome (doc_v25 V25-08).
+    #[must_use]
+    pub fn foreign(err: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self(Box::new(ErrorInner::Foreign(Box::new(err))))
+    }
+
     /// The exit-code class (cli.md §9). Request-construction failures are
     /// usage: the `run_*` validation stages throw `Error::usage` there, and
     /// the model-layer `CoreError` variants are all request-shaped, so both
@@ -64,7 +75,8 @@ impl Error {
             | ErrorInner::Spec(FilterError::Spec(_) | FilterError::Format(_)) => ErrorKind::Usage,
             ErrorInner::Io(_)
             | ErrorInner::Spec(FilterError::Io(_) | FilterError::Decode { .. })
-            | ErrorInner::Engine(_) => ErrorKind::Runtime,
+            | ErrorInner::Engine(_)
+            | ErrorInner::Foreign(_) => ErrorKind::Runtime,
         }
     }
 }
@@ -77,6 +89,7 @@ impl std::fmt::Display for Error {
             ErrorInner::Engine(e) => write!(f, "{e}"),
             ErrorInner::Spec(e) => write!(f, "{e}"),
             ErrorInner::Usage(msg) => write!(f, "{msg}"),
+            ErrorInner::Foreign(err) => write!(f, "{err}"),
         }
     }
 }
@@ -89,6 +102,7 @@ impl std::error::Error for Error {
             ErrorInner::Engine(e) => Some(e),
             ErrorInner::Spec(e) => Some(e),
             ErrorInner::Usage(_) => None,
+            ErrorInner::Foreign(err) => Some(err.as_ref()),
         }
     }
 }

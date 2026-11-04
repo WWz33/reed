@@ -647,7 +647,12 @@ pub fn run_rename_opened(
         Some(p) => Box::new(std::io::BufWriter::with_capacity(
             1 << 20,
             std::fs::File::create(p).map_err(|e| {
-                crate::Error::usage(format!("cannot create {}: {e}", p.display()))
+                // A filesystem failure is runtime (doc_v25 V25-08): the same
+                // command on filter/convert already exits 1.
+                crate::Error::from(std::io::Error::new(
+                    e.kind(),
+                    format!("cannot create {}: {e}", p.display()),
+                ))
             })?,
         )),
     };

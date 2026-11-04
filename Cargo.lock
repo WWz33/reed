@@ -1513,6 +1513,7 @@ dependencies = [
  "proptest",
  "rayon",
  "reed-core",
+ "reed-distance",
  "reed-engine",
  "reed-filter",
  "reed-graph",
@@ -1531,9 +1532,6 @@ dependencies = [
  "clap",
  "rayon",
  "reed",
- "reed-distance",
- "reed-graph",
- "reed-reduce",
  "tracing",
  "tracing-subscriber",
 ]
