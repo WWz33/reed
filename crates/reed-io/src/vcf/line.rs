@@ -352,7 +352,10 @@ pub enum MalformedLine {
     /// record could filter two different ways. The column is rejected instead
     /// of choosing a convention per consumer — a deliberate divergence from
     /// htslib, which accepts the record silently.
-    DuplicateInfoKey(super::info::DuplicateInfoKey),
+    ///
+    /// Also carries the INFO tag-count ceiling (doc_v26 review item 2), which
+    /// bounds the duplicate check's quadratic scan.
+    InfoColumn(super::info::InfoColumnError),
 }
 
 impl MalformedLine {
@@ -364,7 +367,12 @@ impl MalformedLine {
             Self::SampleColumns(_) => "a sample-column count differing from the header",
             Self::Position => "an unparsable POS",
             Self::Empty(_) => "an empty required column",
-            Self::DuplicateInfoKey(_) => "a duplicate INFO tag",
+            Self::InfoColumn(super::info::InfoColumnError::Duplicate(_)) => {
+                "a duplicate INFO tag"
+            }
+            Self::InfoColumn(super::info::InfoColumnError::TooManyTags { .. }) => {
+                "too many INFO tags"
+            }
         }
     }
 }
@@ -427,8 +435,8 @@ pub fn classify_line(line: &[u8], n_samples: usize) -> RecordClass<'_> {
     if let Some(field) = lr.first_empty_required() {
         return RecordClass::Malformed(MalformedLine::Empty(field));
     }
-    if let Err(duplicate) = crate::vcf::info::validate_info(lr.info_text()) {
-        return RecordClass::Malformed(MalformedLine::DuplicateInfoKey(duplicate));
+    if let Err(err) = crate::vcf::info::validate_info(lr.info_text()) {
+        return RecordClass::Malformed(MalformedLine::InfoColumn(err));
     }
     if let Err(err) = lr.validate_sample_cols(n_samples) {
         return RecordClass::Malformed(MalformedLine::SampleColumns(err));
@@ -717,7 +725,9 @@ mod tests {
     fn duplicate_info_tags_are_malformed() {
         let line = b"chr1\t1\t.\tA\tG\t50\tPASS\tAC=1;AC=3;AN=4\tGT\t0/1\n";
         match classify_line(line, 1) {
-            RecordClass::Malformed(MalformedLine::DuplicateInfoKey(key)) => {
+            RecordClass::Malformed(MalformedLine::InfoColumn(
+                crate::vcf::info::InfoColumnError::Duplicate(key),
+            )) => {
                 assert_eq!(key.key_len, 2);
             }
             other => panic!("expected a duplicate-INFO rejection, got {other:?}"),

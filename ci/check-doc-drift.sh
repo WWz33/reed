@@ -59,6 +59,12 @@ check "the shared Verbosity enum exists (doc_v4 03 §3.3)" \
 check "exactly one production allow(unsafe_code) site (doc_v6 06 Y0)" \
     bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | grep -v "/tests/" | wc -l)" -eq 1 ]'
 
+# doc_v26 V26-03 / review item 3: the --threads ceiling is a user-facing
+# constraint, so the spec row and the code constant must agree.
+check "the --threads ceiling is documented in the CLI spec (doc_v26 V26-03)" \
+    bash -c 'grep -q "上限 1024" docs/spec/cli.md &&
+        grep -q "pub const MAX_THREADS: usize = 1024;" crates/reed-engine/src/budget.rs'
+
 # doc_v5 03 §6 / A5-3: the stale names are gone from the code.
 check "no code says sample.max_missing (doc_v5 A5-3)" \
     bash -c '! grep -rq "sample\.max_missing" crates/*/src'

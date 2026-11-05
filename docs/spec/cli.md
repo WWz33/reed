@@ -57,7 +57,7 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `-o, --output FILE\|PREFIX` | filter：输出文件（缺省 stdout），格式来自 `-O` 或扩展名；stats：输出前缀；index：索引路径。别名 `--out` | 三者 |
 | `-O, --output-type v\|z\|b\|u[0-9]` | 输出类型与压缩级别（`-Oz6`、`-Ob1`） | filter |
 | `-W, --write-index[=csi\|tbi]` | 边写边建索引；**不给则不写**（bcftools 语义；W1 修正了"默认写"的缺陷）。索引只在 BGZF 输出且给了 `-o FILE` 时才有意义：其余形态是用法错（doc_v21 D2） | filter、rename |
-| `--threads INT` | worker 线程数，默认全部核 | 三者 |
+| `--threads INT` | worker 线程数，默认全部核。**上限 1024**（doc_v26 V26-03）：0 与超过 1024 的值都是用法错（exit 2），错误信息给出上限。上限存在的理由是派生容量（ticket 窗口 `2×workers`、abort 通道 `threads+4`、reorder ring）随线程数增长，无界值会请求不现实的资源；1024 远高于任何受支持的部署（参照机 56 核 / 348 样本） | 三者（全部子命令同一域） |
 | `--memory MB` | 在途内存预算（MiB），默认物理内存一半 | filter / stats |
 | `--tmp-dir DIR` | 临时目录（多遍运行的 stdin 溢写）；**filter 使用**，stats 保留接受但不使用（报告单遍读取；doc_v15 D15-23） | filter；stats（接受不使用） |
 | `--verbosity 0..3` | 0 静默；1 摘要（默认）；2 阶段计时；3 调试（`RUST_LOG`，默认 debug）；>3 报错 | 三者 |
@@ -482,7 +482,7 @@ reed pca in.vcf.gz --pcs 10 -o out
 | `--pcs INT` | 输出的 PC 数（默认 10） |
 | `--stand binom2\|binom` | 标准化：`binom2 = sqrt(2p(1-p))`（GCTA/plink2/flashpca，默认）；`binom = sqrt(p(1-p))`（老 EIGENSOFT）。两者给出**相同的 PC**，特征值恰好相差 2 倍 |
 | `--missing pairwise\|meanimpute` | 缺失策略：`pairwise`（每对用自己的分母，plink2/GCTA 默认）；`meanimpute`（flashpca、plink2 `meanimpute`） |
-| `--solver auto\|dense\|stream` | `auto`（默认）：`N²·8` 在内存预算内走 `dense`，否则 `stream`；`dense` 物化 N×N 并取全谱；`stream` 是矩阵-free 的块 Lanczos |
+| `--solver auto\|dense\|stream` | `auto`（默认）：按 **dense 路径的真实峰值**判断（doc_v26 V26-20：`4·N·M·8 + 6·N²·8`，pairwise 再加 `N²·8`），在内存预算内走 `dense`，否则 `stream`；旧规则只看 `N²·8`，会把峰值远超预算的路径选成 dense。`dense` 物化 N×N 并取全谱；`stream` 是矩阵-free 的块 Lanczos |
 | `-o PREFIX` | **必填**：写 `PREFIX.eigenvec`、`PREFIX.eigenval`、`PREFIX.pve` |
 | `-s/-S/--samples-file/--keep/--remove` | 样本子集（与 `reed filter` 同拼写） |
 | `--threads INT`、`--memory MB` | 线程与内存预算 |

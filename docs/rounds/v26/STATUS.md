@@ -41,11 +41,19 @@
 | R-5 | `validate_info` 每条记录 `Vec` 分配 + `contains` 的 O(k²)；注释却写"allocation-free and linear" | 改为无分配的"与前缀重比"，注释如实写 O(k²) 及其理由（k 是个位数）；新增独立计数分配器测试 | 新测试：旧实现 **4000 次调用 6000 次分配**，新实现 **0** |
 | R-6 | CI 的 data-gate 把 reed 分支跑两次（`run_all.sh` 已并入 + 又显式跑 `run_reed.sh`） | 删除显式的第二次调用，保留 `REED` 导出 + `run_all.sh` 一条路径 | YAML 中 `run_reed.sh` 只剩注释里的一处说明 |
 
+## 2026-11-06 第二轮复核（3 项）
+
+| # | 问题 | 处理 | 证据 |
+|---|---|---|---|
+| S-1 | 原子清理的**同进程**竞态：同一目标持有一个超过 60 s 未更新的临时文件，再创建该目标的另一个 `AtomicFile` 时仍可能被清理，导致提交失败 | 新增进程内活跃临时文件登记表 `LIVE_TEMPORARIES`（`Mutex<Vec<PathBuf>>`）。创建时在**同一把锁内**完成"清扫 + 登记"，提交/`Drop` 时注销；清扫跳过所有已登记路径。因此"崩溃遗留"和"活跃但安静"可以区分，不再靠年龄猜 | 新增 2 个测试：活跃兄弟临时文件（老化 1 h）在第二次 create 后仍存在且两个都能提交；注销后的陈旧同名文件仍会被清扫。**移除活跃检查后测试失败** |
+| S-2 | INFO 查重仍是 O(k²)，标签数无上限 | 按"边界问题"处理，但把上界做成确定性的：新增 `MAX_INFO_TAGS = 4096`，`validate_info` 与 `InfoIndex::build` 在同一条规则上共享（超过即 malformed，且在平方扫描**之前**检查）。真实数据实测最大 7 个标签，余量三个数量级 | 测试：4096 个标签通过、4097 被拒、索引同样拒绝且失败后不遗留表 |
+| S-3 | `--threads` 的 1024 上限未进 CLI 规格 | 已写进 `docs/spec/cli.md` §2 的 `--threads` 行（含 0/超限都是 exit 2、错误信息含上限、上限存在理由、远高于受支持部署）；新增 doc-drift 守卫把规格文本与 `MAX_THREADS` 常量绑在一起。顺带修正同一节里 `--solver auto` 仍写旧 `N²·8` 规则的过期描述 | 守卫 98/98；实测 `--threads 1025` 报 `exceeds the supported maximum of 1024`，1024 正常 |
+
 ## 本轮验收
 
-- `ci/test-parallel.sh`：**1059 passed / 0 failed**（56 个二进制，16 s）。
+- `ci/test-parallel.sh`：**1062 passed / 0 failed**（56 个二进制，17 s）。
 - `cargo +stable clippy --workspace --all-targets -- -D warnings`：**0 告警**。
-- `ci/check-doc-drift.sh`：**97 项 ok**；`ci/check-structure.sh`：**16 项 ok**。
+- `ci/check-doc-drift.sh`：**98 项 ok**；`ci/check-structure.sh`：**16 项 ok**。
 - `cargo +1.91 check --workspace --all-targets`：通过（MSRV 实测）。
 - 真实数据：7 GB `clean.vcf.gz`（3,315,604 记录）filter 结果记录数不变；8 GB `clean.bcf` 走 native BCF 路径通过；BCF→stats 往返通过。
 - 未跑：全量 gold/data-gates（本机 plink2 在该子集上另有自身失败，与 reed 无关，故只做了区域烟测）；长时资源压力；完整性能基准回归。

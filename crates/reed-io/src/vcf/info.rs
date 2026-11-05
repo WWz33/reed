@@ -88,8 +88,21 @@ pub struct DuplicateInfoKey {
     pub key_len: usize,
 }
 
+/// The most INFO tags one record may carry (review item 2).
+///
+/// The duplicate check is O(k²) in the tag count (see [`validate_info`]), so
+/// an unbounded k left the worst case open: a record with tens of thousands
+/// of unique tags made one `classify_line` call scan quadratically. Real VCFs
+/// carry a few dozen (`DP`, `AC`, `AN`, `MQ`, `QD`, …); htslib's own ceiling is
+/// `UINT16_MAX` tags (`vcf.c:3950`), which still allows a pathological scan.
+///
+/// 4096 is far above any real record and makes the worst case finite —
+/// ~8.4M short `memcmp`s per record, milliseconds, not seconds. A record past
+/// it is [`IoError::MalformedRecord`]-class malformed input, not a slow one.
+pub const MAX_INFO_TAGS: usize = 4096;
+
 /// Validates an INFO column for the record contract shared by every consumer
-/// (doc_v26 V26-04): today that is the no-duplicate-tag rule.
+/// (doc_v26 V26-04): the no-duplicate-tag rule plus the tag-count ceiling.
 ///
 /// # Cost
 ///
@@ -110,21 +123,49 @@ pub struct DuplicateInfoKey {
 ///
 /// # Errors
 ///
-/// [`DuplicateInfoKey`] when a tag repeats.
-pub fn validate_info(info: &[u8]) -> Result<(), DuplicateInfoKey> {
+/// [`DuplicateInfoKey`] when a tag repeats, and [`InfoTagOverflow`] when the
+/// record carries more than [`MAX_INFO_TAGS`] tags.
+pub fn validate_info(info: &[u8]) -> Result<(), InfoColumnError> {
+    let mut tags = 0_usize;
     for (tag, _) in info_fragments(info) {
+        tags += 1;
+        // Checked before the quadratic scan below, so the bound really does
+        // cap the work (review item 2).
+        if tags > MAX_INFO_TAGS {
+            return Err(InfoColumnError::TooManyTags {
+                limit: MAX_INFO_TAGS,
+            });
+        }
         let key_start = tag.as_ptr() as usize - info.as_ptr() as usize;
         // Compare against every earlier key: the earlier region is
         // `info[..key_start]`, so re-walking that prefix keeps the check
         // allocation-free and identical to the index's rule.
         if prefix_has_key(&info[..key_start], tag) {
-            return Err(DuplicateInfoKey {
+            return Err(InfoColumnError::Duplicate(DuplicateInfoKey {
                 key_start,
                 key_len: tag.len(),
-            });
+            }));
         }
     }
     Ok(())
+}
+
+/// Why an INFO column fails validation (review item 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InfoColumnError {
+    /// A tag repeats.
+    Duplicate(DuplicateInfoKey),
+    /// The record declares more tags than [`MAX_INFO_TAGS`].
+    TooManyTags {
+        /// The ceiling that was exceeded.
+        limit: usize,
+    },
+}
+
+impl From<DuplicateInfoKey> for InfoColumnError {
+    fn from(err: DuplicateInfoKey) -> Self {
+        Self::Duplicate(err)
+    }
 }
 
 /// Whether `prefix` (the INFO text before the current fragment) already
@@ -154,18 +195,27 @@ impl InfoIndex {
     ///
     /// # Errors
     ///
-    /// [`DuplicateInfoKey`] when a tag repeats (doc_v26 V26-04). The index is
-    /// left empty in that case: a caller that keeps going must not filter on
-    /// a partially built table.
+    /// [`InfoColumnError`] when a tag repeats (doc_v26 V26-04) or the record
+    /// carries more than [`MAX_INFO_TAGS`] tags (review item 2: the same
+    /// ceiling as [`validate_info`], so the index cannot be built for a
+    /// record the classifier would have rejected). The index is left empty in
+    /// that case: a caller that keeps going must not filter on a partially
+    /// built table.
     ///
     /// # Panics
     ///
     /// Panics only on a slice/subslice relationship the caller cannot break
     /// (`info_fragments` yields borrows of `info`).
-    pub fn build(&mut self, info: &[u8]) -> Result<(), DuplicateInfoKey> {
+    pub fn build(&mut self, info: &[u8]) -> Result<(), InfoColumnError> {
         self.frags.clear();
         for (tag, value) in info_fragments(info) {
             let tag_start = tag.as_ptr() as usize - info.as_ptr() as usize;
+            if self.frags.len() >= MAX_INFO_TAGS {
+                self.frags.clear();
+                return Err(InfoColumnError::TooManyTags {
+                    limit: MAX_INFO_TAGS,
+                });
+            }
             // Duplicate check: the fragment list is short (a handful of
             // tags), so a linear scan beats any map here.
             if self
@@ -178,7 +228,7 @@ impl InfoIndex {
                     key_len: tag.len(),
                 };
                 self.frags.clear();
-                return Err(duplicate);
+                return Err(duplicate.into());
             }
             let value = value.map(|v| {
                 let start = v.as_ptr() as usize - info.as_ptr() as usize;
@@ -242,14 +292,63 @@ mod tests {
     fn duplicate_tags_are_rejected() {
         let info = b"AC=1;AN=4;AC=3";
         let err = validate_info(info).expect_err("duplicate AC must be rejected");
-        assert_eq!(&info[err.key_start..err.key_start + err.key_len], b"AC");
+        let InfoColumnError::Duplicate(key) = err else {
+            panic!("expected a duplicate, got {err:?}");
+        };
+        assert_eq!(&info[key.key_start..key.key_start + key.key_len], b"AC");
         let mut idx = InfoIndex::default();
         assert!(idx.build(info).is_err(), "the index must reject duplicates");
         assert_eq!(idx.get(info, b"AN"), None, "a failed build leaves no table");
         // The first occurrence is the one reported.
         let again = b"DP=1;DP=2";
         let err = validate_info(again).expect_err("duplicate DP must be rejected");
-        assert_eq!(err.key_start, 5, "DP starts right after the first `;`");
+        let InfoColumnError::Duplicate(key) = err else {
+            panic!("expected a duplicate, got {err:?}");
+        };
+        assert_eq!(key.key_start, 5, "DP starts right after the first `;`");
+    }
+
+    /// Review item 2: an unbounded tag count made the O(k²) duplicate scan
+    /// quadratic in an attacker-controlled k. A record past `MAX_INFO_TAGS`
+    /// is rejected before the scan can be exploited.
+    #[test]
+    fn an_excessive_tag_count_is_rejected() {
+        // Exactly at the ceiling: accepted (all unique).
+        use std::fmt::Write as _;
+        let mut at = String::new();
+        for i in 0..MAX_INFO_TAGS {
+            if i > 0 {
+                at.push(';');
+            }
+            write!(at, "T{i}=1").expect("invariant: writing to a String");
+        }
+        assert!(validate_info(at.as_bytes()).is_ok(), "the ceiling itself is legal");
+
+        // One past it: rejected with the histogram-free error.
+        let mut over = at.clone();
+        over.push_str(";EXTRA=1");
+        assert_eq!(
+            validate_info(over.as_bytes()),
+            Err(InfoColumnError::TooManyTags {
+                limit: MAX_INFO_TAGS
+            })
+        );
+
+        // The index enforces the same rule, so a caller cannot build a table
+        // the classifier would have rejected.
+        let mut idx = InfoIndex::default();
+        assert_eq!(
+            idx.build(over.as_bytes()),
+            Err(InfoColumnError::TooManyTags {
+                limit: MAX_INFO_TAGS
+            }),
+            "the index must not accept a record the classifier rejects"
+        );
+        assert_eq!(idx.get(over.as_bytes(), b"T0"), None, "a failed build leaves no table");
+        // And the legal case still builds.
+        let mut idx = InfoIndex::default();
+        idx.build(at.as_bytes()).expect("invariant: at the ceiling");
+        assert!(idx.get(at.as_bytes(), b"T0").is_some());
     }
 
     /// Flags and a repeated flag are covered as well (a Flag has no `=`).

@@ -8,7 +8,7 @@ are the stability promise (`docs/spec/cli.md` §0).
 ## [Unreleased] — doc_v26：IO/filter 遗留缺陷与并行资源（2026-11-06）
 
 对 v25 之后的 IO/filter/并行审查（`docs/rounds/v26/`）逐条落地：V26-00…V26-21。
-每条先补能失败的输入测试，再改共享底层契约。含 2026-11-06 复核的 6 项追加修复。验收：1059 项测试全绿、clippy 0、
+每条先补能失败的输入测试，再改共享底层契约。含两轮 2026-11-06 复核的 9 项追加修复。验收：1062 项测试全绿、clippy 0、
 doc-drift 97/97、structure 16/16、MSRV 1.91 实测通过。
 
 ### Fixed（安全 / 正确性）
@@ -66,6 +66,16 @@ doc-drift 97/97、structure 16/16、MSRV 1.91 实测通过。
 
 ### Removed
 - `reed-io` 重复的 noodles dev-dependency；spill 测试锁（测试改持私有命名源）。
+
+### Fixed（2026-11-06 第二轮复核，3 项）
+- **io 原子输出**：同进程竞态。临时文件清理改为"进程内活跃登记表"驱动：创建时在同一把
+  锁内清扫并登记，提交/`Drop` 注销，清扫跳过已登记路径。此前一个活跃但 60 s 未更新的
+  临时文件会被同一进程对同一目标的另一次 `create` 删掉，导致提交失败。
+- **io INFO 查重**：新增 `MAX_INFO_TAGS = 4096` 上界（`validate_info` 与
+  `InfoIndex::build` 同一规则，且在 O(k²) 扫描之前检查），把最坏情况变成确定性的
+  malformed 拒绝。真实数据实测最大 7 个标签。
+- **docs**：`--threads` 的 1024 上限写入 `docs/spec/cli.md` 并加 doc-drift 守卫；
+  同时修正同一节 `--solver auto` 仍描述旧 `N²·8` 规则的过期文字。
 
 ### Fixed（2026-11-06 复核追加，6 项）
 - **io mmap API**：`MmapChunkSource::open` 改为 `pub unsafe fn`。它是安全 `pub fn`

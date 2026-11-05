@@ -37,6 +37,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Process-wide counter for temporary names (one sequence per process).
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Temporaries this process currently owns and may still publish.
+///
+/// The sweep must never remove a file another `AtomicFile` in this process is
+/// still writing (review item 1): a long-running writer whose temporary has
+/// not been touched for a minute is *active*, not stale, and deleting it makes
+/// its commit fail. Age cannot tell the two apart, but ownership can — so
+/// every temporary is registered here on creation and deregistered when it is
+/// committed or dropped, and the sweep skips anything registered.
+///
+/// The mutex also covers the sweep's directory walk, so a temporary cannot be
+/// created between the walk and the check.
+static LIVE_TEMPORARIES: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Deregisters `path` (idempotent: a path that was already removed is fine).
+fn unregister_live(path: &Path) {
+    if let Ok(mut live) = LIVE_TEMPORARIES.lock() {
+        live.retain(|p| p != path);
+    }
+}
+
 /// How many candidate names one output may burn through before giving up.
 const TEMP_ATTEMPTS: usize = 16;
 
@@ -59,7 +79,13 @@ const TEMP_ATTEMPTS: usize = 16;
 /// choice: stale bytes are recoverable, deleted data is not. There is no
 /// portable, race-free way to prove another pid is dead from a filename, so
 /// this implementation does not pretend to.
-fn sweep_stale_temps(target: &Path) {
+///
+/// Age alone still cannot separate "crashed 60 s ago" from "active but quiet
+/// for 60 s", so a name this process **currently owns** is skipped
+/// ([`LIVE_TEMPORARIES`]); the whole walk runs under that registry's lock, so
+/// no temporary can be created between the check and the removal (review
+/// item 1).
+fn sweep_stale_temps(target: &Path, live: &[PathBuf]) {
     let Some(parent) = target.parent() else { return };
     let name = target
         .file_name()
@@ -88,6 +114,11 @@ fn sweep_stale_temps(target: &Path) {
         if pid_text.parse::<u32>().ok() != Some(own_pid)
             || counter_text.parse::<u64>().is_err()
         {
+            continue;
+        }
+        // A temporary this process still owns is active, however quiet it
+        // has been: never remove it (review item 1).
+        if live.iter().any(|p| *p == entry.path()) {
             continue;
         }
         let old = entry
@@ -183,22 +214,31 @@ impl AtomicFile {
         {
             std::fs::create_dir_all(parent)?;
         }
-        sweep_stale_temps(target);
-        for _ in 0..TEMP_ATTEMPTS {
-            let temp = temp_path(target, TEMP_COUNTER.fetch_add(1, Ordering::Relaxed));
-            match OpenOptions::new().write(true).create_new(true).open(&temp) {
-                Ok(file) => {
-                    return Ok((
-                        Self {
-                            temp,
-                            target: target.to_path_buf(),
-                            committed: false,
-                        },
-                        file,
-                    ));
+        // The sweep and the registration happen under one lock, so a
+        // temporary created here can never be seen as stale by another
+        // `create` in this process (review item 1).
+        {
+            let mut registry = LIVE_TEMPORARIES
+                .lock()
+                .expect("invariant: live-temporary registry not poisoned");
+            sweep_stale_temps(target, &registry);
+            for _ in 0..TEMP_ATTEMPTS {
+                let temp = temp_path(target, TEMP_COUNTER.fetch_add(1, Ordering::Relaxed));
+                match OpenOptions::new().write(true).create_new(true).open(&temp) {
+                    Ok(file) => {
+                        registry.push(temp.clone());
+                        return Ok((
+                            Self {
+                                temp,
+                                target: target.to_path_buf(),
+                                committed: false,
+                            },
+                            file,
+                        ));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(e),
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e),
             }
         }
         Err(std::io::Error::new(
@@ -237,17 +277,26 @@ impl AtomicFile {
     ///
     /// `sync_all` or rename failures.
     pub fn commit(mut self) -> std::io::Result<()> {
-        let temp = OpenOptions::new().write(true).open(&self.temp)?;
-        temp.sync_all()?;
-        drop(temp);
-        std::fs::rename(&self.temp, &self.target)?;
-        self.committed = true;
-        Ok(())
+        let result = (|| {
+            let temp = OpenOptions::new().write(true).open(&self.temp)?;
+            temp.sync_all()?;
+            drop(temp);
+            std::fs::rename(&self.temp, &self.target)
+        })();
+        // Deregister on success and on failure alike: either the name is gone
+        // (renamed) or `Drop` will remove it, so neither is "live" any more.
+        if result.is_ok() {
+            self.committed = true;
+        }
+        unregister_live(&self.temp);
+        result
     }
 }
 
 impl Drop for AtomicFile {
     fn drop(&mut self) {
+        // No longer active: the sweep may remove this name if it survives.
+        unregister_live(&self.temp);
         if !self.committed {
             // Unlink never follows a symlink, and the name is ours. After a
             // successful commit this fails with NotFound and is ignored.
@@ -404,6 +453,73 @@ mod tests {
         assert!(user_pid.exists(), "a non-numeric pid field is not ours");
         assert!(other_target.exists(), "another target's file is not ours");
         drop(out);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Review item 1: a second `AtomicFile` for the same target must not
+    /// sweep the first one's temporary away, even when the first has been
+    /// quiet for longer than the staleness window and both name this process.
+    /// Age cannot separate "crashed" from "active but quiet"; the live
+    /// registry can.
+    #[test]
+    fn a_live_sibling_temporary_is_not_swept() {
+        let dir = dir("live");
+        let target = dir.join("out.txt");
+        // The first writer: open, then aged past the staleness window.
+        let (first, mut file) = AtomicFile::create(&target).expect("invariant: first");
+        let first_temp = first.temp_path().to_path_buf();
+        file.write_all(b"still being written").expect("invariant: write");
+        file.set_modified(
+            std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+        )
+        .expect("invariant: age the file");
+
+        // A second writer for the same target sweeps its own stale names.
+        let (second, _file2) = AtomicFile::create(&target).expect("invariant: second");
+        assert!(
+            first_temp.exists(),
+            "an active temporary must survive another create, however old it looks"
+        );
+        assert_ne!(first.temp_path(), second.temp_path());
+
+        // Both can still commit (in either order).
+        drop(file);
+        second.commit().expect("invariant: second commits");
+        first.commit().expect("invariant: first commits");
+        assert_eq!(std::fs::read(&target).unwrap(), b"still being written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// After the first writer is gone, its leftover name is no longer live and
+    /// a later create may sweep it (the SIGKILL-recovery path).
+    #[test]
+    fn a_released_temporary_becomes_sweepable() {
+        let dir = dir("released");
+        let target = dir.join("out.txt");
+        let (orphan, _file) = AtomicFile::create(&target).expect("invariant: orphan");
+        let orphan_temp = orphan.temp_path().to_path_buf();
+        // Make it look like a crashed run: old, and not committed.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&orphan_temp)
+            .expect("invariant: open")
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .expect("invariant: age");
+        drop(orphan); // deregisters, and Drop removes it
+        // Recreate the same shape as if the process had died: write the name
+        // by hand and age it, without registering it.
+        std::fs::write(&orphan_temp, b"x").expect("invariant: orphan bytes");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&orphan_temp)
+            .expect("invariant: open")
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .expect("invariant: age");
+        let (_next, _file2) = AtomicFile::create(&target).expect("invariant: next");
+        assert!(
+            !orphan_temp.exists(),
+            "an unregistered, stale, same-pid temporary is swept"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
