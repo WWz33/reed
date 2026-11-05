@@ -222,9 +222,12 @@ check "plain gzip is decoded multi-member (doc_v10 D10-6)" \
 
 # doc_v10 D10-7: the output header declares PASS even when the input does
 # not (htslib injects it on both sides).
+# doc_v26 V26-10: the mutation moved behind the opaque header type, so the
+# guard follows the behaviour (the filter calls with_pass_filter) and the
+# implementation (reed-io declares PASS) rather than an old helper name.
 check "the output header declares PASS (doc_v10 D10-7)" \
-    bash -c 'grep -q "fn ensure_pass_filter" crates/reed/src/filter/mod.rs &&
-        grep -q "ensure_pass_filter(out_header)" crates/reed/src/filter/mod.rs'
+    bash -c 'grep -q "with_pass_filter()" crates/reed/src/filter/mod.rs &&
+        grep -q "fn with_pass_filter" crates/reed-io/src/header/vcf_header.rs'
 
 # doc_v10 D10-8: record field sizes go through the checked `field_bytes`
 # helper, never a raw `type_width(ty) * count` product.

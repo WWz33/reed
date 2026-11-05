@@ -8,6 +8,7 @@
 #   bash gold/scripts/run_all.sh
 #   REGION=Chr01:1-2000000 OUTDIR=/tmp/goldtest bash gold/scripts/run_all.sh   # 烟测
 #   HWE_MIN=0 bash gold/scripts/run_all.sh                                     # 关闭 HWE 层
+#   REED=/path/to/reed bash gold/scripts/run_all.sh                            # 并入 reed 分支
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_tools BCFTOOLS VCFTOOLS PLINK2 BGZIP TABIX
 
@@ -23,8 +24,10 @@ log "        INFO(bcftools only): QD>=$INFO_QD_MIN FS<=$INFO_FS_MAX MQ>=$INFO_MQ
 # 1) 共享样本名单 (全量)
 build_sample_keep
 
-# 2) 三分支并行
+# 2) 三分支并行（doc_v26 V26-14：REED 存在时把 reed 分支并入，
+#    这样 parity 读取的 out/reed.vcf.gz 必定由本次运行生成）
 declare -a names=(bcftools vcftools plink2)
+[[ -n "${REED:-}" ]] && names+=(reed)
 declare -a pids=()
 for n in "${names[@]}"; do
     ( bash "$GOLD_DIR/scripts/run_$n.sh" > "$LOGDIR/run_$n.out" 2>&1; echo $? > "$WORKDIR/run_$n.rc" ) &

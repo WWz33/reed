@@ -1830,9 +1830,6 @@ mod spill_tests {
 
     #[test]
     fn rows_blob_spills_and_cleans_up() {
-        let _serialized = crate::spill::SPILL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let mut blob = RowsBlob::default();
         let mut first = b"aaaa".to_vec();
         blob.append(&mut first, 8).expect("append");
@@ -1854,9 +1851,6 @@ mod spill_tests {
 
     #[test]
     fn write_hapmap_streams_a_spilled_blob() {
-        let _serialized = crate::spill::SPILL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("reed-convert-spill-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
@@ -1886,9 +1880,6 @@ mod spill_tests {
 
     #[test]
     fn rows_blob_visit_sees_the_whole_stream() {
-        let _serialized = crate::spill::SPILL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let mut blob = RowsBlob::default();
         let mut head = vec![1_u8, 2, 255];
         blob.append(&mut head, 2).expect("append"); // 3 > 2: spills at once
@@ -1906,9 +1897,6 @@ mod spill_tests {
 
     #[test]
     fn write_count_matrix_streams_spilled_cells() {
-        let _serialized = crate::spill::SPILL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("reed-convert-cells-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
