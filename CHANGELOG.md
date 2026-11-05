@@ -5,6 +5,68 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v26：IO/filter 遗留缺陷与并行资源（2026-11-06）
+
+对 v25 之后的 IO/filter/并行审查（`docs/rounds/v26/`）逐条落地：V26-00…V26-21。
+每条先补能失败的输入测试，再改共享底层契约。验收：1055 项测试全绿、clippy 0、
+doc-drift 97/97、structure 16/16、MSRV 1.91 实测通过。
+
+### Fixed（安全 / 正确性）
+- **io BGZF**：新增 `block_entry` 作为唯一块入口。空成员过去只看 ISIZE 尾 4 字节，
+  被 ISIZE 清零的坏块会被**跳过且不验 CRC**（静默丢记录）；ISIZE 超过 64 KiB
+  会让 `inflate_chunk` 先按声明值扩容再解压（可被要求任意分配）。现在校验
+  `ISIZE <= 65536`，空成员用零长窗口让 libdeflate 证明其为空并验 CRC；
+  stream/mmap/region 三源统一。
+- **reed 输入**：默认 BGZF 路径改为流式。`memmap2` 的合同要求映射期间底层文件不被
+  **任何进程**修改，"只读打开"不足以建立该前提。7 GB 输入实测 100.8 s vs
+  101.1 s，记录逐字节一致；`MmapChunkSource` 保留为显式 API 并写明调用方契约。
+- **filter INFO**：AC 求和改 checked（`AC=18446744073709551615,1` 原会 debug panic /
+  release 回绕并可能算出错的 AF）；AC 元素数在物化前按 `n_alt` 拒绝。
+- **io INFO**：重复标签拒绝（索引取首项、AC/AN reader 取末项，同一记录按不同规则
+  过滤结果不同）；AC/AN 改走同一索引。
+- **io BCF**：`n_allele = 0` 在 `site_header` 与 renderer 都返回 `MalformedRecord`
+  （后者原先把 REF/ALT 渲染成 `.` 当有效行输出）。
+- **io VCF**：空 CHROM/REF/ALT/QUAL/FILTER/INFO/FORMAT 判为 malformed（`.` 仍合法）；
+  判空排在样本列一致性之前。
+- **engine/reed 内存**：seam stitcher 上限取 min(1 GiB, `--memory`)；BCF carry 的
+  两处"先 append 后检查"改为 append 前检查（原实现可越过 1 GiB 且无视预算）。
+- **engine 内存探测**：默认预算取 host `MemTotal` 与 cgroup v2/v1 限额的最小值
+  （受限容器原先按宿主机内存放行，随后被 OOM 杀掉）。
+- **io/engine 输入上界**：无 `#CHROM` 的头部累积设 256 MiB 上限，超限直接报错，
+  不再耗尽内存后才说"没有头"。
+
+### Fixed（资源契约）
+- **`--threads`**：新增 1024 上限（解析期拒绝，7 个子命令一致）；`tickets()` 饱和乘、
+  `abort_channel_for` 饱和加，库内直接构造的预算不再能溢出成一次性通道。
+- **PCA/faer 并行**：`reed-reduce` 新增 `Parallel`（`Serial`/`Threads(n)`），贯穿
+  `gram_divide`/`sym_eig`/`sym_eig_top_k`、PCA 三入口与 `StreamConfig`；faer 改走
+  显式 `matmul`/`evd`（运算符形式读 faer 全局设置）。`--threads 1` 实测 CPU
+  53.4 s → 23.4 s（wall 21.0 → 23.5 s），满秩结果跨 1/2/8 线程逐字节相同。
+- **PCA 内存估算**：dense 峰值改为 `4·n·m·8 + 6·n²·8`（pairwise +1 份 n²），
+  覆盖 `x`、`st.w`、faer `wm`、GRM、`am`、`u`、workspace 与返回副本；以
+  `ru_maxrss` 拟合，误差 ±7%。`auto` 改用完整峰值。
+- **FrameChain**：测量并钉住 40 B/chunk 的元数据成本（1 TiB ≈ 39 MiB），
+  判定当前规模不需要 ring。
+
+### Added
+- **原子输出**：`reed-io::write::atomic::{AtomicFile, write_atomic}` — 同目录临时文件
+  + `create_new` + `sync_all` + `rename`；未提交即删除，60 s 以上陈旧临时文件下次
+  清理。替换所有命令的文件输出（含 CSI/TBI、报告族、PCA/DAPC/SFS、distance、
+  CLI 的 `--report`/`--timing`/`.log`/`.nwk`）。`kill -9` 实测旧文件逐字节不变。
+  多文件组只承诺逐文件原子（`docs/spec/cli.md` §12）。
+- **_sfs 布局**是唯一自动创建父目录的出口；其余缺目录仍报错（与旧行为一致）。
+
+### Changed
+- **依赖边界**：`HeaderFacts.header` 改为 opaque `VcfHeader`，`reed` 不再直接依赖
+  noodles（仅 dev-dependency 供集成测试读回索引）。`api_surface` 增加编译门。
+- **noodles**：0.117 → 0.119.0（bcf 0.94 / vcf 0.96），无需源码改动。
+- **gold 工作流**：`run_all.sh` 在 `REED` 存在时并入 reed 分支；CI 先构建当前
+  checkout 并在 parity 前断言产物存在。
+- **CI**：新增 1.91 MSRV job（本地实测通过）。
+
+### Removed
+- `reed-io` 重复的 noodles dev-dependency；spill 测试锁（测试改持私有命名源）。
+
 ## [Unreleased] — doc_v25 复核修复：三域 review 的六条实测 bug（2026-11-05）
 
 对 `6fd061d..7d235ab` 的三域 review（GT/记录行、filter/不变式、CLI/facade），
