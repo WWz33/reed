@@ -1720,7 +1720,7 @@ fn threads_above_the_supported_maximum_are_usage_errors() {
     let over = "1025";
     let at_max = "1024";
     for command in ["filter", "stats", "popg", "pca", "distance", "convert", "rename"] {
-        let out = run(&[command, "--threads", &over, "-"]);
+        let out = run(&[command, "--threads", over, "-"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
             out.status.code(),
@@ -1733,7 +1733,7 @@ fn threads_above_the_supported_maximum_are_usage_errors() {
         );
         // The cap itself is accepted (parsing succeeds; the run then fails on
         // the empty stdin, which is a different, non-usage-code path).
-        let out = run(&[command, "--threads", &at_max, "-"]);
+        let out = run(&[command, "--threads", at_max, "-"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             !stderr.contains("exceeds the supported maximum"),

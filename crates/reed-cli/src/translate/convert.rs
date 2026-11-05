@@ -397,7 +397,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         let mut path = prefix.clone().into_os_string();
         path.push(".log");
         let path = PathBuf::from(path);
-        std::fs::write(&path, log)?;
+        reed::write_atomic(&path, log)?;
         files.push(path);
     }
 

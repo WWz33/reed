@@ -276,7 +276,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
     }
     let text = reed::windows::render_tsv(&report.windows, &kinds, false);
     match args.out.as_deref() {
-        Some(path) if path != "-" => std::fs::write(path, text)?,
+        Some(path) if path != "-" => reed::write_atomic(std::path::Path::new(path), text)?,
         // `-o -` and no `-o` both stream to stdout; write_all turns a closed
         // pipe into a normal error instead of a panic (doc_v15 D15-14/D15-39).
         _ => std::io::stdout().write_all(text.as_bytes())?,

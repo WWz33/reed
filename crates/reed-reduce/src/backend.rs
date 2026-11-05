@@ -32,9 +32,10 @@ use reed_core::linalg::Mat;
 ///
 /// `reed-reduce` stays faer-agnostic: this enum is part of its own surface and
 /// the mapping happens behind the `faer-backend` feature.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Parallel {
     /// One thread.
+    #[default]
     Serial,
     /// At most `n` rayon threads (n >= 1).
     Threads(usize),
@@ -59,12 +60,6 @@ impl Parallel {
             Self::Threads(n) if n <= 1 => faer::Parallelism::None,
             Self::Threads(n) => faer::Parallelism::Rayon(n),
         }
-    }
-}
-
-impl Default for Parallel {
-    fn default() -> Self {
-        Self::Serial
     }
 }
 

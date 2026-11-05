@@ -401,20 +401,19 @@ fn meminfo_total(path: &Path) -> Option<u64> {
 fn cgroup_limits(root: &Path) -> Vec<u64> {
     let mut limits = Vec::new();
     // cgroup v2. `max` is the literal "no limit".
-    if let Ok(text) = std::fs::read_to_string(root.join("memory.max")) {
-        if let Some(bytes) = parse_cgroup_limit(&text) {
-            limits.push(bytes);
-        }
+    if let Ok(text) = std::fs::read_to_string(root.join("memory.max"))
+        && let Some(bytes) = parse_cgroup_limit(&text)
+    {
+        limits.push(bytes);
     }
     // cgroup v1. The sentinel is a huge value near u64::MAX/4096 rounded down;
     // values at or above the documented sentinel mean "unlimited".
     let v1 = root.join("memory").join("memory.limit_in_bytes");
-    if let Ok(text) = std::fs::read_to_string(&v1).or_else(|_| {
-        std::fs::read_to_string(root.join("memory.limit_in_bytes"))
-    }) {
-        if let Some(bytes) = parse_cgroup_limit(&text) {
-            limits.push(bytes);
-        }
+    if let Ok(text) = std::fs::read_to_string(&v1)
+        .or_else(|_| std::fs::read_to_string(root.join("memory.limit_in_bytes")))
+        && let Some(bytes) = parse_cgroup_limit(&text)
+    {
+        limits.push(bytes);
     }
     limits
 }

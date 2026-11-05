@@ -528,6 +528,13 @@ pub(crate) fn solve(
 }
 
 /// Writes `.eigenvec`, `.eigenval` and `.pve` next to `prefix`.
+///
+/// All three are written to sibling temporaries first and published only
+/// after every one of them is complete (doc_v26 V26-08): a failure while
+/// writing the second file cannot leave the first new and the third stale.
+/// The three renames are still individual — an interrupt between them leaves
+/// a mixed group, which is the documented per-file promise; what this
+/// function guarantees is that no *write error* produces a partial group.
 fn write_outputs(
     prefix: &str,
     sample_names: &[String],
@@ -536,40 +543,55 @@ fn write_outputs(
     vectors: &Mat,
     pve: &[f64],
 ) -> Result<(), crate::Error> {
-    let vec_path = format!("{prefix}.eigenvec");
-    let val_path = format!("{prefix}.eigenval");
-    let pve_path = format!("{prefix}.pve");
+    use reed_io::write::atomic::AtomicFile;
+    let vec_path = std::path::Path::new(&format!("{prefix}.eigenvec")).to_path_buf();
+    let val_path = std::path::Path::new(&format!("{prefix}.eigenval")).to_path_buf();
+    let pve_path = std::path::Path::new(&format!("{prefix}.pve")).to_path_buf();
 
-    let file = std::fs::File::create(&vec_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
-    // plink's header: `#FID IID PC1..PCk`; reed uses the sample name for both
-    // FID and IID so single-name datasets round-trip.
-    write!(f, "#FID\tIID").map_err(io_err)?;
-    for c in 0..values.len() {
-        write!(f, "\tPC{}", c + 1).map_err(io_err)?;
-    }
-    writeln!(f).map_err(io_err)?;
-    for (row, &i) in kept.iter().enumerate() {
-        let name = &sample_names[i];
-        write!(f, "{name}\t{name}").map_err(io_err)?;
+    let (vec_out, target) = AtomicFile::create(&vec_path)?;
+    {
+        let mut f = BufWriter::with_capacity(1 << 16, target);
+        // plink's header: `#FID IID PC1..PCk`; reed uses the sample name for
+        // both FID and IID so single-name datasets round-trip.
+        write!(f, "#FID\tIID").map_err(io_err)?;
         for c in 0..values.len() {
-            write!(f, "\t{:.9}", vectors.get(row, c)).map_err(io_err)?;
+            write!(f, "\tPC{}", c + 1).map_err(io_err)?;
         }
         writeln!(f).map_err(io_err)?;
+        for (row, &i) in kept.iter().enumerate() {
+            let name = &sample_names[i];
+            write!(f, "{name}\t{name}").map_err(io_err)?;
+            for c in 0..values.len() {
+                write!(f, "\t{:.9}", vectors.get(row, c)).map_err(io_err)?;
+            }
+            writeln!(f).map_err(io_err)?;
+        }
+        f.flush().map_err(io_err)?;
     }
 
-    let file = std::fs::File::create(&val_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
-    for v in values {
-        writeln!(f, "{v:.9}").map_err(io_err)?;
+    let (val_out, target) = AtomicFile::create(&val_path)?;
+    {
+        let mut f = BufWriter::with_capacity(1 << 16, target);
+        for v in values {
+            writeln!(f, "{v:.9}").map_err(io_err)?;
+        }
+        f.flush().map_err(io_err)?;
     }
 
-    let file = std::fs::File::create(&pve_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
-    for v in pve {
-        writeln!(f, "{v:.9}").map_err(io_err)?;
+    let (pve_out, target) = AtomicFile::create(&pve_path)?;
+    {
+        let mut f = BufWriter::with_capacity(1 << 16, target);
+        for v in pve {
+            writeln!(f, "{v:.9}").map_err(io_err)?;
+        }
+        f.flush().map_err(io_err)?;
     }
-    f.flush().map_err(io_err)?;
+
+    // Publish in a fixed order; any earlier rename succeeded, later ones
+    // still happen, so no write failure leaves a *partially written* file.
+    vec_out.commit()?;
+    val_out.commit()?;
+    pve_out.commit()?;
     Ok(())
 }
 
@@ -695,7 +717,7 @@ mod tests {
         let streamed = solve(&x, 2, Stand::Binom2, "meanimpute", "stream", &budget)
             .expect("invariant: stream solve");
         assert_eq!(streamed.solver, "stream");
-        assert!(streamed.values.len() == 2);
+        assert_eq!(streamed.values.len(), 2);
     }
 
     /// doc_v25 V25-01 (F1): `reed pca` fails on a GT allele beyond the ALT

@@ -8,7 +8,7 @@ use reed::distance::matrices::{
     AjkOptions, DistanceOptions, DiscordanceMode, DiscordanceOptions, MatrixKind, MatrixResult,
     MissingPolicy, PiHatOptions,
 };
-use reed::distance::output::{is_matrix_kind, write_ids, write_matrix};
+use reed::distance::output::is_matrix_kind;
 use reed::distance::{standardize, MatrixFormat, Stand};
 use reed::graph;
 
@@ -281,7 +281,8 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         }
 
         let nwk = graph::to_newick(&tree, args.digits).map_err(graph_error)?;
-        std::fs::write(format!("{prefix}.nwk"), nwk).map_err(reed::Error::from)?;
+        reed::write_atomic(std::path::Path::new(&format!("{prefix}.nwk")), nwk)
+        .map_err(reed::Error::from)?;
         if args.verbosity.shows_summary() {
             eprintln!(
                 "reed distance --tree: {} samples, {} sites, method={method}",
@@ -294,15 +295,37 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     let suffix = kind.suffix();
     let out_path = std::path::PathBuf::from(format!("{prefix}.{suffix}"));
 
-    if is_matrix_kind(kind) {
-        write_matrix(&out_path, &result, format).map_err(reed::Error::from)?;
-        write_ids(
-            &std::path::PathBuf::from(format!("{prefix}.{suffix}.id")),
-            &ids,
-        )
-        .map_err(reed::Error::from)?;
+    // doc_v26 V26-08: the matrix/table and its `.id` sidecar are each
+    // published atomically (a failure while rendering leaves the previous
+    // file untouched); both are complete before either is published.
+    let id_path = std::path::PathBuf::from(format!("{prefix}.{suffix}.id"));
+    let (matrix_atomic, matrix_file) = reed::atomic_file::AtomicFile::create(&out_path)?;
+    let (id_atomic, id_file) = if is_matrix_kind(kind) {
+        let (a, f) = reed::atomic_file::AtomicFile::create(&id_path)?;
+        (Some(a), Some(f))
     } else {
-        write_table(&out_path, &result)?;
+        (None, None)
+    };
+    if is_matrix_kind(kind) {
+        let mut f = BufWriter::with_capacity(1 << 16, matrix_file);
+        reed::distance::output::write_matrix_to(&mut f, &result, format)
+            .map_err(reed::Error::from)?;
+        f.flush().map_err(reed::Error::from)?;
+        drop(f);
+        if let (Some(atomic), Some(id_file)) = (id_atomic, id_file) {
+            let mut f = BufWriter::with_capacity(1 << 16, id_file);
+            reed::distance::output::write_ids_to(&mut f, &ids).map_err(reed::Error::from)?;
+            f.flush().map_err(reed::Error::from)?;
+            drop(f);
+            matrix_atomic.commit()?;
+            atomic.commit()?;
+        }
+    } else {
+        let mut f = BufWriter::with_capacity(1 << 16, matrix_file);
+        write_table_to(&mut f, &result)?;
+        f.flush().map_err(reed::Error::from)?;
+        drop(f);
+        matrix_atomic.commit()?;
     }
 
     if args.verbosity.shows_summary() {
@@ -319,9 +342,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
 
 /// Writes the per-pair table formats (`.genome`, `.relatedness2`,
 /// `.relatedness`, `.gtcheck`) with the reference tools' exact headers.
-fn write_table(path: &std::path::Path, m: &MatrixResult) -> Result<(), reed::Error> {
-    let file = std::fs::File::create(path).map_err(reed::Error::from)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
+fn write_table_to<W: std::io::Write>(f: &mut W, m: &MatrixResult) -> Result<(), reed::Error> {
     let n = m.n;
     match m.kind {
         MatrixKind::Phi => {
@@ -410,7 +431,6 @@ fn write_table(path: &std::path::Path, m: &MatrixResult) -> Result<(), reed::Err
         }
         _ => unreachable!("is_matrix_kind covers the rest"),
     }
-    f.flush().map_err(reed::Error::from)?;
     Ok(())
 }
 

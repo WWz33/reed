@@ -28,6 +28,11 @@ pub struct Region {
     pub end1: Option<u64>,
 }
 
+/// One block as read by [`RegionChunkSource::read_block`]: its bytes, its
+/// compressed offset, and the validated `(compressed length, inflated
+/// length)` entry.
+type BlockRead = (Vec<u8>, u64, (u32, u32));
+
 /// Reads only the compressed byte range covering `regions`.
 pub struct RegionChunkSource<R: Read + Seek> {
     inner: R,
@@ -80,7 +85,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
 
     /// Reads one block; `None` once the region's range is exhausted or the
     /// underlying stream ends.
-    fn read_block(&mut self) -> Result<Option<(Vec<u8>, u64, (u32, u32))>, IoError> {
+    fn read_block(&mut self) -> Result<Option<BlockRead>, IoError> {
         if self.done {
             return Ok(None);
         }

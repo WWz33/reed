@@ -192,18 +192,38 @@ impl Indexer {
         }
     }
 
-    /// Writes the index to `path`.
+    /// Writes the index to `path`, atomically (doc_v26 V26-08).
+    ///
+    /// noodles serialises a whole index buffer, so the bytes can go through
+    /// the shared [`crate::write::atomic::AtomicFile`]: a failure while
+    /// writing or syncing leaves the previous index in place instead of a
+    /// truncated one that no longer matches the VCF.
     ///
     /// # Errors
     ///
     /// [`IoError::Io`] on write failure.
     pub fn write(self, path: &Path) -> Result<(), IoError> {
-        match self {
-            Self::Csi(indexer, n_ref) => noodles::csi::fs::write(path, &indexer.build(n_ref))
-                .map_err(|e| IoError::Io(e.to_string())),
-            Self::Tbi(indexer) => noodles::tabix::fs::write(path, &indexer.build())
-                .map_err(|e| IoError::Io(e.to_string())),
-        }
+        // noodles' `fs::write` opens the path itself (creating/truncating),
+        // so the bytes are serialized into a buffer through noodles' own
+        // `Writer` and published with the shared atomic helper.
+        let bytes = match self {
+            Self::Csi(indexer, n_ref) => {
+                let mut out = Vec::new();
+                noodles::csi::io::Writer::new(&mut out)
+                    .write_index(&indexer.build(n_ref))
+                    .map_err(|e| IoError::Io(e.to_string()))?;
+                out
+            }
+            Self::Tbi(indexer) => {
+                let mut out = Vec::new();
+                noodles::tabix::io::Writer::new(&mut out)
+                    .write_index(&indexer.build())
+                    .map_err(|e| IoError::Io(e.to_string()))?;
+                out
+            }
+        };
+        crate::write::atomic::write_atomic(path, bytes)
+            .map_err(|e| IoError::Io(e.to_string()))
     }
 }
 

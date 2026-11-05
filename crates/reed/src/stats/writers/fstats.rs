@@ -44,7 +44,7 @@ pub fn write_fstats(
     let mut path = prefix.as_os_str().to_os_string();
     path.push(".fstats");
     let path = PathBuf::from(path);
-    std::fs::write(&path, out).map_err(EngineError::Io)?;
+    reed_io::write::atomic::write_atomic(&path, out).map_err(EngineError::Io)?;
     Ok(vec![path])
 }
 

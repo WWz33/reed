@@ -40,6 +40,6 @@ pub use matrices::{
     AjkOptions, DiscordanceMode, DiscordanceOptions, KingCounts, MatrixKind, MatrixResult,
     PiHatOptions, PiHatResult,
 };
-pub use output::{write_matrix, MatrixFormat};
+pub use output::{write_ids_to, write_matrix, write_matrix_to, MatrixFormat};
 pub use grm::{Grm, MissingPolicy};
 pub use standard::{standardize, standardize_binom2, Stand, Standardized};

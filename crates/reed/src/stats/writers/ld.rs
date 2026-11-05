@@ -74,6 +74,6 @@ fn write(prefix: &Path, suffix: &str, text: String) -> Result<PathBuf, EngineErr
     let mut path = prefix.as_os_str().to_os_string();
     path.push(suffix);
     let path = PathBuf::from(path);
-    std::fs::write(&path, text).map_err(EngineError::Io)?;
+    reed_io::write::atomic::write_atomic(&path, text).map_err(EngineError::Io)?;
     Ok(path)
 }

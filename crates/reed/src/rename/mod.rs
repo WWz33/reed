@@ -639,23 +639,6 @@ pub fn run_rename_opened(
     }
 
     // ---- write ----
-    let writer: Box<dyn std::io::Write + Send> = match &output.path {
-        None => Box::new(std::io::BufWriter::with_capacity(
-            1 << 20,
-            std::io::stdout(),
-        )),
-        Some(p) => Box::new(std::io::BufWriter::with_capacity(
-            1 << 20,
-            std::fs::File::create(p).map_err(|e| {
-                // A filesystem failure is runtime (doc_v25 V25-08): the same
-                // command on filter/convert already exits 1.
-                crate::Error::from(std::io::Error::new(
-                    e.kind(),
-                    format!("cannot create {}: {e}", p.display()),
-                ))
-            })?,
-        )),
-    };
     // `-W`: an index needs BGZF framing and a real file; the contig names
     // are the *written* header's (derived above), so the index matches the
     // file it ships with.
@@ -698,14 +681,34 @@ pub fn run_rename_opened(
         }),
         _ => None,
     };
-    let mut out = reed_io::write::ordered_output::OrderedOutput::new(
-        writer,
-        output.compressed,
-        output.level,
-        indexer,
-        index_path,
-        contig_names,
-    );
+    // doc_v26 V26-08: a file output is written to a sibling temporary and
+    // renamed on finish; stdout has no file to publish and keeps the plain
+    // writer.
+    let mut out = match &output.path {
+        None => reed_io::write::ordered_output::OrderedOutput::new(
+            Box::new(std::io::BufWriter::with_capacity(1 << 20, std::io::stdout())),
+            output.compressed,
+            output.level,
+            indexer,
+            index_path,
+            contig_names,
+        ),
+        Some(p) => {
+            reed_io::write::ordered_output::OrderedOutput::create(
+                p,
+                output.compressed,
+                output.level,
+                indexer,
+                index_path,
+                contig_names,
+            )
+            .map_err(|e| {
+                // A filesystem failure is runtime (doc_v25 V25-08): the same
+                // command on filter/convert already exits 1.
+                crate::Error::from(e)
+            })?
+        }
+    };
     out.write_header(header_text.as_bytes())
         .map_err(EngineError::from)?;
 

@@ -155,8 +155,19 @@ fn ferr(err: EngineError) -> FilterError {
 }
 
 /// The output sink both pass1 strategies use (doc_v25 08 §3 ②).
+/// How to open the output stream: a file (atomic, doc_v26 V26-08) or stdout.
+enum OutputTarget {
+    /// A file: the writer plus the atomic owner that publishes it.
+    File(
+        Box<dyn Write + Send>,
+        reed_io::write::atomic::AtomicFile,
+    ),
+    /// stdout, which has no file to publish.
+    Stdout(Box<dyn Write + Send>),
+}
+
 fn output_sink(
-    writer: Box<dyn Write + Send>,
+    target: OutputTarget,
     compressed: bool,
     level: u8,
     indexer: Option<Indexer>,
@@ -164,15 +175,25 @@ fn output_sink(
     contig_names: Arc<[Vec<u8>]>,
     slot: Arc<Mutex<Option<FunnelPartial>>>,
 ) -> OutputSink {
+    let (writer, atomic) = match target {
+        OutputTarget::File(w, a) => (w, Some(a)),
+        OutputTarget::Stdout(w) => (w, None),
+    };
+    let out = OrderedOutput::new(
+        writer,
+        compressed,
+        level,
+        indexer,
+        index_path,
+        contig_names,
+    );
     OutputSink {
-        out: OrderedOutput::new(
-            writer,
-            compressed,
-            level,
-            indexer,
-            index_path,
-            contig_names,
-        ),
+        // doc_v26 V26-08: with a file output the sink owns the atomic
+        // temporary; `finish` publishes it after the data is complete.
+        out: match atomic {
+            Some(atomic) => out.adopting(atomic),
+            None => out,
+        },
         funnel: FunnelPartial::default(),
         slot,
     }
@@ -699,16 +720,23 @@ pub fn run_filter(
             },
         },
     };
-    let writer: Box<dyn Write + Send> = match &opts.output {
-        None => Box::new(std::io::BufWriter::with_capacity(
+    // doc_v26 V26-08: a file output goes through the atomic owner below (a
+    // sibling temporary renamed on finish). `None` is stdout, which has no
+    // file to publish.
+    let mut target = Some(match &opts.output {
+        None => OutputTarget::Stdout(Box::new(std::io::BufWriter::with_capacity(
             1 << 20,
             std::io::stdout(),
-        )),
-        Some(p) => Box::new(std::io::BufWriter::with_capacity(
-            1 << 20,
-            std::fs::File::create(p).map_err(FilterError::from)?,
-        )),
-    };
+        ))),
+        Some(p) => {
+            let (atomic, file) =
+                reed_io::write::atomic::AtomicFile::create(p).map_err(FilterError::from)?;
+            OutputTarget::File(
+                Box::new(std::io::BufWriter::with_capacity(1 << 20, file)),
+                atomic,
+            )
+        }
+    });
     let compressed = gz_out;
 
     // ---- pass1 ----
@@ -756,7 +784,7 @@ pub fn run_filter(
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
         let mut sink = output_sink(
-            writer,
+            target.take().expect("invariant: one sink is built"),
             compressed,
             opts.compress_level,
             indexer,
@@ -812,7 +840,7 @@ pub fn run_filter(
         };
         let slot: Arc<Mutex<Option<FunnelPartial>>> = Arc::new(Mutex::new(None));
         let mut sink = output_sink(
-            writer,
+            target.take().expect("invariant: one sink is built"),
             compressed,
             bcf_level.unwrap_or(opts.compress_level),
             indexer,
@@ -893,12 +921,12 @@ pub fn run_filter(
         timing,
     };
     if let Some(path) = &opts.timing {
-        std::fs::write(path, report.timing_text()).map_err(FilterError::from)?;
+        reed_io::write::atomic::write_atomic(path, report.timing_text()).map_err(FilterError::from)?;
     }
     if let Some(path) = &opts.report_json {
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| FilterError::Spec(format!("report serialization: {e}")))?;
-        std::fs::write(path, json).map_err(FilterError::from)?;
+        reed_io::write::atomic::write_atomic(path, json).map_err(FilterError::from)?;
     }
     Ok(report)
 }

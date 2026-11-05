@@ -177,7 +177,7 @@ impl NewlineStitcher {
     pub fn with_ceiling(ceiling: usize) -> Self {
         Self {
             fragment: Vec::new(),
-            ceiling: ceiling.min(MAX_RECORD_BYTES).max(1),
+            ceiling: ceiling.clamp(1, MAX_RECORD_BYTES),
         }
     }
 
