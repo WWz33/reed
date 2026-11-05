@@ -198,6 +198,23 @@ pub fn inflate_chunk<'a>(
             reason: "chunk block table disagrees with the payload length".to_string(),
         });
     }
+    // doc_v26 V26-01: the block table comes from the reader, but a size above
+    // the BGZF limit must never reach the resize below — that is the
+    // allocation an oversized ISIZE used to request before libdeflate could
+    // reject the block.
+    if let Some(&(_, ilen)) = chunk
+        .blocks
+        .iter()
+        .find(|&&(_, ilen)| ilen as usize > crate::bgzf::block::BGZF_INFLATE_MAX)
+    {
+        return Err(IoError::MalformedBgzf {
+            locus: None,
+            reason: format!(
+                "chunk declares a {ilen}-byte block, over the BGZF limit of {} bytes",
+                crate::bgzf::block::BGZF_INFLATE_MAX
+            ),
+        });
+    }
     if scratch.len() < total_inflated {
         scratch.resize(total_inflated, 0);
     }
@@ -207,7 +224,12 @@ pub fn inflate_chunk<'a>(
         let block = &compressed[..clen as usize];
         compressed = &compressed[clen as usize..];
         if ilen == 0 {
-            continue; // Empty member (EOF marker or concatenation join).
+            // Empty member (EOF marker or concatenation join). The reader
+            // already proved it inflates to nothing (doc_v26 V26-01); the
+            // proof is repeated here for chunk sources that hand-build a
+            // table, so no path can skip bytes on the footer's word alone.
+            inflater.verify_empty_member(block)?;
+            continue;
         }
         pos += inflater.inflate_window(block, &mut scratch[pos..pos + ilen as usize])?;
     }

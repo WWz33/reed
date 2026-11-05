@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use reed_core::ChunkId;
 
-use crate::bgzf::block::{BGZF_HEADER_LEN, is_empty_member, is_eof_block, parse_block_size};
+use crate::bgzf::block::{BGZF_HEADER_LEN, block_entry, is_eof_block, parse_block_size};
 use crate::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes, ChunkPayload};
 use crate::error::IoError;
 
@@ -16,6 +16,9 @@ pub struct BgzfChunkReader<R: Read> {
     inner: R,
     chunk_target: u64,
     next_chunk_id: u64,
+    /// Validates members (empty-member proof, doc_v26 V26-01) while cutting
+    /// chunks. The reader thread owns it; workers keep their own.
+    inflater: crate::bgzf::inflate::Inflater,
     /// Compressed bytes read but not yet handed to a chunk: the block where
     /// the header ends (chunk 0 starts here, so it is not read twice), and
     /// the tail of the last slab read that belongs to the next chunk.
@@ -59,6 +62,7 @@ impl<R: Read> BgzfChunkReader<R> {
             inner,
             chunk_target,
             next_chunk_id: 0,
+            inflater: crate::bgzf::inflate::Inflater::new(),
             carry: Vec::new(),
             carry_offset: 0,
             compressed_offset: 0,
@@ -133,17 +137,17 @@ impl<R: Read> BgzfChunkReader<R> {
                 if out.len() < pos + total {
                     break; // The block spans further: read more bytes.
                 }
-                if is_empty_member(&out[pos..pos + total]) {
+                // doc_v26 V26-01: the one validated entry. An "empty" member
+                // must inflate to nothing, and a declared size over the BGZF
+                // limit fails here — before any buffer is sized from it.
+                let entry = block_entry(&out[pos..pos + total], &mut self.inflater)?;
+                if entry.1 == 0 {
                     self.last_was_eof_marker = is_eof_block(&out[pos..pos + total]);
-                    blocks.push((u32::try_from(total).unwrap_or(u32::MAX), 0));
                 } else {
                     self.last_was_eof_marker = false;
                     non_empty += total as u64;
-                    blocks.push((
-                        u32::try_from(total).unwrap_or(u32::MAX),
-                        crate::bgzf::block::block_inflated_size(&out[pos..pos + total]),
-                    ));
                 }
+                blocks.push(entry);
                 pos += total;
             }
             // At least one whole block and the target reached: the chunk is
@@ -230,7 +234,9 @@ impl<R: Read> BgzfChunkReader<R> {
             block.resize(total, 0);
             self.inner.read_exact(&mut block[BGZF_HEADER_LEN..])?;
             self.compressed_offset += total as u64;
-            if is_empty_member(&block) {
+            // doc_v26 V26-01: an empty member is only skipped after the
+            // shared validator proved it really inflates to nothing.
+            if block_entry(&block, &mut self.inflater)?.1 == 0 {
                 self.last_was_eof_marker = is_eof_block(&block);
                 continue;
             }
@@ -352,10 +358,22 @@ impl<R: Read> BgzfChunkReader<R> {
 /// read syscall. Chunk boundaries follow the same rule as the streaming
 /// reader — whole blocks until the compressed target is reached — so the
 /// two readers produce identical chunks and identical output.
+///
+/// # Safety contract of the mapping
+///
+/// This source is **not** reachable through the default input path: `reed`
+/// opens BGZF inputs with the streaming reader, because `memmap2::Mmap::map`
+/// is only sound while the backing file is not modified by *any* process for
+/// the lifetime of the mapping, and a shared working directory, NFS export or
+/// an in-place rewrite cannot establish that (doc_v26 V26-00). A caller that
+/// can prove the precondition (a private, immutable snapshot) may use this
+/// source directly.
 pub struct MmapChunkSource {
     map: Arc<memmap2::Mmap>,
     chunk_target: u64,
     next_chunk_id: u64,
+    /// Validates members (empty-member proof, doc_v26 V26-01).
+    inflater: crate::bgzf::inflate::Inflater,
     /// Compressed offset of the next chunk's first block.
     next_offset: usize,
     /// Records' start offset inside that block's inflated text.
@@ -373,14 +391,22 @@ impl MmapChunkSource {
     ///
     /// Mapping failures (the caller falls back to the streaming reader) and
     /// [`IoError::Header`] when the header is missing or unparsable.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that no process modifies or truncates
+    /// `file` while the returned source (and any chunk of it) is alive —
+    /// see the type-level note. reed's own input path does not use this
+    /// entry (doc_v26 V26-00).
     pub fn open(file: std::fs::File) -> Result<(Self, crate::header::HeaderFacts), IoError> {
-        // SAFETY: `Mmap::map` is unsafe because a concurrent writer could
-        // change the file under the mapping (the worst case is a SIGBUS on
-        // truncation). reed opens the input read-only, never writes it, and
-        // the mapping outlives every chunk; the callers fall back to the
-        // streaming reader when the input is not a regular file. This is the
-        // single audited `unsafe` site in the workspace (doc_v6 06 Y0 deleted
-        // the AVX-512 count kernel).
+        // SAFETY: `Mmap::map` is unsafe because the file must not be modified
+        // for the lifetime of the mapping (the worst case is a SIGBUS on
+        // truncation). "reed opens it read-only and never writes it" is *not*
+        // sufficient: another process can still truncate or rewrite it. The
+        // precondition is therefore a caller contract of `open` (an immutable
+        // snapshot), and the default input path no longer uses this source
+        // (doc_v26 V26-00). This remains the single audited `unsafe` site in
+        // the workspace (doc_v6 06 Y0 deleted the AVX-512 count kernel).
         #[allow(unsafe_code)]
         let map = unsafe { memmap2::Mmap::map(&file) }?;
         let map = Arc::new(map);
@@ -398,6 +424,7 @@ impl MmapChunkSource {
             map,
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
+            inflater: crate::bgzf::inflate::Inflater::new(),
             next_offset: first_offset,
             first_in_block_offset,
             last_was_eof_marker: false,
@@ -444,20 +471,19 @@ impl crate::chunk::ChunkSource for MmapChunkSource {
                 });
             }
             let block = &self.map[pos..pos + size];
-            if is_empty_member(block) {
+            // doc_v26 V26-01: same validated entry as the streaming reader.
+            let entry = block_entry(block, &mut self.inflater)?;
+            if entry.1 == 0 {
                 // Empty members stay in the chunk's byte range (their
                 // inflated length is zero) so the block offsets remain
                 // contiguous for the index.
                 self.last_was_eof_marker = is_eof_block(block);
-                blocks.push((u32::try_from(size).unwrap_or(u32::MAX), 0));
+                blocks.push(entry);
                 pos += size;
                 continue;
             }
             self.last_was_eof_marker = false;
-            blocks.push((
-                u32::try_from(size).unwrap_or(u32::MAX),
-                crate::bgzf::block::block_inflated_size(block),
-            ));
+            blocks.push(entry);
             pos += size;
             total += size as u64;
             if total >= self.chunk_target {
@@ -864,6 +890,88 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// doc_v26 V26-01: a member with ISIZE zeroed but a real payload used to
+    /// be skipped by every source, silently dropping its records while the
+    /// run succeeded. All three sources must report `MalformedBgzf`.
+    #[test]
+    fn isize_zeroed_member_is_rejected_by_every_source() {
+        let text = record_text(40);
+        let mut blocks = compress_blocks(&text, 64);
+        assert!(blocks.len() >= 3, "fixture needs several blocks");
+        // Zero the ISIZE footer of a padding-free copy of a real data block.
+        let mut damaged = blocks.remove(1);
+        let n = damaged.len();
+        damaged[n - 4..].copy_from_slice(&0_u32.to_le_bytes());
+        blocks.insert(1, damaged);
+
+        let mut stream: Vec<u8> = Vec::new();
+        for block in &blocks {
+            stream.extend_from_slice(block);
+        }
+        let mut with_header = compress_lines(&[&header_text(2)], 64);
+        with_header.extend_from_slice(&stream);
+
+        // 1. streaming header scan / chunk walk
+        let mut reader = BgzfChunkReader::with_chunk_target(Cursor(with_header.clone()), 64);
+        let mut inflater = crate::bgzf::inflate::Inflater::new();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = reader.scan_header(&mut inflater)?;
+            loop {
+                match reader.next_chunk() {
+                    Ok(Some(_)) => {}
+                    Ok(None) => break Ok(()),
+                    Err(err) => break Err(err),
+                }
+            }
+        }));
+        match outcome {
+            Ok(Err(err)) => assert!(matches!(err, IoError::MalformedBgzf { .. }), "{err:?}"),
+            Ok(Ok(())) => panic!("streaming source accepted a zeroed ISIZE"),
+            Err(panic) => panic!("streaming source panicked: {}", panic_message(&panic)),
+        }
+
+        // 2. mmap source
+        let mut path = std::env::temp_dir();
+        path.push(format!("reed_isize0_{}.bgz", std::process::id()));
+        std::fs::write(&path, &with_header).expect("invariant: temp file");
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (mut source, _) = MmapChunkSource::open(
+                std::fs::File::open(&path).expect("invariant: file exists"),
+            )?;
+            loop {
+                match crate::chunk::ChunkSource::next_chunk(&mut source) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => break Ok(()),
+                    Err(err) => break Err(err),
+                }
+            }
+        }));
+        let _ = std::fs::remove_file(&path);
+        match outcome {
+            Ok(Err(err)) => assert!(matches!(err, IoError::MalformedBgzf { .. }), "{err:?}"),
+            Ok(Ok(())) => panic!("mmap source accepted a zeroed ISIZE"),
+            Err(panic) => panic!("mmap source panicked: {}", panic_message(&panic)),
+        }
+    }
+
+    /// doc_v26 V26-01: a legal stream carrying empty members still reads
+    /// through end to end — the validator must not turn concatenation joins
+    /// into errors.
+    #[test]
+    fn legal_empty_members_still_read_through_the_validator() {
+        let text = record_text(20);
+        let blocks = compress_blocks(&text, 32);
+        let mut stream = compress_lines(&[&header_text(2)], 64);
+        for (i, block) in blocks.iter().enumerate() {
+            if i % 3 == 0 {
+                stream.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+            }
+            stream.extend_from_slice(block);
+        }
+        stream.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+        assert_eq!(count_records_in_stream(&stream, 48), 20);
     }
 
     /// A6-7: the streaming and mmap sources must produce identical chunk
