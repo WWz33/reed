@@ -72,7 +72,14 @@ pub fn eval_head(
         .iter()
         .any(|r| matches!(r, HeadRule::Info(_) | HeadRule::Expr { .. }));
     if scratch.index_current {
-        scratch.index.build(line.info_text());
+        // doc_v26 V26-04: a duplicate INFO tag rejects the record at
+        // `classify_line`, so this rebuild cannot fail for a line that
+        // reached the head. A caller that bypassed the classifier gets an
+        // empty index (every INFO rule then reads a missing operand), which
+        // is the conservative outcome: no rule may pick an element.
+        if scratch.index.build(line.info_text()).is_err() {
+            scratch.index_current = false;
+        }
     }
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
@@ -139,6 +146,9 @@ pub fn eval_head(
                     AfInfoDecision::AcExceedsAn { alt_sum, an } => {
                         return Err(ac_exceeds_an(line, pos1, alt_sum, an));
                     }
+                    AfInfoDecision::AcOverflow => {
+                        return Err(ac_overflow(line, pos1));
+                    }
                 }
             }
             HeadRule::MaxAfInfo(bound) => {
@@ -147,6 +157,9 @@ pub fn eval_head(
                     AfInfoDecision::Absent | AfInfoDecision::AcLength => true,
                     AfInfoDecision::AcExceedsAn { alt_sum, an } => {
                         return Err(ac_exceeds_an(line, pos1, alt_sum, an));
+                    }
+                    AfInfoDecision::AcOverflow => {
+                        return Err(ac_overflow(line, pos1));
                     }
                 }
             }
@@ -210,6 +223,8 @@ enum AfInfoDecision {
         /// INFO/AN.
         an: u64,
     },
+    /// AC's values sum past `u64::MAX` (doc_v26 V26-02).
+    AcOverflow,
 }
 
 fn af_info_decision(info: &[u8], n_alt: u32) -> AfInfoDecision {
@@ -221,6 +236,17 @@ fn af_info_decision(info: &[u8], n_alt: u32) -> AfInfoDecision {
         InfoAfOutcome::Absent => AfInfoDecision::Absent,
         InfoAfOutcome::AcLength { .. } => AfInfoDecision::AcLength,
         InfoAfOutcome::AcExceedsAn { alt_sum, an } => AfInfoDecision::AcExceedsAn { alt_sum, an },
+        InfoAfOutcome::AcOverflow { .. } => AfInfoDecision::AcOverflow,
+    }
+}
+
+/// The error a record whose AC cannot be summed raises (doc_v26 V26-02): the
+/// value is outside the representable count domain, so no AF can be derived.
+fn ac_overflow(line: &LineRef<'_>, pos1: u64) -> FilterError {
+    FilterError::Decode {
+        contig: String::from_utf8_lossy(line.chrom()).into_owned(),
+        pos: pos1,
+        msg: "INFO/AC values sum past the 64-bit count domain".to_string(),
     }
 }
 

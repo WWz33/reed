@@ -42,7 +42,12 @@ pub struct SiteHeader {
 /// # Errors
 ///
 /// [`IoError::MalformedRecord`] when the shared block is shorter than its
-/// header.
+/// header, and when the record declares no allele (doc_v26 V26-05):
+/// `n_allele` counts REF plus the ALTs, so zero means the shared block has no
+/// allele string at all. reed used to accept it — the renderer printed `.`
+/// for REF and ALT and the GT path treated every code as "0 alleles" — while
+/// htslib rejects such a record; a BCF that no other tool accepts must not
+/// flow through filter/stats looking valid.
 pub fn site_header(record: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
     let mut c = Cursor::new(record.shared);
     let chrom = c.i32()?;
@@ -51,10 +56,16 @@ pub fn site_header(record: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
     let _qual = c.u32()?;
     let na_ni = c.u32()?;
     let nf_ns = c.u32()?;
+    let n_allele = (na_ni >> 16) as usize;
+    if n_allele == 0 {
+        return Err(malformed(
+            "BCF record declares zero alleles (n_allele = 0); REF is required",
+        ));
+    }
     Ok(SiteHeader {
         chrom,
         pos0,
-        n_allele: (na_ni >> 16) as usize,
+        n_allele,
         n_sample: (nf_ns & 0x00FF_FFFF) as usize,
         n_fmt: (nf_ns >> 24) as usize,
     })
@@ -356,6 +367,45 @@ mod tests {
             ploidy: PloidyPolicy::HaploidAsHalfCall,
             ..GenotypePolicies::default()
         }
+    }
+
+    /// doc_v26 V26-05: `site_header` is the numeric path's only record
+    /// entry; a record declaring zero alleles has no REF and must be
+    /// rejected there, before any consumer treats it as a valid site.
+    #[test]
+    fn v26_site_header_rejects_zero_alleles() {
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom
+        shared.extend_from_slice(&9_i32.to_le_bytes()); // pos0
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // qual
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // n_allele = 0, n_info = 0
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // 0 FORMAT, 0 samples
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &[],
+        };
+        let err = site_header(&rec).expect_err("n_allele = 0 must be MalformedRecord");
+        assert!(matches!(err, IoError::MalformedRecord { .. }), "{err:?}");
+        // The control: one allele (REF only) is a valid sites-only record.
+        let mut valid = Vec::new();
+        valid.extend_from_slice(&0_i32.to_le_bytes());
+        valid.extend_from_slice(&9_i32.to_le_bytes());
+        valid.extend_from_slice(&1_i32.to_le_bytes());
+        valid.extend_from_slice(&0_u32.to_le_bytes());
+        valid.extend_from_slice(&(1_u32 << 16).to_le_bytes());
+        valid.extend_from_slice(&0_u32.to_le_bytes());
+        valid.extend_from_slice(&[0x07]);
+        valid.extend_from_slice(&[0x17, b'A']);
+        valid.extend_from_slice(&[0x01]);
+        let rec = BcfRecordRef {
+            shared: &valid,
+            indiv: &[],
+        };
+        assert_eq!(
+            site_header(&rec).expect("invariant: one allele").n_allele,
+            1
+        );
     }
 
     /// Every table entry equals the text path on the same rendered bytes

@@ -71,6 +71,48 @@ pub fn parse_info_int(text: &[u8]) -> Option<i64> {
     Some(if neg { -value } else { value })
 }
 
+/// Why an INFO column cannot be indexed (doc_v26 V26-04).
+///
+/// A repeated tag is not a warning: the index reader, the AC/AN reader and
+/// the expression evaluator each picked a different element (first or last),
+/// so `AC=1;AC=3;AN=4` filtered differently depending on which rule ran. The
+/// column is rejected once, at the shared index, instead of every consumer
+/// choosing a convention. htslib's own readers take the first match
+/// (`bcf_get_info_id`, `vcf.c:6207-6216`), which is what the retained single
+/// entry then delivers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DuplicateInfoKey {
+    /// Offset and length of the repeated key within the INFO column.
+    pub key_start: usize,
+    /// Key length in bytes.
+    pub key_len: usize,
+}
+
+/// Validates an INFO column for the record contract shared by every consumer
+/// (doc_v26 V26-04): today that is the no-duplicate-tag rule.
+///
+/// The check is allocation-free and linear over the fragments, so
+/// [`crate::vcf::line::classify_line`] can run it on every record and no
+/// INFO reader has to choose a first/last convention.
+///
+/// # Errors
+///
+/// [`DuplicateInfoKey`] when a tag repeats.
+pub fn validate_info(info: &[u8]) -> Result<(), DuplicateInfoKey> {
+    let mut seen: Vec<&[u8]> = Vec::new();
+    for (tag, _) in info_fragments(info) {
+        if seen.contains(&tag) {
+            let key_start = tag.as_ptr() as usize - info.as_ptr() as usize;
+            return Err(DuplicateInfoKey {
+                key_start,
+                key_len: tag.len(),
+            });
+        }
+        seen.push(tag);
+    }
+    Ok(())
+}
+
 /// One record's INFO fragments as byte ranges — built once per record and
 /// shared by every INFO reader (typed head rules and expressions, A6-18).
 #[derive(Default, Debug)]
@@ -81,16 +123,42 @@ pub struct InfoIndex {
 impl InfoIndex {
     /// Rebuilds the ranges over `info` (empty or `.` INFO yields no
     /// entries).
-    pub fn build(&mut self, info: &[u8]) {
+    ///
+    /// # Errors
+    ///
+    /// [`DuplicateInfoKey`] when a tag repeats (doc_v26 V26-04). The index is
+    /// left empty in that case: a caller that keeps going must not filter on
+    /// a partially built table.
+    ///
+    /// # Panics
+    ///
+    /// Panics only on a slice/subslice relationship the caller cannot break
+    /// (`info_fragments` yields borrows of `info`).
+    pub fn build(&mut self, info: &[u8]) -> Result<(), DuplicateInfoKey> {
         self.frags.clear();
         for (tag, value) in info_fragments(info) {
             let tag_start = tag.as_ptr() as usize - info.as_ptr() as usize;
+            // Duplicate check: the fragment list is short (a handful of
+            // tags), so a linear scan beats any map here.
+            if self
+                .frags
+                .iter()
+                .any(|(range, _)| &info[range.clone()] == tag)
+            {
+                let duplicate = DuplicateInfoKey {
+                    key_start: tag_start,
+                    key_len: tag.len(),
+                };
+                self.frags.clear();
+                return Err(duplicate);
+            }
             let value = value.map(|v| {
                 let start = v.as_ptr() as usize - info.as_ptr() as usize;
                 start..start + v.len()
             });
             self.frags.push((tag_start..tag_start + tag.len(), value));
         }
+        Ok(())
     }
 
     /// Looks one tag up: `Some(None)` = flag present, `Some(Some(v))` = the
@@ -127,7 +195,7 @@ mod tests {
     fn index_get_matches_the_scan() {
         let info = b"DP=5;SOMETHING;MQ=58.2;AC=1,2";
         let mut idx = InfoIndex::default();
-        idx.build(info);
+        idx.build(info).expect("invariant: unique tags");
         assert_eq!(idx.get(info, b"DP"), Some(Some(b"5".as_slice())));
         assert_eq!(idx.get(info, b"SOMETHING"), Some(None));
         assert_eq!(idx.get(info, b"MQ"), Some(Some(b"58.2".as_slice())));
@@ -135,8 +203,31 @@ mod tests {
         assert_eq!(idx.get(info, b"NOPE"), None);
         // A rebuilt index serves the next record's bytes.
         let info2 = b"AF=0.5";
-        idx.build(info2);
+        idx.build(info2).expect("invariant: unique tags");
         assert_eq!(idx.get(info2, b"AF"), Some(Some(b"0.5".as_slice())));
         assert_eq!(idx.get(info2, b"DP"), None);
+    }
+
+    /// doc_v26 V26-04: a repeated tag is rejected by the shared validator and
+    /// the index; no reader may pick the first or last element.
+    #[test]
+    fn duplicate_tags_are_rejected() {
+        let info = b"AC=1;AN=4;AC=3";
+        let err = validate_info(info).expect_err("duplicate AC must be rejected");
+        assert_eq!(&info[err.key_start..err.key_start + err.key_len], b"AC");
+        let mut idx = InfoIndex::default();
+        assert!(idx.build(info).is_err(), "the index must reject duplicates");
+        assert_eq!(idx.get(info, b"AN"), None, "a failed build leaves no table");
+        // The first occurrence is the one reported.
+        let again = b"DP=1;DP=2";
+        let err = validate_info(again).expect_err("duplicate DP must be rejected");
+        assert_eq!(err.key_start, 5, "DP starts right after the first `;`");
+    }
+
+    /// Flags and a repeated flag are covered as well (a Flag has no `=`).
+    #[test]
+    fn duplicate_flags_are_rejected() {
+        assert!(validate_info(b"DB;DB").is_err());
+        assert!(validate_info(b"DB;SOMETHING").is_ok());
     }
 }
