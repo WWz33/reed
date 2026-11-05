@@ -119,6 +119,17 @@ impl SampleMask {
         self.bits.get(sample_id.get() as usize)
     }
 
+    /// Whether the sample at header index `i` is selected.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `i` is past the mask's length (the caller invariant the
+    /// type exists to enforce).
+    #[must_use]
+    pub fn get(&self, i: usize) -> bool {
+        self.bits.get(i)
+    }
+
     /// Number of selected samples.
     #[must_use]
     pub const fn n_selected(&self) -> u32 {
@@ -145,6 +156,55 @@ impl SampleMask {
     #[must_use]
     pub fn words(&self) -> &[u64] {
         self.bits.words()
+    }
+}
+
+/// A full-length sample keep mask (doc_v25 V25-07b).
+///
+/// The length is validated once, at construction: the five drivers used to
+/// re-check `keep.len() == n_samples` with hand-written messages, and one
+/// path (the old core `count_site`) even defaulted a short mask to "keep".
+/// The `Arc` makes the mask cheap to share across workers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeepMask(std::sync::Arc<[bool]>);
+
+impl KeepMask {
+    /// Builds a mask for a header declaring `n_samples`; a different length
+    /// is a [`CoreError::LengthMismatch`].
+    pub fn try_new(n_samples: usize, bits: Vec<bool>) -> Result<Self, CoreError> {
+        if bits.len() != n_samples {
+            return Err(CoreError::LengthMismatch {
+                expected: n_samples,
+                got: bits.len(),
+            });
+        }
+        Ok(Self(bits.into()))
+    }
+
+    /// A mask keeping every sample.
+    #[must_use]
+    pub fn all(n_samples: usize) -> Self {
+        Self(vec![true; n_samples].into())
+    }
+
+    /// The bits (always `n_samples` long).
+    #[must_use]
+    pub fn as_slice(&self) -> &[bool] {
+        &self.0
+    }
+
+    /// Number of kept samples.
+    #[must_use]
+    pub fn n_selected(&self) -> usize {
+        self.0.iter().filter(|&&k| k).count()
+    }
+}
+
+impl std::ops::Deref for KeepMask {
+    type Target = [bool];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -179,6 +239,23 @@ mod tests {
         assert!(a.and(&b).is_err());
         let c = SampleMask::from_ids(4, [SampleId(0), SampleId(3)]).unwrap();
         assert_eq!(a.and(&c).unwrap().n_selected(), 2);
+    }
+
+    #[test]
+    fn keep_mask_validates_its_length_once() {
+        let keep = KeepMask::try_new(3, vec![true, false, true]).expect("length matches");
+        assert_eq!(keep.len(), 3);
+        assert_eq!(keep.n_selected(), 2);
+        assert!(keep[0] && !keep[1] && keep[2]);
+        let err = KeepMask::try_new(3, vec![true]).expect_err("short mask");
+        assert!(matches!(
+            err,
+            CoreError::LengthMismatch {
+                expected: 3,
+                got: 1
+            }
+        ));
+        assert_eq!(KeepMask::all(2).n_selected(), 2);
     }
 
     #[test]

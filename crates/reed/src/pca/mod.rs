@@ -110,22 +110,19 @@ pub fn read_genotype_matrix(
         ));
     }
     let n_samples = sample_names.len();
-    let keep: Vec<bool> = match keep {
-        Some(mask) => {
-            if mask.len() != n_samples {
-                return Err(crate::Error::usage(format!(
-                    "sample keep mask has {} entries but the header declares {n_samples}",
-                    mask.len()
-                )));
-            }
-            mask.to_vec()
-        }
-        None => vec![true; n_samples],
-    };
+    let keep = reed_core::sample::KeepMask::try_new(
+        n_samples,
+        keep.map_or_else(|| vec![true; n_samples], <[bool]>::to_vec),
+    )
+    .map_err(|e| crate::Error::usage(e.to_string()))?;
     if !keep.iter().any(|&k| k) {
         return Err(crate::Error::usage("the sample subset selects no samples"));
     }
-    let job = PcaJob { n_samples, keep: keep.clone(), allow_multiallelic: false };
+    let job = PcaJob {
+        n_samples,
+        keep: keep.as_slice().to_vec(),
+        allow_multiallelic: false,
+    };
     let abort = reed_engine::abort::abort_for(budget);
     // doc_v20 review of S76: cap the collection itself, not just the final
     // matrix, so a 120 GB run refuses while scanning instead of after.
@@ -236,6 +233,10 @@ pub struct PcaReport {
     pub eigenvalues: Vec<f64>,
     /// Solver actually used (`dense` or `stream`).
     pub solver: String,
+    /// The stream solver's final relative residual (`None` for dense); a
+    /// value above the solver tolerance means the components did not
+    /// converge and the run logged a warning (doc_v25 V25-10).
+    pub stream_max_residual: Option<f64>,
     /// Wall time.
     pub elapsed: std::time::Duration,
 }
@@ -329,6 +330,7 @@ pub fn run_pca_opened(
     let c = solve(&x, request.pcs, stand, missing, solver, budget)?;
     let (values, vectors, pve) = (c.values, c.vectors, c.pve);
     let chosen = c.solver;
+    let stream_max_residual = c.max_residual;
     let elapsed = started.elapsed();
 
     write_outputs(
@@ -346,6 +348,7 @@ pub fn run_pca_opened(
         n_pcs: values.len(),
         eigenvalues: values,
         solver: chosen.to_string(),
+        stream_max_residual,
         elapsed,
     })
 }
@@ -363,6 +366,10 @@ pub(crate) struct Components {
     pub pve: Vec<f64>,
     /// Solver actually used (`dense` or `stream`).
     pub solver: &'static str,
+    /// The stream solver's final relative residual (`None` for dense): a
+    /// value above `tol` means the requested components did not converge
+    /// (doc_v25 V25-10).
+    pub max_residual: Option<f64>,
 }
 
 /// Runs the PCA step over a samples x sites dosage matrix.
@@ -406,6 +413,15 @@ pub(crate) fn solve(
             ..Default::default()
         };
         let r = lanczos_top_k(&st.w, &cfg);
+        if r.max_residual > cfg.tol {
+            tracing::warn!(
+                residual = r.max_residual,
+                tol = cfg.tol,
+                cycles = r.cycles,
+                "PCA stream solver did not converge; the written components may be \
+                 inaccurate (raise --pcs headroom or use --solver dense)"
+            );
+        }
         // The stream solver has no full spectrum, but the trace of `W W' / m`
         // is the eigenvalue sum, so the normalisation is still the whole
         // spectrum rather than the retained part.
@@ -426,6 +442,7 @@ pub(crate) fn solve(
             vectors: r.vectors,
             pve,
             solver: "stream",
+            max_residual: Some(r.max_residual),
         })
     } else {
         let p = if missing == "pairwise" {
@@ -438,6 +455,7 @@ pub(crate) fn solve(
             vectors: p.vectors,
             pve: p.pve,
             solver: "dense",
+            max_residual: None,
         })
     }
 }
@@ -565,6 +583,101 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
         dir
+    }
+
+    /// doc_v25 V25-01 (F1): `reed pca` fails on a GT allele beyond the ALT
+    /// count instead of silently turning the sample into missing data —
+    /// `0/9` on a single-ALT record used to become NaN, and a file of such
+    /// records ran PCA on an empty matrix.
+    #[test]
+    fn v25_01_pca_rejects_out_of_domain_gt() {
+        let dir = temp_dir("v25-domain");
+        let mut text = String::from(
+            "##fileformat=VCFv4.3\n##contig=<ID=1,length=1000000>\n\
+             ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n",
+        );
+        text.push_str("1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\n");
+        text.push_str("1\t101\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\n");
+        let input = dir.join("in.vcf");
+        std::fs::write(&input, text).expect("invariant: fixture");
+        let request = PcaRequest {
+            pcs: 1,
+            prefix: dir.join("out").to_string_lossy().into_owned(),
+            ..PcaRequest::default()
+        };
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let Err(e) = run_pca(Some(&input), &request, &budget) else {
+            panic!("an out-of-domain GT allele must fail the run (doc_v25 V25-01)")
+        };
+        assert_eq!(e.kind(), crate::ErrorKind::Runtime, "{e}");
+        assert!(
+            e.to_string().contains("exceeds ALT count 1"),
+            "unexpected error: {e}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// doc_v25 V25-02: `FORMAT=DP:GT` reads the same dosages as `GT:DP`.
+    /// The old first-colon lookup parsed the DP value (`9`) as the genotype,
+    /// so every sample became NaN; the two runs' `.eigenvec` files differ.
+    #[test]
+    fn v25_02_pca_reads_gt_after_dp() {
+        use std::fmt::Write as _;
+        let dir = temp_dir("v25-gtpos");
+        let make = |name: &str, format: &str, rows: &[&[&str]]| -> Vec<u8> {
+            let mut text = String::from(
+                "##fileformat=VCFv4.3\n##contig=<ID=1,length=1000000>\n\
+                 ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+                 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n\
+                 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+            );
+            for (i, row) in rows.iter().enumerate() {
+                writeln!(
+                    text,
+                    "1\t{}\t.\tA\tG\t50\tPASS\t.\t{format}\t{}",
+                    100 + i,
+                    row.join("\t")
+                )
+                .expect("invariant: writing to a String");
+            }
+            let input = dir.join(format!("{name}.vcf"));
+            std::fs::write(&input, text).expect("invariant: fixture");
+            let request = PcaRequest {
+                pcs: 2,
+                prefix: dir.join(name).to_string_lossy().into_owned(),
+                ..PcaRequest::default()
+            };
+            let budget = ThreadBudget {
+                threads: 2,
+                mem: MemBudget::from_bytes(u64::MAX),
+            };
+            run_pca(Some(&input), &request, &budget).expect("invariant: pca");
+            std::fs::read(dir.join(format!("{name}.eigenvec"))).expect("invariant: eigenvec")
+        };
+        let gt_first = make(
+            "gt-first",
+            "GT:DP",
+            &[
+                &["0/0:9", "0/1:8", "1/1:7", "./.:."],
+                &["0/1:9", "1/1:8", "0/1:7", "0/0:."],
+                &["1/1:9", "0/0:8", "0/1:7", "0/0:."],
+            ],
+        );
+        let dp_first = make(
+            "dp-first",
+            "DP:GT",
+            &[
+                &["9:0/0", "8:0/1", "7:1/1", ".:./."],
+                &["9:0/1", "8:1/1", "7:0/1", ".:0/0"],
+                &["9:1/1", "8:0/0", "7:0/1", ".:0/0"],
+            ],
+        );
+        assert_eq!(gt_first, dp_first, "DP:GT must yield the same eigenvec");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// doc_v20 R10: the stream solver mean-imputes; `--missing pairwise`
@@ -734,5 +847,38 @@ mod tests {
         assert_eq!(report.n_samples, 8);
         assert_eq!(report.n_sites, 60);
         assert_eq!(report.eigenvalues.len(), 2);
+    }
+
+    /// doc_v25 V25-10: the rank-deficient stream solve converges (it used
+    /// to burn max_cycles) and reports its residual in the report.
+    #[test]
+    fn v25_10_stream_reports_a_converged_residual_on_a_rank_deficient_input() {
+        let dir = temp_dir("v25-residual");
+        let input = dir.join("in.vcf");
+        // 20 samples, 5 sites: W W' has rank at most 5, so pcs=8 asks for
+        // components beyond the rank.
+        std::fs::write(&input, fixture_text(20, 5)).expect("invariant: fixture");
+        let request = PcaRequest {
+            pcs: 8,
+            missing: "meanimpute".into(),
+            solver: "stream".into(),
+            prefix: dir.join("out").to_string_lossy().into_owned(),
+            ..PcaRequest::default()
+        };
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let report = run_pca(Some(&input), &request, &budget).expect("stream pca");
+        assert_eq!(report.solver, "stream");
+        let residual = report
+            .stream_max_residual
+            .expect("the stream solver records its residual");
+        assert!(residual.is_finite(), "{residual}");
+        assert!(
+            residual <= 1e-10,
+            "rank-deficient input did not converge: {residual}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

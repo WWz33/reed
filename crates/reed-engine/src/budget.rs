@@ -6,6 +6,104 @@ use std::path::Path;
 /// `TICKETS_PER_WORKER × workers`.
 pub const TICKETS_PER_WORKER: usize = 2;
 
+/// A validated `--threads` value (doc_v25 V25-06).
+///
+/// `0` used to mean "all cores" on the distance path (rayon's convention)
+/// and "sequential" on every `ThreadBudget` path — a silent resource split.
+/// The CLI now rejects it once, at parse time, so every command agrees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Threads(usize);
+
+impl Threads {
+    /// The thread count (≥ 1).
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Threads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for Threads {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let value: usize = text
+            .trim()
+            .parse()
+            .map_err(|_| format!("--threads: {text:?} is not a thread count"))?;
+        if value == 0 {
+            return Err("--threads: must be >= 1 (0 does not mean \"all cores\")".to_string());
+        }
+        Ok(Self(value))
+    }
+}
+
+/// A validated `--memory` value in MiB (doc_v25 V25-06).
+///
+/// The old `saturating_mul(1 << 20)` silently turned an overflowing value
+/// into an unlimited budget; the newtype rejects `0` and anything that does
+/// not fit the byte budget at parse time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemMiB(u32);
+
+impl MemMiB {
+    /// The value in MiB (≥ 1).
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// The value in bytes (exact: `u32` MiB always fits `u64`).
+    #[must_use]
+    pub const fn bytes(self) -> u64 {
+        (self.0 as u64) << 20
+    }
+}
+
+/// Clap `value_parser` for `--threads` (the `FromStr` grammar, one copy).
+///
+/// # Errors
+///
+/// The `FromStr` message.
+pub fn parse_threads(text: &str) -> Result<Threads, String> {
+    text.parse()
+}
+
+/// Clap `value_parser` for `--memory`.
+///
+/// # Errors
+///
+/// The `FromStr` message.
+pub fn parse_mem_mib(text: &str) -> Result<MemMiB, String> {
+    text.parse()
+}
+
+impl std::fmt::Display for MemMiB {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for MemMiB {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let value: u32 = text
+            .trim()
+            .parse()
+            .map_err(|_| format!("--memory: {text:?} is not a MiB count"))?;
+        if value == 0 {
+            return Err("--memory: must be >= 1 MiB".to_string());
+        }
+        Ok(Self(value))
+    }
+}
+
 /// The single compute-resource knob: total threads reed may use.
 ///
 /// Layout: 1 reader + 1 reducer/writer + `workers()` compute workers.
@@ -26,6 +124,27 @@ impl ThreadBudget {
         Self {
             threads: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
             mem: MemBudget::default_half_memory(),
+        }
+    }
+
+    /// The CLI's single budget constructor (doc_v25 V25-06): `None` threads
+    /// means all available cores (1 when the platform refuses to report —
+    /// the same fallback as [`Self::all`], never a panic), `None` memory the
+    /// default half-memory budget. Both values are already validated by the
+    /// CLI's value parsers ([`Threads`], [`MemMiB`]).
+    #[must_use]
+    pub fn from_cli(threads: Option<Threads>, mem_mib: Option<MemMiB>) -> Self {
+        Self {
+            threads: threads.map_or_else(
+                || {
+                    std::thread::available_parallelism()
+                        .map_or(1, std::num::NonZeroUsize::get)
+                },
+                Threads::get,
+            ),
+            mem: mem_mib.map_or_else(MemBudget::default_half_memory, |m| {
+                MemBudget::from_bytes(m.bytes())
+            }),
         }
     }
 

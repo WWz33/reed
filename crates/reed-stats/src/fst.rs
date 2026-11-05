@@ -485,9 +485,9 @@ impl FstMatrixAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        for (dst, src) in self.pairs.iter_mut().zip(&other.pairs) {
+        crate::merge_zip_eq("FstMatrixEntry pairs", &mut self.pairs, &other.pairs, |dst, src| {
             dst.merge(src);
-        }
+        });
     }
 
     /// The matrix entries in (i, j) row-major order, i < j.

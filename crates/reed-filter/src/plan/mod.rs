@@ -6,16 +6,24 @@
 // Casts in this file are bounded by construction: The `-q/-Q` threshold is deliberately the f32 bcftools parses.
 #![allow(clippy::cast_possible_truncation)]
 
-pub mod provenance;
+pub use reed_core::provenance;
+mod compile;
+pub use compile::compile;
 pub mod strategy;
 
-use reed_core::tag_table::{TagNumber, TagTable, TagType};
+use reed_core::tag_table::{TagTable, TagType};
 
 pub use strategy::ExecStrategy;
 
 use crate::FilterError;
 use crate::spec::region::RegionTriple;
-use crate::spec::{FilterSpec, OnMissing, Quantifier, RegionRule};
+use crate::spec::{OnMissing, Quantifier, RegionRule};
+// The module's tests build specs directly; the compiler itself now lives in
+// `plan/compile/` and imports it there.
+#[cfg(test)]
+use crate::spec::FilterSpec;
+#[cfg(test)]
+use reed_core::tag_table::TagNumber;
 
 /// A compiled head rule (fixed columns + INFO only).
 #[derive(Clone, Debug)]
@@ -187,30 +195,6 @@ fn warn_stale_af() {
         "-q/-Q reads INFO/AC,INFO/AN, which may be stale; use --maf/--mac for \
          genotype-recomputed values or remove the tags with -x INFO/AC,INFO/AN"
     );
-}
-
-/// Whether an expression reads a genotype-derived site field (forbidden in
-/// `--set-gts .` expressions, whose mask decision must not depend on the
-/// post-mask counts).
-fn expr_reads_gt_fields(expr: &crate::expr::Expr) -> bool {
-    use crate::expr::Expr;
-    match expr {
-        Expr::Field(f) => f.is_genotype_derived(),
-        // doc_v20 review of S58: `INFO/AC` (and the other built-ins spelled
-        // with the `INFO/` prefix) resolve through the same INFO-or-genotype
-        // helper as the bare names, so with an untrusted cohort they need the
-        // genotype values — which a `--set-gts` mask stage does not have.
-        // Treat them as genotype-derived so the compiler rejects them instead
-        // of silently evaluating to Missing.
-        Expr::Bare(name) | Expr::Info(name) => {
-            crate::expr::Field::from_name(name).is_some_and(crate::expr::Field::is_genotype_derived)
-        }
-        Expr::Cmp(_, a, b) | Expr::Logic(_, a, b) => {
-            expr_reads_gt_fields(a) || expr_reads_gt_fields(b)
-        }
-        Expr::Not(e) | Expr::Subscript(e, _) => expr_reads_gt_fields(e),
-        _ => false,
-    }
 }
 
 /// A compiled INFO predicate.
@@ -423,631 +407,6 @@ impl FilterPlan {
     }
 }
 
-/// Compiles the spec against the input header.
-///
-/// `biallelic_gate` is the filter driver's default (§11.6, plink2-style):
-/// push [`HeadRule::BiallelicGate`] unless the spec allows multiallelic
-/// input. The stats driver passes `false` — its multiallelic handling is
-/// per reporter, not a record gate.
-///
-/// # Errors
-///
-/// [`FilterError::Spec`] on validation failures: unknown tags, non-numeric
-/// types, `Number` outside {1, A}, a missing quantifier where one is
-/// required, thresholds out of range, or the M7 `midp` HWE mode.
-pub fn compile(
-    spec: &FilterSpec,
-    tags: &TagTable,
-    command_line: &str,
-    biallelic_gate: bool,
-) -> Result<FilterPlan, FilterError> {
-    // ---- head rules (§11.2 order: targets → class/alt → FILTER → QUAL →
-    // INFO in declaration order) ----
-    let mut head = Vec::new();
-    // The indexed family (`-r/-R`) and the streaming family (`-t/-T`) are two
-    // separate predicates, so a site must satisfy both — bcftools'
-    // intersection (doc_v23 V23-61).
-    let indexed =
-        crate::spec::region::parse_regions_strict(&spec.targets.indexed, tags.contigs())?;
-    if !indexed.is_empty() {
-        head.push(HeadRule::Regions {
-            include: indexed,
-            exclude: Vec::new(),
-        });
-    }
-    let regions = compile_regions(&spec.targets, tags.contigs())?;
-    if let Some(r) = regions {
-        head.push(HeadRule::Regions {
-            include: r.0,
-            exclude: r.1,
-        });
-    }
-    if !spec.site.variant_class.is_empty() {
-        head.push(HeadRule::VariantClass(spec.site.variant_class.clone()));
-    }
-    if spec.site.just_acgt {
-        head.push(HeadRule::JustAcgt);
-    }
-    if !spec.site.exclude_variant_class.is_empty() {
-        head.push(HeadRule::ExcludeVariantClass(
-            spec.site.exclude_variant_class.clone(),
-        ));
-    }
-    if spec.site.min_alt_alleles > 0 {
-        head.push(HeadRule::MinAltAlleles(spec.site.min_alt_alleles));
-    }
-    if let Some(max) = spec.site.max_alt_alleles {
-        head.push(HeadRule::MaxAltAlleles(max));
-    } else if biallelic_gate && !spec.multiallelics_allowed() {
-        // The default gate (§11.6, plink2-style): without `multiallelic =
-        // "allow"` or an explicit `max_alt_alleles > 1`, multiallelic
-        // records do not reach the decoder — the collapsed per-record
-        // counts (and the recomputed AC/MAF/HWE) are biallelic-valid only.
-        head.push(HeadRule::BiallelicGate);
-    }
-    if !spec.site.require_filter.is_empty() {
-        head.push(HeadRule::RequireFilter(
-            spec.site
-                .require_filter
-                .iter()
-                .map(String::as_bytes)
-                .map(<[u8]>::to_vec)
-                .collect(),
-        ));
-    }
-    if let Some(q) = spec.site.min_qual {
-        if q < 0.0 {
-            return Err(FilterError::Spec(format!(
-                "min_qual out of range [0,inf): {q}"
-            )));
-        }
-        head.push(HeadRule::MinQual(q));
-    }
-    // `-q/-Q` (bcftools): the INFO AC/AN values decide at the site stage when
-    // the header declares both AND the threshold is the `nref` form; the
-    // other `:type`s are genotype-derived and live in the tail only.
-    //
-    // The INFO preference holds only while AC/AN still describe the cohort
-    // being decided on. Once the sample set changes (a static subset, a
-    // genotype mask, `--mind`, or `--set-gts .`), bcftools recomputes from
-    // the subset GT before applying `-q/-Q` (vcfview.c:341-350) and gates
-    // its own INFO preference on `!sample_mask_set` (filter.c:1471); reed
-    // mirrors that by not pushing the INFO short-circuit at all, so the
-    // decision runs through `af_of`, whose `info_trusted` flag is false in
-    // every execution path once the cohort changed (doc_v12 D12-6).
-    let info_af = tags.info("AC").is_some() && tags.info("AN").is_some();
-    // An empty `SampleSelect` (JSON `"sample_select": {}`) selects nothing;
-    // treating it as "cohort changed" silently diverted `-q/-Q` from the
-    // INFO short-circuit (doc_v23 V23-25).
-    let cohort_changed = spec
-        .sample_select
-        .as_ref()
-        .is_some_and(|select| !select.is_empty())
-        || spec.mind.is_some()
-        || !spec.genotype.mask_if.is_empty()
-        || spec.genotype.set_gts.is_some();
-    let (min_af_info, max_af_info) = af_info_sides(&spec.site_after_mask, info_af, cohort_changed);
-    for bound in spec.site_after_mask.min_af.iter().copied() {
-        if !(0.0..=1.0).contains(&bound) {
-            return Err(FilterError::Spec(format!(
-                "min_af out of range [0,1]: {bound}"
-            )));
-        }
-        if min_af_info {
-            head.push(HeadRule::MinAfInfo(af_threshold(bound)));
-        }
-    }
-    for bound in spec.site_after_mask.max_af.iter().copied() {
-        if !(0.0..=1.0).contains(&bound) {
-            return Err(FilterError::Spec(format!(
-                "max_af out of range [0,1]: {bound}"
-            )));
-        }
-        if max_af_info {
-            head.push(HeadRule::MaxAfInfo(af_threshold(bound)));
-        }
-    }
-    // Warn only after both bounds validate, so an out-of-range threshold
-    // errors without the stale-INFO noise first.
-    if min_af_info || max_af_info {
-        warn_stale_af();
-    }
-    // ---- expressions (02-cli.md §4): non-genotype-dependent ones run here,
-    // genotype-dependent ones after the mask stage ----
-    let format_tags: Vec<String> = tags.format_names();
-    for (index, text) in spec.site.include.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, tags)
-            .map_err(|e| FilterError::Spec(format!("-i {text:?}: {e}")))?;
-        warn_stale_info(&expr, text, tags);
-        if expr.references_genotypes() {
-            return Err(FilterError::Spec(format!(
-                "-i {text:?} reads genotype-derived values and belongs in [site_after_mask]"
-            )));
-        }
-        head.push(HeadRule::Expr {
-            id: format!("site.include#{}", index + 1),
-            include: true,
-            expr,
-        });
-    }
-    for (index, text) in spec.site.exclude.iter().enumerate() {
-        let expr = crate::expr::parse_and_check(text, tags)
-            .map_err(|e| FilterError::Spec(format!("-e {text:?}: {e}")))?;
-        warn_stale_info(&expr, text, tags);
-        if expr.references_genotypes() {
-            return Err(FilterError::Spec(format!(
-                "-e {text:?} reads genotype-derived values and belongs in [site_after_mask]"
-            )));
-        }
-        head.push(HeadRule::Expr {
-            id: format!("site.exclude#{}", index + 1),
-            include: false,
-            expr,
-        });
-    }
-    for rule in &spec.site.info {
-        let def = tags.info(&rule.tag).ok_or_else(|| {
-            FilterError::Spec(format!(
-                "INFO tag {} is not declared in the header",
-                rule.tag
-            ))
-        })?;
-        validate_numeric(&rule.tag, def.ty)?;
-        let number_a = def.number == TagNumber::A;
-        if def.number != TagNumber::Count(1) && !number_a {
-            return Err(FilterError::Spec(format!(
-                "INFO tag {} has an unsupported Number (want 1 or A)",
-                rule.tag
-            )));
-        }
-        let quantifier = if number_a {
-            rule.quantifier.ok_or_else(|| {
-                FilterError::Spec(format!(
-                    "INFO tag {} is Number=A: declare quantifier = \"any\" | \"all\"",
-                    rule.tag
-                ))
-            })?
-        } else {
-            // A Number=1 tag with a declared quantifier would silently
-            // change nothing; keep the declaration honest.
-            // A declared quantifier on a Number=1 tag is harmless (the
-            // value set has one element); accepted silently.
-            Quantifier::Any
-        };
-        let cmp = crate::spec::predicate::Cmp::parse(&rule.keep_if)?;
-        // Missing-tag behaviour: bcftools semantics default to pass.
-        let on_missing = rule.on_missing;
-        if on_missing == OnMissing::Keep || on_missing == OnMissing::Mask {
-            return Err(FilterError::Spec(format!(
-                "INFO rule {} uses a genotype on_missing value (pass|fail only)",
-                rule.tag
-            )));
-        }
-        head.push(HeadRule::Info(InfoRule {
-            tag: rule.tag.as_bytes().to_vec(),
-            cmp,
-            on_missing,
-            quantifier,
-            number_a,
-        }));
-    }
-
-    // ---- mask rules ----
-    let mut fmt_expr_fields: Vec<FmtExprField> = Vec::new();
-    let mut mask = Vec::new();
-    let mut int_fields: Vec<IntField> = Vec::new();
-    let mut float_fields: Vec<Vec<u8>> = Vec::new();
-    for rule in &spec.genotype.mask_if {
-        // `depth = true` is the explicit depth policy (doc_v22 D22-1): the
-        // record's DP when it carries one, otherwise the sample's AD sum.
-        // Only `DP` can be a depth field.
-        if rule.depth && rule.field != "DP" {
-            return Err(FilterError::Spec(format!(
-                "mask rule {}: depth = true is only valid for FORMAT/DP",
-                rule.field
-            )));
-        }
-        let fallback = rule.depth.then(|| b"AD".to_vec());
-        // The fallback reads AD as integers whenever a record's FORMAT has
-        // no DP key. Validate that even when DP is declared: otherwise a
-        // Float AD makes the mask a silent no-op for exactly those records
-        // (doc_v22 V22-R7).
-        if rule.depth
-            && let Some(ad) = tags.format("AD")
-            && ad.ty != TagType::Integer
-        {
-            return Err(FilterError::Spec(
-                "FORMAT field AD must be Integer for the depth fallback (DP is read when the \
-                 record carries it)"
-                    .to_string(),
-            ));
-        }
-        let def = match tags.format(&rule.field) {
-            Some(def) => def,
-            // A depth mask on a callset that only emits AD (`GT:PL:AD`,
-            // common for BSA-seq/GATK-lite pipelines). The type check above
-            // already rejected a non-Integer AD.
-            None if rule.depth => tags.format("AD").ok_or_else(|| {
-                FilterError::Spec(
-                    "FORMAT field DP is not declared in the header, and neither is an \
-                     Integer FORMAT/AD to fall back to"
-                        .to_string(),
-                )
-            })?,
-            None => {
-                return Err(FilterError::Spec(format!(
-                    "FORMAT field {} is not declared in the header",
-                    rule.field
-                )));
-            }
-        };
-        validate_numeric(&rule.field, def.ty)?;
-        let is_float = def.ty == TagType::Float;
-        if is_float && rule.depth {
-            return Err(FilterError::Spec(
-                "FORMAT field DP is Float; the depth mask needs an Integer DP (or Integer AD \
-                 to fall back to)"
-                    .to_string(),
-            ));
-        }
-        let cmp = crate::spec::predicate::Cmp::parse(&rule.when)?;
-        // The mask default is keep (§11.1): an omitted on_missing
-        // deserializes to the enum default (Pass) and normalizes to Keep.
-        let on_missing = match rule.on_missing {
-            OnMissing::Keep | OnMissing::Pass => OnMissing::Keep,
-            OnMissing::Mask | OnMissing::Fail => OnMissing::Mask,
-        };
-        let int_column_of = |fields: &mut Vec<IntField>| match fields
-            .iter()
-            .position(|f| f.name == rule.field.as_bytes() && f.fallback == fallback)
-        {
-            Some(i) => i,
-            None => {
-                fields.push(IntField {
-                    name: rule.field.as_bytes().to_vec(),
-                    fallback: fallback.clone(),
-                });
-                fields.len() - 1
-            }
-        };
-        let float_column_of = |fields: &mut Vec<Vec<u8>>| match fields
-            .iter()
-            .position(|f| f.as_slice() == rule.field.as_bytes())
-        {
-            Some(i) => i,
-            None => {
-                fields.push(rule.field.as_bytes().to_vec());
-                fields.len() - 1
-            }
-        };
-        let (int_column, float_column) = if is_float {
-            (0, Some(float_column_of(&mut float_fields)))
-        } else {
-            (int_column_of(&mut int_fields), None)
-        };
-        mask.push(MaskRule {
-            expr: None,
-            include: true,
-            field: rule.field.as_bytes().to_vec(),
-            cmp,
-            on_missing,
-            int_column,
-            float_column,
-        });
-    }
-
-    // ---- tail rules (fixed order §11.2) ----
-    let mut tail = Vec::new();
-    // bcftools applies -q/-Q (site-level AF bounds) before the plink2-style
-    // missing/MAF blocks.
-    if let Some(f) = spec.site_after_mask.min_af {
-        if !(0.0..=1.0).contains(&f) {
-            return Err(FilterError::Spec(format!("min_af out of range [0,1]: {f}")));
-        }
-        tail.push(TailRule::MinAf(
-            af_threshold(f),
-            spec.site_after_mask
-                .min_af_kind
-                .unwrap_or(crate::spec::AfKind::Nref),
-        ));
-    }
-    if let Some(f) = spec.site_after_mask.max_af {
-        if !(0.0..=1.0).contains(&f) {
-            return Err(FilterError::Spec(format!("max_af out of range [0,1]: {f}")));
-        }
-        tail.push(TailRule::MaxAf(
-            af_threshold(f),
-            spec.site_after_mask
-                .max_af_kind
-                .unwrap_or(crate::spec::AfKind::Nref),
-        ));
-    }
-    if let Some(rate) = spec.site_after_mask.max_missing {
-        // The range is validated where the rate is parsed
-        // (spec/missing_rate.rs), so a compiled spec can only carry
-        // `q ≤ 10^9`.
-        tail.push(TailRule::MaxMissing(rate));
-    }
-    if let Some(m) = spec.site_after_mask.min_maf {
-        if !(0.0..=0.5).contains(&m) {
-            return Err(FilterError::Spec(format!(
-                "min_maf out of range [0,0.5]: {m}"
-            )));
-        }
-        tail.push(TailRule::MinMaf(m));
-    }
-    if let Some(m) = spec.site_after_mask.max_maf {
-        if !(0.0..=0.5).contains(&m) {
-            return Err(FilterError::Spec(format!(
-                "max_maf out of range [0,0.5]: {m}"
-            )));
-        }
-        tail.push(TailRule::MaxMaf(m));
-    }
-    // doc_v21 S13: `--maf 0.4 --max-maf 0.2` (and the MAC pair) is an empty
-    // intersection — bcftools/plink2 reject it; reed silently emitted an
-    // empty file.
-    if let (Some(min), Some(max)) = (
-        spec.site_after_mask.min_maf,
-        spec.site_after_mask.max_maf,
-    ) && min > max
-    {
-        return Err(FilterError::Spec(format!(
-            "--maf {min} exceeds --max-maf {max} (empty intersection)"
-        )));
-    }
-    if spec.site_after_mask.min_mac > 0 {
-        tail.push(TailRule::MinMac(spec.site_after_mask.min_mac));
-    }
-    if spec.site_after_mask.max_mac > 0 {
-        tail.push(TailRule::MaxMac(spec.site_after_mask.max_mac));
-    }
-    if spec.site_after_mask.max_mac > 0 && spec.site_after_mask.min_mac > spec.site_after_mask.max_mac
-    {
-        return Err(FilterError::Spec(format!(
-            "--mac {} exceeds --max-mac {} (empty intersection)",
-            spec.site_after_mask.min_mac, spec.site_after_mask.max_mac
-        )));
-    }
-    if let Some(p) = spec.site_after_mask.min_hwe_p {
-        if spec.site_after_mask.hwe_mode == crate::spec::HweMode::MidP {
-            // doc_v21 S12: no internal milestone code; the exact test is the
-            // only implemented mode and the message says so.
-            return Err(FilterError::Spec(
-                "--hwe midp is not implemented yet: only the exact test is available; \
-                 drop the `midp` token"
-                    .into(),
-            ));
-        }
-        if !(0.0..=1.0).contains(&p) {
-            return Err(FilterError::Spec(format!(
-                "min_hwe_p out of range [0,1]: {p}"
-            )));
-        }
-        tail.push(TailRule::MinHweP(p));
-    }
-    // `-g/--genotype` (repeated flags AND, unlike bcftools' last-wins):
-    // exact duplicates collapse; requiring a class and its absence is
-    // unsatisfiable — reject at compile time rather than silently drop
-    // every record.
-    let mut gt_rules: Vec<crate::spec::GtClassRule> =
-        Vec::with_capacity(spec.site_after_mask.gt_class.len());
-    for &rule in &spec.site_after_mask.gt_class {
-        if gt_rules.contains(&rule) {
-            continue; // an exact duplicate: AND is idempotent
-        }
-        if let Some(prior) = gt_rules.iter().find(|r| r.class() == rule.class()) {
-            return Err(FilterError::Spec(format!(
-                "-g/--genotype rules {:?} and {:?} are contradictory \
-                 (a site cannot have and lack a {} call)",
-                prior.id(),
-                rule.id(),
-                rule.class(),
-            )));
-        }
-        gt_rules.push(rule);
-    }
-    tail.extend(gt_rules.into_iter().map(TailRule::GtClass));
-
-    // `--set-gts .` turns the `FMT/` expressions into per-sample mask rules
-    // (bcftools `filter -S .`); genotype-derived site fields stay tail rules.
-    let set_gts = match spec.genotype.set_gts.as_deref() {
-        None => false,
-        Some(".") => true,
-        Some(other) => {
-            return Err(FilterError::Spec(format!(
-                "--set-gts {other:?}: only `.` (the missing genotype) is supported"
-            )));
-        }
-    };
-    for (index, include, text) in spec
-        .site_after_mask
-        .include
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (i, true, t))
-        .chain(
-            spec.site_after_mask
-                .exclude
-                .iter()
-                .enumerate()
-                .map(|(i, t)| (i, false, t)),
-        )
-    {
-        let flag = if include { "-i" } else { "-e" };
-        let expr = crate::expr::parse_and_check_fmt(text, tags, &format_tags)
-            .map_err(|e| FilterError::Spec(format!("{flag} {text:?} (after mask): {e}")))?;
-        warn_stale_info(&expr, text, tags);
-        if !expr.references_genotypes() {
-            return Err(FilterError::Spec(format!(
-                "{flag} {text:?} does not read genotype-derived values and belongs in [site]"
-            )));
-        }
-        let mut fmt_tags = Vec::new();
-        expr.fmt_tags(&mut fmt_tags);
-        if fmt_tags.is_empty() {
-            tail.push(TailRule::Expr {
-                id: if include {
-                    format!("after_mask.include#{}", index + 1)
-                } else {
-                    format!("after_mask.exclude#{}", index + 1)
-                },
-                include,
-                expr,
-            });
-            continue;
-        }
-        if !set_gts {
-            return Err(FilterError::Spec(format!(
-                "{flag} {text:?} reads FORMAT values: they are masks, not site rules — add --set-gts ."
-            )));
-        }
-        if expr_reads_gt_fields(&expr) {
-            return Err(FilterError::Spec(format!(
-                "{flag} {text:?} mixes FORMAT values with genotype-derived fields; \
-                 --set-gts . expressions may read FORMAT and site fields only"
-            )));
-        }
-        for tag in &fmt_tags {
-            let def = tags.format(tag).ok_or_else(|| {
-                FilterError::Spec(format!("FORMAT tag {tag} is not declared in the header"))
-            })?;
-            if def.number != TagNumber::Count(1) {
-                return Err(FilterError::Spec(format!(
-                    "FORMAT tag {tag} is multi-valued (Number={:?}): subscripts are not supported yet",
-                    def.number
-                )));
-            }
-            validate_numeric(tag, def.ty)?;
-            let is_float = def.ty == TagType::Float;
-            let int_column_of = |fields: &mut Vec<IntField>| match fields
-                .iter()
-                .position(|f| f.name == tag.as_bytes() && f.fallback.is_none())
-            {
-                Some(i) => i,
-                None => {
-                    fields.push(IntField {
-                        name: tag.as_bytes().to_vec(),
-                        // An explicit `FMT/...` expression is literal: no
-                        // depth fallback (doc_v22 D22-1).
-                        fallback: None,
-                    });
-                    fields.len() - 1
-                }
-            };
-            let float_column_of = |fields: &mut Vec<Vec<u8>>| match fields
-                .iter()
-                .position(|f| f.as_slice() == tag.as_bytes())
-            {
-                Some(i) => i,
-                None => {
-                    fields.push(tag.as_bytes().to_vec());
-                    fields.len() - 1
-                }
-            };
-            let (int_column, float_column) = if is_float {
-                (0, Some(float_column_of(&mut float_fields)))
-            } else {
-                (int_column_of(&mut int_fields), None)
-            };
-            fmt_expr_fields.push(FmtExprField {
-                tag: tag.as_bytes().to_vec(),
-                int_column,
-                float_column,
-            });
-        }
-        mask.push(MaskRule {
-            expr: Some(expr),
-            include,
-            field: Vec::new(),
-            cmp: crate::spec::Cmp::parse(">= 0").expect("invariant: a constant comparison"),
-            on_missing: crate::spec::OnMissing::Keep,
-            int_column: 0,
-            float_column: None,
-        });
-    }
-
-    // ---- strategy (§11.4; SketchThenEmit selection is M5b) ----
-    // The sketch path evaluates tail rules in the mid stage, where the
-    // record bytes are gone; a tail rule that reads them therefore forces
-    // the single-pass path (02-cli.md §4: expressions run on the record).
-    // The predicate mirrors `FilterPlan::tail_reads_record` (the plan does
-    // not exist yet here), so the driver's later override asks the same
-    // question (doc_v12 D12-1).
-    let tail_reads_record = tail.iter().any(|r| {
-        matches!(
-            r,
-            TailRule::Expr { .. } | TailRule::MinAf(..) | TailRule::MaxAf(..)
-        )
-    });
-    let strategy = if tail_reads_record {
-        ExecStrategy::SinglePass
-    } else if spec.mind.is_some() {
-        ExecStrategy::TwoPassReparse
-    } else {
-        ExecStrategy::SinglePass
-    };
-
-    // ---- recompute + stale ----
-    // `--fill-tags` entries are validated here (not only in the CLI): an
-    // unsupported tag is a spec error, like bcftools `+fill-tags`
-    // ("the tag X is not supported", plugins/fill-tags.c:530-535). Silently
-    // accepting one turned `--fill-tags AF` into a no-op that the default
-    // `-x` then used to delete the input's AF (doc_v12 D12-11).
-    let canonical_tags: Vec<&'static str> = spec
-        .recompute
-        .tags
-        .iter()
-        .map(|tag| {
-            crate::spec::recompute::canonical_fill_tag(tag)
-                .map_err(|e| FilterError::Spec(e.to_string()))
-        })
-        .collect::<Result<_, _>>()?;
-    let wants = |tag: &str| canonical_tags.contains(&tag);
-    let no_update = spec.recompute.no_update;
-    let recompute = RecomputeFlags {
-        ac: wants("AC"),
-        an: wants("AN"),
-        ns: wants("NS"),
-        maf: wants("MAF"),
-        hwe: wants("HWE"),
-    };
-    let stale_tags = spec.recompute.stale_bytes();
-
-    // ---- ascertainment (§11.7) + provenance (§11.8) ----
-    let provenance = provenance::Provenance::new(spec, command_line)?;
-
-    let policies = reed_core::genotype::GenotypePolicies {
-        ploidy: match spec.policy.ploidy {
-            crate::spec::PloidyPolicy::RequireDiploid => {
-                reed_core::genotype::PloidyPolicy::RequireDiploid
-            }
-            crate::spec::PloidyPolicy::AllowHaploid => {
-                reed_core::genotype::PloidyPolicy::HaploidAsHalfCall
-            }
-        },
-        multiallelic: reed_core::genotype::MultiallelicPolicy::CollapseAlt,
-        ..reed_core::genotype::GenotypePolicies::default()
-    };
-
-    Ok(FilterPlan {
-        head,
-        mask,
-        tail,
-        strategy,
-        int_fields,
-        float_fields,
-        fmt_expr_fields,
-        policies,
-        stale_tags,
-        auto_stale_tags: Vec::new(),
-        recompute,
-        no_update,
-        info_trusted: !cohort_changed,
-        tags: std::sync::Arc::new(tags.clone()),
-        provenance,
-    })
-}
 
 /// bcftools parses `-q/-Q` with `sscanf("%f")` into a **float**, so its
 /// threshold is the f32 nearest the written value; at an exact boundary
@@ -1480,5 +839,91 @@ mod region_contig_tests {
             }
         }
         assert!(seen, "expected HLA-A*01:01:10-20: {:?}", plan.head);
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    use crate::spec::{SiteRules, TailRules};
+
+    fn tags() -> TagTable {
+        let mut table = TagTable::new();
+        table.add_format("GT", TagType::Character, TagNumber::Count(1));
+        table.add_info("AC", TagType::Integer, TagNumber::A);
+        table.add_info("DP", TagType::Integer, TagNumber::Count(1));
+        table
+    }
+
+    /// doc_v25 V25-04: `INFO/AC` is the same built-in as the bare `AC`, so
+    /// the two spellings must route the same way. `INFO/AC` used to fall
+    /// through `references_genotypes` and reach the head stage, where INFO
+    /// was assumed to describe the output cohort.
+    #[test]
+    fn info_spelling_routes_like_the_bare_builtin() {
+        let table = tags();
+        // doc_v25 review: an explicit `INFO/` read is a plain INFO value and
+        // stays in the head stage (bcftools evaluates `-i/-e` before it
+        // subsets the samples, `vcfview.c:322` vs `:341`).
+        let spec = FilterSpec {
+            site: SiteRules {
+                include: vec!["INFO/AC>1".into()],
+                ..SiteRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let plan = compile(&spec, &table, "", false).expect("INFO/AC is a head rule");
+        assert_eq!(plan.head.len(), 1);
+        assert!(plan.tail.is_empty());
+        // The bare built-in still needs the decoded genotypes.
+        let spec = FilterSpec {
+            site: SiteRules {
+                include: vec!["AC>1".into()],
+                ..SiteRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let err = compile(&spec, &table, "", false)
+            .expect_err("the bare genotype-derived built-in belongs after the mask");
+        assert!(err.to_string().contains("site_after_mask"), "{err}");
+        // A plain INFO tag is not genotype-derived: it stays in the head.
+        let spec = FilterSpec {
+            site: SiteRules {
+                include: vec!["INFO/DP>10".into()],
+                ..SiteRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let plan = compile(&spec, &table, "", false).expect("INFO/DP is a head rule");
+        assert_eq!(plan.head.len(), 1);
+        assert!(plan.tail.is_empty());
+    }
+
+    /// The after-mask stage still accepts the bare built-in (the routed
+    /// half of the same rule); an explicit `INFO/` read now belongs in
+    /// `[site]` and is rejected there with a pointer to it.
+    #[test]
+    fn info_spelling_compiles_in_the_after_mask_stage() {
+        let spec = FilterSpec {
+            site_after_mask: TailRules {
+                include: vec!["AC>1".into()],
+                ..TailRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let plan = compile(&spec, &tags(), "", false).expect("after-mask expression");
+        assert!(plan.head.is_empty());
+        assert_eq!(plan.tail.len(), 1);
+
+        let spec = FilterSpec {
+            site_after_mask: TailRules {
+                include: vec!["INFO/AC>1".into()],
+                ..TailRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let err = compile(&spec, &tags(), "", false)
+            .expect_err("an INFO-only read belongs in [site]");
+        assert!(err.to_string().contains("[site]"), "{err}");
     }
 }

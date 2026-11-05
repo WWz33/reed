@@ -14,8 +14,6 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -25,13 +23,15 @@ use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::metrics::StageMetrics;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
 
 use crate::convert::writers;
 use crate::convert::{ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions};
 use crate::stats::driver::{build_sfs_plan, resolve_groups, sfs_report};
-use crate::stats::request::SfsReport;
+use crate::stats::request::{SfsPartial, SfsReport};
 use crate::stats::run::{StatsJob, StatsPartial, StatsScratch};
+
+pub(crate) use super::spill::{RowsBlob, SPILL_THRESHOLD, SPILL_TOTAL_BUDGET, SpilledMsa};
 
 /// One conversion run's record counters (the vcf2phylip stdout report,
 /// v13 §3.1; reed adds `malformed`, B13-2).
@@ -158,6 +158,12 @@ pub(crate) struct GtSlots {
     pub(crate) overflow: bool,
     /// A token that is neither `.` nor an unsigned integer.
     pub(crate) bad: bool,
+    /// An allele token the *strict statistics scanner* rejects but convert
+    /// itself accepts: more than five digits (`0000000`) or an index that
+    /// does not fit the scanner's `u16`. Row targets parse it like the old
+    /// code did (bcftools accepts zero-padded alleles), but the composed
+    /// `--sfs` target must not hand the record to the strict scanner.
+    pub(crate) strict_bad: bool,
     /// The raw GT text does not start with `.` (vcf2phylip's presence rule).
     pub(crate) present: bool,
     /// The raw GT field range within the samples region (for GEN_BIN).
@@ -233,243 +239,6 @@ pub(crate) struct CountPartial {
 pub(crate) struct HmpPartial {
     pub(crate) n_sites: u64,
     pub(crate) rows: Vec<u8>,
-}
-
-/// Rendered hapmap rows: kept in memory for a small run, spilled to an
-/// append-only temp file past [`HMP_SPILL_THRESHOLD`] so a whole-genome run
-/// holds only one chunk's text at a time (doc_v15 D15-7, bounded form). The
-/// temp file is removed on drop — including on failure or abort, since the
-/// engine drops the sink.
-#[derive(Debug)]
-pub(crate) enum RowsBlob {
-    Memory(Vec<u8>),
-    Spilled { path: PathBuf, len: u64 },
-}
-
-impl Default for RowsBlob {
-    fn default() -> Self {
-        Self::Memory(Vec::new())
-    }
-}
-
-impl Drop for RowsBlob {
-    fn drop(&mut self) {
-        if let Self::Spilled { path, .. } = self {
-            let _ = std::fs::remove_file(&*path);
-        }
-    }
-}
-
-/// Spill each buffered blob past this many bytes. A whole-genome run is far
-/// larger; a small run never touches the disk.
-pub(crate) const SPILL_THRESHOLD: usize = 4 << 20;
-
-/// The sink's total in-memory blob budget: per-sample blobs are small
-/// individually (one byte per site), so a whole-genome, many-sample run
-/// would only cross the per-blob threshold on the largest ones. Past this
-/// total the sink spills whole buffers in a fixed order (bytes unchanged).
-pub(crate) const SPILL_TOTAL_BUDGET: usize = 8 << 20;
-
-impl RowsBlob {
-    /// Absorbs one chunk's rendered rows. The ordered sink appends in chunk
-    /// order, so the bytes stay identical to the in-memory form.
-    pub(crate) fn append(
-        &mut self,
-        rows: &mut Vec<u8>,
-        threshold: usize,
-    ) -> Result<(), EngineError> {
-        if let Self::Spilled { path, len } = self {
-            let mut file = OpenOptions::new()
-                .append(true)
-                .open(&*path)
-                .map_err(EngineError::Io)?;
-            file.write_all(rows).map_err(EngineError::Io)?;
-            *len = len.saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
-            return Ok(());
-        }
-        // A `Drop` type cannot be destructured by move: fill the buffer,
-        // then flip the variant once the borrow has ended.
-        let mut spilled: Option<(PathBuf, u64)> = None;
-        if let Self::Memory(buf) = self {
-            if buf.len() + rows.len() <= threshold {
-                buf.append(rows);
-                return Ok(());
-            }
-            buf.append(rows);
-            let path = spill_path();
-            let mut file = File::create(&path).map_err(EngineError::Io)?;
-            file.write_all(buf).map_err(EngineError::Io)?;
-            file.flush().map_err(EngineError::Io)?;
-            let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
-            spilled = Some((path, len));
-        }
-        if let Some((path, len)) = spilled {
-            *self = Self::Spilled { path, len };
-        }
-        Ok(())
-    }
-
-    /// Streams the bytes through `f` in read-sized chunks (the transformed
-    /// renderers: `--012` maps each byte back to a cell token).
-    pub(crate) fn visit(
-        &self,
-        mut f: impl FnMut(&[u8]) -> std::io::Result<()>,
-    ) -> Result<(), EngineError> {
-        match self {
-            Self::Memory(bytes) => f(bytes).map_err(EngineError::Io),
-            Self::Spilled { path, .. } => {
-                let mut src = std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?);
-                let mut buf = vec![0_u8; 64 << 10];
-                loop {
-                    let n = src.read(&mut buf).map_err(EngineError::Io)?;
-                    if n == 0 {
-                        return Ok(());
-                    }
-                    f(&buf[..n]).map_err(EngineError::Io)?;
-                }
-            }
-        }
-    }
-
-    /// In-memory bytes (`0` once spilled).
-    #[must_use]
-    pub(crate) fn mem_len(&self) -> usize {
-        match self {
-            Self::Memory(bytes) => bytes.len(),
-            Self::Spilled { .. } => 0,
-        }
-    }
-
-    /// Forces the in-memory buffer to a spill file (no-op when empty or
-    /// already spilled).
-    pub(crate) fn spill_now(&mut self) -> Result<(), EngineError> {
-        let mut spilled: Option<(PathBuf, u64)> = None;
-        if let Self::Memory(buf) = self
-            && !buf.is_empty()
-        {
-            let path = spill_path();
-            let mut file = File::create(&path).map_err(EngineError::Io)?;
-            file.write_all(buf).map_err(EngineError::Io)?;
-            file.flush().map_err(EngineError::Io)?;
-            let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
-            spilled = Some((path, len));
-        }
-        if let Some((path, len)) = spilled {
-            *self = Self::Spilled { path, len };
-        }
-        Ok(())
-    }
-
-    /// Streams the rows into `out` (the render path).
-    pub(crate) fn write_to(&self, out: &mut impl std::io::Write) -> Result<(), EngineError> {
-        match self {
-            Self::Memory(bytes) => out.write_all(bytes).map_err(EngineError::Io),
-            Self::Spilled { path, len } => {
-                let mut src =
-                    std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?);
-                let copied = std::io::copy(&mut src, out).map_err(EngineError::Io)?;
-                debug_assert_eq!(copied, *len, "invariant: the spill length tracks writes");
-                Ok(())
-            }
-        }
-    }
-}
-
-/// A unique per-process temp path for one spilled blob (`TMPDIR` is
-/// respected through `std::env::temp_dir`).
-fn spill_path() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("reed-convert-{}-{n}.spill", std::process::id()))
-}
-
-/// The MSA sites, one frame stream per contig run (the `runs` merge rule is
-/// preserved: a run continues while the contig does not change). Each frame
-/// is `pos0: u64 LE || width: u32 LE || vals (n_samples x width)` — the
-/// render walks the frames once per sample, so nothing region-sized is ever
-/// buffered (doc_v15 D15-7).
-pub(crate) struct SpilledMsa {
-    pub(crate) runs: Vec<(Vec<u8>, RowsBlob)>,
-}
-
-/// A pull-based reader over one contig's frames. The render re-walks the
-/// frames per sample, so the reader rewinds: memory slices by index, spill
-/// files by `seek`.
-pub(crate) struct MsaFrameReader<'a> {
-    source: MsaFrameSource<'a>,
-    n_samples: usize,
-}
-
-enum MsaFrameSource<'a> {
-    Memory { bytes: &'a [u8], cursor: usize },
-    Spilled { file: std::io::BufReader<File> },
-}
-
-impl<'a> MsaFrameReader<'a> {
-    pub(crate) fn open(blob: &'a RowsBlob, n_samples: usize) -> Result<Self, EngineError> {
-        let source = match blob {
-            RowsBlob::Memory(bytes) => MsaFrameSource::Memory { bytes, cursor: 0 },
-            RowsBlob::Spilled { path, .. } => MsaFrameSource::Spilled {
-                file: std::io::BufReader::new(File::open(path).map_err(EngineError::Io)?),
-            },
-        };
-        Ok(Self { source, n_samples })
-    }
-
-    /// Reads the next frame and copies only `sample`'s slice into `buf`.
-    /// `Ok(None)` at the end of the stream.
-    ///
-    /// The render walks the frames once per sample; reading the whole frame
-    /// every pass would be the per-sample repeated-IO shape the convert
-    /// design forbids (doc_v13 D13-2), so the spill path seeks past the
-    /// other samples' bytes (doc_v15 D15-7).
-    pub(crate) fn next_frame_for_sample(
-        &mut self,
-        sample: usize,
-        buf: &mut Vec<u8>,
-    ) -> Result<Option<u64>, EngineError> {
-        let mut header = [0_u8; 12];
-        match &mut self.source {
-            MsaFrameSource::Memory { bytes, cursor } => {
-                if *cursor + 12 > bytes.len() {
-                    return if *cursor == bytes.len() {
-                        Ok(None)
-                    } else {
-                        Err(EngineError::job("MSA spill: truncated frame header"))
-                    };
-                }
-                header.copy_from_slice(&bytes[*cursor..*cursor + 12]);
-                *cursor += 12;
-            }
-            MsaFrameSource::Spilled { file } => match file.read_exact(&mut header) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-                Err(e) => return Err(EngineError::Io(e)),
-            },
-        }
-        let pos0 = u64::from_le_bytes(header[..8].try_into().expect("invariant: 8 bytes"));
-        let width = u32::from_le_bytes(header[8..].try_into().expect("invariant: 4 bytes")) as usize;
-        let len = self.n_samples * width;
-        let lo = sample * width;
-        buf.clear();
-        buf.resize(width, 0);
-        match &mut self.source {
-            MsaFrameSource::Memory { bytes, cursor } => {
-                if *cursor + len > bytes.len() {
-                    return Err(EngineError::job("MSA spill: truncated frame values"));
-                }
-                buf.copy_from_slice(&bytes[*cursor + lo..*cursor + lo + width]);
-                *cursor += len;
-            }
-            MsaFrameSource::Spilled { file } => {
-                file.seek_relative(lo as i64).map_err(EngineError::Io)?;
-                file.read_exact(buf).map_err(EngineError::Io)?;
-                let tail = u64::try_from(len - lo - width).unwrap_or(u64::MAX);
-                file.seek_relative(tail as i64).map_err(EngineError::Io)?;
-            }
-        }
-        Ok(Some(pos0))
-    }
 }
 
 /// One contig run of in-region MSA sites (positions ascending).
@@ -713,33 +482,65 @@ impl ChunkJob for ConvertJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let mut partial = ConvertPartial::default();
+        // The composed SFS body is rebuilt only when a record must be
+        // dropped: structural blanks need no dropping (the statistics job
+        // skips them itself), but malformed lines (doc_v25 V25-03) and
+        // records whose GT the strict scanner would reject — out-of-domain
+        // alleles, non-digit tokens, polyploids (doc_v25 V25-01) — must not
+        // reach it. Convert's policy for those is "count malformed, exit 0"
+        // (B13-9), so handing them to the strict scanner used to turn the
+        // same file into a fatal `--sfs` run. A clean chunk still hands the
+        // original slice over (zero copy).
+        let want_sfs = self.sfs.is_some();
+        let mut dropped: Vec<usize> = Vec::new();
+        let mut line_no: u32 = 0;
+        for (index, line) in body.split(|&b| b == b'\n').enumerate() {
+            let key = DrawKey {
+                chunk: chunk.id.get(),
+                line: line_no,
+            };
+            // Blank lines are not records: they do not consume a draw slot
+            // (the key must stay aligned with the emitted rows).
+            let outcome = self.push_line(line, key, &mut partial, scratch);
+            if outcome != LineOutcome::Blank {
+                line_no += 1;
+            }
+            if want_sfs {
+                let keep = match outcome {
+                    LineOutcome::Record => sfs_accepts_gt(scratch),
+                    // `Blank` passes through: the statistics job skips it.
+                    LineOutcome::Blank => true,
+                    LineOutcome::Malformed => false,
+                };
+                if !keep {
+                    dropped.push(index);
+                }
+            }
+        }
         if let Some(stats) = &self.sfs {
             let ConvertScratch {
                 sanitized,
                 stats: stats_scratch,
                 ..
             } = scratch;
-            // A pure SFS run hands the body through untouched (exact
-            // `stats --sfs` behavior); a mixed run drops the structurally
-            // malformed lines the row targets skip (B13-2).
-            let sfs_body = if self.has_row_targets() {
-                sanitize_body(body, self.n_samples, sanitized)
-            } else {
+            let sfs_body = if dropped.is_empty() {
                 body
+            } else {
+                sanitized.clear();
+                let mut next_drop = dropped.iter().copied().peekable();
+                for (index, line) in body.split(|&b| b == b'\n').enumerate() {
+                    if next_drop.peek() == Some(&index) {
+                        next_drop.next();
+                        continue;
+                    }
+                    if !sanitized.is_empty() {
+                        sanitized.push(b'\n');
+                    }
+                    sanitized.extend_from_slice(line);
+                }
+                sanitized.as_slice()
             };
             partial.sfs = Some(stats.run_chunk(chunk, sfs_body, stats_scratch)?);
-        }
-        let mut line_no: u32 = 0;
-        for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            let key = DrawKey {
-                chunk: chunk.id.get(),
-                line: line_no,
-            };
-            self.push_line(line, key, &mut partial, scratch);
-            line_no += 1;
         }
         Ok(partial)
     }
@@ -751,28 +552,38 @@ impl ChunkJob for ConvertJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let mut partial = ConvertPartial::default();
-        if let Some(stats) = &self.sfs {
-            let ConvertScratch {
-                stats: stats_scratch,
-                ..
-            } = scratch;
-            let sfs_line = if self.has_row_targets() && !line_is_sane(line, self.n_samples) {
-                b"".as_slice()
-            } else {
-                line
-            };
-            if !sfs_line.is_empty() {
-                partial.sfs = Some(stats.run_seam(id, sfs_line, stats_scratch)?);
-            }
-        }
         // The seam record belongs to the previous chunk's stream.
         let key = DrawKey {
             chunk: id.get().saturating_sub(1),
             line: u32::MAX,
         };
-        self.push_line(line, key, &mut partial, scratch);
+        let outcome = self.push_line(line, key, &mut partial, scratch);
+        // Feed the SFS target only what convert accepts (the same policy as
+        // the body path: structural blanks/malformed and GT-domain rejects
+        // never reach the strict statistics scanner).
+        if let Some(stats) = &self.sfs
+            && outcome == LineOutcome::Record
+            && sfs_accepts_gt(scratch)
+        {
+            let ConvertScratch {
+                stats: stats_scratch,
+                ..
+            } = scratch;
+            partial.sfs = Some(stats.run_seam(id, line, stats_scratch)?);
+        }
         Ok(partial)
     }
+}
+
+/// Whether the genotype just parsed by [`ConvertJob::parse_gts`] passes the
+/// strict statistics scanner's grammar (doc_v25 V25-01): every sample's GT is
+/// diploid-or-haploid, digit-only within the scanner's five-digit token cap,
+/// and inside the record's allele domain.
+fn sfs_accepts_gt(scratch: &ConvertScratch) -> bool {
+    !scratch
+        .gts
+        .iter()
+        .any(|gt| gt.bad || gt.strict_bad || gt.overflow || gt.n > 2)
 }
 
 impl ConvertJob {
@@ -780,36 +591,37 @@ impl ConvertJob {
         self.phylo.is_some() || self.count || self.hmp || self.msa.is_some()
     }
 
+    /// Folds one line into every row target. Returns whether the line was a
+    /// record slot (non-blank): malformed lines still consume one, exactly as
+    /// vcf2phylip counts them; blank lines do not exist for it.
     fn push_line(
         &self,
         line: &[u8],
         key: DrawKey,
         partial: &mut ConvertPartial,
         scratch: &mut ConvertScratch,
-    ) {
-        // vcf2phylip counts every non-empty, non-`#` line as processed,
-        // malformed ones included (`snp_num` increments before its checks).
+    ) -> LineOutcome {
+        let lr = match classify_line(line, self.n_samples) {
+            RecordClass::Record(lr) => lr,
+            // `line_is_sane` used to call a blank seam line sane and hand it
+            // to the statistics job; a blank line is now simply not a record
+            // (doc_v25 V25-03).
+            RecordClass::Blank => return LineOutcome::Blank,
+            RecordClass::Malformed(why) => {
+                // vcf2phylip counts every non-empty, non-`#` line as
+                // processed, malformed ones included (`snp_num` increments
+                // before its checks).
+                partial.counters.total_records += 1;
+                self.bump_malformed(partial, scratch, why.label());
+                return LineOutcome::Malformed;
+            }
+        };
         partial.counters.total_records += 1;
-        let Some(lr) = LineRef::parse(line) else {
-            self.bump_malformed(partial, scratch, "fewer than 8 columns");
-            return;
-        };
-        if lr.validate_sample_cols(self.n_samples).is_err() {
-            self.bump_malformed(
-                partial,
-                scratch,
-                "a sample-column count differing from the header",
-            );
-            return;
-        }
-        let Ok(pos1) = reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom()) else {
-            self.bump_malformed(partial, scratch, "an unparsable POS");
-            return;
-        };
-        let Some(pos0) = pos1.checked_sub(1) else {
-            self.bump_malformed(partial, scratch, "POS 0 (VCF positions are 1-based)");
-            return;
-        };
+        let pos1 = reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom())
+            .expect("invariant: classify_line validated POS");
+        let pos0 = pos1
+            .checked_sub(1)
+            .expect("invariant: classify_line rejects POS 0");
 
         // The single per-sample GT parse (D13-7).
         self.parse_gts(&lr, scratch);
@@ -898,6 +710,7 @@ impl ConvertJob {
         self.push_count_matrix(&lr, present, partial, scratch);
         self.push_hapmap(&lr, present, partial, scratch);
         self.push_msa(&lr, pos0, partial, scratch);
+        LineOutcome::Record
     }
 
     /// The phylogenetic partial, created with the shape both branches agree
@@ -940,8 +753,22 @@ impl ConvertJob {
     }
 
     /// Parses every sample's GT tokens into `scratch.gts` (the D13-7 view).
+    /// An allele index above the record's ALT count marks the genotype bad
+    /// (doc_v25 V25-01): every target then counts the record as malformed —
+    /// the `--012` path used to code a haploid out-of-domain call as `-1`
+    /// silently.
     fn parse_gts(&self, lr: &LineRef<'_>, scratch: &mut ConvertScratch) {
         let samples = lr.samples_text();
+        // The record's ALT count (0 for `ALT=.`): legal indices are 0..=n_alt.
+        let n_alt: u32 = if lr.alts() == b"." {
+            0
+        } else {
+            u32::try_from(memchr::memchr_iter(b',', lr.alts()).count() + 1).unwrap_or(u32::MAX)
+        };
+        // One GT-position lookup per record (doc_v25 V25-02): the old
+        // `memchr(b':')` took the first subfield, so `FORMAT=DP:GT` handed
+        // the DP value to the genotype parser.
+        let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
         scratch.gts.clear();
         scratch.gts.resize(self.n_samples, GtSlots::default());
         let mut start = 0_usize;
@@ -951,8 +778,10 @@ impl ConvertJob {
                 memchr::memchr(b'\t', &samples[begin..]).map_or(samples.len(), |rel| begin + rel);
             let column = &samples[begin..end];
             start = end + 1;
-            let colon = memchr::memchr(b':', column).unwrap_or(column.len());
-            let raw = &column[..colon];
+            // A column shorter than the GT position has no GT text; treat it
+            // as missing, never as the first subfield.
+            let raw = reed_io::vcf::format_layout::gt_subfield(column, gt_index)
+                .unwrap_or(&b"."[..]);
             gt.raw_start = begin as u32;
             gt.raw_len = raw.len() as u32;
             gt.present = !raw.starts_with(b".");
@@ -965,12 +794,19 @@ impl ConvertJob {
                 if token == b"." {
                     gt.slots[tokens] = None;
                 } else if !token.is_empty() && token.iter().all(u8::is_ascii_digit) {
+                    // The row targets' grammar: any digit run (bcftools
+                    // accepts zero-padded alleles), but the strict scanner
+                    // caps a token at five digits — record that separately
+                    // instead of failing this record for every target.
+                    if token.len() > 5 {
+                        gt.strict_bad = true;
+                    }
                     match std::str::from_utf8(token)
                         .ok()
                         .and_then(|t| t.parse::<u32>().ok())
                     {
-                        Some(idx) => gt.slots[tokens] = Some(idx),
-                        None => gt.bad = true,
+                        Some(idx) if idx <= n_alt => gt.slots[tokens] = Some(idx),
+                        _ => gt.bad = true,
                     }
                 } else {
                     gt.bad = true;
@@ -1343,43 +1179,21 @@ impl ConvertJob {
     }
 }
 
+/// What one input line was for the row targets (`push_line`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LineOutcome {
+    /// Only line terminators: not a record, consumes no draw slot.
+    Blank,
+    /// A non-blank line that fails the structural checks: counted as
+    /// malformed (vcf2phylip's `snp_num` slot) and skipped.
+    Malformed,
+    /// A structurally valid record; GT-domain rejection is decided per
+    /// target from the parsed `gts`.
+    Record,
+}
+
 /// A malformed record for one target (skipped with a counter).
 struct Malformed;
-
-/// Whether one complete record line is structurally sane for the composed
-/// statistics job (`LineRef` parses it, its sample columns match the header
-/// and POS parses).
-fn line_is_sane(line: &[u8], n_samples: usize) -> bool {
-    if line.iter().all(|&b| b == b'\n' || b == b'\r') {
-        return true;
-    }
-    LineRef::parse(line).is_some_and(|lr| {
-        lr.validate_sample_cols(n_samples).is_ok()
-            && reed_io::vcf::fixed::parse_pos1(lr.pos_text(), lr.chrom()).is_ok()
-    })
-}
-
-/// Copies `body`, dropping lines [`line_is_sane`] rejects; returns the input
-/// untouched when nothing must be dropped (the common case).
-fn sanitize_body<'a>(body: &'a [u8], n_samples: usize, out: &'a mut Vec<u8>) -> &'a [u8] {
-    let mut clean = true;
-    for line in body.split_inclusive(|&b| b == b'\n') {
-        if !line_is_sane(line, n_samples) {
-            clean = false;
-            break;
-        }
-    }
-    if clean {
-        return body;
-    }
-    out.clear();
-    for line in body.split_inclusive(|&b| b == b'\n') {
-        if line_is_sane(line, n_samples) {
-            out.extend_from_slice(line);
-        }
-    }
-    out.as_slice()
-}
 
 /// The raw ALT allele count (`.` counts zero; else commas + 1).
 fn raw_alt_count(lr: &LineRef<'_>) -> u32 {
@@ -1696,21 +1510,19 @@ pub fn run_convert_opened(
     }
 
     // The kept-sample view (deterministic header order).
-    let keep: Vec<bool> = request
-        .keep_samples
-        .clone()
-        .unwrap_or_else(|| vec![true; n_samples]);
-    if keep.len() != n_samples {
-        return Err(crate::Error::usage(format!(
-            "sample keep mask has {} entries but the header declares {n_samples}",
-            keep.len()
-        )));
-    }
+    let keep = reed_core::sample::KeepMask::try_new(
+        n_samples,
+        request
+            .keep_samples
+            .clone()
+            .unwrap_or_else(|| vec![true; n_samples]),
+    )
+    .map_err(|e| crate::Error::usage(e.to_string()))?;
     if !keep.iter().any(|&k| k) {
         return Err(crate::Error::usage("the sample subset selects no samples"));
     }
-    let n_kept = keep.iter().filter(|&&k| k).count();
-    let keep: Arc<[bool]> = keep.into();
+    let n_kept = keep.n_selected();
+    let keep: Arc<[bool]> = Arc::from(keep.as_slice());
 
     // Resolve the targets.
     let mut phylo: Option<PhyloPlan> = None;
@@ -1967,9 +1779,23 @@ pub fn run_convert_opened(
     if let (Some((_, int_dtype)), Some(plan), Some(partial)) =
         (&sfs_request, &sfs_plan, &merged.sfs)
     {
-        let partial_sfs = partial
-            .sfs_partial()
-            .expect("invariant: the SFS job produced a spectra partial");
+        // `SfsPartial` is seeded lazily by the first site that reaches the
+        // projector, so an input where every record is skipped (all
+        // multiallelic, ALT `.` with a GT call, out-of-domain GT, polyploid)
+        // leaves the accumulator unseeded. That is a legitimate empty
+        // spectrum, not a broken invariant: write the zero spectrum like
+        // `stats` does for a 0-site request instead of panicking (the
+        // `--sfs` panic is what made v25's stricter GT rejection abort runs
+        // the old build completed).
+        let empty;
+        let partial_sfs = match partial.sfs_partial() {
+            Some(sfs) => sfs,
+            None => {
+                empty = SfsPartial::new(plan)
+                    .ok_or_else(|| crate::Error::usage("invalid SFS projections"))?;
+                &empty
+            }
+        };
         let report = sfs_report(partial_sfs, plan);
         files.extend(crate::stats::writers::sfs::write_projected_sfs(
             prefix,
@@ -1993,16 +1819,20 @@ pub fn run_convert_opened(
 #[cfg(test)]
 mod spill_tests {
     use super::*;
+    use std::io::Write as _;
 
     fn spill_path_of(blob: &RowsBlob) -> PathBuf {
         match blob {
-            RowsBlob::Spilled { path, .. } => path.clone(),
+            RowsBlob::Spilled { spill, .. } => spill.path().to_path_buf(),
             RowsBlob::Memory(_) => panic!("expected a spilled blob"),
         }
     }
 
     #[test]
     fn rows_blob_spills_and_cleans_up() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut blob = RowsBlob::default();
         let mut first = b"aaaa".to_vec();
         blob.append(&mut first, 8).expect("append");
@@ -2024,14 +1854,21 @@ mod spill_tests {
 
     #[test]
     fn write_hapmap_streams_a_spilled_blob() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("reed-convert-spill-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
         let row: &[u8] = b"chr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
-        let spill = dir.join("rows.spill");
-        std::fs::write(&spill, row).expect("invariant: spill file");
+        // A real TempSpill, so the drop path is the production one.
+        let (mut file, spill) =
+            crate::spill::TempSpill::create(Some(&dir), "convert", "spill")
+                .expect("invariant: spill file");
+        file.write_all(row).expect("invariant: spill write");
+        let spill_path = spill.path().to_path_buf();
         let rows = RowsBlob::Spilled {
-            path: spill.clone(),
+            spill,
             len: row.len() as u64,
         };
         let names = vec!["s0".to_string()];
@@ -2040,12 +1877,18 @@ mod spill_tests {
         let expected = "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\nchr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
         assert_eq!(text, expected);
         drop(rows);
-        assert!(!spill.exists(), "the spill file must be removed on drop");
+        assert!(
+            !spill_path.exists(),
+            "the spill file must be removed on drop"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rows_blob_visit_sees_the_whole_stream() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut blob = RowsBlob::default();
         let mut head = vec![1_u8, 2, 255];
         blob.append(&mut head, 2).expect("append"); // 3 > 2: spills at once
@@ -2063,15 +1906,20 @@ mod spill_tests {
 
     #[test]
     fn write_count_matrix_streams_spilled_cells() {
+        let _serialized = crate::spill::SPILL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("reed-convert-cells-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
-        let cells_path = dir.join("cells.spill");
         let raw: Vec<u8> = vec![1, 2, 0xFF, 0]; // 0/1, 1/1, ./., 0/0
-        std::fs::write(&cells_path, &raw).expect("invariant: spill file");
+        let (mut cell_file, cells_spill) =
+            crate::spill::TempSpill::create(Some(&dir), "convert", "spill")
+                .expect("invariant: spill file");
+        cell_file.write_all(&raw).expect("invariant: spill write");
         let count = SpilledCount {
             cells: vec![RowsBlob::Spilled {
-                path: cells_path,
+                spill: cells_spill,
                 len: raw.len() as u64,
             }],
             pos: RowsBlob::Memory(b"chr1\t1\nchr1\t2\nchr1\t3\nchr1\t4\n".to_vec()),

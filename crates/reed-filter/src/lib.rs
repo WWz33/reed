@@ -16,6 +16,7 @@ pub mod eval;
 pub mod expr;
 pub mod funnel;
 pub mod plan;
+pub mod semantics;
 pub mod spec;
 
 pub use error::FilterError;

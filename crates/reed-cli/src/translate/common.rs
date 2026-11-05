@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::budget::ThreadBudget;
 
 use crate::units::input_path;
 
@@ -13,19 +13,13 @@ use crate::units::input_path;
 /// and frame-chain cumulative times without which "reader-bound" is only an
 /// inference.
 pub(crate) fn print_engine_metrics(m: &reed::metrics::StageMetrics) {
-    eprintln!("chunks_read\t{}", m.n_chunks_read);
-    eprintln!("engine.reader_ms\t{:.3}", m.reader_time.as_secs_f64() * 1e3);
-    eprintln!("engine.reduce_ms\t{:.3}", m.reduce_time.as_secs_f64() * 1e3);
-    eprintln!(
-        "engine.chain_wait_ms\t{:.3}",
-        m.chain_wait.as_secs_f64() * 1e3
-    );
-    eprintln!("worker_busy_ms\t{:.3}", m.worker_busy.as_secs_f64() * 1e3);
+    // One renderer for every command (doc_v25 V25-08b).
+    eprint!("{}", m.render_tsv());
 }
 
 /// Whether the shared site flags left the spec at its defaults (no
 /// filtering requested, so the wrapper is skipped entirely).
-fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
+pub(crate) fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
     spec.site == reed::spec::SiteRules::default()
         && spec.genotype == reed::spec::GenotypeRules::default()
         && spec.site_after_mask == reed::spec::TailRules::default()
@@ -357,8 +351,8 @@ pub(crate) fn prelude(
     site_args: &crate::cli::filter_flags::SiteFilterArgs,
     sites_file: Option<&str>,
     contig_lengths_arg: Option<&str>,
-    threads_arg: Option<usize>,
-    memory_arg: Option<u64>,
+    threads_arg: Option<reed::budget::Threads>,
+    memory_arg: Option<reed::budget::MemMiB>,
 ) -> Result<Prelude, reed::Error> {
     let started = std::time::Instant::now();
     let input_file = input_path(input);
@@ -449,17 +443,7 @@ pub(crate) fn prelude(
         }
     }
 
-    let threads = threads_arg.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
-    let budget = ThreadBudget {
-        threads,
-        mem: memory_arg.map_or_else(MemBudget::default_half_memory, |m| {
-            MemBudget::from_bytes(m.saturating_mul(1 << 20))
-        }),
-    };
+    let budget = ThreadBudget::from_cli(threads_arg, memory_arg);
 
     // `--sites-file` narrows the counted sites for every route (doc_v7 D7-6).
     if let Some(path) = sites_file {
@@ -480,27 +464,6 @@ pub(crate) fn prelude(
         budget,
         open_secs,
     })
-}
-
-/// Splits an `-O OUTPUT_TYPE` spec into the type letter and the optional
-/// level suffix, refusing the empty spec before `split_at(1)` would panic
-/// (doc_v20 R4: `-O ''` — which clap accepts — used to abort the process
-/// with exit 101; filter, rename and convert share this spelling check).
-///
-/// # Errors
-///
-/// A usage error naming the accepted `spellings` when the spec is empty.
-pub(crate) fn split_output_type<'a>(
-    spec: &'a str,
-    spellings: &str,
-) -> Result<(&'a str, &'a str), reed::Error> {
-    if spec.is_empty() {
-        return Err(reed::Error::usage(format!(
-            "invalid -O '': expected {spellings}"
-        )));
-    }
-    let (kind, level) = spec.split_at(1);
-    Ok((kind, level))
 }
 
 /// Refuses an output path that is the input itself (doc_v20 R5): the

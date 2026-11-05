@@ -22,6 +22,8 @@ pub mod parser;
 
 use reed_io::vcf::info::info_fragments;
 
+use crate::semantics::{MissingCtx, MissingSides};
+
 pub use parser::{CmpOp, Expr, Field, LogicOp, Subscript};
 
 /// Genotype-derived counts for a site (available after the mask stage).
@@ -365,7 +367,12 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
                 .find(|(t, _)| t.as_slice() == tag.as_bytes())
                 .and_then(|(_, num)| num.map_or(Some(Val::Missing), |n| Some(Val::Num(n))))
         }),
-        Expr::Info(tag) | Expr::Bare(tag) => {
+        // An explicit `INFO/TAG` read is never genotype-derived: it names the
+        // record's own INFO value (bcftools evaluates `-i/-e` before
+        // `bcf_subset`). Only the bare built-in names fall back to the
+        // genotype counts, so only they route through `field_value`.
+        Expr::Info(tag) => info_operand(site, tag.as_bytes()).scalar(),
+        Expr::Bare(tag) => {
             if let Some(field) = Field::from_name(tag) {
                 return field_value(field, site);
             }
@@ -508,14 +515,9 @@ impl<'a> Operand<'a> {
     }
 
     /// bcftools' comparison rule over two operands: any pair satisfies the
-    /// comparison, and a missing element on either side follows the
-    /// `missing_logic` table of `CMP_VECTORS` (`filter.c:4449-4455`):
-    ///
-    /// | operator | one side missing | both sides missing |
-    /// |---|---|---|
-    /// | `==` | false | **true** |
-    /// | `!=` | **true** | **true** |
-    /// | `< <= > >=` | false | false |
+    /// comparison, and a missing element on either side asks
+    /// [`crate::semantics::compare_missing`] (the one copy of the
+    /// `missing_logic` table, doc_v25 V25-04).
     ///
     /// The `!=` row is the one that matters in practice: `-i 'DP!=3'` keeps
     /// records whose `DP` is `.` or absent under bcftools, and reed used to
@@ -537,14 +539,16 @@ impl<'a> Operand<'a> {
                 let a_missing = matches!(a, Val::Missing);
                 let b_missing = matches!(b, Val::Missing);
                 if a_missing || b_missing {
-                    // `missing_logic[nmiss]`: index 1 = one side missing,
-                    // index 2 = both. Only `==` passes on the both-missing
-                    // index and only `!=` on the one-side index.
-                    let passes = match (a_missing, b_missing) {
-                        (true, true) => matches!(op, CmpOp::Eq | CmpOp::Ne),
-                        _ => op == CmpOp::Ne,
+                    // The one implementation of bcftools' `missing_logic`
+                    // (doc_v25 V25-04): `!=` passes on one side, `==`/`!=`
+                    // on both.
+                    let sides = match (a_missing, b_missing) {
+                        (true, true) => MissingSides::Both,
+                        (true, false) => MissingSides::Lhs,
+                        (false, true) => MissingSides::Rhs,
+                        (false, false) => unreachable!("invariant: a side is missing"),
                     };
-                    if passes {
+                    if crate::semantics::compare_missing(op, sides, MissingCtx::Expr) {
                         return true;
                     }
                     continue;
@@ -1009,14 +1013,18 @@ mod tests {
         assert!(ev("AN==100", &s, &tags));
         assert!(ev("AF==0.03", &s, &tags));
         assert!(ev("MAC==3", &s, &tags));
-        // The built-in is gated regardless of spelling: `INFO/AC` resolves
-        // to the same Field::Ac node as the bare `AC`.
-        assert!(ev("INFO/AC==3", &s, &tags));
-        // Direct INFO/TAG reads are NOT gated — only the derived-statistic
-        // built-ins switch source (exactly like `af_of`).
+        // The bare names are the genotype-derived built-ins; the explicit
+        // `INFO/` spelling is a plain INFO read and keeps the record value.
+        // This split is what bcftools' evaluation order produces: `-i/-e`
+        // runs before `bcf_subset` (`vcfview.c:322` vs `:341`), so
+        // `INFO/AC` is the input cohort's count. V25-04 collapsed the two
+        // spellings; doc_v25 review restored the split.
+        assert!(ev("INFO/AC==80", &s, &tags));
+        // Direct INFO/TAG reads are NOT gated either — only the bare
+        // derived-statistic built-ins switch source (exactly like `af_of`).
         assert!(ev("DP==40", &s, &tags));
         // The same record pre-mask (`info_trusted == true`, the head
-        // context) still prefers the INFO values.
+        // context) prefers the INFO values for both spellings.
         let mut head = SiteValues::from_line(&line, 100, Some(gt), true);
         head.tags = Some(&t);
         assert!(ev("MAF==0.5", &head, &tags));
@@ -1045,6 +1053,35 @@ mod tests {
             !parser::parse("FILTER=\"PASS\"")
                 .expect("inv")
                 .references_genotypes()
+        );
+        // doc_v25 V25-04: the `INFO/` spelling of a genotype-derived
+        // built-in routes like the bare name; a plain INFO tag stays in the
+        // doc_v25 review: an explicit `INFO/` read is a plain INFO value
+        // (bcftools evaluates `-i/-e` before `bcf_subset`), so it stays in
+        // the head stage even for a genotype-derived name. The bare name
+        // still routes to the genotype path.
+        assert!(
+            !parser::parse("INFO/AC>1")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(parser::parse("AC>1").expect("inv").references_genotypes());
+        // `--set-gts .` still cannot depend on a genotype-derived site
+        // field under either spelling: on the mask stage a bare `AC` would
+        // read the post-mask count and `INFO/AC` a stale cohort's INFO.
+        assert!(parser::parse("AC>1").expect("inv").reads_gt_fields());
+        assert!(parser::parse("INFO/AC>1").expect("inv").reads_gt_fields());
+        assert!(
+            !parser::parse("INFO/DP>10")
+                .expect("inv")
+                .references_genotypes()
+        );
+        assert!(!parser::parse("INFO/DP>10").expect("inv").reads_gt_fields());
+        assert!(
+            !parser::parse("FMT/DP>10")
+                .expect("inv")
+                .reads_gt_fields(),
+            "FORMAT reads are the mask stage's business, not a site field"
         );
     }
 }

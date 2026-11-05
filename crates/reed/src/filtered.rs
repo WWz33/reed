@@ -172,9 +172,7 @@ impl<J: ChunkJob> FilteredJob<J> {
                 info_remove: &[],
                 info_set: &[],
             };
-            let gt_index = crate::filter::record_pipeline::gt_subfield_index(
-                view.line.format_text(),
-            );
+            let gt_index = reed_io::vcf::format_layout::gt_index(view.line.format_text());
             edit_vcf_line(view.line, &edit, gt_index, buffer);
             Ok(())
         })?;
@@ -298,10 +296,9 @@ impl<J: ChunkJob> ChunkJob for FilteredJob<J> {
             return self.inner.run_chunk(chunk, body, &mut scratch.inner);
         }
         self.start_chunk(scratch);
-        for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
+        // Only the terminator artifact is dropped; a blank line reaches the
+        // wrapper's pipeline, whose policy makes it an error (doc_v25 V25-03).
+        for line in reed_io::vcf::line::body_lines(body) {
             if self.records.is_some() {
                 self.scan_line(line, scratch)?;
             } else {

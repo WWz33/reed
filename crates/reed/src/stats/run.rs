@@ -13,7 +13,6 @@ use reed_engine::error::EngineError;
 use reed_engine::pipeline::ChunkJob;
 use reed_io::bcf::BcfDict;
 use reed_io::vcf::genotype_scan::GenotypeScanner;
-use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
 use reed_stats::request::StatAcc;
 use reed_stats::sfs::{ProjectionCache, WeightsArc};
@@ -297,9 +296,6 @@ impl ChunkJob for StatsJob {
         let mut current: Option<SegmentPartial> = None;
         self.reset_row(scratch);
         for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
             self.push_line(line, &mut current, &mut partial, scratch)?;
         }
         if let Some(segment) = current.take() {
@@ -611,6 +607,10 @@ impl StatsJob {
         }
     }
 
+    /// The one line-entry point for the text path (doc_v25 V25-03): blank
+    /// lines are skipped (a seam can deliver `"\n"` or `"\r\n"` as the
+    /// stitched line), malformed lines stay fatal — stats' strict policy is
+    /// unchanged. `classify_line` owns the judgement.
     fn push_line(
         &self,
         line: &[u8],
@@ -618,8 +618,15 @@ impl StatsJob {
         partial: &mut StatsPartial,
         scratch: &mut StatsScratch,
     ) -> Result<(), EngineError> {
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 8 columns"));
+        let lr = match reed_io::vcf::line::classify_line(line, self.n_samples) {
+            reed_io::vcf::line::RecordClass::Record(lr) => lr,
+            reed_io::vcf::line::RecordClass::Blank => return Ok(()),
+            reed_io::vcf::line::RecordClass::Malformed(why) => {
+                return Err(EngineError::job(format!(
+                    "record line is malformed ({})",
+                    why.label()
+                )));
+            }
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let Some(pos0) = self.site_prefix(
@@ -678,8 +685,17 @@ impl StatsJob {
         let mut current: Option<SegmentPartial> = None;
         self.reset_row(scratch);
         for rec in records {
-            let Some(lr) = LineRef::parse(rec.line) else {
-                return Err(EngineError::job("record line has fewer than 8 columns"));
+            let lr = match reed_io::vcf::line::classify_line(rec.line, self.n_samples) {
+                reed_io::vcf::line::RecordClass::Record(lr) => lr,
+                reed_io::vcf::line::RecordClass::Blank => {
+                    return Err(EngineError::job("blank record line"));
+                }
+                reed_io::vcf::line::RecordClass::Malformed(why) => {
+                    return Err(EngineError::job(format!(
+                        "record line is malformed ({})",
+                        why.label()
+                    )));
+                }
             };
             let site = SiteView::parse(&lr).map_err(EngineError::from)?;
             let Some(pos0) = self.site_prefix(
@@ -796,5 +812,59 @@ impl StatsJob {
             partial,
             &mut scratch.ld,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reed_io::chunk::{ChunkBytes, ChunkPayload};
+
+    fn sfs_job() -> StatsJob {
+        let plan = crate::stats::request::SfsPlan {
+            projections: vec![2].into(),
+            folded: false,
+            joint_pairs: Vec::new().into(),
+        };
+        StatsJob::for_sfs(2, vec![Some(0), Some(0)], plan, Arc::new(HashMap::new()))
+    }
+
+    fn plain_chunk() -> ChunkBytes {
+        ChunkBytes {
+            id: reed_core::ChunkId(0),
+            compressed: ChunkPayload::from(Vec::new()),
+            first_in_block_offset: 0,
+            plain: true,
+            compressed_start: 0,
+            blocks: Vec::new(),
+            truncate_to: None,
+        }
+    }
+
+    /// The stats line policy (doc_v25 V25-03): a blank seam record (`"\n"`)
+    /// or a CRLF blank line in the body is skipped; a malformed line stays
+    /// fatal, with the old diagnostic still in the message.
+    #[test]
+    fn blank_lines_are_skipped_and_malformed_stays_fatal() {
+        let job = sfs_job();
+        let mut scratch = StatsScratch::default();
+        for blank in [b"\n".as_slice(), b"\r\n"] {
+            let partial = job
+                .run_seam(reed_core::ChunkId(1), blank, &mut scratch)
+                .expect("a blank seam line is not a record");
+            assert_eq!(partial.n_records, 0);
+        }
+        // A CRLF blank (`b"\r"` after the split) between two records.
+        let body = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n\r\n\
+                     chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n";
+        let partial = job
+            .run_chunk(&plain_chunk(), body, &mut scratch)
+            .expect("a blank body line is not a record");
+        assert_eq!(partial.n_records, 2);
+        let Err(err) = job.run_seam(reed_core::ChunkId(1), b"chr1\t1\t.\n", &mut scratch)
+        else {
+            panic!("a malformed line must stay fatal");
+        };
+        assert!(err.to_string().contains("fewer than 8 columns"), "{err}");
     }
 }

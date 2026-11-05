@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::budget::ThreadBudget;
 use reed::{ChrStyle, RenameOutput, RenameSpec};
 
 use crate::cli::RenameCli;
@@ -52,57 +52,15 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
                 .is_some_and(|o| o.ends_with(".gz") || o.ends_with(".bgz"));
             (compressed, 6_u8)
         }
-        Some(text) => {
-            let (kind, level) = super::common::split_output_type(
-                text,
-                "v or z with an optional 1-9 level, e.g. z6",
-            )?;
-            let level = if level.is_empty() {
-                6
-            } else {
-                let parsed = level.parse::<u8>().map_err(|_| {
-                    reed::Error::usage(format!("invalid -O level in {text:?} (want 1-9)"))
-                })?;
-                // doc_v21 S15: an out-of-range level is a usage error, not a
-                // writer-time "invalid compression level" (exit 1).
-                if !(1..=9).contains(&parsed) {
-                    return Err(reed::Error::usage(format!(
-                        "invalid -O level in {text:?} (want 1-9)"
-                    )));
-                }
-                parsed
-            };
-            match kind {
-                "v" => (false, level),
-                "z" => (true, level),
-                "b" | "u" => {
-                    return Err(reed::Error::usage(
-                        "reed rename writes VCF text: -O accepts v or z (BCF input/output is \
-                         not supported yet)",
-                    ));
-                }
-                other => {
-                    return Err(reed::Error::usage(format!(
-                        "unknown -O type {other:?} (expected v or z)"
-                    )));
-                }
-            }
-        }
+        Some(text) => crate::params::parse_text_output_type(
+            text,
+            "v or z with an optional 1-9 level, e.g. z6",
+            "reed rename writes VCF text: -O accepts v or z (BCF input/output is \
+             not supported yet)",
+        )?,
     };
-    let threads = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
-    let budget = ThreadBudget {
-        threads,
-        mem: args
-            .memory
-            .map_or_else(MemBudget::default_half_memory, |m| {
-                MemBudget::from_bytes(m.saturating_mul(1 << 20))
-            }),
-    };
-    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+    let budget = ThreadBudget::from_cli(args.threads, args.memory);
+    let command_line = crate::params::command_line();
     let write_index = reed::WriteIndex::parse(args.write_index.as_deref())?;
     // doc_v21 S16: `-W` with no possible index target used to be a silent
     // no-op. Checked here, not in the library, so library callers are

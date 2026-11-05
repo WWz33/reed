@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::cli::FilterCli;
 use crate::units::input_path;
+use reed::budget::ThreadBudget;
 
 /// Translates the shared site/threshold flags (`SiteFilterArgs`) into the
 /// typed spec — the same flags serve `reed filter` and `reed stats`
@@ -382,52 +383,33 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
             other => Err(reed::Error::usage(format!("unknown strategy {other:?}"))),
         })
         .transpose()?;
-    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-    let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
+    let command_line = crate::params::command_line();
+    let budget = ThreadBudget::from_cli(*threads, *memory);
     // -O v|z|b|u[level]: explicit output type, `-o` names the file (the
     // extension is only inferred when -O is absent).
     let mut output_bcf = None;
     let (output, compress_level, output_compressed) = match output_type.as_deref() {
         None => (out.as_deref().and_then(crate::units::output_path), *compress_level, None),
         Some(spec) => {
-            let (kind, level) = super::common::split_output_type(
+            // One `-O` parser for every subcommand (doc_v25 V25-06): the
+            // letter/level grammar and its 1-9 domain live in `params`.
+            let parsed = crate::params::parse_output_type(
                 spec,
                 "v, z, b or u with an optional 1-9 level, e.g. z6",
             )?;
-            // doc_v21 S15: an out-of-range level must be a usage error here,
-            // not a runtime "invalid compression level" from the writer (exit
-            // 1 with a doubled `io error:` prefix); `convert` already
-            // validated 1-9.
-            let level = if level.is_empty() {
-                *compress_level
-            } else {
-                let parsed = level
-                    .parse::<u8>()
-                    .map_err(|_| reed::Error::usage(format!("invalid -O level in {spec:?}")))?;
-                if !(1..=9).contains(&parsed) {
-                    return Err(reed::Error::usage(format!(
-                        "invalid -O level in {spec:?}: the level must be 1-9"
-                    )));
-                }
-                parsed
-            };
-            match kind {
-                "v" => (out.as_deref().and_then(crate::units::output_path), level, Some(false)),
-                "z" => (out.as_deref().and_then(crate::units::output_path), level, Some(true)),
-                "b" => {
-                    output_bcf = Some(level);
-                    (out.as_deref().and_then(crate::units::output_path), level, None)
+            let path = out.as_deref().and_then(crate::units::output_path);
+            match parsed.kind {
+                'v' => (path, parsed.level, Some(false)),
+                'z' => (path, parsed.level, Some(true)),
+                'b' => {
+                    output_bcf = parsed.bcf_level();
+                    (path, parsed.level, None)
                 }
                 // `-Ou`: BGZF level-0 blocks (htslib's uncompressed BCF).
-                "u" => {
-                    output_bcf = Some(0);
-                    (out.as_deref().and_then(crate::units::output_path), 0, None)
+                _ => {
+                    output_bcf = parsed.bcf_level();
+                    (path, 0, None)
                 }
-                other => return Err(reed::Error::usage(format!("unknown output type {other:?}"))),
             }
         }
     };
@@ -468,7 +450,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         }
     }
     let opts = reed::FilterOptions {
-        threads,
+        threads: budget.threads,
         output,
         write_index: reed::WriteIndex::parse(write_index.as_deref())?,
         compress_level,
@@ -481,11 +463,11 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
         output_compressed,
         output_bcf,
-        mem_bytes: memory.map(|m| m.saturating_mul(1 << 20)),
+        mem_bytes: memory.map(reed::budget::MemMiB::bytes),
         no_version: *no_version,
         no_command: cli.no_command,
     };
-    tracing::debug!(threads, strategy = ?strategy, "reed filter starting");
+    tracing::debug!(threads = budget.threads, strategy = ?strategy, "reed filter starting");
     let report = reed::run_filter(input_file.as_deref(), &spec, &opts)?;
     if verbosity.shows_summary() {
         eprint_report(&report);
@@ -771,6 +753,46 @@ mod tests {
             .expect_err("the empty -O must be refused");
         assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
         assert!(err.to_string().contains("invalid -O ''"), "{err}");
+    }
+
+    /// doc_v25 V25-04 (R2): a closed mask bound replays as the equivalent
+    /// strict CLI bound. `DP <= 3` masks DP 1..=3 and keeps DP >= 4, so the
+    /// rendered flag is `--min-dp 4`; before the fix it was `--min-dp 3`,
+    /// which keeps DP=3 — the two spellings disagreed on the boundary.
+    #[test]
+    fn closed_mask_bounds_replay_without_changing_the_mask() {
+        use reed::spec::{GenotypeMaskRule, GenotypeRules, OnMissing};
+        let spec = FilterSpec {
+            genotype: GenotypeRules {
+                mask_if: vec![GenotypeMaskRule {
+                    field: "DP".into(),
+                    when: "<= 3".into(),
+                    on_missing: OnMissing::Keep,
+                    depth: true,
+                }],
+                ..GenotypeRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let rendered = spec.to_args();
+        let pairs: Vec<(&str, &str)> = rendered
+            .windows(2)
+            .map(|w| (w[0].as_str(), w[1].as_str()))
+            .collect();
+        assert!(pairs.contains(&("--min-dp", "4")), "{rendered:?}");
+
+        let replayed = spec_from_flags(&cli_from(&rendered)).expect("the rendered flags translate");
+        let before = spec.genotype.mask_if[0].parsed().expect("parsed");
+        let after = replayed.genotype.mask_if[0].parsed().expect("parsed");
+        for dp in 0..=6 {
+            assert_eq!(
+                before.apply_i64(dp),
+                after.apply_i64(dp),
+                "DP={dp}: the replay changed the mask"
+            );
+            // The mask fires exactly for DP <= 3 on both sides.
+            assert_eq!(before.apply_i64(dp), dp <= 3, "DP={dp}");
+        }
     }
 
     /// The rendered flags are also what `##reed_filterCommand` reports, so

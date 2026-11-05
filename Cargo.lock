@@ -1510,8 +1510,10 @@ dependencies = [
  "flate2",
  "memchr",
  "noodles",
+ "proptest",
  "rayon",
  "reed-core",
+ "reed-distance",
  "reed-engine",
  "reed-filter",
  "reed-graph",
@@ -1530,9 +1532,6 @@ dependencies = [
  "clap",
  "rayon",
  "reed",
- "reed-distance",
- "reed-graph",
- "reed-reduce",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1545,6 +1544,8 @@ dependencies = [
  "proptest",
  "reed-oracle",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -1621,6 +1622,7 @@ dependencies = [
  "rayon",
  "reed-core",
  "reed-distance",
+ "tracing",
 ]
 
 [[package]]

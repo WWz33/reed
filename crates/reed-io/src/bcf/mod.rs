@@ -42,13 +42,14 @@ pub mod dict;
 pub mod encode_native;
 pub mod encode_noodles;
 pub mod gt;
+pub(crate) mod gt_decode;
 pub mod record;
 pub mod render;
 
 pub use columns::decode_format_columns;
 pub use dict::BcfDict;
 pub use encode_native::NativeEncoder;
-pub use encode_noodles::{BcfEncoder, bcf_header_text};
+pub use encode_noodles::{BcfEncoder, bcf_file_header, bcf_header_text};
 pub use gt::{GtQuery, GtTable, SiteHeader, decode_record_gt, format_key, site_header};
 pub use record::{BcfRecordRef, VirtualMap, declared_len, record_len, record_ref, record_site};
 pub use render::{render_record, render_sample_part, render_site_line, render_site_part};

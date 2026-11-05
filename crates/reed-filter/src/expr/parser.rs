@@ -235,11 +235,23 @@ impl Expr {
         }
     }
 
-    /// Whether the expression reads genotype-derived quantities.
+    /// Whether the expression reads quantities that need the decoded
+    /// genotypes, i.e. must run after the mask stage (`-i/-e` routing).
+    ///
+    /// The `INFO/` prefix is a plain INFO read: bcftools evaluates `-i/-e`
+    /// before it subsets the samples (`vcfview.c:322` before `:341`), so
+    /// `INFO/AC` names the record's own INFO value and never a recomputed
+    /// one. A *bare* built-in is different — `AC` falls back to the genotype
+    /// counts when the record carries no such INFO, so it needs the scanner
+    /// and routes after the mask stage. V25-04 collapsed both spellings onto
+    /// one path; that made `-s S1 -i 'INFO/AC>1'` read the post-subset count
+    /// (0) and drop every record.
     #[must_use]
     pub fn references_genotypes(&self) -> bool {
         match self {
             Self::Field(f) => f.is_genotype_derived(),
+            // An explicit INFO read stays in the head stage; only the bare
+            // names fall back to the genotype counts.
             Self::Bare(name) => Field::from_name(name).is_some_and(Field::is_genotype_derived),
             Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
                 a.references_genotypes() || b.references_genotypes()
@@ -248,6 +260,31 @@ impl Expr {
             // expression (`--set-gts .`, 02-cli.md §3.3).
             Self::Fmt(_) => true,
             Self::Not(e) | Self::Subscript(e, _) => e.references_genotypes(),
+            _ => false,
+        }
+    }
+
+    /// Whether the expression reads a genotype-derived **site** field (as
+    /// opposed to a `FORMAT` column, which `--set-gts .` evaluates per
+    /// sample). A `--set-gts` mask decision must not depend on the
+    /// post-mask counts, so the compiler rejects these.
+    ///
+    /// This keeps both spellings here: `--set-gts` evaluates on the mask
+    /// stage, where a bare `AC` would read the post-mask count, and an
+    /// `INFO/AC` would read a stale cohort's INFO. Neither is a legal basis
+    /// for a mask decision, so the distinction that matters for `-i/-e`
+    /// routing ([`Self::references_genotypes`]) does not apply to this gate.
+    #[must_use]
+    pub fn reads_gt_fields(&self) -> bool {
+        match self {
+            Self::Field(f) => f.is_genotype_derived(),
+            Self::Bare(name) | Self::Info(name) => {
+                Field::from_name(name).is_some_and(Field::is_genotype_derived)
+            }
+            Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
+                a.reads_gt_fields() || b.reads_gt_fields()
+            }
+            Self::Not(e) | Self::Subscript(e, _) => e.reads_gt_fields(),
             _ => false,
         }
     }

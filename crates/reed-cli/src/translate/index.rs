@@ -52,11 +52,8 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
             index_path.display()
         )));
     }
-    let threads = threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .expect("invariant: parallelism")
-            .get()
-    });
+    // The one available-parallelism fallback lives in ThreadBudget.
+    let threads = reed::budget::ThreadBudget::from_cli(threads, None).threads;
     tracing::debug!(
         flavor = flavor.suffix(),
         threads,
@@ -77,8 +74,9 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
         eprintln!("# reed index timing");
         eprintln!("flavor\t{}", flavor.suffix());
         eprintln!("threads\t{threads}");
-        eprintln!("n_records\t{}", outcome.n_records);
+        eprintln!("n_records_in\t{}", outcome.n_records);
         eprintln!("total_ms\t{:.3}", started.elapsed().as_secs_f64() * 1e3);
+        super::common::print_engine_metrics(&outcome.metrics);
     }
     Ok(())
 }

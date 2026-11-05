@@ -254,6 +254,93 @@ impl<'a> LineRef<'a> {
     }
 }
 
+/// The first structural check a line failed (`classify_line`; doc_v25 V25-03).
+///
+/// Kept as data rather than a message so each consumer can render its own
+/// diagnostic (convert's once-per-run warning, stats' fatal job error) without
+/// re-deriving which check failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MalformedLine {
+    /// Fewer than eight tab-separated columns.
+    FewerThanEightColumns,
+    /// The sample columns disagree with the header's declared count.
+    SampleColumns(SampleColumnsError),
+    /// POS is not a 1-based decimal (`0` included: VCF positions start at 1).
+    Position,
+}
+
+impl MalformedLine {
+    /// A short label for warnings and job errors.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FewerThanEightColumns => "fewer than 8 columns",
+            Self::SampleColumns(_) => "a sample-column count differing from the header",
+            Self::Position => "an unparsable POS",
+        }
+    }
+}
+
+/// How one line of a newline-framed stream classifies (doc_v25 V25-03).
+///
+/// No `PartialEq`: the [`Record`](Self::Record) variant carries a borrowed
+/// [`LineRef`] (offset-only, no value semantics); consumers match on the
+/// variant they care about.
+#[derive(Clone, Copy, Debug)]
+pub enum RecordClass<'a> {
+    /// A structurally valid record.
+    Record(LineRef<'a>),
+    /// Only line terminators (`""`, `"\n"`, `"\r"`, `"\r\n"`): not a record,
+    /// not a malformed one either.
+    Blank,
+    /// A non-blank line that fails a structural check.
+    Malformed(MalformedLine),
+}
+
+/// The complete lines of a chunk body.
+///
+/// A body is a run of complete lines ending in `\n` (possibly empty). Splitting
+/// on `\n` therefore leaves one empty piece after the final terminator that is
+/// *not* a blank line; this iterator drops exactly that piece and keeps genuine
+/// blank lines, so a consumer can classify every yielded slice (doc_v25
+/// V25-03).
+pub fn body_lines(body: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut lines = body.split(|&b| b == b'\n').peekable();
+    std::iter::from_fn(move || {
+        let line = lines.next()?;
+        if line.is_empty() && lines.peek().is_none() {
+            return None;
+        }
+        Some(line)
+    })
+}
+
+/// Classifies one line for every record consumer (doc_v25 V25-03).
+///
+/// This is the single definition of "is this line a record": `LineRef` parses
+/// it, its sample columns match `n_samples`, and POS is a 1-based decimal.
+/// Entrances only choose what to do with [`RecordClass::Blank`] /
+/// [`RecordClass::Malformed`]; they never re-derive the judgement.
+///
+/// `line` may or may not carry its terminator: chunk bodies split on `\n`
+/// (no terminator), seam records arrive with one.
+#[must_use]
+pub fn classify_line(line: &[u8], n_samples: usize) -> RecordClass<'_> {
+    if line.iter().all(|&b| b == b'\n' || b == b'\r') {
+        return RecordClass::Blank;
+    }
+    let Some(lr) = LineRef::parse(line) else {
+        return RecordClass::Malformed(MalformedLine::FewerThanEightColumns);
+    };
+    if let Err(err) = lr.validate_sample_cols(n_samples) {
+        return RecordClass::Malformed(MalformedLine::SampleColumns(err));
+    }
+    match super::fixed::parse_pos1(lr.pos_text(), lr.chrom()) {
+        Ok(pos1) if pos1 > 0 => RecordClass::Record(lr),
+        _ => RecordClass::Malformed(MalformedLine::Position),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +509,105 @@ mod tests {
             let want = reference_validation(&fields, expected);
             proptest::prop_assert_eq!(got, want);
         }
+    }
+
+    /// Every terminator-only form is Blank, not malformed: a blank line may
+    /// straddle a chunk seam (`"\n"`) or be a CRLF blank (`"\r\n"`), and no
+    /// consumer should count a terminator as a record (doc_v25 V25-03).
+    #[test]
+    fn terminator_only_lines_are_blank() {
+        for line in [
+            b"".as_slice(),
+            b"\n",
+            b"\r",
+            b"\r\n",
+            b"\n\r",
+            b"\r\r\n\n",
+        ] {
+            assert!(
+                matches!(classify_line(line, 1), RecordClass::Blank),
+                "{:?}",
+                String::from_utf8_lossy(line)
+            );
+        }
+    }
+
+    /// The classifier names the failed check and returns the parsed line
+    /// otherwise; a record without its terminator (body) and with one (seam)
+    /// classify the same.
+    #[test]
+    fn classify_line_names_the_failed_check() {
+        let record = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        assert!(matches!(
+            classify_line(record, 1),
+            RecordClass::Record(lr) if lr.samples_text() == b"0/1"
+        ));
+        assert!(matches!(
+            classify_line(&record[..record.len() - 1], 1),
+            RecordClass::Record(_)
+        ));
+        assert!(matches!(
+            classify_line(b"chr1\t1\t.\tA\tG\t50\tPASS\n", 1),
+            RecordClass::Malformed(MalformedLine::FewerThanEightColumns)
+        ));
+        assert!(matches!(
+            classify_line(record, 2),
+            RecordClass::Malformed(MalformedLine::SampleColumns(
+                SampleColumnsError::TooFew {
+                    found: 1,
+                    expected: 2,
+                }
+            ))
+        ));
+        assert!(matches!(
+            classify_line(b"chr1\tx\t.\tA\tG\t50\tPASS\t.\n", 0),
+            RecordClass::Malformed(MalformedLine::Position)
+        ));
+        assert!(matches!(
+            classify_line(b"chr1\t0\t.\tA\tG\t50\tPASS\t.\n", 0),
+            RecordClass::Malformed(MalformedLine::Position)
+        ));
+        // Whitespace is not blank: it is a malformed line.
+        assert!(matches!(
+            classify_line(b" ", 0),
+            RecordClass::Malformed(MalformedLine::FewerThanEightColumns)
+        ));
+    }
+
+    /// `body_lines` drops only the piece after the body's final terminator;
+    /// genuine blank lines survive so the classifier can see them.
+    #[test]
+    fn body_lines_keeps_genuine_blanks_and_drops_the_artifact() {
+        let cases: &[(&[u8], &[&[u8]])] = &[
+            (b"", &[]),
+            (b"a\n", &[b"a"]),
+            (b"a\n\n", &[b"a", b""]),
+            (b"\n", &[b""]),
+            (b"a\n\nb\n", &[b"a", b"", b"b"]),
+            (b"a", &[b"a"]),
+        ];
+        for (body, want) in cases {
+            let got: Vec<&[u8]> = body_lines(body).collect();
+            assert_eq!(got, *want, "body {:?}", String::from_utf8_lossy(body));
+        }
+    }
+
+    /// The labels are stable: they are the strings consumers put in
+    /// warnings and job errors.
+    #[test]
+    fn malformed_labels_name_the_check() {
+        assert_eq!(
+            MalformedLine::FewerThanEightColumns.label(),
+            "fewer than 8 columns"
+        );
+        assert_eq!(
+            MalformedLine::SampleColumns(SampleColumnsError::TooFew {
+                found: 0,
+                expected: 1
+            })
+            .label(),
+            "a sample-column count differing from the header"
+        );
+        assert_eq!(MalformedLine::Position.label(), "an unparsable POS");
     }
 }

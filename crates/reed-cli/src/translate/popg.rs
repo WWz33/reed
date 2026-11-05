@@ -158,7 +158,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             .out
             .clone()
             .expect("invariant: -o checked before the run");
-        let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+        let command_line = crate::params::command_line();
         let mut files = Vec::new();
         if let Some(ld_report) = &report.ld {
             files.extend(reed::ld::write_ld(
@@ -213,7 +213,6 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
             eprintln!("n_records\t{}", report.n_records);
             eprintln!("n_windows\t{}", report.n_windows);
-            eprintln!("chunks\t{}", report.n_chunks);
             print_engine_metrics(&report.metrics);
         }
         return Ok(());
@@ -273,7 +272,6 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         eprintln!("phase.run_ms\t{:.3}", run_secs * 1e3);
         eprintln!("n_records\t{}", report.n_records);
         eprintln!("n_windows\t{}", report.n_windows);
-        eprintln!("chunks\t{}", report.n_chunks);
         print_engine_metrics(&report.metrics);
     }
     let text = reed::windows::render_tsv(&report.windows, &kinds, false);
@@ -485,7 +483,7 @@ pub(crate) fn build_windowed_request(
     // sink needs the final path; the writer below then sees no in-memory rows
     // and does not recreate the file.
     let ld_request = build_ld_request(
-        args.ld_decay.as_deref(),
+        args.ld_decay,
         args.ld_pairs,
         args.out.as_deref(),
     )?;
@@ -608,11 +606,11 @@ fn build_fstats_request(
 /// `--ld-pairs` without `--ld-decay`: the pair table is that table's detail
 /// level, and alone the flag used to produce no output at all.
 fn build_ld_request(
-    ld_decay: Option<&str>,
+    ld_decay: Option<u64>,
     ld_pairs: bool,
     out_prefix: Option<&str>,
 ) -> Result<Option<reed::LdRequest>, reed::Error> {
-    if ld_decay.is_none() {
+    let Some(decay_max_bp) = ld_decay else {
         if ld_pairs {
             return Err(reed::Error::usage(
                 "--ld-pairs writes the per-pair table of --ld-decay; pass --ld-decay [MAX_BP] \
@@ -620,11 +618,6 @@ fn build_ld_request(
             ));
         }
         return Ok(None);
-    }
-    let decay_max_bp = match ld_decay {
-        None => None,
-        Some("") => Some(100_000),
-        Some(text) => Some(crate::units::parse_size(text).map_err(reed::Error::usage)?),
     };
     // `--ld-pairs` with a prefix streams its rows during the run, which is
     // what keeps memory O(one contig) instead of O(every pair)
@@ -638,7 +631,7 @@ fn build_ld_request(
         None
     };
     Ok(Some(reed::LdRequest {
-        decay_max_bp,
+        decay_max_bp: Some(decay_max_bp),
         decay_bin_bp: 1000,
         pairs: ld_pairs,
         pairs_path,

@@ -312,7 +312,7 @@ pub fn run_dapc_opened(
             ));
         }
         let report = reed_reduce::xval::run(&scores, &groups, &levels, &candidates, &cfg)
-            .map_err(|e| crate::Error::usage(e.to_string()))?;
+            .map_err(map_xval_err)?;
         xval_outcome = Some(XvalOutcome {
             candidates: report
                 .candidates
@@ -385,7 +385,25 @@ pub fn run_dapc_opened(
 }
 
 fn map_lda_err(e: LdaError) -> crate::Error {
-    crate::Error::usage(e.to_string())
+    // Data-shaped failures are runtime; a request/group-shape problem is
+    // usage (doc_v25 V25-08).
+    match e {
+        LdaError::Degenerate | LdaError::ConstantWithinGroups { .. } => {
+            crate::Error::foreign(e)
+        }
+        _ => crate::Error::usage(e.to_string()),
+    }
+}
+
+/// A cross-validation failure. The LDA errors keep the direct path's
+/// classification (doc_v25 V25-08): the same degenerate data used to exit 1
+/// without `--xval` and exit 2 with it.
+fn map_xval_err(e: reed_reduce::xval::XvalError) -> crate::Error {
+    use reed_reduce::xval::XvalError;
+    match e {
+        XvalError::Lda(e) => map_lda_err(e),
+        other => crate::Error::usage(other.to_string()),
+    }
 }
 
 /// Writes `.dapc.ind`, `.dapc.eig` and `.dapc.var` next to `prefix`.
@@ -464,4 +482,63 @@ fn write_xval(prefix: &str, xv: &XvalOutcome) -> Result<(), crate::Error> {
 
 fn io_err(e: std::io::Error) -> crate::Error {
     crate::Error::from(e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v25 V25-08: numeric/data failures are runtime; request-shape
+    /// failures the operator can fix are usage.
+    #[test]
+    fn lda_failures_split_into_usage_and_runtime() {
+        for err in [
+            LdaError::Degenerate,
+            LdaError::ConstantWithinGroups { column: 3 },
+        ] {
+            let label = format!("{err:?}");
+            assert_eq!(
+                map_lda_err(err).kind(),
+                crate::ErrorKind::Runtime,
+                "{label}"
+            );
+        }
+        for err in [
+            LdaError::NoObservations,
+            LdaError::TooFewGroups(1),
+            LdaError::ZeroDimen,
+            LdaError::EmptyGroup { group: 0 },
+        ] {
+            let label = format!("{err:?}");
+            assert_eq!(
+                map_lda_err(err).kind(),
+                crate::ErrorKind::Usage,
+                "{label}"
+            );
+        }
+    }
+
+    /// doc_v25 V25-08: an LDA failure inside `--xval` keeps the direct
+    /// path's classification. It used to be `usage` for every
+    /// `XvalError`, so the same degenerate data exited 1 without `--xval`
+    /// and 2 with it.
+    #[test]
+    fn xval_lda_failures_keep_the_lda_classification() {
+        use reed_reduce::xval::XvalError;
+        for err in [
+            LdaError::Degenerate,
+            LdaError::ConstantWithinGroups { column: 3 },
+        ] {
+            let label = format!("{err:?}");
+            assert_eq!(
+                map_xval_err(XvalError::Lda(err)).kind(),
+                crate::ErrorKind::Runtime,
+                "{label}"
+            );
+        }
+        assert_eq!(
+            map_xval_err(XvalError::NoRepetitions).kind(),
+            crate::ErrorKind::Usage
+        );
+    }
 }

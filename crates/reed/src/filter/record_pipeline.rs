@@ -9,7 +9,7 @@
 
 use reed_core::Bitset;
 use reed_core::count::SiteCounts;
-use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters, STATE_ALT, STATE_MISSING};
+use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters};
 use reed_core::math::hwe::HweCache;
 use reed_engine::error::EngineError;
 use reed_filter::eval::head::{HeadScratch, eval_head};
@@ -20,7 +20,7 @@ use reed_filter::plan::FilterPlan;
 use reed_io::vcf::format_layout::IntSpec;
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::info::InfoIndex;
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
 use reed_io::vcf::site::{ContigTable, SiteView};
 
 use super::job_err;
@@ -78,6 +78,8 @@ pub(crate) struct Processed {
 /// reusable mask/count state.
 pub(crate) struct RecordPipeline {
     scanner: GenotypeScanner,
+    /// The header's sample count, for the line classifier (V25-03).
+    n_samples: usize,
     contigs: ContigTable,
     counters: PolicyCounters,
     head: HeadScratch,
@@ -107,6 +109,7 @@ impl RecordPipeline {
     ) -> Self {
         Self {
             scanner: GenotypeScanner::new_with_specs(n_samples, int_specs, float_keys, policies),
+            n_samples,
             contigs: ContigTable::new(contig_names.iter().cloned()),
             counters: PolicyCounters::default(),
             head: HeadScratch::new(),
@@ -143,6 +146,21 @@ impl RecordPipeline {
             .collect();
     }
 
+    /// The filter's line policy (doc_v25 V25-03): blank and malformed lines
+    /// are both errors, and `classify_line` owns the judgement. Before the
+    /// split, a blank LF line inside a chunk body was skipped while the same
+    /// line at a seam (or with CRLF) failed as "fewer than 8 columns".
+    fn record_line<'a>(&self, line: &'a [u8]) -> Result<LineRef<'a>, EngineError> {
+        match classify_line(line, self.n_samples) {
+            RecordClass::Record(lr) => Ok(lr),
+            RecordClass::Blank => Err(EngineError::job("blank record line")),
+            RecordClass::Malformed(why) => Err(EngineError::job(format!(
+                "record line is malformed ({})",
+                why.label()
+            ))),
+        }
+    }
+
     /// Runs head → decode → mask → count → tail for one record and calls
     /// `body` when the strategy gets the record.
     ///
@@ -166,9 +184,7 @@ impl RecordPipeline {
         F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
     {
         funnel.n_input += 1;
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 8 columns"));
-        };
+        let lr = self.record_line(line)?;
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
         } else {
@@ -178,6 +194,8 @@ impl RecordPipeline {
         let pos1 = site.pos1;
 
         // ---- head stage (§11.2: order is semantics) ----
+        // `ΣAC > AN` aborts the run like bcftools' `[E::bcf_calc_ac]`
+        // (doc_v25 V25-04): a job error, so it exits 1, not 2.
         let head_passed = eval_head(
             &lr,
             pos1,
@@ -185,7 +203,8 @@ impl RecordPipeline {
             &mut funnel.head_hits,
             &mut self.head,
             &plan.tags,
-        );
+        )
+        .map_err(|e| EngineError::job(e.to_string()))?;
         if !head_passed {
             return Ok(Processed::default());
         }
@@ -197,7 +216,7 @@ impl RecordPipeline {
             .scanner
             .scan(&lr, &site, &mut self.counters)
             .map_err(job_err)?;
-        funnel.policy.add_decode(&self.counters);
+        funnel.policy.merge(&self.counters);
 
         run_stages(
             &lr,
@@ -264,9 +283,7 @@ impl RecordPipeline {
         F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
     {
         funnel.n_input += 1;
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(EngineError::job("record line has fewer than 8 columns"));
-        };
+        let lr = self.record_line(line)?;
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
         } else {
@@ -281,11 +298,12 @@ impl RecordPipeline {
             &mut funnel.head_hits,
             &mut self.head,
             &plan.tags,
-        );
+        )
+        .map_err(|e| EngineError::job(e.to_string()))?;
         if !head_passed {
             return Ok(Processed::default());
         }
-        funnel.policy.add_decode(native.counters);
+        funnel.policy.merge(native.counters);
         let scan = ScanOutput {
             codes: native.codes,
             int_columns: native.int_columns,
@@ -452,7 +470,7 @@ where
 {
     // doc_v20 S68: the sketch path's mid stage packs the same mask into
     // bitmap words sized by the header's sample count; tolerating a short
-    // mask here (`keep.get(i).copied().unwrap_or(true)`) kept the tail
+    // mask here (the old short-mask `unwrap_or` default) kept the tail
     // samples while the mid stage dropped them, so the two strategies
     // counted different sample sets. Full length is the contract.
     debug_assert_eq!(
@@ -521,17 +539,29 @@ where
     // field, DP<5 and DP>100 both read DP).
     for (local, rule) in field_rules.iter().enumerate() {
         let rule_index = field_rule_map[local];
-        let mask_on_missing = rule.on_missing == reed_filter::spec::OnMissing::Mask;
+        // The shared missing-value table (doc_v25 V25-04): a missing value
+        // fires only when the rule opted in with `on_missing = mask`.
+        let mask_ctx =
+            reed_filter::semantics::MissingCtx::ColumnarMask(rule.on_missing);
+        let missing_fires = reed_filter::semantics::compare_missing(
+            rule.cmp.op.into(),
+            reed_filter::semantics::MissingSides::Lhs,
+            mask_ctx,
+        );
         if let Some(j) = rule.float_column {
             let Some(column) = scan.float_columns.get(j) else {
                 continue;
             };
             for (i, &x) in column.iter().enumerate() {
-                if masked.get(i)
-                    || !evaluated(i)
-                    || (x.is_nan() && !mask_on_missing)
-                    || (!x.is_nan() && !rule.cmp.apply_f64(f64::from(x)))
-                {
+                if masked.get(i) || !evaluated(i) {
+                    continue;
+                }
+                let fires = if x.is_nan() {
+                    missing_fires
+                } else {
+                    rule.cmp.apply_f64(f64::from(x))
+                };
+                if !fires {
                     continue;
                 }
                 attribute_hit(
@@ -555,11 +585,15 @@ where
                 reed_filter::spec::Typed::Int(threshold) => {
                     let op = rule.cmp.op;
                     for (i, &x) in column.iter().enumerate() {
-                        if masked.get(i)
-                            || !evaluated(i)
-                            || (x == INT_MISSING && !mask_on_missing)
-                            || (x != INT_MISSING && !op.apply_i64(i64::from(x), threshold))
-                        {
+                        if masked.get(i) || !evaluated(i) {
+                            continue;
+                        }
+                        let fires = if x == INT_MISSING {
+                            missing_fires
+                        } else {
+                            op.apply_i64(i64::from(x), threshold)
+                        };
+                        if !fires {
                             continue;
                         }
                         attribute_hit(
@@ -575,11 +609,15 @@ where
                 }
                 reed_filter::spec::Typed::Float(_) => {
                     for (i, &x) in column.iter().enumerate() {
-                        if masked.get(i)
-                            || !evaluated(i)
-                            || (x == INT_MISSING && !mask_on_missing)
-                            || (x != INT_MISSING && !rule.cmp.apply_f64(f64::from(x)))
-                        {
+                        if masked.get(i) || !evaluated(i) {
+                            continue;
+                        }
+                        let fires = if x == INT_MISSING {
+                            missing_fires
+                        } else {
+                            rule.cmp.apply_f64(f64::from(x))
+                        };
+                        if !fires {
                             continue;
                         }
                         attribute_hit(
@@ -597,34 +635,15 @@ where
         }
     }
 
-    // `count_site` semantics from the decoded slots: masked calls count as
-    // missing (the attribution the single pass reports).
+    // The shared counting semantic (doc_v25 V25-07a): masked calls count as
+    // missing. The called→missing transition counter stays here — it is the
+    // filter's attribution, not part of the count definition.
     if opts.counts {
+        *counts = reed_core::count::SiteCounts::from_codes_kept(scan.codes, keep, Some(masked));
+        counts.has_gt = scan.has_gt;
         for (i, &code) in scan.codes.iter().enumerate() {
-            if !keep[i] {
-                continue;
-            }
-            if !code.is_called_any() {
-                counts.n_missing += 1;
-            } else if masked.get(i) {
+            if keep[i] && masked.get(i) && code.is_called_any() {
                 funnel.masked_gt += 1;
-                counts.n_missing += 1;
-            } else {
-                let (s0, s1) = (code.slot_state(0), code.slot_state(1));
-                let n_alt = u64::from(s0 == STATE_ALT) + u64::from(s1 == STATE_ALT);
-                let n_miss = u64::from(s0 == STATE_MISSING) + u64::from(s1 == STATE_MISSING);
-                counts.ns += 1;
-                counts.an += 2 - n_miss;
-                counts.ac += n_alt;
-                match (n_miss, n_alt) {
-                    (0, 0) => counts.hom_ref += 1,
-                    (0, 1) => counts.het += 1,
-                    (0, _) => counts.hom_alt += 1,
-                    // Half-calls feed AN/AC/NS but no genotype class; the
-                    // `-g/--genotype` rule reads them as missing (bcftools
-                    // `bcf_gt_type` UNKN).
-                    _ => counts.n_half_called += 1,
-                }
             }
         }
     }
@@ -727,27 +746,14 @@ fn attribute_hit(
     }
 }
 
-/// Index of `GT` among the colon-separated FORMAT keys.
-///
-/// Positions are `usize`: a `u8` conversion used to hide every GT past the
-/// 256th key (V22-R2-1).
-#[must_use]
-pub(crate) fn gt_subfield_index(format_text: &[u8]) -> Option<usize> {
-    format_text.split(|&b| b == b':').position(|k| k == b"GT")
-}
-
 #[cfg(test)]
 mod tests {
+    // Every test in this module is debug-only (the short-keep assertion is
+    // compiled out in release), so the module's only imports are too.
+    #[cfg(debug_assertions)]
     use super::*;
     #[cfg(debug_assertions)]
     use reed_core::tag_table::{TagNumber, TagTable, TagType};
-
-    #[test]
-    fn gt_index_found_or_none() {
-        assert_eq!(gt_subfield_index(b"GT:DP:GQ"), Some(0));
-        assert_eq!(gt_subfield_index(b"DP:GT"), Some(1));
-        assert_eq!(gt_subfield_index(b"DP:GQ"), None);
-    }
 
     /// The empty plan (no head/mask/tail rules, GT declared) — the
     /// construction pattern from `filtered.rs`'s tests. Only the
@@ -763,7 +769,7 @@ mod tests {
 
     /// doc_v20 S68: `keep` must be FULL LENGTH — one entry per sample
     /// column. A short mask used to be silently tolerated as "keep the
-    /// tail samples" here (`keep.get(i).copied().unwrap_or(true)`) while
+    /// tail samples" here (the old short-mask `unwrap_or` default) while
     /// the sketch path's mid stage DROPPED them, so the two strategies
     /// counted different sample sets; the pinned contract is that a short
     /// keep is a programming error, caught in debug builds by the length

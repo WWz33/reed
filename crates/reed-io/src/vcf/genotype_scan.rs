@@ -197,7 +197,9 @@ impl GenotypeScanner {
             split_needed(subfields, field, last_needed);
 
             let code = match gt_index.and_then(|gi| subfields.get(gi)) {
-                Some(range) => decode_gt(&field[range.clone()], site, policies, counters, token)?,
+                Some(range) => {
+                    decode_gt(&field[range.clone()], site, site.n_alt(), policies, counters, token)?
+                }
                 None => {
                     *token = [None, None];
                     GtCode::MISSING
@@ -317,24 +319,40 @@ impl LocusSource for (&[u8], u64) {
 pub(crate) fn decode_gt_text<S: LocusSource>(
     gt: &[u8],
     locus: &S,
+    n_alt: u32,
     policies: &GenotypePolicies,
     counters: &mut PolicyCounters,
     token: &mut [Option<u16>; 2],
 ) -> Result<GtCode, IoError> {
-    decode_gt(gt, locus, policies, counters, token)
+    decode_gt(gt, locus, n_alt, policies, counters, token)
 }
 
 /// Decodes one sample's GT subfield, applying the policies and filling
 /// `token` with the raw allele indices (2 per sample).
+///
+/// `n_alt` is the record's ALT count (0 for `ALT=.`): an allele index above
+/// it names an allele the record does not declare, which is malformed input
+/// — not a policy question (doc_v25 V25-01).
 fn decode_gt<S: LocusSource>(
     gt: &[u8],
     site: &S,
+    n_alt: u32,
     policies: &GenotypePolicies,
     counters: &mut PolicyCounters,
     token: &mut [Option<u16>; 2],
 ) -> Result<GtCode, IoError> {
     // Fast path: exactly `[0|1|.][/|][0|1|.]`.
     if let Some((s0, s1, phased)) = fast_gt(gt) {
+        // `ALT='.'` leaves only the REF allele: the fast path's `1` (ALT)
+        // names an allele that does not exist.
+        if n_alt == 0
+            && (s0 == reed_core::genotype::STATE_ALT || s1 == reed_core::genotype::STATE_ALT)
+        {
+            return Err(IoError::MalformedRecord {
+                locus: site.error_locus(),
+                reason: "GT allele index 1 exceeds ALT count 0".to_string(),
+            });
+        }
         *token = [
             (s0 != reed_core::genotype::STATE_MISSING)
                 .then(|| u16::from(s0 == reed_core::genotype::STATE_ALT)),
@@ -374,7 +392,7 @@ fn decode_gt<S: LocusSource>(
                 reason: "polyploid genotype (more than two alleles)",
             });
         }
-        slots[n_alleles] = parse_allele(&gt[from..end], site)?;
+        slots[n_alleles] = parse_allele(&gt[from..end], site, n_alt)?;
         n_alleles += 1;
         if end == gt.len() {
             break;
@@ -422,8 +440,14 @@ fn fast_gt(gt: &[u8]) -> Option<(u8, u8, bool)> {
 }
 
 /// One allele token: `None` for `.`, else the index (multi-digit capable,
-/// checked arithmetic — 01-review D14).
-fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, IoError> {
+/// checked arithmetic — 01-review D14). The index must name a declared
+/// allele: `0..=n_alt` (0 is REF; `n_alt == 0` means `ALT=.`), anything
+/// above is malformed input (doc_v25 V25-01).
+fn parse_allele<S: LocusSource>(
+    token: &[u8],
+    site: &S,
+    n_alt: u32,
+) -> Result<Option<u16>, IoError> {
     if token == b"." {
         return Ok(None);
     }
@@ -449,6 +473,12 @@ fn parse_allele<S: LocusSource>(token: &[u8], site: &S) -> Result<Option<u16>, I
                 locus: site.error_locus(),
                 reason: "GT allele index exceeds u16".to_string(),
             })?;
+    }
+    if u32::from(value) > n_alt {
+        return Err(IoError::MalformedRecord {
+            locus: site.error_locus(),
+            reason: format!("GT allele index {value} exceeds ALT count {n_alt}"),
+        });
     }
     Ok(Some(value))
 }
@@ -549,7 +579,7 @@ mod tests {
         let decode = |gt: &[u8]| {
             let mut counters = PolicyCounters::default();
             let mut token = [None; 2];
-            decode_gt_text(gt, &locus, &policies, &mut counters, &mut token)
+            decode_gt_text(gt, &locus, u32::MAX, &policies, &mut counters, &mut token)
         };
         assert_eq!(decode(b"|0/1").unwrap(), decode(b"0|1").unwrap());
         assert_eq!(decode(b"/0|1").unwrap(), decode(b"0|1").unwrap());
@@ -605,9 +635,11 @@ mod tests {
     #[test]
     fn haploid_and_multiallelic_follow_the_policies() {
         let mut scanner = GenotypeScanner::new(3, &[], &[], permissive()).tracking_alleles();
+        // Twelve ALTs keep `10/11` inside the allele domain (doc_v25 V25-01):
+        // the multi-digit indices still collapse onto the ALT bit.
         let (out, counters) = scan(
             &mut scanner,
-            b"c\t1\t.\tA\tG\t.\tPASS\t.\tGT\t1\t10/11\t0/.\n",
+            b"c\t1\t.\tA\tG,T,A,C,G,T,A,C,G,T,A,C\t.\tPASS\t.\tGT\t1\t10/11\t0/.\n",
         );
         assert_eq!(out.codes[0].state(), 0b1001); // haploid ALT → half call
         assert!(out.codes[0].is_haploid());
@@ -629,6 +661,85 @@ mod tests {
         let mut counters = PolicyCounters::default();
         let err = scanner.scan(&lr, &site, &mut counters).unwrap_err();
         assert!(matches!(err, IoError::PolicyRejected { .. }));
+    }
+
+    /// doc_v25 V25-01 (F1): a GT allele index beyond the record's ALT count
+    /// is malformed input, not a policy question. `0/9` on a single-ALT
+    /// record used to decode as a plain ALT call under `CollapseAlt` and
+    /// flow into every consumer — the `-Ob` encoder wrote `(9+1)<<1`,
+    /// which htslib then refuses to read back.
+    /// doc_v25 V25-02: GT is found by FORMAT key order, never assumed to be
+    /// the first subfield. `DP:GT` used to hand `30` to the genotype parser
+    /// in convert/pca (the scanner's layout was already correct; this pins
+    /// the shared lookup).
+    #[test]
+    fn gt_position_follows_the_format_order() {
+        let mut scanner = GenotypeScanner::new(1, &[], &[], permissive());
+        let (out, _) = scan(&mut scanner, b"c\t1\t.\tA\tG\t.\tPASS\t.\tDP:GT\t30:0/1\n");
+        assert_eq!(out.codes[0].state(), 0b0100, "DP:GT decodes the 0/1");
+        let (out, _) = scan(
+            &mut scanner,
+            b"c\t1\t.\tA\tG,T\t.\tPASS\t.\tAD:DP:GQ:GT\t5,6:10:40:1|2\n",
+        );
+        assert_eq!(out.codes[0].state(), 0b0101, "GT in the last position");
+    }
+
+    #[test]
+    fn gt_allele_beyond_the_alt_count_is_malformed() {
+        // (ALT, GT) the scanner must refuse.
+        let bad: &[(&[u8], &[u8])] = &[
+            (b"G", b"0/9"),
+            (b"G", b"1|2"),
+            (b"G", b"9"),    // haploid out-of-domain call
+            (b"G", b"9/9"),
+            (b"G,T", b"0/3"),
+            // ALT='.' leaves only the REF allele: allele 1 does not exist.
+            (b".", b"0/1"),
+        ];
+        for (alt, gt) in bad {
+            let mut text = String::from("c\t1\t.\tA\t");
+            text.push_str(String::from_utf8_lossy(alt).as_ref());
+            text.push_str("\t.\tPASS\t.\tGT\t");
+            text.push_str(String::from_utf8_lossy(gt).as_ref());
+            text.push('\n');
+            let mut scanner = GenotypeScanner::new(1, &[], &[], permissive());
+            let lr = line(text.as_bytes());
+            let site = SiteView::parse(&lr).expect("invariant: well-formed");
+            let mut counters = PolicyCounters::default();
+            let Err(err) = scanner.scan(&lr, &site, &mut counters) else {
+                panic!("ALT={alt:?} GT={gt:?} is out of the allele domain and must be refused");
+            };
+            assert!(
+                matches!(err, IoError::MalformedRecord { .. }),
+                "ALT={alt:?} GT={gt:?}: {err:?}"
+            );
+            let msg = err.to_string();
+            let n_alt = if *alt == b"." {
+                0
+            } else {
+                memchr::memchr_iter(b',', alt).count() + 1
+            };
+            assert!(
+                msg.contains(&format!("exceeds ALT count {n_alt}")),
+                "ALT={alt:?} GT={gt:?}: {msg}"
+            );
+        }
+        // In-domain controls decode normally under the same policies.
+        let good: &[(&[u8], &[u8])] = &[(b"G", b"0/1"), (b"G,T", b"1|2"), (b".", b"0/0")];
+        for (alt, gt) in good {
+            let mut text = String::from("c\t1\t.\tA\t");
+            text.push_str(String::from_utf8_lossy(alt).as_ref());
+            text.push_str("\t.\tPASS\t.\tGT\t");
+            text.push_str(String::from_utf8_lossy(gt).as_ref());
+            text.push('\n');
+            let mut scanner = GenotypeScanner::new(1, &[], &[], permissive());
+            let lr = line(text.as_bytes());
+            let site = SiteView::parse(&lr).expect("invariant: well-formed");
+            let mut counters = PolicyCounters::default();
+            scanner
+                .scan(&lr, &site, &mut counters)
+                .unwrap_or_else(|e| panic!("ALT={alt:?} GT={gt:?} is in-domain: {e}"));
+        }
     }
 
     #[test]

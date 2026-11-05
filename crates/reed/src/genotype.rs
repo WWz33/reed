@@ -5,7 +5,7 @@
 //! avoids the "two parsers drift apart" failure mode.
 
 
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{RecordClass, classify_line};
 use reed_io::{IoError, Locus};
 use reed_engine::pipeline::{ChunkJob, OrderedSink};
 use reed_core::ChunkId;
@@ -37,7 +37,7 @@ impl GenotypeBlock {
 /// (`genotype_scan.rs`). The locus is built from whatever columns are
 /// present, with `pos1 = 0` when POS does not parse (the `parse_pos1`
 /// convention) — the whole line is not re-parsed just to name it.
-fn malformed_line(line: &[u8], reason: &'static str) -> EngineError {
+fn malformed_line(line: &[u8], reason: impl Into<String>) -> EngineError {
     let chrom_end = line.iter().position(|&b| b == b'\t').unwrap_or(line.len());
     let chrom = &line[..chrom_end];
     let pos_start = (chrom_end + 1).min(line.len());
@@ -54,8 +54,29 @@ fn malformed_line(line: &[u8], reason: &'static str) -> EngineError {
             contig_name: String::from_utf8_lossy(chrom).into_owned(),
             pos1,
         },
-        reason: reason.to_string(),
+        reason: reason.into(),
     })
+}
+
+/// One sample's dosage from its raw sample column: resolve the GT subfield
+/// through the shared FORMAT layout (never assume it is the first subfield —
+/// doc_v25 V25-02), then parse it. `line` names the record for the
+/// allele-domain error (doc_v25 V25-01). Both the body and seam paths call
+/// this, so the two copies cannot drift.
+fn dosage_from_column(
+    line: &[u8],
+    column: &[u8],
+    gt_index: Option<usize>,
+    n_alt: usize,
+) -> Result<f64, EngineError> {
+    let raw = reed_io::vcf::format_layout::gt_subfield(column, gt_index).unwrap_or(&b"."[..]);
+    match PcaJob::dosage(raw, n_alt) {
+        Ok(v) => Ok(v.unwrap_or(f64::NAN)),
+        Err(allele) => Err(malformed_line(
+            line,
+            format!("GT allele index {allele} exceeds ALT count {n_alt}"),
+        )),
+    }
 }
 
 #[derive(Default)]
@@ -76,25 +97,38 @@ pub(crate) struct PcaJob {
 impl PcaJob {
     /// Parses the GT column of one sample into `0/1/2` or `NaN`.
     ///
-    /// Returns `None` when the genotype is not a diploid biallelic call
-    /// (missing, haploid, or an allele index beyond ALT).
-    pub(crate) fn dosage(raw: &[u8], n_alt: usize) -> Option<f64> {
+    /// Returns `Ok(None)` when the genotype is not a diploid biallelic call
+    /// (missing, haploid, polyploid). `Err` carries the allele index when
+    /// it names an allele beyond the record's ALT count: that is malformed
+    /// input, not missing data (doc_v25 V25-01) — the caller fails the run
+    /// like the scanner does.
+    pub(crate) fn dosage(raw: &[u8], n_alt: usize) -> Result<Option<f64>, u32> {
         let mut a = 0u32;
         let mut b = 0u32;
         let mut seen = 0usize;
         for token in raw.split(|&c| c == b'/' || c == b'|') {
             if seen >= 2 {
-                return None;
+                return Ok(None);
             }
             if token == b"." || token.is_empty() {
-                return None;
+                return Ok(None);
             }
             let mut value = 0u32;
             for &c in token {
                 if !c.is_ascii_digit() {
-                    return None;
+                    return Ok(None);
                 }
-                value = value.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
+                let Some(next) =
+                    value.checked_mul(10).and_then(|v| v.checked_add(u32::from(c - b'0')))
+                else {
+                    // An index that no longer fits u32 names no allele any
+                    // record declares; report it at the u32 ceiling.
+                    return Err(u32::MAX);
+                };
+                value = next;
+            }
+            if value as usize > n_alt {
+                return Err(value);
             }
             if seen == 0 {
                 a = value;
@@ -103,10 +137,10 @@ impl PcaJob {
             }
             seen += 1;
         }
-        if seen != 2 || a as usize > n_alt || b as usize > n_alt {
-            return None;
+        if seen != 2 {
+            return Ok(None);
         }
-        Some(f64::from(a + b))
+        Ok(Some(f64::from(a + b)))
     }
 }
 
@@ -122,27 +156,23 @@ impl ChunkJob for PcaJob {
     ) -> Result<Self::Partial, EngineError> {
         let mut out = GenotypeBlock::default();
         for line in body.split(|&c| c == b'\n') {
-            if line.is_empty() || line[0] == b'#' {
+            if line.first() == Some(&b'#') {
                 continue;
             }
-            // A malformed record is an error, not a skip: silently dropping
-            // it yields a wrong matrix on a truncated or mismatched file
-            // (doc_v20 R6).
-            let Some(lr) = LineRef::parse(line) else {
-                return Err(malformed_line(line, "record line has fewer than 8 columns"));
+            // doc_v25 V25-03: one classification for every record consumer.
+            // A genuine blank line (CRLF residue) is skipped like stats does;
+            // a malformed record stays fatal (doc_v20 R6: dropping it silently
+            // yields a wrong matrix on a truncated or mismatched file).
+            let lr = match classify_line(line, self.n_samples) {
+                RecordClass::Record(lr) => lr,
+                RecordClass::Blank => continue,
+                RecordClass::Malformed(why) => {
+                    return Err(malformed_line(
+                        line,
+                        format!("record line is malformed ({})", why.label()),
+                    ));
+                }
             };
-            if lr.validate_sample_cols(self.n_samples).is_err() {
-                return Err(malformed_line(
-                    line,
-                    "sample column count disagrees with the header",
-                ));
-            }
-            // doc_v20 review of R6: the position is not stored any more, but
-            // a non-numeric POS is still a malformed record and must not pass
-            // silently here while `filter`/`stats` reject the same line.
-            if !lr.pos_text().iter().all(u8::is_ascii_digit) || lr.pos_text().is_empty() {
-                return Err(malformed_line(line, "POS is not a positive integer"));
-            }
             // Allele count gate: only biallelic sites have a 0/1/2 dosage.
             let alts = lr.alts();
             let n_alt = if alts == b"." {
@@ -153,6 +183,7 @@ impl ChunkJob for PcaJob {
             if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
                 continue;
             }
+            let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
             let samples = lr.samples_text();
             let mut start = 0usize;
             scratch.values.clear();
@@ -168,10 +199,9 @@ impl ChunkJob for PcaJob {
                     continue;
                 }
                 let column = &samples[begin..end];
-                // The GT is the first colon-separated field.
-                let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
-                let raw = &column[..colon];
-                scratch.values.push(PcaJob::dosage(raw, n_alt).unwrap_or(f64::NAN));
+                scratch
+                    .values
+                    .push(dosage_from_column(line, column, gt_index, n_alt)?);
             }
             if scratch.values.is_empty() {
                 continue;
@@ -202,24 +232,22 @@ impl ChunkJob for PcaJob {
     ) -> Result<Self::Partial, EngineError> {
         // A record spanning a chunk boundary: process it like any other line.
         let mut out = GenotypeBlock::default();
-        if line.is_empty() || line[0] == b'#' {
+        if line.first() == Some(&b'#') {
             return Ok(out);
         }
-        // Malformed seam records are errors too, like the body path
-        // (doc_v20 R6).
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(malformed_line(line, "record line has fewer than 8 columns"));
+        // doc_v25 V25-03: the seam goes through the same classification as the
+        // body (blank skipped, malformed fatal). doc_v20 R6: a malformed seam
+        // record is an error, like the body path.
+        let lr = match classify_line(line, self.n_samples) {
+            RecordClass::Record(lr) => lr,
+            RecordClass::Blank => return Ok(out),
+            RecordClass::Malformed(why) => {
+                return Err(malformed_line(
+                    line,
+                    format!("record line is malformed ({})", why.label()),
+                ));
+            }
         };
-        if lr.validate_sample_cols(self.n_samples).is_err() {
-            return Err(malformed_line(
-                line,
-                "sample column count disagrees with the header",
-            ));
-        }
-        // doc_v20 review of R6: same POS contract as `run_chunk`.
-        if !lr.pos_text().iter().all(u8::is_ascii_digit) || lr.pos_text().is_empty() {
-            return Err(malformed_line(line, "POS is not a positive integer"));
-        }
         let alts = lr.alts();
         let n_alt = if alts == b"." {
             0
@@ -229,6 +257,7 @@ impl ChunkJob for PcaJob {
         if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
             return Ok(out);
         }
+        let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
         let samples = lr.samples_text();
         let mut start = 0usize;
         scratch.values.clear();
@@ -244,8 +273,9 @@ impl ChunkJob for PcaJob {
                 continue;
             }
             let column = &samples[begin..end];
-            let colon = column.iter().position(|&c| c == b':').unwrap_or(column.len());
-            scratch.values.push(PcaJob::dosage(&column[..colon], n_alt).unwrap_or(f64::NAN));
+            scratch
+                .values
+                .push(dosage_from_column(line, column, gt_index, n_alt)?);
         }
         let mut any_alt = false;
         for v in &scratch.values {
@@ -403,7 +433,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("chr1:101"), "error must name the locus: {msg}");
         assert!(
-            msg.contains("sample column count"),
+            msg.contains("sample-column count"),
             "error must name the mismatch: {msg}"
         );
     }
@@ -421,6 +451,37 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("chr1:102"), "error must name the locus: {msg}");
         assert!(msg.contains("8 columns"), "error must name the reason: {msg}");
+    }
+
+    /// doc_v25 V25-03: a genuine blank line in the body (`"\r"` left by a CRLF
+    /// split) is not a record and must be skipped, not fail the run. The same
+    /// file is accepted by convert/stats/filter; pca had its own line checks.
+    #[test]
+    fn v25_03_run_chunk_skips_a_crlf_blank_line() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let body = b"chr1\t107\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\r\n\r\n\
+chr1\t108\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n";
+        let block = job
+            .run_chunk(&chunk_bytes(), body, &mut scratch)
+            .expect("a blank line must not fail the chunk (doc_v25 V25-03)");
+        assert_eq!(block.n_sites, 2, "both records must be counted");
+    }
+
+    /// doc_v25 V25-03: a blank seam line (`"\n"` or `"\r\n"` from the
+    /// stitcher) is skipped; before the fix it failed with "fewer than 8
+    /// columns" depending on where the chunk boundary landed.
+    #[test]
+    fn v25_03_run_seam_skips_a_blank_line() {
+        let job = job(2);
+        for blank in [b"\n".as_slice(), b"\r\n", b"\r", b""] {
+            let block = job
+                .run_seam(ChunkId(1), blank, &mut PcaScratch::default())
+                .unwrap_or_else(|err| {
+                    panic!("blank seam {blank:?} must be skipped, got: {err}")
+                });
+            assert_eq!(block.n_sites, 0);
+        }
     }
 
     /// doc_v20 R6: the seam path (a record spanning a chunk boundary)
@@ -449,5 +510,52 @@ mod tests {
             err.to_string().contains("chr1:103"),
             "error must name the locus: {err}"
         );
+    }
+
+    /// doc_v25 V25-01 (F1): an allele index beyond the record's ALT count is
+    /// malformed input for PCA too, not missing data. `0/9` on a single-ALT
+    /// record used to become NaN and silently drop the sample (and a
+    /// haploid `9` dropped the whole site via the no-variation skip).
+    #[test]
+    fn v25_01_run_chunk_rejects_gt_allele_beyond_the_alt_count() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let body = b"chr1\t104\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\n";
+        let Err(err) = job.run_chunk(&chunk_bytes(), body, &mut scratch) else {
+            panic!("an out-of-domain GT allele must fail the chunk (doc_v25 V25-01)")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("chr1:104"), "error must name the locus: {msg}");
+        assert!(msg.contains("exceeds ALT count 1"), "{msg}");
+    }
+
+    /// doc_v25 V25-01 (F1): the haploid shape reaches the same refusal —
+    /// `GT 9` used to return `-1`-style missing (NaN) instead of an error.
+    #[test]
+    fn v25_01_run_chunk_rejects_haploid_gt_allele_beyond_the_alt_count() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let body = b"chr1\t105\t.\tA\tG\t50\tPASS\t.\tGT\t9\t0/1\n";
+        let Err(err) = job.run_chunk(&chunk_bytes(), body, &mut scratch) else {
+            panic!("a haploid out-of-domain GT allele must fail the chunk (doc_v25 V25-01)")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("chr1:105"), "error must name the locus: {msg}");
+        assert!(msg.contains("exceeds ALT count 1"), "{msg}");
+    }
+
+    /// doc_v25 V25-01 (F1): the seam path (a record spanning a chunk
+    /// boundary) rejects the same record as the body path.
+    #[test]
+    fn v25_01_run_seam_rejects_gt_allele_beyond_the_alt_count() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let line = b"chr1\t106\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1";
+        let Err(err) = job.run_seam(ChunkId(1), line, &mut scratch) else {
+            panic!("an out-of-domain GT allele must fail the seam (doc_v25 V25-01)")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("chr1:106"), "error must name the locus: {msg}");
+        assert!(msg.contains("exceeds ALT count 1"), "{msg}");
     }
 }

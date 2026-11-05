@@ -82,15 +82,25 @@ impl IndividualFAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        for (dst, src) in self.o_hom.iter_mut().zip(&other.o_hom) {
+        crate::merge_zip_eq("IndividualFAcc o_hom", &mut self.o_hom, &other.o_hom, |dst, src| {
             *dst += src;
-        }
-        for (dst, src) in self.n_called.iter_mut().zip(&other.n_called) {
-            *dst += src;
-        }
-        for (dst, src) in self.hetero_expected.iter_mut().zip(&other.hetero_expected) {
-            dst.merge(src);
-        }
+        });
+        crate::merge_zip_eq(
+            "IndividualFAcc n_called",
+            &mut self.n_called,
+            &other.n_called,
+            |dst, src| {
+                *dst += src;
+            },
+        );
+        crate::merge_zip_eq(
+            "IndividualFAcc hetero_expected",
+            &mut self.hetero_expected,
+            &other.hetero_expected,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
     }
 
     /// F = (O_hom − E_hom) / (N − E_hom) per sample (plink `--het`).

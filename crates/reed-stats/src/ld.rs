@@ -203,12 +203,17 @@ impl LdDecayAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        for (dst, src) in self.sum_r2.iter_mut().zip(&other.sum_r2) {
-            dst.merge(src);
-        }
-        for (dst, src) in self.counts.iter_mut().zip(&other.counts) {
+        crate::merge_zip_eq(
+            "LdDecaySet sum_r2",
+            &mut self.sum_r2,
+            &other.sum_r2,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
+        crate::merge_zip_eq("LdDecaySet counts", &mut self.counts, &other.counts, |dst, src| {
             *dst += src;
-        }
+        });
     }
 
     /// Mean r² per bin (`None` for empty bins).

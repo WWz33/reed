@@ -56,7 +56,16 @@ impl SampleLayout {
         n_groups: usize,
         keep: Option<&[bool]>,
     ) -> Self {
-        let kept = |sample: usize| keep.is_none_or(|k| k.get(sample).copied().unwrap_or(true));
+        if let Some(keep) = keep {
+            // Full length only (doc_v25 V25-07b): the old `unwrap_or(true)`
+            // kept the tail of a short mask without a diagnostic.
+            assert_eq!(
+                keep.len(),
+                assignments.len(),
+                "invariant: keep mask length differs from the sample count"
+            );
+        }
+        let kept = |sample: usize| keep.is_none_or(|k| k[sample]);
         let mut dest = vec![u32::MAX; assignments.len()];
         let mut slices = Vec::with_capacity(n_groups + 1);
         let mut cursor = 0_usize;
@@ -238,9 +247,14 @@ impl LdDecaySet {
     /// the site order for a deterministic result).
     pub fn merge(&mut self, other: &Self) {
         self.cohort.merge(&other.cohort);
-        for (dst, src) in self.groups.iter_mut().zip(&other.groups) {
-            dst.merge(src);
-        }
+        crate::merge_zip_eq(
+            "FstMatrix groups",
+            &mut self.groups,
+            &other.groups,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
         self.pairs.extend_from_slice(&other.pairs);
     }
 }

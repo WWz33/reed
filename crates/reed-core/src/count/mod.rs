@@ -8,7 +8,7 @@
 
 pub mod site_counts;
 
-pub use site_counts::{SiteCounts, count_site};
+pub use site_counts::SiteCounts;
 
 /// Genotype and allele tallies for one group at one site (24 bytes).
 ///
@@ -54,19 +54,17 @@ impl SiteGroupCounts {
     /// twin of the text-path counting for the consumers that decode codes
     /// directly (docs/rounds/v2/03 §3.3).
     pub fn add_code(&mut self, code: crate::genotype::GtCode) {
-        let (s0, s1) = (code.slot_state(0), code.slot_state(1));
-        let alt = u32::from(s0 == crate::genotype::STATE_ALT)
-            + u32::from(s1 == crate::genotype::STATE_ALT);
-        let miss = u32::from(s0 == crate::genotype::STATE_MISSING)
-            + u32::from(s1 == crate::genotype::STATE_MISSING);
-        self.n_alt_alleles += alt;
-        self.n_ref_alleles += 2 - alt - miss;
-        match (miss, alt) {
-            (0, 0) => self.n_hom_ref += 1,
-            (0, 1) => self.n_het += 1,
-            (0, _) => self.n_hom_alt += 1,
-            (2, _) => {}
-            _ => self.n_half_called += 1,
+        // The class and allele counts are shared with `SiteCounts::from_codes`
+        // (doc_v25 V25-07a); only the destination fields differ.
+        use crate::genotype::GtClass;
+        self.n_alt_alleles += code.n_alt();
+        self.n_ref_alleles += code.n_ref();
+        match code.class() {
+            GtClass::HomRef => self.n_hom_ref += 1,
+            GtClass::Het => self.n_het += 1,
+            GtClass::HomAlt => self.n_hom_alt += 1,
+            GtClass::HalfCall => self.n_half_called += 1,
+            GtClass::Missing => {}
         }
     }
 }

@@ -111,29 +111,21 @@ fn af_of(
     kind: crate::spec::AfKind,
 ) -> Option<f64> {
     use crate::spec::AfKind;
-    // INFO/AC lists the ALT counts only; prepend the REF count as
-    // `an − ΣALT` (bcftools' `bcf_calc_ac` fills `ac[0]` the same way).
-    //
     // The INFO preference holds only while the record's AC/AN still describe
     // the cohort being decided on: after a subset or a genotype mask they
     // describe the input cohort, and bcftools switches to the genotypes
     // (`vcfview.c:341-350`, `filter.c:1471`; doc_v12 D12-6).
+    //
+    // The reader is shared with the head (`-q/-Q`) and includes the
+    // `ΣAC > AN` malformed-record guard, so one record reads the same way on
+    // both sides (doc_v25 V25-04).
     let info = if values.info_trusted {
-        crate::eval::head::allele_counts_info(values.info, values.n_alt)
+        crate::semantics::info_af(values.info, values.n_alt)
     } else {
         None
     };
     let (counts_per_allele, an) = match info {
-        Some((alts, an)) => {
-            let alt_sum: u64 = alts.iter().sum();
-            if alt_sum > an {
-                return None;
-            }
-            let mut counts = Vec::with_capacity(alts.len() + 1);
-            counts.push(an - alt_sum);
-            counts.extend(alts);
-            (counts, an)
-        }
+        Some(c) => (c.per_allele, c.an),
         None => {
             if counts.an == 0 {
                 return None;
@@ -184,6 +176,47 @@ mod tests {
             n_missing: counts.n_missing,
             n_samples: 4,
         })
+    }
+
+    /// doc_v25 V25-04: the head (`-q/-Q`) and the tail share one AC/AN
+    /// reader. A record whose ALT counts exceed AN (`AC=200;AN=100`) has no
+    /// usable INFO on either side; the tail falls back to the genotype
+    /// counts instead of rejecting the record on the malformed INFO alone.
+    #[test]
+    fn malformed_info_falls_back_to_the_counts_on_the_tail() {
+        let c = counts(1, 4, 0, 1, 0);
+        let v = crate::expr::SiteValues {
+            qual: None,
+            filter: b"PASS",
+            id: b".",
+            chrom: b"chr1",
+            pos: 1,
+            variant_type: "snp",
+            n_alt: 1,
+            n_samples: 2,
+            info: b"AC=200;AN=100",
+            info_trusted: true,
+            info_index: None,
+            gt: Some(crate::expr::GtCounts {
+                ac: c.ac,
+                an: c.an,
+                n_missing: c.n_missing,
+                n_samples: 2,
+            }),
+            fmt: None,
+            tags: None,
+        };
+        assert_eq!(
+            af_of(&v, &c, crate::spec::AfKind::Nref),
+            Some(0.25),
+            "malformed INFO reads as no INFO; the counts decide"
+        );
+        // A usable INFO record still wins over the counts (1/4 = 0.5).
+        let usable = crate::expr::SiteValues {
+            info: b"AC=2;AN=4",
+            ..v
+        };
+        assert_eq!(af_of(&usable, &c, crate::spec::AfKind::Nref), Some(0.5));
     }
 
     #[test]

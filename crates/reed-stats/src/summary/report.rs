@@ -234,31 +234,36 @@ impl QcReportAcc {
         self.sis.tv += other.sis.tv;
         self.sis.n_indels += other.sis.n_indels;
 
-        for (dst, src) in self.af.snps.iter_mut().zip(&other.af.snps) {
+        crate::merge_zip_eq("SummaryReport af.snps", &mut self.af.snps, &other.af.snps, |dst, src| {
             *dst += src;
-        }
-        for (dst, src) in self.af.ts.iter_mut().zip(&other.af.ts) {
+        });
+        crate::merge_zip_eq("SummaryReport af.ts", &mut self.af.ts, &other.af.ts, |dst, src| {
             *dst += src;
-        }
-        for (dst, src) in self.af.tv.iter_mut().zip(&other.af.tv) {
+        });
+        crate::merge_zip_eq("SummaryReport af.tv", &mut self.af.tv, &other.af.tv, |dst, src| {
             *dst += src;
-        }
-        for (dst, src) in self.af.indels.iter_mut().zip(&other.af.indels) {
-            *dst += src;
-        }
+        });
+        crate::merge_zip_eq(
+            "SummaryReport af.indels",
+            &mut self.af.indels,
+            &other.af.indels,
+            |dst, src| {
+                *dst += src;
+            },
+        );
 
         self.qual.snv.merge(&other.qual.snv);
         self.qual.snv_ts.merge(&other.qual.snv_ts);
         self.qual.snv_tv.merge(&other.qual.snv_tv);
         self.qual.indel.merge(&other.qual.indel);
-        for (dst, src) in self.subst.iter_mut().zip(&other.subst) {
+        crate::merge_zip_eq("SummaryReport subst", &mut self.subst, &other.subst, |dst, src| {
             *dst += src;
-        }
+        });
         self.dp_genotypes.merge(&other.dp_genotypes);
         self.dp_sites.merge(&other.dp_sites);
         self.idd.merge(&other.idd);
         self.idd_ins.merge(&other.idd_ins);
-        for (dst, src) in self.psc.iter_mut().zip(&other.psc) {
+        crate::merge_zip_eq("SummaryReport psc", &mut self.psc, &other.psc, |dst, src| {
             let PscAcc {
                 hom_rr,
                 hom_aa,
@@ -285,7 +290,7 @@ impl QcReportAcc {
             dst.hap_ref += hap_ref;
             dst.hap_alt += hap_alt;
             dst.missing += missing;
-        }
+        });
     }
 }
 

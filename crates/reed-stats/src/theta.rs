@@ -81,16 +81,19 @@ impl ThetaAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        if other.sites.len() > self.sites.len() {
-            self.sites.resize(other.sites.len(), 0);
-            self.mutations.resize(other.mutations.len(), 0);
-        }
-        for (dst, src) in self.sites.iter_mut().zip(&other.sites) {
+        // Shape equality is the merge precondition (doc_v25 V25-05): the
+        // old resize-then-zip hid a caller that merged different shapes.
+        crate::merge_zip_eq("ThetaAcc sites", &mut self.sites, &other.sites, |dst, src| {
             *dst += src;
-        }
-        for (dst, src) in self.mutations.iter_mut().zip(&other.mutations) {
-            *dst += src;
-        }
+        });
+        crate::merge_zip_eq(
+            "ThetaAcc mutations",
+            &mut self.mutations,
+            &other.mutations,
+            |dst, src| {
+                *dst += src;
+            },
+        );
         self.total_allele_count += other.total_allele_count;
         self.n_sites += other.n_sites;
         self.n_var_sites += other.n_var_sites;

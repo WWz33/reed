@@ -500,10 +500,9 @@ impl ChunkJob for MatrixJob {
     ) -> Result<Self::Partial, EngineError> {
         let scratch = scratch.get_or_insert_with(|| self.build_scratch());
         self.reset_unit(scratch);
-        for line in body.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
+        // Only the terminator artifact is dropped; a blank line is the
+        // pipeline's error to report (doc_v25 V25-03).
+        for line in reed_io::vcf::line::body_lines(body) {
             self.scan_line(line, scratch)?;
         }
         Ok(self.take_partial(scratch, false))

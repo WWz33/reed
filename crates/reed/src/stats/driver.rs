@@ -40,14 +40,10 @@ pub(crate) fn resolve_groups(
     };
     let mut gt_groups = gt_groups;
     if let Some(keep) = keep {
-        if keep.len() != gt_groups.len() {
-            return Err(crate::error::Error::usage(format!(
-                "sample keep mask has {} entries but the header declares {}",
-                keep.len(),
-                gt_groups.len()
-            )));
-        }
-        for (slot, kept) in gt_groups.iter_mut().zip(keep) {
+        // One construction check for every driver (doc_v25 V25-07b).
+        let keep = reed_core::sample::KeepMask::try_new(gt_groups.len(), keep.to_vec())
+            .map_err(|e| crate::error::Error::usage(e.to_string()))?;
+        for (slot, &kept) in gt_groups.iter_mut().zip(keep.iter()) {
             if !kept {
                 *slot = None;
             }

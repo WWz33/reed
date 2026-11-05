@@ -81,6 +81,7 @@ mod filtered;
 mod index;
 mod input;
 mod rename;
+mod spill;
 mod stats;
 
 // Requests, drivers and their reports (08 §6.2).
@@ -155,4 +156,9 @@ pub use reed_core::coord::{Interval0, Pos0};
 pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_engine::budget;
 pub use reed_engine::metrics;
+// The facade's boundary (doc_v25 V25-08): the CLI depends on `reed` only;
+// distance/reduce/graph are reachable through the facade's re-exports.
+pub use reed_distance as distance;
+pub use reed_graph as graph;
+pub use reed_reduce as reduce;
 pub use reed_io::{bgzf, chunk};
