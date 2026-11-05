@@ -257,3 +257,45 @@ fn run_reports_is_reachable_from_the_root() {
     assert_eq!(outcome.n_records, 2);
     assert_eq!(outcome.files.len(), 1);
 }
+
+// ---- doc_v26 V26-10: no third-party header type in the facade surface ----
+//
+// `HeaderFacts` used to expose `noodles::vcf::Header` as a public field. This
+// gate is the proof that the boundary holds: the header is an opaque value
+// whose operations are reed's, so a noodles upgrade cannot break a downstream
+// user of `reed`. The function below compiles only if `HeaderFacts.header`
+// names a `reed` type and no noodles type is reachable through it.
+#[allow(dead_code, clippy::unimplemented)]
+fn _header_is_opaque() {
+    // `HeaderFacts` is reachable and its field has reed's type.
+    let facts: reed::HeaderFacts = unreachable_header_fixture();
+    let header: &reed::header::VcfHeader = &facts.header;
+    let _ = header.n_samples();
+    let _ = header.sample_names();
+    let _ = header.contig_names();
+    let _ = header.contig_lengths();
+    let _ = header.info_keys();
+    let _ = header.format_keys();
+    // The operations a command performs are on the opaque value.
+    let pruned = header.with_samples_pruned(&[true]);
+    let added = pruned.with_info_definitions(&[reed::header::InfoDefinition {
+        id: "AC",
+        number: reed::header::InfoNumber::A,
+        ty: reed::header::InfoType::Integer,
+        description: "d",
+    }]);
+    let _ = added.with_pass_filter();
+    let _ = added.to_text();
+    let _: Result<Vec<u8>, reed::Error> = added.to_bcf_file_header().map_err(reed::Error::from);
+    // A `noodles::vcf::Header` would not satisfy these calls, and no noodles
+    // path is exported: the facade's `header` module is the whole surface.
+    let _: fn(&reed::header::VcfHeader) -> reed::TagTable = reed::header::tag_table;
+}
+
+/// A `HeaderFacts` value for the compile gate above (never called: the gate
+/// only has to type-check).
+#[allow(dead_code)]
+fn unreachable_header_fixture() -> reed::HeaderFacts {
+    let text = b"##fileformat=VCFv4.3\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n";
+    reed::HeaderFacts::parse(text).expect("invariant: valid header")
+}

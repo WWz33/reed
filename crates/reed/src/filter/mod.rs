@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use noodles::vcf;
 use reed_core::ChunkId;
 use reed_core::sample::SampleMask;
 use reed_engine::budget::ThreadBudget;
@@ -635,12 +634,13 @@ pub fn run_filter(
 
     // ---- output header: prune samples, add recompute defs, provenance ----
     let out_header = if subset {
-        facts.pruned_header(&keep)
+        facts.header.with_samples_pruned(&keep)
     } else {
         header.clone()
     };
-    let mut out_header = ensure_info_defs(out_header, &plan.recompute);
-    out_header = ensure_pass_filter(out_header);
+    let mut out_header = out_header
+        .with_info_definitions(&recompute_definitions(&plan.recompute))
+        .with_pass_filter();
     for (key, value) in plan
         .provenance
         .header_lines()
@@ -656,14 +656,10 @@ pub fn run_filter(
             !value.is_empty() && (!opts.no_command || k != "reed_command")
         })
     {
-        out_header
-            .insert(
-                key.as_str().parse().expect("invariant: valid key"),
-                value.into(),
-            )
-            .map_err(|e| FilterError::Spec(format!("header insert {key}: {e}")))?;
+        out_header = out_header
+            .with_meta_line(&key, &value)
+            .map_err(|e| FilterError::Spec(e.to_string()))?;
     }
-    let mut header_bytes = Vec::new();
     // `-Ob/-Ou` selects BCF; extension inference stays for the text path.
     let bcf_level = match opts.output_bcf {
         Some(level) => Some(level),
@@ -686,19 +682,15 @@ pub fn run_filter(
              or write text with -Oz/-Ov",
         ));
     }
-    match bcf_level {
+    let header_bytes = match bcf_level {
         Some(_) => {
             // The BCF file header lives in reed-io (magic + l_text +
             // NUL-terminated text, 02-bcf.md §3.2); the records then ride
             // BGZF blocks like any other payload.
-            header_bytes = reed_io::bcf::bcf_file_header(&out_header).map_err(io_err)?;
+            out_header.to_bcf_file_header().map_err(io_err)?
         }
-        None => {
-            vcf::io::Writer::new(&mut header_bytes)
-                .write_header(&out_header)
-                .map_err(FilterError::from)?;
-        }
-    }
+        None => out_header.to_text(),
+    };
 
     // ---- output target ----
     if bcf_level.is_some() && opts.write_index == WriteIndex::Tbi {
@@ -751,10 +743,11 @@ pub fn run_filter(
         })
         .collect();
     let contig_names: Arc<[Vec<u8>]> = Arc::from(
-        header
-            .contigs()
+        facts
+            .header
+            .contig_names()
             .iter()
-            .map(|(name, _)| name.as_bytes().to_vec())
+            .map(|name| name.as_bytes().to_vec())
             .collect::<Vec<_>>()
             .into_boxed_slice(),
     );
@@ -935,9 +928,9 @@ pub fn run_filter(
 /// ascertainment cohort dimension (§11.7).
 fn build_keep(
     keep: Vec<bool>,
-    header: &vcf::Header,
+    header: &reed_io::header::VcfHeader,
 ) -> Result<(Arc<[bool]>, Option<SampleMask>), FilterError> {
-    let n = header.sample_names().len();
+    let n = header.n_samples();
     // The keep mask's one length check (doc_v25 V25-07b): the filter used
     // to accept a short mask here and only the mid-stage width assert saw
     // it.
@@ -964,7 +957,7 @@ fn build_keep(
 /// samples are an error unless `force` (bcftools `--force-samples`).
 fn keep_list_from_file(
     path: &Path,
-    header: &vcf::Header,
+    header: &reed_io::header::VcfHeader,
     force: bool,
 ) -> Result<Vec<bool>, FilterError> {
     let text = std::fs::read_to_string(path).map_err(FilterError::from)?;
@@ -980,16 +973,17 @@ fn keep_list_from_file(
 /// Builds the keep mask from an inline sample list.
 fn keep_list_from_names(
     names: &[String],
-    header: &vcf::Header,
+    header: &reed_io::header::VcfHeader,
     force: bool,
 ) -> Result<Vec<bool>, FilterError> {
-    let index: HashMap<&str, usize> = header
-        .sample_names()
+    // One snapshot of the names avoids re-materialising the list twice.
+    let sample_names = header.sample_names();
+    let index: HashMap<&str, usize> = sample_names
         .iter()
         .enumerate()
         .map(|(i, name)| (name.as_str(), i))
         .collect();
-    let mut keep = vec![false; header.sample_names().len()];
+    let mut keep = vec![false; sample_names.len()];
     for name in names {
         match index.get(name.as_str()) {
             Some(&i) => keep[i] = true,
@@ -1004,85 +998,54 @@ fn keep_list_from_names(
     Ok(keep)
 }
 
-/// Adds header definitions for recomputed tags the input lacks (§11.6:
-/// canonical Numbers — AC/HWE are `A`).
-fn ensure_info_defs(
-    mut header: vcf::Header,
-    recompute: &reed_filter::plan::RecomputeFlags,
-) -> vcf::Header {
-    use noodles::vcf::header::record::value::map::info::{Number, Type};
-    type InfoMap =
-        noodles::vcf::header::record::value::Map<noodles::vcf::header::record::value::map::Info>;
-    let add = |header: &mut vcf::Header, id: &str, number: Number, ty: Type, desc: &str| {
-        if !header.infos().iter().any(|(k, _)| k.as_str() == id) {
-            header
-                .infos_mut()
-                .insert(id.to_string(), InfoMap::new(number, ty, desc));
-        }
-    };
+/// The INFO definitions a recompute needs, as format-layer data (doc_v26
+/// V26-10: the header mutation itself lives in `reed-io`).
+///
+/// Canonical Numbers: AC and HWE are `A` (one value per ALT).
+fn recompute_definitions(recompute: &reed_filter::plan::RecomputeFlags) -> Vec<reed_io::header::InfoDefinition> {
+    use reed_io::header::{InfoDefinition, InfoNumber, InfoType};
+    let mut defs = Vec::new();
     if recompute.ac {
-        add(
-            &mut header,
-            "AC",
-            Number::A,
-            Type::Integer,
-            "Allele count in genotypes",
-        );
+        defs.push(InfoDefinition {
+            id: "AC",
+            number: InfoNumber::A,
+            ty: InfoType::Integer,
+            description: "Allele count in genotypes",
+        });
     }
     if recompute.an {
-        add(
-            &mut header,
-            "AN",
-            Number::Count(1),
-            Type::Integer,
-            "Total number of alleles in called genotypes",
-        );
+        defs.push(InfoDefinition {
+            id: "AN",
+            number: InfoNumber::Fixed(1),
+            ty: InfoType::Integer,
+            description: "Total number of alleles in called genotypes",
+        });
     }
     if recompute.ns {
-        add(
-            &mut header,
-            "NS",
-            Number::Count(1),
-            Type::Integer,
-            "Number of samples with data",
-        );
+        defs.push(InfoDefinition {
+            id: "NS",
+            number: InfoNumber::Fixed(1),
+            ty: InfoType::Integer,
+            description: "Number of samples with data",
+        });
     }
     if recompute.maf {
-        add(
-            &mut header,
-            "MAF",
-            Number::Count(1),
-            Type::Float,
-            "Frequency of the second most common allele",
-        );
+        defs.push(InfoDefinition {
+            id: "MAF",
+            number: InfoNumber::Fixed(1),
+            ty: InfoType::Float,
+            description: "Frequency of the second most common allele",
+        });
     }
     if recompute.hwe {
-        add(
-            &mut header,
-            "HWE",
-            Number::A,
-            Type::Float,
-            "HWE test (PMID:15789306); 1=good, 0=bad",
-        );
+        defs.push(InfoDefinition {
+            id: "HWE",
+            number: InfoNumber::A,
+            ty: InfoType::Float,
+            description: "HWE test (PMID:15789306); 1=good, 0=bad",
+        });
     }
-    header
-}
-
-/// Declares PASS when the input header does not (doc_v10 N7, D10-7).
-///
-/// htslib adds the definition on both read and write
-/// (`bcf_hdr_parse`/`bcf_hdr_init`; "The filter PASS must appear first in
-/// the dictionary", vcf.c:1485-1490/1724-1726). Without it a `FILTER=PASS`
-/// record fails the BCF encoder's dictionary lookup, and the written BCF
-/// header lacks the line htslib assumes at index 0.
-fn ensure_pass_filter(mut header: vcf::Header) -> vcf::Header {
-    use noodles::vcf::header::record::value::{Map, map::Filter};
-    if !header.filters().iter().any(|(id, _)| id.as_str() == "PASS") {
-        header
-            .filters_mut()
-            .insert(String::from("PASS"), Map::<Filter>::pass());
-    }
-    header
+    defs
 }
 
 /// The ordered output sink: [`OrderedOutput`] plus the funnel counters the

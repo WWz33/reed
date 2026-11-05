@@ -160,6 +160,9 @@ pub use reed_io::write::atomic as atomic_file;
 pub use reed_core::tag_table::{TagNumber, TagTable, TagType};
 /// Builds the tag table from an opened input's header.
 pub use reed_io::header::tag_table;
+/// The VCF header as an opaque value (doc_v26 V26-10): the operations a
+/// downstream user needs, without a third-party type in the surface.
+pub use reed_io::header::{self as header, HeaderFacts, VcfHeader};
 pub use reed_core::coord::{Interval0, Pos0};
 pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_engine::budget;
