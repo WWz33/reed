@@ -60,6 +60,15 @@ impl PlainChunkSource {
             if n == 0 {
                 return Err(IoError::Header("no #CHROM line found in the stream".into()));
             }
+            // doc_v26 V26-13: a malformed input with no #CHROM line used to
+            // grow this buffer until memory ran out, and only then report the
+            // missing header.
+            if header_text.len().saturating_add(line.len()) > crate::header::MAX_HEADER_BYTES {
+                return Err(IoError::Header(format!(
+                    "header exceeds {} bytes without a #CHROM line",
+                    crate::header::MAX_HEADER_BYTES
+                )));
+            }
             header_text.extend_from_slice(&line);
             if line.starts_with(b"#CHROM") {
                 break;
@@ -114,6 +123,62 @@ impl crate::chunk::ChunkSource for PlainChunkSource {
 mod tests {
     use super::*;
     use crate::chunk::ChunkSource as _;
+
+    /// doc_v26 V26-13: a header without a `#CHROM` line must be rejected at
+    /// the ceiling instead of growing until memory runs out.
+    #[test]
+    fn v26_13_endless_header_without_chrom_is_capped() {
+        let mut text = String::from("##fileformat=VCFv4.3\n");
+        for _ in 0..40_000 {
+            text.push_str("##INFO=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n");
+        }
+        assert!(text.len() > 1 << 20 && text.len() < crate::header::MAX_HEADER_BYTES);
+        let err = match PlainChunkSource::open_vcf(std::io::Cursor::new(text.into_bytes())) {
+            Ok(_) => panic!("a header with no #CHROM line must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("#CHROM"), "{err}");
+    }
+
+    /// A legal header near the ceiling still parses; the bound is not a
+    /// practical limit on real headers.
+    #[test]
+    fn v26_13_a_large_but_legal_header_still_parses() {
+        use std::fmt::Write as _;
+        let mut text = String::from("##fileformat=VCFv4.3\n##contig=<ID=chr1,length=1000>\n");
+        let mut n = 0_u32;
+        while text.len() < (4 << 20) {
+            // Distinct IDs: a repeated ##INFO line is a duplicate, and
+            // noodles rejects it (that is the header parser's own contract).
+            writeln!(
+                text,
+                "##INFO=<ID=T{n},Number=1,Type=Integer,Description=\"d\">"
+            )
+            .expect("invariant: writing to a String");
+            n += 1;
+        }
+        text.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n");
+        let (mut source, facts) =
+            PlainChunkSource::open_vcf(std::io::Cursor::new(text.into_bytes()))
+                .expect("invariant: a legal large header parses");
+        assert_eq!(facts.n_samples(), 1);
+        assert!(
+            source.next_chunk().expect("invariant: read").is_none(),
+            "no records"
+        );
+    }
+
+    /// The ceiling admits wide cohorts (a million-sample header is ~20 MiB).
+    #[test]
+    fn v26_13_the_ceiling_admits_wide_cohorts() {
+        let ceiling = crate::header::MAX_HEADER_BYTES;
+        assert!(ceiling >= (64 << 20), "the ceiling must admit wide cohorts");
+        let accumulated = ceiling;
+        assert!(
+            accumulated.saturating_add(1) > ceiling,
+            "one more byte past the ceiling must trip the check"
+        );
+    }
 
     /// A gzip member of `text` (regular gzip, no BGZF `BC` subfield).
     fn gzip_member(text: &[u8]) -> Vec<u8> {

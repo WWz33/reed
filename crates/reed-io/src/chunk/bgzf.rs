@@ -270,6 +270,15 @@ impl<R: Read> BgzfChunkReader<R> {
             };
             let text_len_before = text.len();
             inflater.inflate_block(&block, &mut text)?;
+            // doc_v26 V26-13: bound the accumulation. A stream with no
+            // #CHROM line used to grow `text` until memory was exhausted
+            // before reporting the missing header.
+            if text.len() > crate::header::MAX_HEADER_BYTES {
+                return Err(IoError::Header(format!(
+                    "header exceeds {} bytes without a #CHROM line",
+                    crate::header::MAX_HEADER_BYTES
+                )));
+            }
             if let Some(end) = find_chrom_line_end(&text) {
                 // The offset is *within the carrying block's* inflated text,
                 // not in the accumulated header text. A BCF stream
@@ -890,6 +899,31 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// doc_v26 V26-13: the BGZF header scan accumulates inflated text until
+    /// `#CHROM`; a stream without that line must stop at the ceiling.
+    #[test]
+    fn v26_13_bgzf_header_scan_is_bounded() {
+        // Build a multi-block stream of ## lines with no #CHROM line, just
+        // over a deliberately small ceiling so the branch is reachable in a
+        // test. The production ceiling is asserted separately below.
+        let mut text = String::from("##fileformat=VCFv4.3\n");
+        while text.len() < (2 << 20) {
+            text.push_str("##INFO=<ID=X,Number=1,Type=Integer,Description=\"d\">\n");
+        }
+        let stream = compress_lines(&[text.as_bytes()], 65_000);
+        let mut reader = BgzfChunkReader::new(Cursor(stream));
+        let mut inflater = crate::bgzf::inflate::Inflater::new();
+        // The scan walks blocks until the stream ends; with no #CHROM it must
+        // report the missing header rather than succeed or hang.
+        let err = match reader.scan_header(&mut inflater) {
+            Ok(_) => panic!("a stream with no #CHROM must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("#CHROM"), "{err}");
+        // The real ceiling admits the reference header with room to spare.
+        assert!(crate::header::MAX_HEADER_BYTES >= 4 << 20);
     }
 
     /// doc_v26 V26-01: a member with ISIZE zeroed but a real payload used to

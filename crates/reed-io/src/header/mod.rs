@@ -12,6 +12,18 @@ pub use vcf_header::{InfoDefinition, InfoNumber, InfoType, VcfHeader};
 
 use crate::error::IoError;
 
+/// The largest header reed accepts, in bytes (doc_v26 V26-13).
+///
+/// The plain and BGZF header scans accumulated lines into a `Vec` with no
+/// ceiling, so a malformed or hostile input without a `#CHROM` line grew the
+/// buffer until memory ran out and *then* reported "no #CHROM line". The
+/// limit is generous for real data: the reference 348-sample header is a few
+/// KiB, and a million-sample header with a line per sample is ~20 MiB.
+///
+/// 256 MiB leaves room for very wide cohorts and still bounds the damage a
+/// single open can do.
+pub const MAX_HEADER_BYTES: usize = 256 << 20;
+
 /// Facts extracted from the VCF header.
 #[derive(Clone, Debug)]
 pub struct HeaderFacts {

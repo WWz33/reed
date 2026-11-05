@@ -303,6 +303,32 @@ mod tests {
         assert_eq!(chain.last_publish_id.load(Ordering::Acquire), 1);
     }
 
+    /// doc_v26 V26-18: the chain's metadata is `O(total chunks)`. This pins
+    /// the per-chunk cost so the documented figure cannot drift silently: at
+    /// a 1 MiB chunk target a 1 TB BCF holds ~1M chunks and ~40 MiB of cells
+    /// plus ~0.1 MiB of waiter bits, which is the scaling the review judged
+    /// acceptable (a ring buffer would save it only for inputs far larger
+    /// than any supported run).
+    #[test]
+    fn v26_18_metadata_growth_is_a_fixed_per_chunk_cost() {
+        let slot = std::mem::size_of::<Option<Carried>>();
+        // A `Carried` is a Vec (24) plus two u64s; `Option` adds nothing
+        // because the Vec's null pointer is the niche.
+        assert_eq!(slot, std::mem::size_of::<Carried>());
+        assert!(slot <= 48, "a cell must stay a small fixed record, got {slot}");
+        let per_million_chunks = 1_000_000_usize * slot;
+        assert!(
+            per_million_chunks <= 64 << 20,
+            "1M chunks (1 TB at a 1 MiB target) must stay under 64 MiB, got {}",
+            per_million_chunks >> 20
+        );
+        // The waiter bitmap is one bit per chunk.
+        assert!(
+            (1_000_000_usize / 64 + 1) * 8 <= 128 << 10,
+            "the waiter bitmap is 8 bytes per 64 chunks"
+        );
+    }
+
     /// doc_v23 V23-16: a cell that is already published is served even when
     /// the last publish is older than the stall limit. The old order checked
     /// the watchdog first and failed a healthy run after a slow read.
