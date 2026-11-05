@@ -351,10 +351,38 @@ impl BytePermits {
     }
 }
 
-/// Physical memory in bytes (Linux `/proc/meminfo`), `None` if unknown.
+/// Physical memory in bytes, `None` if unknown (doc_v26 V26-09).
+///
+/// The default budget used to be half the *host's* `MemTotal`, so a container
+/// limited to 2 GiB on a 512 GiB host was allowed a 256 GiB budget and then
+/// killed by the OOM killer. The budget is now the smallest of:
+///
+/// * `/proc/meminfo`'s `MemTotal`,
+/// * the cgroup v2 `memory.max` limit,
+/// * the cgroup v1 `memory.limit_in_bytes` limit.
+///
+/// `max` (v2's "no limit") and v1's "unlimited" sentinel are ignored, a
+/// missing or unreadable file is ignored, and the host value is the fallback
+/// when no limit can be read. The root paths are injectable so tests can
+/// point at a fixture tree.
 #[must_use]
 fn physical_memory_bytes() -> Option<u64> {
-    let info = std::fs::read_to_string(Path::new("/proc/meminfo")).ok()?;
+    physical_memory_bytes_at(Path::new("/proc/meminfo"), Path::new("/sys/fs/cgroup"))
+}
+
+/// [`physical_memory_bytes`] over an explicit meminfo path and cgroup root.
+#[must_use]
+fn physical_memory_bytes_at(meminfo: &Path, cgroup_root: &Path) -> Option<u64> {
+    let mut smallest = meminfo_total(meminfo);
+    for limit in cgroup_limits(cgroup_root) {
+        smallest = Some(smallest.map_or(limit, |host| host.min(limit)));
+    }
+    smallest
+}
+
+/// `/proc/meminfo`'s `MemTotal` in bytes.
+fn meminfo_total(path: &Path) -> Option<u64> {
+    let info = std::fs::read_to_string(path).ok()?;
     for line in info.lines() {
         if let Some(rest) = line.strip_prefix("MemTotal:") {
             let kib: u64 = rest.trim().trim_end_matches(" kB").trim().parse().ok()?;
@@ -362,6 +390,49 @@ fn physical_memory_bytes() -> Option<u64> {
         }
     }
     None
+}
+
+/// Every readable cgroup memory limit (v2 and v1).
+///
+/// The files are the cgroup *root's* limit in a test fixture and the
+/// container's own limit in production; the caller reads exactly the two
+/// canonical paths so no `/proc/self/cgroup` parsing bug can produce a wrong
+/// answer. An unreadable or unlimited file yields nothing.
+fn cgroup_limits(root: &Path) -> Vec<u64> {
+    let mut limits = Vec::new();
+    // cgroup v2. `max` is the literal "no limit".
+    if let Ok(text) = std::fs::read_to_string(root.join("memory.max")) {
+        if let Some(bytes) = parse_cgroup_limit(&text) {
+            limits.push(bytes);
+        }
+    }
+    // cgroup v1. The sentinel is a huge value near u64::MAX/4096 rounded down;
+    // values at or above the documented sentinel mean "unlimited".
+    let v1 = root.join("memory").join("memory.limit_in_bytes");
+    if let Ok(text) = std::fs::read_to_string(&v1).or_else(|_| {
+        std::fs::read_to_string(root.join("memory.limit_in_bytes"))
+    }) {
+        if let Some(bytes) = parse_cgroup_limit(&text) {
+            limits.push(bytes);
+        }
+    }
+    limits
+}
+
+/// Parses a cgroup limit file; `None` for `max`, the v1 unlimited sentinel,
+/// zero and non-numeric text.
+fn parse_cgroup_limit(text: &str) -> Option<u64> {
+    let text = text.trim();
+    if text.is_empty() || text == "max" {
+        return None;
+    }
+    let bytes: u64 = text.parse().ok()?;
+    // cgroup v1's PAGE_COUNTER_MAX sentinel: 0x7FFFFFFFFFFFF000.
+    const V1_UNLIMITED: u64 = 0x7FFF_FFFF_FFFF_F000;
+    if bytes == 0 || bytes >= V1_UNLIMITED {
+        return None;
+    }
+    Some(bytes)
 }
 
 #[cfg(test)]
@@ -432,6 +503,71 @@ mod tests {
         assert_eq!(seen(&threads(56)), 54);
         assert_eq!(seen(&threads(1)), rayon::current_num_threads());
         assert_eq!(seen(&threads(2)), rayon::current_num_threads());
+    }
+
+    /// doc_v26 V26-09: the default budget is the smallest of the host's
+    /// MemTotal and the cgroup limits, so a limited container cannot be
+    /// handed a host-sized budget.
+    #[test]
+    fn the_default_budget_takes_the_smallest_visible_limit() {
+        let dir = std::env::temp_dir().join(format!("reed-cgroup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: fixture dir");
+        let meminfo = dir.join("meminfo");
+        std::fs::write(&meminfo, "MemTotal:       33554432 kB\nMemFree: 1 kB\n")
+            .expect("invariant: meminfo");
+
+        // No cgroup files at all: the host value is the answer.
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir),
+            Some(32 * 1024 * 1024 * 1024)
+        );
+
+        // cgroup v2 limit below the host: it wins.
+        std::fs::write(dir.join("memory.max"), "2147483648\n").expect("invariant: v2");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir),
+            Some(2 * 1024 * 1024 * 1024)
+        );
+
+        // `max` means unlimited, so the host value returns.
+        std::fs::write(dir.join("memory.max"), "max\n").expect("invariant: v2 unlimited");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir),
+            Some(32 * 1024 * 1024 * 1024)
+        );
+
+        // cgroup v1 (both spellings) is read too, and the smaller of the two
+        // cgroup limits wins.
+        std::fs::write(dir.join("memory.max"), "8589934592\n").expect("invariant: v2");
+        std::fs::create_dir_all(dir.join("memory")).expect("invariant: v1 dir");
+        std::fs::write(
+            dir.join("memory").join("memory.limit_in_bytes"),
+            "4294967296\n",
+        )
+        .expect("invariant: v1");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir),
+            Some(4 * 1024 * 1024 * 1024)
+        );
+
+        // v1's unlimited sentinel and zero are ignored.
+        std::fs::write(
+            dir.join("memory").join("memory.limit_in_bytes"),
+            "9223372036854771712\n",
+        )
+        .expect("invariant: v1 sentinel");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir),
+            Some(8 * 1024 * 1024 * 1024)
+        );
+        std::fs::write(dir.join("memory.max"), "0\n").expect("invariant: v2 zero");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir),
+            Some(32 * 1024 * 1024 * 1024)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

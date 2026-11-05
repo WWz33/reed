@@ -768,7 +768,7 @@ pub fn run_filter(
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
         let abort = reed_engine::abort::abort_for(&budget);
-        let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        let job = crate::bcf_input::InputJob::new(job, &opened, &abort, &budget);
         timing_chunks = drive_pass1(
             &mut opened,
             job,
@@ -830,10 +830,11 @@ pub fn run_filter(
                 job,
                 &opened,
                 &abort,
+                &budget,
                 FilterJob::run_bcf_records,
             )
         } else {
-            crate::bcf_input::InputJob::new(job, &opened, &abort)
+            crate::bcf_input::InputJob::new(job, &opened, &abort, &budget)
         };
         timing_chunks = drive_pass1(
             &mut opened,

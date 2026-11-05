@@ -31,7 +31,28 @@ use crate::reorder::ReorderBuffer;
 /// The largest record the engine reassembles across chunk seams. Shared with
 /// the BCF frame chain, which enforces the same ceiling on carried prefixes
 /// (`docs/rounds/v6/03-architecture.md` A6-2).
+///
+/// This is the *absolute* ceiling. Each run's effective ceiling is the
+/// smaller of this and its memory budget, so `--memory 64` cannot accumulate
+/// a 1 GiB seam fragment that it alone could never admit as a chunk
+/// (doc_v26 V26-07).
 pub const MAX_RECORD_BYTES: usize = 1 << 30;
+
+/// The effective per-record ceiling for one run: [`MAX_RECORD_BYTES`], or the
+/// memory budget when that is smaller (doc_v26 V26-07).
+///
+/// A budget below a single byte still allows the smallest progress unit, so
+/// the function never returns zero.
+#[must_use]
+pub fn record_ceiling(budget: &crate::budget::ThreadBudget) -> usize {
+    if budget.mem.bytes < MAX_RECORD_BYTES as u64 {
+        // A budget of zero is refused at parse time; the max(1) keeps the
+        // function total for library-built budgets.
+        (budget.mem.bytes as usize).max(1)
+    } else {
+        MAX_RECORD_BYTES
+    }
+}
 
 /// Message for an input whose last record has no terminating newline. Shared
 /// with the BCF path (`reed/src/bcf_input.rs`) so every input format reports
@@ -134,16 +155,38 @@ pub trait OrderedSink<P>: Send {
 /// Reassembles the record that spans a chunk seam from its fragments, with
 /// a hard ceiling: a pathological newline-free input must fail the run, not
 /// grow the reducer's buffer to the file size (A6-2).
-#[derive(Default)]
 pub struct NewlineStitcher {
     fragment: Vec<u8>,
+    /// This run's ceiling (≤ [`MAX_RECORD_BYTES`], doc_v26 V26-07).
+    ceiling: usize,
+}
+
+impl Default for NewlineStitcher {
+    fn default() -> Self {
+        Self {
+            fragment: Vec::new(),
+            ceiling: MAX_RECORD_BYTES,
+        }
+    }
 }
 
 impl NewlineStitcher {
+    /// A stitcher bounded by `ceiling` bytes (the run's effective ceiling;
+    /// see [`record_ceiling`]).
+    #[must_use]
+    pub fn with_ceiling(ceiling: usize) -> Self {
+        Self {
+            fragment: Vec::new(),
+            ceiling: ceiling.min(MAX_RECORD_BYTES).max(1),
+        }
+    }
+
     fn grow(&mut self, bytes: &[u8]) -> Result<(), EngineError> {
-        if self.fragment.len() + bytes.len() > MAX_RECORD_BYTES {
+        if self.fragment.len().saturating_add(bytes.len()) > self.ceiling {
             return Err(EngineError::job(format!(
-                "record exceeds {MAX_RECORD_BYTES} bytes across chunk seams"
+                "record exceeds {} bytes across chunk seams (the run's ceiling: the smaller of \
+                 the {MAX_RECORD_BYTES}-byte hard limit and the --memory budget)",
+                self.ceiling
             )));
         }
         self.fragment.extend_from_slice(bytes);
@@ -557,7 +600,7 @@ where
         // ticket wait — without it the scope join deadlocks instead of
         // failing the run (doc_v9 D9-1/D9-1c).
         let mut ring: ReorderBuffer<WorkerMsg<J::Partial>> = ReorderBuffer::new(window);
-        let mut stitcher = NewlineStitcher::default();
+        let mut stitcher = NewlineStitcher::with_ceiling(record_ceiling(budget));
         let mut seam_scratch = J::Scratch::default();
         let mut delivered: u64 = 0;
         let mut sink = sink;
@@ -705,7 +748,7 @@ where
     let mut inflate_scratch = Vec::new();
     let mut scratch = J::Scratch::default();
     let mut seam_scratch = J::Scratch::default();
-    let mut stitcher = NewlineStitcher::default();
+    let mut stitcher = NewlineStitcher::with_ceiling(record_ceiling(budget));
     let mut sink = sink;
     let mut reader_time = Duration::ZERO;
     let mut inflate_time = Duration::ZERO;
@@ -868,14 +911,37 @@ mod tests {
 
     #[test]
     fn stitcher_rejects_a_record_past_the_ceiling() {
-        let mut stitcher = NewlineStitcher {
-            fragment: vec![0; MAX_RECORD_BYTES],
-        };
+        let mut stitcher = NewlineStitcher::with_ceiling(MAX_RECORD_BYTES);
+        stitcher.fragment = vec![0; MAX_RECORD_BYTES];
         let err = stitcher
             .push_head(Some(b"x"))
             .expect_err("a fragment past the ceiling must fail");
         assert!(matches!(err, EngineError::Job(_)), "got {err:?}");
         assert!(err.to_string().contains("across chunk seams"), "{err}");
+    }
+
+    /// doc_v26 V26-07: the ceiling is the smaller of the hard limit and the
+    /// run's memory budget, so a small `--memory` cannot accumulate a seam
+    /// fragment it could never admit as a chunk.
+    #[test]
+    fn stitcher_ceiling_follows_the_memory_budget() {
+        use crate::budget::MemBudget;
+        let budget = |bytes: u64| crate::budget::ThreadBudget {
+            threads: 4,
+            mem: MemBudget::from_bytes(bytes),
+        };
+        assert_eq!(record_ceiling(&budget(u64::MAX)), MAX_RECORD_BYTES);
+        assert_eq!(record_ceiling(&budget(64 << 20)), 64 << 20);
+
+        let mut stitcher = NewlineStitcher::with_ceiling(record_ceiling(&budget(8)));
+        stitcher.push_tail(Some(b"1234")).expect("invariant: under budget");
+        let err = stitcher
+            .push_tail(Some(b"56789"))
+            .expect_err("a fragment past the budget must fail");
+        assert!(err.to_string().contains("--memory budget"), "{err}");
+        // The hard ceiling still applies when the budget is larger.
+        let stitcher = NewlineStitcher::with_ceiling(record_ceiling(&budget(u64::MAX)));
+        assert_eq!(stitcher.ceiling, MAX_RECORD_BYTES);
     }
 
     /// S2 gate: the guard is the only release path — dropping it returns the

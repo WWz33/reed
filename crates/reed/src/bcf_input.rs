@@ -25,8 +25,6 @@ use crate::input::OpenedInput;
 
 /// The largest record the chain will carry; a runaway length prefix must not
 /// allocate. Shared with the engine's seam stitcher (A6-2).
-const MAX_RECORD_BYTES: usize = reed_engine::pipeline::MAX_RECORD_BYTES;
-
 /// The BCF side of the wrapper: the frame chain plus the tag dictionaries.
 struct BcfState {
     chain: Arc<FrameChain>,
@@ -47,6 +45,11 @@ pub type BcfRecordFn<J> = fn(
 /// Wraps a text job so it also runs on BCF input.
 pub struct InputJob<J: ChunkJob> {
     inner: J,
+    /// The run's effective record ceiling: the smaller of the engine's hard
+    /// limit and `--memory` (doc_v26 V26-07). Carried bytes count against it,
+    /// so a small budget cannot accumulate a prefix the pipeline itself could
+    /// never admit.
+    record_ceiling: usize,
     bcf: Option<BcfState>,
     /// When set and the input is BCF, framed records go here instead of
     /// being rendered to text.
@@ -78,8 +81,17 @@ impl<J: ChunkJob> InputJob<J> {
 
     /// Wraps `inner` for the input `opened` opened; BCF inputs get a chain
     /// cell 0 (chunk 0 never waits) bound to the run's abort signal.
+    ///
+    /// `budget` sets the carried-record ceiling together with the engine's
+    /// hard limit (`reed_engine::pipeline::record_ceiling`).
     #[must_use]
-    pub fn new(inner: J, opened: &OpenedInput, abort: &Abort) -> Self {
+    pub fn new(
+        inner: J,
+        opened: &OpenedInput,
+        abort: &Abort,
+        budget: &reed_engine::budget::ThreadBudget,
+    ) -> Self {
+        let record_ceiling = reed_engine::pipeline::record_ceiling(budget);
         let bcf = opened.bcf.as_ref().map(|dict| {
             let chain = Arc::new(FrameChain::new(abort.signal.clone()));
             chain.publish(0, Carried::default());
@@ -90,6 +102,7 @@ impl<J: ChunkJob> InputJob<J> {
         });
         Self {
             inner,
+            record_ceiling,
             bcf,
             native: None,
         }
@@ -103,9 +116,10 @@ impl<J: ChunkJob> InputJob<J> {
         inner: J,
         opened: &OpenedInput,
         abort: &Abort,
+        budget: &reed_engine::budget::ThreadBudget,
         records: BcfRecordFn<J>,
     ) -> Self {
-        let mut job = Self::new(inner, opened, abort);
+        let mut job = Self::new(inner, opened, abort, budget);
         job.native = Some(records);
         job
     }
@@ -171,21 +185,30 @@ impl<J: ChunkJob> InputJob<J> {
             body_start = skip;
             body_end = walk_records(text, skip);
         } else {
+            // doc_v26 V26-07: the old code appended a whole chunk's text
+            // and *then* compared a later chunk's declared length against the
+            // ceiling, so both growth branches below could pass 1 GiB (and,
+            // with a small --memory, pass the budget by orders of magnitude).
+            // The ceiling therefore applies before every append.
             let Some(total) = declared_len_across(&carried.head, text) else {
                 // Even the length prefix is still incomplete.
+                self.check_carried(crossing_len, text.len(), None)?;
                 carried.head.extend_from_slice(text);
                 carried.prefix_len += text.len() as u64;
                 guard.publish(carried.clone());
                 return Ok(None);
             };
-            if total > MAX_RECORD_BYTES {
+            if total > self.record_ceiling {
                 return Err(EngineError::job(format!(
-                    "BCF record of {total} bytes exceeds the {MAX_RECORD_BYTES}-byte ceiling"
+                    "BCF record of {total} bytes exceeds the {}-byte ceiling (the smaller of \
+                     the hard limit and the --memory budget)",
+                    self.record_ceiling
                 )));
             }
             let need = total.saturating_sub(crossing_len);
             if need > text.len() {
                 // The record spans this whole chunk.
+                self.check_carried(crossing_len, text.len(), Some(total))?;
                 carried.head.extend_from_slice(text);
                 carried.prefix_len += text.len() as u64;
                 guard.publish(carried.clone());
@@ -202,6 +225,33 @@ impl<J: ChunkJob> InputJob<J> {
             voff: map.voff(body_end),
         });
         Ok(Some((body_start, body_end)))
+    }
+
+    /// Rejects a carried prefix that would pass the run's ceiling, before the
+    /// caller appends `added` bytes to it (doc_v26 V26-07).
+    ///
+    /// `declared` is the record's total length when the prefix already holds
+    /// a complete length field; otherwise the accumulated length is the only
+    /// bound available.
+    fn check_carried(
+        &self,
+        have: usize,
+        added: usize,
+        declared: Option<usize>,
+    ) -> Result<(), EngineError> {
+        let next = have.saturating_add(added);
+        let limit = self.record_ceiling;
+        let over = match declared {
+            Some(total) => total > limit,
+            None => next > limit,
+        };
+        if over {
+            return Err(EngineError::job(format!(
+                "BCF carried record grew to {next} bytes, past the {limit}-byte ceiling (the \
+                 smaller of the hard limit and the --memory budget)"
+            )));
+        }
+        Ok(())
     }
 }
 

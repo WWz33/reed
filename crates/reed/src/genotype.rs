@@ -376,7 +376,7 @@ pub(crate) fn collect_via_engine(
     // renders BCF records to text; a bare `PcaJob` has `RecordFraming::Newline`
     // and splits raw BCF bytes on '\n' (documented-input command failure). Wrap
     // unconditionally — on text input `InputJob` is a transparent passthrough.
-    let wrapped = crate::bcf_input::InputJob::new(job, opened, abort);
+    let wrapped = crate::bcf_input::InputJob::new(job, opened, abort, budget);
     let report = reed_engine::pipeline::run(opened.source_mut(), &wrapped, stash, budget, abort)
         .map_err(crate::Error::from)?;
     wrapped

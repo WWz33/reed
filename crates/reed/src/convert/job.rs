@@ -1721,7 +1721,7 @@ pub fn run_convert_opened(
     let report = {
         // The text path (the InputJob wrapper renders BCF records to text):
         // the native record path is a statistics-only optimization.
-        let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+        let job = crate::bcf_input::InputJob::new(job, &opened, &abort, budget);
         let mut source = opened.source;
         let report = run(source.as_mut(), &job, sink, budget, &abort)?;
         job.finish(report.n_chunks, true)?;

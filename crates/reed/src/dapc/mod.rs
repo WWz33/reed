@@ -182,7 +182,7 @@ pub fn run_dapc_opened(
         None => opened.facts().sample_names.len(),
     };
     let matrix_use = crate::pca::matrix_use(
-        crate::pca::chosen_solver(solver, n_kept, budget),
+        crate::pca::chosen_solver(solver, n_kept, None, budget),
         missing,
     );
     if request.populations.is_empty() {

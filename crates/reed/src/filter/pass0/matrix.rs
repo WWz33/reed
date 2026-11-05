@@ -1083,10 +1083,11 @@ pub(crate) fn run_matrix_pass(
             inner,
             &opened,
             &abort,
+            &budget,
             MatrixJob::run_bcf_records,
         )
     } else {
-        crate::bcf_input::InputJob::new(inner, &opened, &abort)
+        crate::bcf_input::InputJob::new(inner, &opened, &abort, &budget)
     };
     let crate::input::OpenedInput { mut source, .. } = opened;
     let out: Arc<Mutex<Option<MatrixOutput>>> = Arc::new(Mutex::new(None));

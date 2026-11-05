@@ -1434,7 +1434,7 @@ pub fn run_stats_opened(
         writeln!(w, "#CHROM\tID\tPOP\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
     }
     let abort = reed_engine::abort::abort_for(budget);
-    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+    let job = crate::bcf_input::InputJob::new(job, &opened, &abort, budget);
     let crate::input::OpenedInput {
         mut source, facts, ..
     } = opened;

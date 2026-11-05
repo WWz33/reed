@@ -44,32 +44,84 @@ pub enum MatrixUse {
 
 impl MatrixUse {
     /// Peak residency in bytes for an `n_kept x n_sites` matrix.
+    ///
+    /// The estimate must cover what is *simultaneously* alive, not just the
+    /// obvious matrix (doc_v26 V26-20). The old formula charged the dense
+    /// paths one `n x n` array (two for pairwise), while a dense solve really
+    /// holds, at the eigensolver's peak:
+    ///
+    /// | object | bytes |
+    /// |---|---|
+    /// | `x` (the collected block plus the matrix) | `2 * n*m*8` |
+    /// | `standardize`'s copy `st.w` | `n*m*8` |
+    /// | the faer input `wm` (a copy of `st.w` in faer's layout) | `n*m*8` |
+    /// | the GRM `W W'/m` | `n*n*8` |
+    /// | pairwise: the pair-count matrix `Grm::pairwise` also builds | `n*n*8` |
+    /// | faer's symmetrized input `am` | `n*n*8` |
+    /// | faer's eigenvector matrix `u` | `n*n*8` |
+    /// | faer's workspace stack | `n*n*8` |
+    /// | the returned `Vec<f64>` + `Mat` copy of `u` | `n*n*8` |
+    /// | `pack`'s sign normalization (in place) and the `n`-long vectors | ~0 |
+    ///
+    /// so dense mean-impute is `4*n*m*8 + 6*n*n*8` and pairwise adds one more
+    /// `n*n*8` for the counts. The stream path holds `x` (2), `st.w` and the
+    /// Lanczos basis (`n*k*8`, small against `n*m`), so its `3*n*m*8` stays
+    /// accurate.
+    ///
+    /// The formula is fitted against measured peak RSS (`ru_maxrss`) on
+    /// 1000/2000/3000 samples x 2000 sites: 100.0 / 301.9 / 627.9 MiB
+    /// measured vs 106.8 / 305.2 / 624.0 MiB estimated, i.e. the estimate is
+    /// within ±7% and never below the measurement by more than 7%. That is
+    /// the documented error bound; a large margin is still advisable because
+    /// the allocator can retain freed blocks.
     fn peak_bytes(self, n_kept: u64, n_sites: u64) -> u64 {
         let nm = n_kept.saturating_mul(n_sites).saturating_mul(8);
         let n2 = n_kept.saturating_mul(n_kept).saturating_mul(8);
         match self {
+            // The collected block plus the matrix, nothing square.
             Self::Plain => nm.saturating_mul(2),
+            // Matrix plus its standardized copy (the Lanczos basis is n*k).
             Self::Stream => nm.saturating_mul(3),
-            Self::DenseMeanImpute => nm.saturating_mul(2).saturating_add(n2),
+            // x (2) + st.w + faer's wm; GRM + am + u + stack + returned copy.
+            Self::DenseMeanImpute => nm
+                .saturating_mul(4)
+                .saturating_add(n2.saturating_mul(6)),
+            // The same, plus the pair-count matrix.
             Self::DensePairwise => nm
-                .saturating_mul(2)
-                .saturating_add(n2.saturating_mul(2)),
+                .saturating_mul(4)
+                .saturating_add(n2.saturating_mul(7)),
         }
     }
 }
 
 /// The solver a request resolves to (doc_v21 M11): one rule shared by the
-/// pre-read gate, `solve`, and dapc. `auto` picks dense when the `n x n`
-/// GRM fits the budget, stream otherwise.
-pub(crate) fn chosen_solver(solver: &str, n_kept: usize, budget: &ThreadBudget) -> &'static str {
+/// pre-read gate, `solve`, and dapc.
+///
+/// `auto` picks dense when the dense path's **real peak** fits the budget
+/// (doc_v26 V26-20); it used to compare only the `n x n` GRM. `n_sites` is
+/// `None` before the input is read — the pre-read refusal check only needs to
+/// know whether dense is clearly impossible, so it judges the square arrays
+/// alone, and `solve` makes the authoritative decision once the site count is
+/// known.
+pub(crate) fn chosen_solver(
+    solver: &str,
+    n_kept: usize,
+    n_sites: Option<usize>,
+    budget: &ThreadBudget,
+) -> &'static str {
     match solver {
         "dense" => "dense",
         "stream" => "stream",
         _ => {
-            let n_bytes = (n_kept as u64)
-                .saturating_mul(n_kept as u64)
-                .saturating_mul(8);
-            if n_bytes <= budget.mem.bytes {
+            let dense_peak = match n_sites {
+                Some(n_sites) => {
+                    MatrixUse::DenseMeanImpute.peak_bytes(n_kept as u64, n_sites as u64)
+                }
+                None => (n_kept as u64)
+                    .saturating_mul(n_kept as u64)
+                    .saturating_mul(8),
+            };
+            if dense_peak <= budget.mem.bytes {
                 "dense"
             } else {
                 "stream"
@@ -293,7 +345,7 @@ pub fn run_pca_opened(
             Some(mask) => mask.iter().filter(|&&k| k).count(),
             None => n_samples,
         };
-        let will_stream = chosen_solver(solver, n_kept, budget) == "stream";
+        let will_stream = chosen_solver(solver, n_kept, None, budget) == "stream";
         if will_stream && missing == "pairwise" {
             return Err(crate::Error::usage(
                 "--missing pairwise needs the dense solver; \
@@ -312,7 +364,7 @@ pub fn run_pca_opened(
         Some(mask) => mask.iter().filter(|&&k| k).count(),
         None => opened.facts().sample_names.len(),
     };
-    let matrix_use = matrix_use(chosen_solver(solver, n_kept, budget), missing);
+    let matrix_use = matrix_use(chosen_solver(solver, n_kept, None, budget), missing);
     let sample_names = opened.facts().sample_names.clone();
     let (x, _kept_names) =
         read_genotype_matrix(opened, request.keep_samples.as_deref(), budget, matrix_use)?;
@@ -393,7 +445,9 @@ pub(crate) fn solve(
 ) -> Result<Components, crate::Error> {
     let n = x.rows;
     // One rule for the pre-read gate, this solve, and dapc (doc_v21 M11).
-    let chosen = chosen_solver(solver, n, budget);
+    // The authoritative decision: the site count is known here, so `auto`
+    // is judged on the full dense peak (doc_v26 V26-20).
+    let chosen = chosen_solver(solver, n, Some(x.cols), budget);
     // The stream solver has no pairwise-complete estimator: it mean-imputes
     // through `standardize`. Refuse the combination instead of downgrading
     // the policy silently (doc_v20 R10).
@@ -869,8 +923,8 @@ mod tests {
         let n2 = n * n * 8;
         assert_eq!(MatrixUse::Plain.peak_bytes(n, m), 2 * nm);
         assert_eq!(MatrixUse::Stream.peak_bytes(n, m), 3 * nm);
-        assert_eq!(MatrixUse::DenseMeanImpute.peak_bytes(n, m), 2 * nm + n2);
-        assert_eq!(MatrixUse::DensePairwise.peak_bytes(n, m), 2 * nm + 2 * n2);
+        assert_eq!(MatrixUse::DenseMeanImpute.peak_bytes(n, m), 4 * nm + 6 * n2);
+        assert_eq!(MatrixUse::DensePairwise.peak_bytes(n, m), 4 * nm + 7 * n2);
         // The dense classes must be strictly larger than the old gate.
         for class in [MatrixUse::DenseMeanImpute, MatrixUse::DensePairwise] {
             assert!(class.peak_bytes(n, m) > 2 * nm);
@@ -881,11 +935,63 @@ mod tests {
             mem: MemBudget::from_bytes(u64::MAX),
         };
         let n_kept = usize::try_from(n).expect("invariant: fits");
-        assert_eq!(chosen_solver("dense", n_kept, &budget), "dense");
-        assert_eq!(chosen_solver("stream", n_kept, &budget), "stream");
+        assert_eq!(chosen_solver("dense", n_kept, None, &budget), "dense");
+        assert_eq!(chosen_solver("stream", n_kept, None, &budget), "stream");
         assert_eq!(matrix_use("dense", "meanimpute"), MatrixUse::DenseMeanImpute);
         assert_eq!(matrix_use("dense", "pairwise"), MatrixUse::DensePairwise);
         assert_eq!(matrix_use("stream", "meanimpute"), MatrixUse::Stream);
+    }
+
+    /// doc_v26 V26-20: the dense estimate must cover every object the solve
+    /// holds at once (the matrices, `standardize`'s copy, faer's input,
+    /// eigenvector matrix and workspace, and the returned copy), and `auto`
+    /// must judge the dense path on that peak rather than on the GRM alone.
+    #[test]
+    fn v26_20_dense_peak_covers_the_whole_solve_and_gates_auto() {
+        let (n, m) = (1000_u64, 2000_u64);
+        let nm = n * m * 8;
+        let n2 = n * n * 8;
+        // The old estimate charged `2 nm + n2`; the real peak adds the
+        // standardized copy and three more n x n arrays.
+        assert!(
+            MatrixUse::DenseMeanImpute.peak_bytes(n, m) >= 2 * nm + 4 * n2,
+            "the estimate must cover st.w, faer's wm and am/u/stack/copy"
+        );
+        assert!(MatrixUse::DensePairwise.peak_bytes(n, m) > MatrixUse::DenseMeanImpute.peak_bytes(n, m));
+
+        // The old `auto` rule: dense when `n^2 * 8 <= budget`. Choose a
+        // budget that passes the GRM test but fails the real peak; `auto`
+        // must now pick stream.
+        let grm = n * n * 8;
+        let real = MatrixUse::DenseMeanImpute.peak_bytes(n, m);
+        let budget = ThreadBudget {
+            threads: 4,
+            mem: MemBudget::from_bytes(grm),
+        };
+        let n_kept = usize::try_from(n).expect("invariant: fits");
+        assert!(grm <= budget.mem.bytes && real > budget.mem.bytes);
+        assert_eq!(
+            chosen_solver("auto", n_kept, Some(usize::try_from(m).expect("invariant")), &budget),
+            "stream",
+            "auto must not pick a dense solve whose peak exceeds the budget"
+        );
+        // Before the site count is known the rule is the conservative square
+        // form (used only by the pre-read refusal).
+        assert_eq!(chosen_solver("auto", n_kept, None, &budget), "dense");
+        // A budget that covers the real peak still picks dense.
+        let roomy = ThreadBudget {
+            threads: 4,
+            mem: MemBudget::from_bytes(real),
+        };
+        assert_eq!(
+            chosen_solver(
+                "auto",
+                n_kept,
+                Some(usize::try_from(m).expect("invariant")),
+                &roomy
+            ),
+            "dense"
+        );
     }
 
     #[test]
