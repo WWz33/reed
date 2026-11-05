@@ -917,13 +917,12 @@ mod tests {
         let mut inflater = crate::bgzf::inflate::Inflater::new();
         // The scan walks blocks until the stream ends; with no #CHROM it must
         // report the missing header rather than succeed or hang.
-        let err = match reader.scan_header(&mut inflater) {
-            Ok(_) => panic!("a stream with no #CHROM must fail"),
-            Err(err) => err,
+        let Err(err) = reader.scan_header(&mut inflater) else {
+            panic!("a stream with no #CHROM must fail");
         };
         assert!(err.to_string().contains("#CHROM"), "{err}");
         // The real ceiling admits the reference header with room to spare.
-        assert!(crate::header::MAX_HEADER_BYTES >= 4 << 20);
+        const { assert!(crate::header::MAX_HEADER_BYTES >= 4 << 20) };
     }
 
     /// doc_v26 V26-01: a member with ISIZE zeroed but a real payload used to

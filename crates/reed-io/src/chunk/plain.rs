@@ -133,9 +133,8 @@ mod tests {
             text.push_str("##INFO=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n");
         }
         assert!(text.len() > 1 << 20 && text.len() < crate::header::MAX_HEADER_BYTES);
-        let err = match PlainChunkSource::open_vcf(std::io::Cursor::new(text.into_bytes())) {
-            Ok(_) => panic!("a header with no #CHROM line must fail"),
-            Err(err) => err,
+        let Err(err) = PlainChunkSource::open_vcf(std::io::Cursor::new(text.into_bytes())) else {
+            panic!("a header with no #CHROM line must fail");
         };
         assert!(err.to_string().contains("#CHROM"), "{err}");
     }

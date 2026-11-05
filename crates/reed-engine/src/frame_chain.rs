@@ -303,6 +303,11 @@ mod tests {
         assert_eq!(chain.last_publish_id.load(Ordering::Acquire), 1);
     }
 
+    /// The per-cell size, for the doc_v26 V26-18 measurement.
+    const fn cell_size() -> usize {
+        std::mem::size_of::<Option<Carried>>()
+    }
+
     /// doc_v26 V26-18: the chain's metadata is `O(total chunks)`. This pins
     /// the per-chunk cost so the documented figure cannot drift silently: at
     /// a 1 MiB chunk target a 1 TB BCF holds ~1M chunks and ~40 MiB of cells
@@ -311,21 +316,30 @@ mod tests {
     /// than any supported run).
     #[test]
     fn v26_18_metadata_growth_is_a_fixed_per_chunk_cost() {
-        let slot = std::mem::size_of::<Option<Carried>>();
+        // `cell_size` is a const so the ceiling is checked at compile time.
+        const fn cells_threshold() -> usize {
+            64 << 20
+        }
+        let slot = cell_size();
         // A `Carried` is a Vec (24) plus two u64s; `Option` adds nothing
         // because the Vec's null pointer is the niche.
         assert_eq!(slot, std::mem::size_of::<Carried>());
-        assert!(slot <= 48, "a cell must stay a small fixed record, got {slot}");
         let per_million_chunks = 1_000_000_usize * slot;
         assert!(
-            per_million_chunks <= 64 << 20,
+            per_million_chunks <= cells_threshold(),
             "1M chunks (1 TB at a 1 MiB target) must stay under 64 MiB, got {}",
             per_million_chunks >> 20
         );
-        // The waiter bitmap is one bit per chunk.
+        // The waiter bitmap is one bit per chunk: 8 bytes per 64 chunks, so
+        // the same 1M chunks cost ~125 KiB.
+        let bitmap = (1_000_000_usize / 64 + 1) * std::mem::size_of::<u64>();
+        const _: () = assert!(
+            core::mem::size_of::<Option<Carried>>() <= 48,
+            "a cell must stay a small fixed record"
+        );
         assert!(
-            (1_000_000_usize / 64 + 1) * 8 <= 128 << 10,
-            "the waiter bitmap is 8 bytes per 64 chunks"
+            bitmap < (cells_threshold()),
+            "the waiter bitmap must stay far below the cell array, got {bitmap} vs {per_million_chunks}"
         );
     }
 
