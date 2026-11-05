@@ -38,6 +38,10 @@ pub struct StreamConfig {
     pub max_cycles: usize,
     /// Seed for the starting block (deterministic by default).
     pub seed: u64,
+    /// Parallelism bound for the two inner GEMMs (doc_v26 V26-21). Serial by
+    /// default so the library never silently adopts the ambient rayon pool;
+    /// `reed pca` sets it from `--threads`.
+    pub parallel: crate::backend::Parallel,
 }
 
 /// Backwards-compatible alias: the previous name of this configuration.
@@ -53,6 +57,7 @@ impl Default for StreamConfig {
             tol: 1e-10,
             max_cycles: 100,
             seed: 0x9E3779B97F4A7C15,
+            parallel: crate::backend::Parallel::Serial,
         }
     }
 }
@@ -120,18 +125,21 @@ struct Operator<'a> {
     w: &'a Mat,
     #[cfg(feature = "faer-backend")]
     wm: faer::Mat<f64>,
+    /// Parallelism bound for the inner GEMMs (doc_v26 V26-21).
+    parallel: crate::backend::Parallel,
 }
 
 impl<'a> Operator<'a> {
-    fn new(w: &'a Mat) -> Self {
+    fn new(w: &'a Mat, parallel: crate::backend::Parallel) -> Self {
         #[cfg(feature = "faer-backend")]
         {
             let (n, m) = (w.rows, w.cols);
             let wm = faer::Mat::<f64>::from_fn(n, m, |i, j| w.get(i, j));
-            return Self { w, wm };
+            return Self { w, wm, parallel };
         }
         #[cfg(not(feature = "faer-backend"))]
         {
+            let _ = parallel;
             Self { w }
         }
     }
@@ -151,9 +159,14 @@ fn apply_a_block(op: &Operator, q: &Mat, c0: usize, b: usize, out: &mut Mat) {
     #[cfg(feature = "faer-backend")]
     {
         use faer::Mat as FMat;
+        use faer::linalg::matmul::matmul;
         let qm = FMat::<f64>::from_fn(n, b, |i, j| q.get(i, c0 + j));
-        let t = op.wm.transpose() * &qm; // m x b
-        let y = &op.wm * &t; // n x b
+        // doc_v26 V26-21: explicit parallelism instead of the `*` operator,
+        // whose impl reads faer's global setting (the ambient rayon pool).
+        let mut t = FMat::<f64>::zeros(m, b);
+        matmul(t.as_mut(), op.wm.transpose(), qm.as_ref(), None, 1.0, op.parallel.faer());
+        let mut y = FMat::<f64>::zeros(n, b);
+        matmul(y.as_mut(), op.wm.as_ref(), t.as_ref(), None, 1.0, op.parallel.faer());
         let scale = 1.0 / m as f64;
         for j in 0..b {
             for i in 0..n {
@@ -285,7 +298,7 @@ fn seed_block(n: usize, b: usize, seed: u64) -> Mat {
 /// re-sampled from scratch.
 pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
     let n = w.rows;
-    let op = Operator::new(w);
+    let op = Operator::new(w, cfg.parallel);
     let Resolved { k, block, k_keep, krylov_dim } = cfg.resolved(n);
     let max_blocks = (krylov_dim / block).max(2);
     // Number of blocks per cycle; at least 2 so the recurrence can advance.
@@ -428,7 +441,7 @@ pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
             }
         }
 
-        let te = sym_eig(&t);
+        let te = sym_eig(&t, crate::backend::Parallel::Serial);
         let (vals, tvecs) = te.top_k(k.min(used));
 
         let mut v = Mat::zeros(n, vals.len());

@@ -514,7 +514,7 @@ pub fn try_lle_from_sq_distances(
             m.set(j, i, s);
         }
     }
-    let e = sym_eig(&m);
+    let e = sym_eig(&m, crate::backend::Parallel::Serial);
     let mut coords = Mat::zeros(n, n_components);
     for c in 0..n_components {
         let idx = 1 + c;

@@ -63,7 +63,7 @@ pub fn grm_kernel_pca(grm: &Grm, k: usize) -> Embedding {
     // the same centring + eigendecomposition path.
     let mut s = grm_similarity(grm);
     crate::graph::centre_kernel(&mut s);
-    let e = crate::backend::sym_eig(&s);
+    let e = crate::backend::sym_eig(&s, crate::backend::Parallel::Serial);
     let (vals, vecs) = e.top_k(k);
     let n = s.rows;
     let mut coords = Mat::zeros(n, k);
@@ -281,7 +281,7 @@ pub fn grm_kernel(grm: &Grm, k: usize, kind: Kernel) -> Embedding {
                 }
             }
             crate::graph::centre_kernel(&mut kk);
-            let e = crate::backend::sym_eig(&kk);
+            let e = crate::backend::sym_eig(&kk, crate::backend::Parallel::Serial);
             let (vals, vecs) = e.top_k(k);
             let mut coords = Mat::zeros(n, k);
             for c in 0..k {

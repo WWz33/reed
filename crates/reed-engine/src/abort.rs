@@ -93,7 +93,10 @@ impl AbortSignal {
 /// the capacity follows the budget, not `available_parallelism`.
 #[must_use]
 pub fn abort_channel_for(threads: usize) -> (AbortHandle, AbortSignal) {
-    let (tx, rx) = crossbeam_channel::bounded::<()>(threads + 4);
+    // doc_v26 V26-03: saturating, so a budget built directly in library code
+    // cannot wrap this into a one-token channel (which would silently lose
+    // abort wake-ups). The CLI caps `--threads` well below this anyway.
+    let (tx, rx) = crossbeam_channel::bounded::<()>(threads.saturating_add(4));
     let flag = Arc::new(AtomicBool::new(false));
     (
         AbortHandle {

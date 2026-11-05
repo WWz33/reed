@@ -63,7 +63,7 @@ pub fn pcoa(d: &Mat, k: usize) -> Embedding {
             b.set(i, j, -0.5 * (v * v - row_mean[i] - row_mean[j] + grand));
         }
     }
-    let e = sym_eig(&b);
+    let e = sym_eig(&b, crate::backend::Parallel::Serial);
     let (vals, vecs) = e.top_k(k);
     let mut coords = Mat::zeros(n, k);
     for c in 0..k {
@@ -110,7 +110,7 @@ pub fn kernel_pca(x: &Mat, k: usize, kind: Kernel, gamma: f64) -> Embedding {
     }
     // Centre the kernel: K <- K - 1_n K - K 1_n + 1_n K 1_n.
     centre_kernel(&mut kk);
-    let e = sym_eig(&kk);
+    let e = sym_eig(&kk, crate::backend::Parallel::Serial);
     let (vals, vecs) = e.top_k(k);
     let mut coords = Mat::zeros(n, k);
     for c in 0..k {
@@ -240,7 +240,7 @@ pub fn laplacian_eigenmaps(w: &Mat, k: usize) -> Embedding {
             l.set(i, j, v - off);
         }
     }
-    let e = sym_eig(&l);
+    let e = sym_eig(&l, crate::backend::Parallel::Serial);
     // A disconnected graph has one zero eigenvalue per connected component.
     // Skipping only the first leaves component indicators in the output (they
     // are legitimate eigenvectors, just not structure); skipping all of them
@@ -296,7 +296,7 @@ pub fn diffusion_map(w: &Mat, k: usize, alpha: f64) -> Embedding {
             s.set(i, j, if denom > 0.0 { wn.get(i, j) / denom } else { 0.0 });
         }
     }
-    let e = sym_eig(&s);
+    let e = sym_eig(&s, crate::backend::Parallel::Serial);
     let mut values = Vec::with_capacity(k);
     let mut coords = Mat::zeros(n, k);
     let mut c = 0usize;

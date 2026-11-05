@@ -331,7 +331,7 @@ fn spectral_init(g: &Mat, dim: usize, rng: &mut Rng) -> Mat {
             l.set(i, j, diag - off);
         }
     }
-    let e = sym_eig(&l);
+    let e = sym_eig(&l, crate::backend::Parallel::Serial);
     let mut coords = Mat::zeros(n, dim);
     // Skip the trivial smallest eigenvalue; take the next `dim`.
     for c in 0..dim {

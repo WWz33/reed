@@ -99,22 +99,37 @@ pub fn pca_dense(x: &Mat, k: usize) -> Pca {
 /// With the faer backend the product is the blocked GEMM
 /// (`backend::gram_divide`, previously dead code); the dependency-free build
 /// keeps the scalar path in `reed_distance::Grm` (doc_v23 V23-38).
-fn mean_impute_grm(w: &Mat) -> Mat {
+/// Mean-imputed GRM with an explicit parallelism bound (doc_v26 V26-21).
+fn mean_impute_grm_par(w: &Mat, par: crate::backend::Parallel) -> Mat {
     #[cfg(feature = "faer-backend")]
     {
-        crate::backend::gram_divide(w, w.cols).0
+        crate::backend::gram_divide(w, w.cols, par).0
     }
     #[cfg(not(feature = "faer-backend"))]
     {
+        let _ = par;
         Grm::mean_impute(w).a
     }
 }
 
 /// Dense PCA with an explicit standardization convention.
 pub fn pca_dense_with(x: &Mat, k: usize, stand: Stand) -> Pca {
+    pca_dense_with_par(x, k, stand, crate::backend::Parallel::Serial)
+}
+
+/// [`pca_dense_with`] with an explicit parallelism bound (doc_v26 V26-21).
+///
+/// The GRM GEMM and the eigensolver both take `par`; `reed pca` passes the
+/// run's `--threads` budget so the solve cannot fan out past it.
+pub fn pca_dense_with_par(
+    x: &Mat,
+    k: usize,
+    stand: Stand,
+    par: crate::backend::Parallel,
+) -> Pca {
     let st = standardize(x, stand);
-    let grm = mean_impute_grm(&st.w);
-    pack(sym_eig(&grm), Some(k))
+    let grm = mean_impute_grm_par(&st.w, par);
+    pack(sym_eig(&grm, par), Some(k))
 }
 
 /// The eigendecomposition backend this build was **compiled** with:
@@ -133,10 +148,20 @@ pub fn pca_top_k(x: &Mat, k: usize) -> Pca {
 
 /// Partial-spectrum PCA with an explicit standardization convention.
 pub fn pca_top_k_with(x: &Mat, k: usize, stand: Stand) -> Pca {
+    pca_top_k_with_par(x, k, stand, crate::backend::Parallel::Serial)
+}
+
+/// [`pca_top_k_with`] with an explicit parallelism bound (doc_v26 V26-21).
+pub fn pca_top_k_with_par(
+    x: &Mat,
+    k: usize,
+    stand: Stand,
+    par: crate::backend::Parallel,
+) -> Pca {
     let st = standardize(x, stand);
-    let grm = mean_impute_grm(&st.w);
+    let grm = mean_impute_grm_par(&st.w, par);
     let n = grm.rows;
-    let (values, vectors, _backend) = sym_eig_top_k(&grm, k);
+    let (values, vectors, _backend) = sym_eig_top_k(&grm, k, par);
     let total: f64 = (0..n).map(|i| grm.get(i, i)).sum();
     let pve = values
         .iter()
@@ -152,8 +177,19 @@ pub fn pca_dense_pairwise(x: &Mat, k: usize) -> Pca {
 
 /// Pairwise-complete PCA with an explicit standardization convention.
 pub fn pca_dense_pairwise_with(x: &Mat, k: usize, stand: Stand) -> Pca {
+    pca_dense_pairwise_with_par(x, k, stand, crate::backend::Parallel::Serial)
+}
+
+/// [`pca_dense_pairwise_with`] with an explicit parallelism bound
+/// (doc_v26 V26-21).
+pub fn pca_dense_pairwise_with_par(
+    x: &Mat,
+    k: usize,
+    stand: Stand,
+    par: crate::backend::Parallel,
+) -> Pca {
     let grm = Grm::pairwise_with(x, stand);
-    pack(sym_eig(&grm.a), Some(k))
+    pack(sym_eig(&grm.a, par), Some(k))
 }
 
 #[cfg(test)]
@@ -237,7 +273,7 @@ mod tests {
     #[test]
     fn faer_gram_matches_the_scalar_mean_impute() {
         let st = standardize_binom2(&toy());
-        let fast = mean_impute_grm(&st.w);
+        let fast = mean_impute_grm_par(&st.w, crate::backend::Parallel::Serial);
         let slow = Grm::mean_impute(&st.w).a;
         assert_eq!(fast.rows, slow.rows);
         for i in 0..fast.rows {

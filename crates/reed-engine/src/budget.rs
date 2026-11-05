@@ -6,6 +6,17 @@ use std::path::Path;
 /// `TICKETS_PER_WORKER × workers`.
 pub const TICKETS_PER_WORKER: usize = 2;
 
+/// The largest `--threads` value reed accepts (doc_v26 V26-03).
+///
+/// The old parser rejected only `0`, so an arbitrary `usize` reached the
+/// derived capacities — `threads + 4` abort tokens, `TICKETS_PER_WORKER ×
+/// workers` channel slots and reorder cells, `threads` thread spawns. A
+/// four-digit cap keeps every derivation inside a sane resource envelope
+/// (tickets ≤ 2048 slots), is machine-independent so CI and production
+/// agree, and is far above any supported deployment (the reference grid is
+/// 348 samples on 56 cores).
+pub const MAX_THREADS: usize = 1024;
+
 /// A validated `--threads` value (doc_v25 V25-06).
 ///
 /// `0` used to mean "all cores" on the distance path (rayon's convention)
@@ -38,6 +49,11 @@ impl std::str::FromStr for Threads {
             .map_err(|_| format!("--threads: {text:?} is not a thread count"))?;
         if value == 0 {
             return Err("--threads: must be >= 1 (0 does not mean \"all cores\")".to_string());
+        }
+        if value > MAX_THREADS {
+            return Err(format!(
+                "--threads: {value} exceeds the supported maximum of {MAX_THREADS}"
+            ));
         }
         Ok(Self(value))
     }
@@ -170,9 +186,13 @@ impl ThreadBudget {
     }
 
     /// Ticket-window capacity: the hard upper bound on in-flight chunks.
+    ///
+    /// `--threads` is capped at [`MAX_THREADS`], so the product cannot
+    /// overflow; the saturating form keeps the function total for budgets
+    /// built directly in library code (doc_v26 V26-03).
     #[must_use]
     pub fn tickets(&self) -> usize {
-        TICKETS_PER_WORKER * self.workers()
+        TICKETS_PER_WORKER.saturating_mul(self.workers())
     }
 
     /// Whether the run takes the single-threaded sequential path.
@@ -353,6 +373,30 @@ mod tests {
             threads: n,
             mem: MemBudget::from_bytes(u64::MAX),
         }
+    }
+
+    /// doc_v26 V26-03: the parser rejects 0 and anything above the cap, and
+    /// accepts the cap itself.
+    #[test]
+    fn the_thread_parser_has_a_documented_upper_bound() {
+        assert_eq!(MAX_THREADS, 1024, "the CLI contract test pins this value");
+        assert_eq!("1".parse::<Threads>().expect("invariant: 1").get(), 1);
+        assert_eq!(
+            MAX_THREADS.to_string().parse::<Threads>().expect("invariant: cap").get(),
+            MAX_THREADS
+        );
+        for bad in ["0", "0 ", &(MAX_THREADS + 1).to_string(), "18446744073709551615"] {
+            let err = bad.parse::<Threads>().expect_err("must be refused");
+            assert!(
+                err.contains(">= 1") || err.contains("exceeds the supported maximum"),
+                "{bad:?}: {err}"
+            );
+        }
+        // A budget built directly in library code cannot overflow the derived
+        // capacities (the CLI would refuse it, but the library is public).
+        let huge = threads(usize::MAX);
+        assert_eq!(huge.tickets(), usize::MAX);
+        assert_eq!(huge.workers(), usize::MAX - 2);
     }
 
     #[test]

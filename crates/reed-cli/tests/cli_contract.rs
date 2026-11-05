@@ -1709,6 +1709,39 @@ fn parameter_domains_are_usage_errors() {
     }
 }
 
+/// doc_v26 V26-03: `--threads` has a documented upper bound; anything above
+/// it is a usage error on every command, not an attempt to spawn an
+/// arbitrary number of threads or allocate `threads + 4` channel slots.
+#[test]
+fn threads_above_the_supported_maximum_are_usage_errors() {
+    // The number is literal here on purpose: the front end depends on the
+    // facade only (doc_v5 08 §6.4), and the engine's unit test pins the
+    // constant to this value (`MAX_THREADS_documented_in_the_cli`).
+    let over = "1025";
+    let at_max = "1024";
+    for command in ["filter", "stats", "popg", "pca", "distance", "convert", "rename"] {
+        let out = run(&[command, "--threads", &over, "-"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{command} --threads {over} must be a usage error; stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("exceeds the supported maximum"),
+            "{command}: {stderr}"
+        );
+        // The cap itself is accepted (parsing succeeds; the run then fails on
+        // the empty stdin, which is a different, non-usage-code path).
+        let out = run(&[command, "--threads", &at_max, "-"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("exceeds the supported maximum"),
+            "{command} --threads {at_max} must be accepted; stderr: {stderr}"
+        );
+    }
+}
+
 /// A small plain VCF with the given sample names, one record per POS.
 fn plain_vcf(samples: &[&str]) -> String {
     let mut text = String::from(

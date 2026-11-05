@@ -19,6 +19,56 @@
 
 use reed_core::linalg::Mat;
 
+/// How much parallelism a backend call may use (doc_v26 V26-21).
+///
+/// The backend used to hard-code `faer::Parallelism::Rayon(0)`, which means
+/// "whatever rayon pool is ambient at call time" — for a PCA solve that is
+/// the process-global pool, so `--threads 1` still fanned the eigensolver out
+/// over every core. The caller now passes its budget explicitly and the
+/// backend never reads or writes faer's global setting:
+///
+/// * [`Parallel::Serial`] maps to `Parallelism::None` (one thread);
+/// * [`Parallel::Threads`] maps to `Parallelism::Rayon(n)`.
+///
+/// `reed-reduce` stays faer-agnostic: this enum is part of its own surface and
+/// the mapping happens behind the `faer-backend` feature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Parallel {
+    /// One thread.
+    Serial,
+    /// At most `n` rayon threads (n >= 1).
+    Threads(usize),
+}
+
+impl Parallel {
+    /// The thread count this hint represents.
+    #[must_use]
+    pub const fn threads(self) -> usize {
+        match self {
+            Self::Serial => 1,
+            Self::Threads(n) => n,
+        }
+    }
+
+    /// The faer hint for this setting (faer-agnostic facade: `Serial` never
+    /// spawns, `Threads` uses the ambient pool capped by the hint).
+    #[cfg(feature = "faer-backend")]
+    pub(crate) fn faer(self) -> faer::Parallelism<'static> {
+        match self {
+            Self::Serial => faer::Parallelism::None,
+            Self::Threads(n) if n <= 1 => faer::Parallelism::None,
+            Self::Threads(n) => faer::Parallelism::Rayon(n),
+        }
+    }
+}
+
+impl Default for Parallel {
+    fn default() -> Self {
+        Self::Serial
+    }
+}
+
+
 /// Which implementation served a call. Reported so benchmarks and tests can
 /// assert that the fast path was actually taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,10 +156,12 @@ pub fn fix_column_signs(vectors: &mut Mat) {
 }
 
 /// `A = W W' / m`, using the fastest available GEMM.
-pub fn gram_divide(w: &Mat, m: usize) -> (Mat, Backend) {
+///
+/// `par` bounds the GEMM's parallelism (doc_v26 V26-21).
+pub fn gram_divide(w: &Mat, m: usize, par: Parallel) -> (Mat, Backend) {
     #[cfg(feature = "faer-backend")]
     {
-        let a = faer_gram(w);
+        let a = faer_gram(w, par);
         let scale = 1.0 / m as f64;
         let mut out = a;
         for v in out.data.iter_mut() {
@@ -130,25 +182,37 @@ pub fn gram_divide(w: &Mat, m: usize) -> (Mat, Backend) {
 }
 
 #[cfg(feature = "faer-backend")]
-fn faer_gram(w: &Mat) -> Mat {
-    use faer::{Mat as FMat, Parallelism};
+fn faer_gram(w: &Mat, par: Parallel) -> Mat {
+    use faer::Mat as FMat;
 
     let n = w.rows;
     let p = w.cols;
     let wm = FMat::<f64>::from_fn(n, p, |i, j| w.get(i, j));
-    // faer's operator form dispatches to the multi-threaded GEMM. The
-    // explicit `matmul(acc, lhs, rhs, Some(alpha), beta, par)` call silently
-    // writes nothing in 0.20.2, so the operator is the supported path.
-    let _ = Parallelism::Rayon(0);
-    let product = &wm * wm.transpose();
+    // doc_v26 V26-21: the explicit `matmul` entry takes the parallelism,
+    // while faer's operator form (`&wm * ...`) reads *its own global*
+    // setting — the reason `--threads 1` could still fan out. The previous
+    // comment claimed the explicit call "silently writes nothing in 0.20.2";
+    // the unit test `gram_matches_the_operator_form` pins the real behavior,
+    // so a future faer change that breaks it fails there.
+    let mut product = FMat::<f64>::zeros(n, n);
+    faer::linalg::matmul::matmul(
+        product.as_mut(),
+        wm.as_ref(),
+        wm.transpose(),
+        None,
+        1.0,
+        par.faer(),
+    );
     Mat::from_fn(n, n, |i, j| product[(i, j)])
 }
 
 /// Dense symmetric eigendecomposition of `a` (only the lower triangle is read).
-pub fn sym_eig(a: &Mat) -> SymEigResult {
+///
+/// `par` bounds the eigensolver's parallelism (doc_v26 V26-21).
+pub fn sym_eig(a: &Mat, par: Parallel) -> SymEigResult {
     #[cfg(feature = "faer-backend")]
     {
-        let (values, vectors) = faer_sym_eig(a);
+        let (values, vectors) = faer_sym_eig(a, par);
         return SymEigResult { values, vectors, backend: Backend::Faer };
     }
     #[cfg(not(feature = "faer-backend"))]
@@ -159,12 +223,12 @@ pub fn sym_eig(a: &Mat) -> SymEigResult {
 }
 
 #[cfg(feature = "faer-backend")]
-fn faer_sym_eig(a: &Mat) -> (Vec<f64>, Mat) {
+fn faer_sym_eig(a: &Mat, par: Parallel) -> (Vec<f64>, Mat) {
     use faer::dyn_stack::{GlobalPodBuffer, PodStack};
     use faer::linalg::evd::{
         compute_hermitian_evd, compute_hermitian_evd_req, ComputeVectors, HermitianEvdParams,
     };
-    use faer::{Col, Mat as FMat, Parallelism};
+    use faer::{Col, Mat as FMat};
 
     let n = a.rows;
     assert_eq!(n, a.cols, "sym_eig needs a square matrix");
@@ -175,7 +239,7 @@ fn faer_sym_eig(a: &Mat) -> (Vec<f64>, Mat) {
     // so round-off in the input cannot bias the result.
     let mut am = FMat::<f64>::from_fn(n, n, |i, j| 0.5 * (a.get(i, j) + a.get(j, i)));
 
-    let par = Parallelism::Rayon(0);
+    let par = par.faer();
     let req = compute_hermitian_evd_req::<f64>(
         n,
         ComputeVectors::Yes,
@@ -209,8 +273,8 @@ fn faer_sym_eig(a: &Mat) -> (Vec<f64>, Mat) {
 /// from-scratch bisection path in `crate::eig::sym_eig_top_k` does extract only
 /// k pairs but is far slower without BLAS; it stays available as the
 /// dependency-free option.
-pub fn sym_eig_top_k(a: &Mat, k: usize) -> (Vec<f64>, Mat, Backend) {
-    let full = sym_eig(a);
+pub fn sym_eig_top_k(a: &Mat, k: usize, par: Parallel) -> (Vec<f64>, Mat, Backend) {
+    let full = sym_eig(a, par);
     let (vals, vecs) = full.top_k(k);
     (vals, vecs, full.backend)
 }
@@ -242,7 +306,7 @@ mod tests {
     fn eigenvalues_ascending_and_residual_small() {
         let n = 60;
         let a = random_symmetric(n, 0x1234);
-        let e = sym_eig(&a);
+        let e = sym_eig(&a, Parallel::Serial);
         assert_eq!(e.values.len(), n);
         for w in e.values.windows(2) {
             assert!(w[0] <= w[1] + 1e-12, "not ascending");
@@ -263,7 +327,7 @@ mod tests {
     fn trace_matches() {
         let n = 40;
         let a = random_symmetric(n, 0xBEEF);
-        let e = sym_eig(&a);
+        let e = sym_eig(&a, Parallel::Serial);
         let tr_a: f64 = (0..n).map(|i| a.get(i, i)).sum();
         let tr_e: f64 = e.values.iter().sum();
         assert!((tr_a - tr_e).abs() < 1e-9, "trace {tr_a} vs {tr_e}");
@@ -305,7 +369,7 @@ mod tests {
         // `sym_eig` returns faer, and the fallback is reachable directly.
         #[cfg(feature = "faer-backend")]
         {
-            let (faer_vals, faer_vecs) = sym_eig(&a).top_k(2);
+            let (faer_vals, faer_vecs) = sym_eig(&a, Parallel::Serial).top_k(2);
             for c in 0..2 {
                 assert!(
                     (faer_vals[c] - fb_vals[c]).abs() <= 1e-9 * faer_vals[c].abs().max(1.0),
@@ -377,7 +441,7 @@ mod tests {
             (state >> 11) as f64 / (1u64 << 53) as f64
         };
         let w = Mat::from_fn(n, p, |_, _| next() - 0.5);
-        let (g, backend) = gram_divide(&w, p);
+        let (g, backend) = gram_divide(&w, p, Parallel::Serial);
         // Compare against a direct triple loop.
         for i in 0..n {
             for j in 0..n {
@@ -396,11 +460,70 @@ mod tests {
         }
     }
 
+    /// doc_v26 V26-21: the GEMM goes through faer's explicit `matmul` entry
+    /// (which takes the parallelism) rather than the operator form (which
+    /// reads faer's global setting). This pins that the explicit call really
+    /// computes — the old comment claimed it "silently writes nothing in
+    /// 0.20.2", which would make the whole `Parallel` wiring a no-op.
+    #[test]
+    fn gram_matches_the_operator_form() {
+        let n = 20;
+        let p = 15;
+        let mut state = 0x5EEDu64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        let w = Mat::from_fn(n, p, |_, _| next());
+        let (g, _) = gram_divide(&w, p, Parallel::Serial);
+        #[cfg(feature = "faer-backend")]
+        {
+            let wm = faer::Mat::<f64>::from_fn(n, p, |i, j| w.get(i, j));
+            let product = &wm * wm.transpose();
+            for i in 0..n {
+                for j in 0..n {
+                    let want = product[(i, j)] / p as f64;
+                    assert!(
+                        (g.get(i, j) - want).abs() < 1e-12,
+                        "({i},{j}) {} vs operator form {want}",
+                        g.get(i, j)
+                    );
+                }
+            }
+        }
+        #[cfg(not(feature = "faer-backend"))]
+        {
+            // The fallback already has its own naive comparison above.
+            let _ = (&w, g);
+        }
+    }
+
+    /// doc_v26 V26-21: the mapping the rest of the chain relies on — a
+    /// serial budget must reach faer as `Parallelism::None` (never the
+    /// ambient pool), and a bounded budget as `Rayon(n)`.
+    #[cfg(feature = "faer-backend")]
+    #[test]
+    fn parallel_maps_onto_faers_explicit_hints() {
+        assert_eq!(Parallel::Serial.threads(), 1);
+        assert_eq!(Parallel::Threads(8).threads(), 8);
+        assert!(matches!(Parallel::Serial.faer(), faer::Parallelism::None));
+        assert!(matches!(
+            Parallel::Threads(1).faer(),
+            faer::Parallelism::None
+        ));
+        assert!(matches!(
+            Parallel::Threads(8).faer(),
+            faer::Parallelism::Rayon(8)
+        ));
+    }
+
     #[test]
     fn backend_is_reported() {
         let n = 10;
         let a = random_symmetric(n, 7);
-        let e = sym_eig(&a);
+        let e = sym_eig(&a, Parallel::Serial);
         assert_eq!(e.backend, COMPILED_BACKEND);
     }
 }
@@ -416,12 +539,14 @@ mod v23_cross_backend_threads {
     #[test]
     fn faer_is_stable_across_one_and_four_threads() {
         let a = super::tests::random_symmetric(10, 0xA11CE);
+        // doc_v26 V26-21: the parallelism is the budget's, not the ambient
+        // pool's, so each run passes the thread count it actually installed.
         let run = |threads: usize| {
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
                 .expect("invariant: pool")
-                .install(|| sym_eig(&a).top_k(4))
+                .install(|| sym_eig(&a, Parallel::Threads(threads)).top_k(4))
         };
         let (v1, x1) = run(1);
         let (v4, x4) = run(4);

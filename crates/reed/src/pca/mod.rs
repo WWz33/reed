@@ -18,7 +18,7 @@ use std::io::{BufWriter, Write as _};
 use reed_engine::budget::ThreadBudget;
 
 use crate::genotype::{collect_via_engine, CollectSink, GenotypeBlock, PcaJob};
-use reed_reduce::pca::{pca_dense_pairwise_with, pca_dense_with, Stand};
+use reed_reduce::pca::{pca_dense_pairwise_with_par, pca_dense_with_par, Stand};
 use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
 
 
@@ -404,12 +404,25 @@ pub(crate) fn solve(
         ));
     }
 
+    // doc_v26 V26-21: the solve carries the run's thread budget. The
+    // previous code let faer read `rayon::current_num_threads()` from the
+    // process-global pool, so `--threads 1` still fanned the eigensolver out
+    // over every core. `auxiliary()` is the documented bound for the
+    // auxiliary (non-pipeline) stages (doc_v8 D8-1), and the sequential
+    // budget maps to one thread.
+    let par = if budget.is_sequential() {
+        reed_reduce::Parallel::Serial
+    } else {
+        reed_reduce::Parallel::Threads(budget.auxiliary())
+    };
+
     if chosen == "stream" {
         let st = reed_reduce::pca::standardize(x, stand);
         let cfg = StreamConfig {
             k,
             tol: 1e-10,
             max_cycles: 200,
+            parallel: par,
             ..Default::default()
         };
         let r = lanczos_top_k(&st.w, &cfg);
@@ -446,9 +459,9 @@ pub(crate) fn solve(
         })
     } else {
         let p = if missing == "pairwise" {
-            pca_dense_pairwise_with(x, k, stand)
+            pca_dense_pairwise_with_par(x, k, stand, par)
         } else {
-            pca_dense_with(x, k, stand)
+            pca_dense_with_par(x, k, stand, par)
         };
         Ok(Components {
             values: p.values,
@@ -583,6 +596,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
         dir
+    }
+
+    /// doc_v26 V26-21: `solve` passes the budget's parallelism to the dense
+    /// backend instead of letting faer read the process-global rayon pool.
+    /// A serial budget must produce the same components as a parallel one —
+    /// the bound changes thread usage, never the numbers.
+    #[test]
+    fn v26_21_solve_carries_the_thread_budget_and_keeps_the_numbers() {
+        let n = 24;
+        let m = 40;
+        let x = Mat::from_fn(n, m, |i, j| {
+            let v = ((i * 7 + j * 13) % 5) as f64;
+            if v == 0.0 { f64::NAN } else { v - 2.0 }
+        });
+        let run = |threads: usize| {
+            let budget = ThreadBudget {
+                threads,
+                mem: MemBudget::from_bytes(u64::MAX),
+            };
+            solve(&x, 4, Stand::Binom2, "meanimpute", "dense", &budget)
+                .expect("invariant: dense solve")
+        };
+        let serial = run(1);
+        let two = run(2);
+        let many = run(8);
+        for other in [&two, &many] {
+            for (a, b) in serial.values.iter().zip(&other.values) {
+                assert!(
+                    (a - b).abs() <= 1e-12 * a.abs().max(1.0),
+                    "eigenvalues must not depend on the thread count: {a} vs {b}"
+                );
+            }
+            for (a, b) in serial.pve.iter().zip(&other.pve) {
+                assert!((a - b).abs() <= 1e-12, "pve must not depend on threads");
+            }
+        }
+        assert_eq!(serial.solver, "dense");
+        // The stream path takes the same hint (the config's `parallel`).
+        let budget = ThreadBudget {
+            threads: 8,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let streamed = solve(&x, 2, Stand::Binom2, "meanimpute", "stream", &budget)
+            .expect("invariant: stream solve");
+        assert_eq!(streamed.solver, "stream");
+        assert!(streamed.values.len() == 2);
     }
 
     /// doc_v25 V25-01 (F1): `reed pca` fails on a GT allele beyond the ALT
