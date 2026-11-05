@@ -100,6 +100,13 @@ pub(super) fn compile(
         || !spec.genotype.mask_if.is_empty()
         || spec.genotype.set_gts.is_some();
     let (min_af_info, max_af_info) = af_info_sides(&spec.site_after_mask, info_af, cohort_changed);
+    // `-q/-Q` bounds are validated here but the RULES are pushed after the
+    // `-i/-e` expressions (bcftools runs `filter_test` at vcfview.c:322,
+    // before its `-q/-Q` block at :418): a record an expression excludes must
+    // never reach the AF test, so a malformed `AC>AN` record cannot abort a
+    // run whose surviving set is non-empty (`bcftools view -e 'QUAL<5' -q`
+    // exits 0 on that input).
+    let mut af_rules: Vec<HeadRule> = Vec::new();
     for bound in spec.site_after_mask.min_af.iter().copied() {
         if !(0.0..=1.0).contains(&bound) {
             return Err(FilterError::Spec(format!(
@@ -107,7 +114,7 @@ pub(super) fn compile(
             )));
         }
         if min_af_info {
-            head.push(HeadRule::MinAfInfo(af_threshold(bound)));
+            af_rules.push(HeadRule::MinAfInfo(af_threshold(bound)));
         }
     }
     for bound in spec.site_after_mask.max_af.iter().copied() {
@@ -117,7 +124,7 @@ pub(super) fn compile(
             )));
         }
         if max_af_info {
-            head.push(HeadRule::MaxAfInfo(af_threshold(bound)));
+            af_rules.push(HeadRule::MaxAfInfo(af_threshold(bound)));
         }
     }
     // Warn only after both bounds validate, so an out-of-range threshold
@@ -158,6 +165,8 @@ pub(super) fn compile(
             expr,
         });
     }
+    // Now the AF bounds, after every expression rule (bcftools' order).
+    head.extend(af_rules);
     for rule in &spec.site.info {
         let def = tags.info(&rule.tag).ok_or_else(|| {
             FilterError::Spec(format!(

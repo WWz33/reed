@@ -36,7 +36,7 @@ check "--ld-decay is not re-parsed outside its value_parser (doc_v25 V25-06)" \
 
 # V25-01/V25-02: GT code has one home for syntax and one for position.
 check "GT syntax helpers live only in reed-io/src/bcf/gt_decode.rs (doc_v25 V25-02)" \
-    bash -c '! grep -rq "fn gt_codes_into\|fn gt_shape" crates --include=*.rs | grep -v "gt_decode.rs"'
+    bash -c '[ "$(grep -rn "fn gt_codes_into\|fn gt_shape" crates --include=*.rs | grep -v "gt_decode.rs" | wc -l)" -eq 0 ]'
 
 # V25-10: the dead linalg copy stays deleted and the env back door is gone.
 check "the dead reed-reduce linalg file is gone (doc_v25 V25-10, R12)" \

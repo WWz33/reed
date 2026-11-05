@@ -1813,7 +1813,8 @@ fn tree_with_too_few_taxa_is_a_usage_error() {
 }
 
 /// doc_v25 V25-08: an unwritable output is a runtime failure (exit 1) on
-/// both rename and filter — it used to depend on the subcommand.
+/// rename, filter and both convert routes — it used to depend on the
+/// subcommand (the hapmap→VCF route still exited 2).
 #[test]
 fn output_create_failure_is_runtime_on_rename_and_filter() {
     let dir = temp_dir("badout");
@@ -1834,6 +1835,29 @@ fn output_create_failure_is_runtime_on_rename_and_filter() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    // The hapmap input route creates its output in a different writer; it
+    // used to map `File::create` to a usage error (exit 2).
+    let hmp = dir.join("in.hmp.txt");
+    std::fs::write(
+        &hmp,
+        "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\t\
+         assayLSID\tpanelLSID\tQCcode\ts0\n\
+         rs1\tA/G\t1\t100\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n",
+    )
+    .expect("invariant: hapmap fixture");
+    let out = run(&[
+        "convert",
+        hmp.to_str().expect("utf8"),
+        "--vcf",
+        "-o",
+        bad.to_str().expect("utf8"),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "hapmap convert: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

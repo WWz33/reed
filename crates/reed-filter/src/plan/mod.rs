@@ -862,21 +862,30 @@ mod routing_tests {
     #[test]
     fn info_spelling_routes_like_the_bare_builtin() {
         let table = tags();
-        for text in ["AC>1", "INFO/AC>1"] {
-            let spec = FilterSpec {
-                site: SiteRules {
-                    include: vec![text.into()],
-                    ..SiteRules::default()
-                },
-                ..FilterSpec::default()
-            };
-            let err = compile(&spec, &table, "", false)
-                .expect_err("a genotype-derived built-in belongs after the mask");
-            assert!(
-                err.to_string().contains("site_after_mask"),
-                "{text}: {err}"
-            );
-        }
+        // doc_v25 review: an explicit `INFO/` read is a plain INFO value and
+        // stays in the head stage (bcftools evaluates `-i/-e` before it
+        // subsets the samples, `vcfview.c:322` vs `:341`).
+        let spec = FilterSpec {
+            site: SiteRules {
+                include: vec!["INFO/AC>1".into()],
+                ..SiteRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let plan = compile(&spec, &table, "", false).expect("INFO/AC is a head rule");
+        assert_eq!(plan.head.len(), 1);
+        assert!(plan.tail.is_empty());
+        // The bare built-in still needs the decoded genotypes.
+        let spec = FilterSpec {
+            site: SiteRules {
+                include: vec!["AC>1".into()],
+                ..SiteRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let err = compile(&spec, &table, "", false)
+            .expect_err("the bare genotype-derived built-in belongs after the mask");
+        assert!(err.to_string().contains("site_after_mask"), "{err}");
         // A plain INFO tag is not genotype-derived: it stays in the head.
         let spec = FilterSpec {
             site: SiteRules {
@@ -890,13 +899,14 @@ mod routing_tests {
         assert!(plan.tail.is_empty());
     }
 
-    /// The after-mask stage accepts the `INFO/` spelling and compiles it as
-    /// a tail expression (the routed half of the same rule).
+    /// The after-mask stage still accepts the bare built-in (the routed
+    /// half of the same rule); an explicit `INFO/` read now belongs in
+    /// `[site]` and is rejected there with a pointer to it.
     #[test]
     fn info_spelling_compiles_in_the_after_mask_stage() {
         let spec = FilterSpec {
             site_after_mask: TailRules {
-                include: vec!["INFO/AC>1".into()],
+                include: vec!["AC>1".into()],
                 ..TailRules::default()
             },
             ..FilterSpec::default()
@@ -904,5 +914,16 @@ mod routing_tests {
         let plan = compile(&spec, &tags(), "", false).expect("after-mask expression");
         assert!(plan.head.is_empty());
         assert_eq!(plan.tail.len(), 1);
+
+        let spec = FilterSpec {
+            site_after_mask: TailRules {
+                include: vec!["INFO/AC>1".into()],
+                ..TailRules::default()
+            },
+            ..FilterSpec::default()
+        };
+        let err = compile(&spec, &tags(), "", false)
+            .expect_err("an INFO-only read belongs in [site]");
+        assert!(err.to_string().contains("[site]"), "{err}");
     }
 }

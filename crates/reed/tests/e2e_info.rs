@@ -523,8 +523,8 @@ fn quantifier_any_requires_a_satisfying_element() {
             &mut hits,
             &mut scratch,
             &tags,
-            plan.info_trusted,
         )
+        .expect("invariant: the typed AC rule does not read AC/AN")
     };
 
     assert!(
@@ -663,11 +663,70 @@ Chr01\t5\t.\tA\tG,T\t50\tPASS\tAC=3;AN=4\tGT\t0/0\t0/0
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// doc_v25 V25-04, measured on bcftools 1.24: a record whose ALT counts sum
+/// above AN aborts the run (`[E::bcf_calc_ac] Incorrect AN/AC counts`,
+/// exit 1). The head used to read it as "no usable INFO" and silently
+/// continue on the genotype counts.
+#[test]
+fn ac_sum_above_an_aborts_the_run() {
+    let d = dir("ac-over-an");
+    let text = "\
+##fileformat=VCFv4.2
+##contig=<ID=Chr01,length=1000>
+##FILTER=<ID=PASS,Description=\"All filters passed\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+Chr01\t5\t.\tA\tG\t50\tPASS\tAC=200;AN=100\tGT\t0/1\t0/1
+";
+    let path = fixture(&d, "in", text);
+    let mut spec = FilterSpec::default();
+    spec.site_after_mask.min_af = Some(0.1);
+    let out = d.join("out.vcf.gz");
+    let err = run_filter(Some(&path), &spec, &options(None, &out))
+        .expect_err("ΣAC > AN must abort the run like bcftools");
+    assert!(
+        err.to_string().contains("Incorrect AN/AC counts"),
+        "the error must name the malformed AC/AN: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// doc_v25 review, measured on bcftools 1.24: `-i/-e` runs *before* `-q/-Q`
+/// (`vcfview.c:322` vs `:418`), so a record an expression excludes must not
+/// reach the AF test. The new hard `ΣAC > AN` error used to abort a run whose
+/// surviving set was non-empty (`bcftools view -e 'QUAL<5' -q` exits 0).
+#[test]
+fn an_expression_excluded_record_does_not_reach_the_af_abort() {
+    let d = dir("ac-over-an-excluded");
+    let text = "\
+##fileformat=VCFv4.2
+##contig=<ID=Chr01,length=1000>
+##FILTER=<ID=PASS,Description=\"All filters passed\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+Chr01\t100\t.\tA\tG\t1\tPASS\tAC=200;AN=100\tGT\t0/1\t0/1
+Chr01\t200\t.\tA\tG\t50\tPASS\tAC=2;AN=4\tGT\t0/1\t0/1
+";
+    let path = fixture(&d, "in", text);
+    let mut spec = FilterSpec::default();
+    spec.site.exclude = vec!["QUAL<5".to_string()];
+    spec.site_after_mask.min_af = Some(0.05);
+    let lines = run_keep_lines(&path, &spec, None, "out.vcf.gz");
+    assert_eq!(
+        kept_positions(&lines),
+        vec![200],
+        "the excluded malformed record must neither abort nor survive"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 // ---------------------------------------------------------------------------
 // R0-j — D12-14: one value, one answer (internal consistency)
-// ---------------------------------------------------------------------------
-
-/// The same record must yield the same number to the filter, to `-Ob` and
+// ---------------------------------------------------------------------------/// The same record must yield the same number to the filter, to `-Ob` and
 /// to `-Ov`. `XI=1e3` used to filter as 1000, write `.` to BCF and keep
 /// `1e3` in text. The assertions are reed's own spec (02 §13.3 reed column),
 /// **not** bcftools parity: the strict-vs-prefix divergence is permanent

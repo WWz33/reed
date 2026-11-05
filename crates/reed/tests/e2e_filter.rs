@@ -1916,10 +1916,13 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
     let input = dir.join("in.vcf");
     std::fs::write(&input, format!("{header}{records}")).expect("invariant: fixture");
 
-    // Every INFO built-in in one after-mask expression: each is
-    // genotype-derived, so the compiler requires the after-mask stage.
+    // The `INFO/` spellings are plain INFO reads (bcftools evaluates `-i/-e`
+    // before it subsets, `vcfview.c:322` vs `:341`), so they compile in the
+    // head stage; the bare built-ins are genotype-derived and would need the
+    // after-mask stage. Both shapes must agree across strategies.
+    use reed_filter::spec::SiteRules;
     let info_spec = FilterSpec {
-        site_after_mask: TailRules {
+        site: SiteRules {
             include: vec![
                 "INFO/AC>1".into(),
                 "INFO/AN>=4".into(),
@@ -1927,7 +1930,7 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
                 "INFO/MAF<=0.5".into(),
                 "INFO/MAC>=1".into(),
             ],
-            ..TailRules::default()
+            ..SiteRules::default()
         },
         ..FilterSpec::default()
     };
@@ -1991,15 +1994,33 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
         );
     }
 
-    // The sketch refuses a record-reading tail instead of evaluating it
-    // from a different source (the documented limitation; the auto strategy
-    // falls back to TwoPassReparse for `--mind`).
-    let Err(err) = run_filter(
+    // The `INFO/` spellings now run in the head stage, so the sketch can
+    // honour them; the *bare* built-in still needs the record bytes, and the
+    // sketch must refuse it rather than evaluate it from another source
+    // (the documented limitation; `auto` falls back to TwoPassReparse).
+    let sketch_info = dir.join("info-sketch.vcf");
+    run_filter(
         Some(input.as_path()),
         &info_spec,
         &options(
             Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
-            &dir.join("info-sketch.vcf"),
+            &sketch_info,
+        ),
+    )
+    .expect("an INFO-only expression is a head rule the sketch can run");
+    let bare_spec = FilterSpec {
+        site_after_mask: TailRules {
+            include: vec!["AC>1".into()],
+            ..TailRules::default()
+        },
+        ..FilterSpec::default()
+    };
+    let Err(err) = run_filter(
+        Some(input.as_path()),
+        &bare_spec,
+        &options(
+            Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
+            &dir.join("bare-sketch.vcf"),
         ),
     ) else {
         panic!("the sketch must refuse a record-reading tail expression");
@@ -2099,8 +2120,8 @@ fn missing_dp_masks_in_the_expression_context_but_not_by_default_in_mask_if() {
 /// so their surviving sets are identical and differ from the full-cohort
 /// run exactly where the INFO would have been stale.
 #[test]
-fn info_spelling_and_bare_ac_agree_after_a_subset() {
-    use reed_filter::spec::{SampleList, SampleSelect, TailRules};
+fn info_spelling_reads_the_pre_subset_info_like_bcftools() {
+    use reed_filter::spec::{SampleList, SampleSelect};
 
     let dir = std::env::temp_dir().join(format!("reed-filter-v25-s58-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -2122,16 +2143,23 @@ fn info_spelling_and_bare_ac_agree_after_a_subset() {
     )
     .expect("invariant: fixture");
 
-    let spec = |text: &str, subset: bool| FilterSpec {
-        sample_select: subset.then(|| SampleSelect {
-            keep: Some(SampleList::Names(vec!["s0".into(), "s1".into()])),
-            remove: None,
-        }),
-        site_after_mask: TailRules {
-            include: vec![text.into()],
-            ..TailRules::default()
-        },
-        ..FilterSpec::default()
+    // Route by spelling, the way the CLI does: `INFO/` reads the record's
+    // own INFO (head stage), a bare name needs the decoded genotypes (tail).
+    let spec = |text: &str, subset: bool| {
+        let bare = !text.starts_with("INFO/");
+        let mut spec = FilterSpec {
+            sample_select: subset.then(|| SampleSelect {
+                keep: Some(SampleList::Names(vec!["s0".into(), "s1".into()])),
+                remove: None,
+            }),
+            ..FilterSpec::default()
+        };
+        if bare {
+            spec.site_after_mask.include = vec![text.into()];
+        } else {
+            spec.site.include = vec![text.into()];
+        }
+        spec
     };
     let run = |text: &str, subset: bool, tag: &str| -> String {
         let out = dir.join(format!("{tag}.vcf"));
@@ -2151,10 +2179,18 @@ fn info_spelling_and_bare_ac_agree_after_a_subset() {
             .join("\n")
     };
     assert_eq!(records(&bare_subset), "", "subset AC=1 must not pass AC>2");
+    // bcftools evaluates the expression before it subsets (`vcfview.c:322`
+    // vs `:341`), so the explicit INFO spelling sees the input cohort's
+    // AC=4 and keeps the record while the bare name sees the subset's AC=1.
     assert_eq!(
+        records(&info_subset).lines().count(),
+        1,
+        "INFO/AC reads the record's own INFO, not the subset recount"
+    );
+    assert_ne!(
         records(&info_subset),
         records(&bare_subset),
-        "the INFO/ spelling must decide on the same cohort"
+        "the two spellings read different cohorts, as in bcftools"
     );
     assert_eq!(
         records(&full).lines().count(),

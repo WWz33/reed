@@ -93,7 +93,7 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `-m/--min-alleles INT`、`-M/--max-alleles INT` | REF+ALT 等位数上下限；`ALT='.'` 计 0 个 ALT（`-M 1` = 只留不变位点，与 bcftools 一致；doc_v12 N9） | bcftools |
 | `-f/--apply-filters LIST` | FILTER 属于列表 | bcftools |
 | `-i/--include EXPR`、`-e/--exclude EXPR` | bcftools 表达式子集（§5），可重复，按命令行顺序 | bcftools |
-| `-q/--min-af FLOAT`、`-Q/--max-af FLOAT` | 非参考等位频率下限/上限；**INFO 有 AC 与 AN 且样本集未变时取 INFO 值**（bcftools 语义，取到时打印"陈旧 INFO"警告），一旦静态子集/掩码/`--mind`/`--set-gts .` 改变了 cohort，改按（子集/掩码后的）基因型重算——bcftools 同款门（`vcfview.c:341-350`、`filter.c:1471`；doc_v12 N5）；阈值按 bcftools 量化为 f32 | bcftools |
+| `-q/--min-af FLOAT`、`-Q/--max-af FLOAT` | 非参考等位频率下限/上限；**INFO 有 AC 与 AN 且样本集未变时取 INFO 值**（bcftools 语义，取到时打印"陈旧 INFO"警告），一旦静态子集/掩码/`--mind`/`--set-gts .` 改变了 cohort，改按（子集/掩码后的）基因型重算——bcftools 同款门（`vcfview.c:341-350`、`filter.c:1471`；doc_v12 N5）；阈值按 bcftools 量化为 f32。求值顺序：`-i/-e` 先于 `-q/-Q`（bcftools `vcfview.c:322` 的 `filter_test` 先于 `:418` 的频率块），被表达式排除的记录不参与 `-q/-Q`，其畸形 AC/AN 也不会终止整轮 | bcftools |
 
 `-q/-Q` 的 `:nref/:alt1/:minor/:major/:nonmajor` 后缀 **【待实现】**（现只有 nref 一种，07 路线 X6）。
 
@@ -171,6 +171,7 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 - 支持：`QUAL FILTER ID CHROM POS TYPE`、`INFO/TAG` 与裸名 `TAG`（裸名先查 INFO）、`FMT/TAG`、`N_ALT N_SAMPLES AC AN AF MAC MAF N_MISSING F_MISSING`；比较 `== = != < <= > >=`、正则 `~ !~`；逻辑 `&& || & |`（对 FORMAT 的含义照 bcftools 区分）、`!`、括号；缺失值 `"."`；负数字面量（`-12.5`，对应 bcftools `filter.c:3902` 的一元负号，无前导 `+`——bcftools 将其词法化为加法运算符，`filter.c:332`；标识符内的 `-` 不受影响，reed 无算术故 `A - B` 仍是错误）。
 - 未支持：`FMT/` 下标 `[0]/[*]`、通用正则、函数（`MAX/MIN/AVG/…`）。
 - `AC/AN/AF/MAC/MAF`：INFO 中存在时取 INFO 值，否则按基因型。检测到表达式使用了 INFO 中已存在的 AC/AN 时打印"陈旧 INFO"警告，提示改用 `--maf/--mac` 或先 `-x INFO/AC,INFO/AN`。
+- **两种拼写读不同的队列**（与 bcftools 的求值顺序一致）：`INFO/TAG` 是纯 INFO 读取，在**样本子集之前**求值（bcftools `vcfview.c:322` 的 `filter_test` 先于 `:341` 的 `bcf_subset`），所以 `-s S1 -i 'INFO/AC>1'` 看的是输入队列的 AC；裸名 `AC` 在 INFO 缺失时回退基因型计数，因此需要解码结果，在**掩码/子集之后**求值。两条路径的差异是 bcftools 本身的行为，不是 reed 的分歧（doc_v25 复核 2026-11-05）。
 - **与缺失值比较按 bcftools 的算符表**（`filter.c:4449-4455` 的
   `missing_logic`）：
 
@@ -187,7 +188,7 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
   为真，`AF==0`/`AF<1`/`AF>0` 为假。这与 bcftools 在同一输入上的逐记录结果一致
   （doc_v23 V23-50 实测），因此不改成 missing：NaN 是**计算值**，走上面的算符
   表（`!=` 为真），不是字面量缺失。
-- 引用基因型量的表达式（`N_MISSING`、`F_MISSING`，以及 INFO 不存在时的 `AC/AN/…`）在掩码之后求值。
+- 引用基因型量的表达式（`N_MISSING`、`F_MISSING`，以及裸名 `AC/AN/…`）在掩码之后求值；显式 `INFO/` 读取不受此限（见上条）。
 - **Flag 按存在性读写**：`DB=1`/`DB=0` 测 flag 的存在/缺失（`doc/bcftools.txt:4067`），`DB!=0` 等价 `DB=1`；`DB` 单独出现不是合法表达式（bcftools 对单个裸 token 恒假，reed 在编译期报错而不是静默丢弃所有记录；doc_v12 N6）。
 - **多值 INFO 按任一元素比较**：`Number=A/R/G/.` 或 `Count(n>1)` 的标签逐对比较，任一对满足即真（bcftools `CMP_VECTORS`）；`Number=1` 却给了多个值时按 missing 处理（规范外输入，01-review §2.5-B5）。
 - **数值解析**：按 header 声明类型选择文法（Integer 严格十进制含可选 `+`/`-`，Float 为规范正则文法）；解析失败即 missing，不做字节序比较（doc_v12 N13）。
@@ -198,7 +199,7 @@ vcftools 保留 iff `an/(2N) ≥ 1−X`（浮点）；plink2 丢弃 iff `missing
 | 形态 | htslib | reed | 理由 |
 |---|---|---|---|
 | `-Ov`/`-Oz` 的 INFO 文本 | 归一化（`+5`→`5`） | 逐字节保真 | §6.7 的编辑原语设计；保真严格强于归一化 |
-| `Σac > an`（AC/AN 自相矛盾） | `exit(1)` 退出 | 丢该位点继续 | 一条畸形记录不应毁掉整轮批处理 |
+| `Σac > an`（AC/AN 自相矛盾） | `exit(1)` 退出（`bcf_calc_ac`：`[E::bcf_calc_ac] Incorrect AN/AC counts`） | 同 htslib：`-q/-Q` 读到该记录时报运行错误、`exit(1)`；它只对被 `-i/-e` 保留的记录生效（`-e 'QUAL<5'` 排除它时整轮照常） | 静默回退基因型会让同一文件给出与 oracle 不同的结果（doc_v25 复核 2026-11-05；旧行为是"丢该位点继续"） |
 | `5.0`/`1e3`/`0x10`/`5abc`（Integer 标签） | 前缀解析（5 / 1 / 0 / 5） | missing | htslib 的前缀解析自身不自洽（`0x10` 在 Float 得 16）；严格拒绝更可预测 |
 | ` 5`/`5 `（数值） | Integer 不容忍、Float 容忍 | 不 trim，missing | 数值文法（§1.3）无空白；htslib 两类型不一致 |
 | `Number=1` 却给多值 | 标量读作 0（`vcf.c:4286` 的实现细节） | missing | 不把 htslib 的偶然行为固化成契约（02 §6.2b） |

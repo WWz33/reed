@@ -7,6 +7,7 @@ use reed_io::vcf::fixed::parse_qual;
 use reed_io::vcf::info::InfoIndex;
 use reed_io::vcf::line::LineRef;
 
+use crate::FilterError;
 use crate::plan::{HeadRule, InfoRule};
 
 /// Per-worker scratch: the INFO fragment index of the current record, built
@@ -35,10 +36,19 @@ impl HeadScratch {
 /// the record passes (cumulative funnel semantics) and returns whether the
 /// record survived the head stage.
 ///
-/// `info_trusted` is the plan's single field (doc_v20 S58): once the cohort
-/// changed, the built-in AC/AN/AF/MAF/MAC readers fall back to the genotype
-/// values instead of the stale INFO. It used to be hard-coded `true` here,
-/// which read a full-cohort `INFO/AC` on a subset run (doc_v25 V25-04).
+/// `-i/-e` expressions read the record's own INFO, never a genotype
+/// recomputation: bcftools runs `filter_test` (vcfview.c:322) *before* it
+/// subsets the samples (:341), so a subset run sees the original INFO/AC.
+/// The head used to take the plan's `info_trusted` flag here, which made
+/// `-s S1 -i 'INFO/AC>1'` read the post-subset count (0) and drop every
+/// record (doc_v25 review). `-q/-Q` is the one reader that follows the
+/// subset (`vcfview.c:418`), and it has its own rules.
+///
+/// # Errors
+///
+/// [`FilterError::Decode`] when INFO/AC sums above INFO/AN: bcftools prints
+/// `Incorrect AN/AC counts` and aborts the run, so keeping the record would
+/// silently diverge from the oracle.
 pub fn eval_head(
     line: &LineRef<'_>,
     pos1: u64,
@@ -46,8 +56,7 @@ pub fn eval_head(
     hits: &mut [u64],
     scratch: &mut HeadScratch,
     tags: &reed_core::tag_table::TagTable,
-    info_trusted: bool,
-) -> bool {
+) -> Result<bool, FilterError> {
     // The counters are aligned with the rule list; a short slice would make
     // the zip below silently skip rules (a caller invariant violation).
     assert_eq!(
@@ -120,10 +129,27 @@ pub fn eval_head(
             // cohort being decided on (doc_v12 D12-6): the compile drops
             // these rules when the sample set changes, so a rule that is
             // present always reads trusted INFO here.
-            HeadRule::MinAfInfo(bound) => non_reference_af_info(line.info_text(), n_alt_of(alts))
-                .is_none_or(|freq| freq >= *bound),
-            HeadRule::MaxAfInfo(bound) => non_reference_af_info(line.info_text(), n_alt_of(alts))
-                .is_none_or(|freq| freq <= *bound),
+            HeadRule::MinAfInfo(bound) => {
+                match af_info_decision(line.info_text(), n_alt_of(alts)) {
+                    AfInfoDecision::Usable(freq) => freq >= *bound,
+                    // No usable INFO: the tail's genotype rule decides. The
+                    // wrong-length AC keeps D12-13's fallback (bcftools'
+                    // `-q` drops the record instead; recorded divergence).
+                    AfInfoDecision::Absent | AfInfoDecision::AcLength => true,
+                    AfInfoDecision::AcExceedsAn { alt_sum, an } => {
+                        return Err(ac_exceeds_an(line, pos1, alt_sum, an));
+                    }
+                }
+            }
+            HeadRule::MaxAfInfo(bound) => {
+                match af_info_decision(line.info_text(), n_alt_of(alts)) {
+                    AfInfoDecision::Usable(freq) => freq <= *bound,
+                    AfInfoDecision::Absent | AfInfoDecision::AcLength => true,
+                    AfInfoDecision::AcExceedsAn { alt_sum, an } => {
+                        return Err(ac_exceeds_an(line, pos1, alt_sum, an));
+                    }
+                }
+            }
             HeadRule::MinQual(q) => {
                 // A missing QUAL fails (bcftools semantics).
                 parse_qual(line.qual_text(), locus(line, pos1))
@@ -133,11 +159,11 @@ pub fn eval_head(
             }
             HeadRule::Info(rule) => eval_info(line, rule, scratch),
             HeadRule::Expr { include, expr, .. } => {
-                // The cohort-trust decision is the plan's field, not a
-                // constant: `INFO/AC` used to be routed here by spelling and
-                // read the full-cohort value on a subset run (V25-04).
-                let mut values =
-                    crate::expr::SiteValues::from_line(line, pos1, None, info_trusted);
+                // Pre-subset INFO, per bcftools' `filter_test` order
+                // (`vcfview.c:322` before the `bcf_subset` at :341). The
+                // head never sees post-subset genotypes, so `info_trusted`
+                // is unconditionally true here.
+                let mut values = crate::expr::SiteValues::from_line(line, pos1, None, true);
                 values.info_index = Some(&scratch.index);
                 values.tags = Some(tags);
                 let truth = crate::expr::eval(expr, &values);
@@ -145,11 +171,11 @@ pub fn eval_head(
             }
         };
         if !ok {
-            return false;
+            return Ok(false);
         }
         *hit += 1;
     }
-    true
+    Ok(true)
 }
 
 /// The record's ALT count from its ALT column (`.` = zero, the same rule
@@ -161,16 +187,50 @@ fn n_alt_of(alts: &[u8]) -> u32 {
     u32::try_from(memchr::memchr_iter(b',', alts).count() + 1).unwrap_or(u32::MAX)
 }
 
-/// `AC` (summed over ALTs) / `AN` from the INFO text; `None` when either is
-/// missing or malformed (the record then defers to the tail rule, matching
-/// bcftools' per-record fallback to genotype counts).
+/// The typed `-q/-Q` reader's answer for one record, keeping the malformed
+/// cases apart (measured on bcftools 1.24):
 ///
-/// The reader is [`crate::semantics::info_af`]: head and tail now share the
-/// malformed-record guard (`ΣAC > AN` reads as "no usable INFO" on both).
-#[must_use]
-pub fn non_reference_af_info(info: &[u8], n_alt: u32) -> Option<f64> {
-    let counts = crate::semantics::info_af(info, n_alt)?;
-    Some((counts.an - counts.per_allele[0]) as f64 / counts.an as f64)
+/// * absent AC/AN → genotype fallback (the record may still pass);
+/// * AC present with the wrong length → htslib warns once and `-q/-Q` drops
+///   the record; reed keeps D12-13's genotype fallback instead (a recorded
+///   divergence, not an oversight);
+/// * ΣAC > AN → htslib prints `Incorrect AN/AC counts` and aborts the run;
+///   reed now reports the same record as a job error.
+enum AfInfoDecision {
+    /// INFO is usable: this is the non-reference allele frequency.
+    Usable(f64),
+    /// No usable INFO value at all: defer to the genotype rule.
+    Absent,
+    /// AC carries the wrong number of values for the record's ALT count.
+    AcLength,
+    /// AC sums above AN.
+    AcExceedsAn {
+        /// Sum of the AC values.
+        alt_sum: u64,
+        /// INFO/AN.
+        an: u64,
+    },
+}
+
+fn af_info_decision(info: &[u8], n_alt: u32) -> AfInfoDecision {
+    use crate::semantics::{InfoAfOutcome, info_af_outcome};
+    match info_af_outcome(info, n_alt) {
+        InfoAfOutcome::Usable(counts) => {
+            AfInfoDecision::Usable((counts.an - counts.per_allele[0]) as f64 / counts.an as f64)
+        }
+        InfoAfOutcome::Absent => AfInfoDecision::Absent,
+        InfoAfOutcome::AcLength { .. } => AfInfoDecision::AcLength,
+        InfoAfOutcome::AcExceedsAn { alt_sum, an } => AfInfoDecision::AcExceedsAn { alt_sum, an },
+    }
+}
+
+/// The run-aborting error bcftools raises for `ΣAC > AN`.
+fn ac_exceeds_an(line: &LineRef<'_>, pos1: u64, alt_sum: u64, an: u64) -> FilterError {
+    FilterError::Decode {
+        contig: String::from_utf8_lossy(line.chrom()).into_owned(),
+        pos: pos1,
+        msg: format!("Incorrect AN/AC counts (AC sums to {alt_sum} > AN {an})"),
+    }
 }
 
 fn class_matches(class: VariantClass, wanted: &str) -> bool {
@@ -285,21 +345,39 @@ mod tests {
             &mut hits,
             &mut scratch,
             &reed_core::tag_table::TagTable::new(),
-            true,
         )
+        .expect("invariant: no rule reads INFO/AC")
     }
 
     /// R1 (doc_v20): bcftools `-f` keeps a record when the FILTER column
     /// *contains* any listed value, not when the whole column equals one
     /// entry — `bcftools filter` routinely writes `LowQual;LowMQ`, and
     /// `-f LowQual` silently dropped such records.
-    /// doc_v25 V25-04: a record with `ΣAC > AN` is malformed in the same
-    /// way on the head and the tail — the head's `-q/-Q` reader returns
-    /// `None` (the bound passes) instead of computing an AF above 1.
+    ///
+    /// doc_v25 V25-04: bcftools 1.24 (measured) distinguishes the two
+    /// malformed AC shapes — a wrong-length AC is warned about and the
+    /// record is dropped by `-q/-Q`; `ΣAC > AN` aborts the run.
     #[test]
-    fn malformed_ac_an_is_no_usable_info_for_the_head() {
-        assert_eq!(non_reference_af_info(b"AC=200;AN=100", 1), None);
-        assert_eq!(non_reference_af_info(b"AC=2;AN=4", 1), Some(0.5));
+    fn malformed_ac_an_decisions_match_bcftools() {
+        assert!(matches!(
+            af_info_decision(b"AC=2;AN=4", 1),
+            AfInfoDecision::Usable(_)
+        ));
+        assert!(matches!(
+            af_info_decision(b"AC=1,2;AN=4", 1),
+            AfInfoDecision::AcLength
+        ));
+        assert!(matches!(
+            af_info_decision(b"AC=200;AN=100", 1),
+            AfInfoDecision::AcExceedsAn {
+                alt_sum: 200,
+                an: 100
+            }
+        ));
+        assert!(matches!(
+            af_info_decision(b"AN=4", 1),
+            AfInfoDecision::Absent
+        ));
     }
 
     #[test]
@@ -358,8 +436,8 @@ mod tests {
             &mut hits,
             &mut scratch,
             &reed_core::tag_table::TagTable::new(),
-            true,
         )
+        .expect("invariant: the typed INFO rule does not read AC/AN")
     }
 
     fn info_rule_passes(info: &[u8], tag: &str, cmp: &str, on_missing: OnMissing) -> bool {

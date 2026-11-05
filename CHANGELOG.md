@@ -5,6 +5,47 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
+## [Unreleased] — doc_v25 复核修复：三域 review 的六条实测 bug（2026-11-05）
+
+对 `6fd061d..7d235ab` 的三域 review（GT/记录行、filter/不变式、CLI/facade），
+每条先在真实二进制或 bcftools 1.24 上复现；其余 review 主张逐条验证后归为
+测试缺口/重复/文档，未改行为。
+
+### Fixed
+- **pca**：`run_chunk`/`run_seam` 接 `classify_line`。CRLF 空行与跨 chunk seam
+  空行不再让整个 PCA 跑失败（convert/stats/filter 早已同口径）；删除两份重复的
+  `LineRef`/样本列/POS 校验。新增 2 个回归测试。
+- **ci**：`check-structure.sh` 的 GT-helper 门原写作
+  `! grep -q ... | grep -v ...`，`grep -q` 无输出使门恒过；改为计数比较，
+  注入违规已手工验证会失败。
+- **convert --sfs**：组合的 SFS 只接收 convert 自己接受的记录——越界 GT、
+  非数字 GT、polyploid 不再送进严格 stats 扫描器；同一文件 `--phylip` 与
+  `--phylip --sfs` 同为 B13-9 的 exit 0。干净 chunk 仍零拷贝。
+- **filter `-q/-Q`**：`ΣAC > AN` 从"静默回退基因型"改为显式运行错误
+  （bcftools 1.24 实测 `[E::bcf_calc_ac] Incorrect AN/AC counts`，exit 1）。
+  AC 长度不匹配保持 D12-13 的基因型回退，注释改为记录该分歧。
+- **convert hapmap→VCF**：输出文件创建失败的映射从 usage（exit 2）改为
+  runtime（exit 1），与 VCF 路线/filter/rename 一致（`cli_contract` 测试扩展）。
+- **pca --dapc --xval**：`XvalError::Lda(Degenerate|ConstantWithinGroups)` 走
+  与直接路径相同的分类（runtime，exit 1）；其余 `XvalError` 仍是 usage。
+  此前同一份退化数据不带 `--xval` 退 1、带 `--xval` 退 2。
+- **convert --sfs 空谱 panic**：SFS 累积器由首个进入投影的位点惰性初始化，全站
+  被跳过（越界 GT、`ALT=.`、polyploid、全多等位）时 `merged.sfs` 内部的
+  `SfsPartial` 为 `None`，`expect("the SFS job produced a spectra partial")`
+  abort（exit 101）。V25-01 的严格 GT 拒绝把这类输入从"正常出谱/干净报错"
+  扩大成 panic。现在写出全零谱（与 `stats` 的 0 位点请求同口径）并 exit 0。
+- **filter `-q/-Q` 规则顺序**：`-i/-e` 现在排在 `-q/-Q` 之前（bcftools
+  `vcfview.c:322` 先于 `:418`）。被表达式排除的记录不再触发上一轮新增的
+  `ΣAC > AN` 硬错误（`bcftools view -e 'QUAL<5' -q` 实测 exit 0）。
+- **convert 前导零等位基因**：SFS 严格扫描器的 5 位 token 上限只作用于组合的
+  `--sfs` 目标，不再把 `0000000/0` 标成 malformed 而影响 `--012`/`--phylip`
+  （bcftools 接受任意长度前导零）。
+- **filter `INFO/` 表达式与子集**：`INFO/AC|AN|AF|MAF|MAC` 恢复为纯 INFO 读取、
+  在 head 阶段求值（bcftools 在 `bcf_subset` 之前跑 `filter_test`，
+  `vcfview.c:322` vs `:341`）；V25-04 曾把 `INFO/` 与裸名路由合一，使
+  `-s S1 -i 'INFO/AC>1'` 读子集后重算值并丢掉全部记录。裸名 `AC`/`AF` 仍走
+  基因型路径（pre-v25 既有的、已记录的分歧）。
+
 ## [Unreleased] — doc_v23 复核修复：P0 崩溃/数据损坏与 6 项拍板落地（2026-11-03）
 
 仓库外全库审查（`reed-rs-review-2026-11-03.md`，9 区域约 8.9 万行）经

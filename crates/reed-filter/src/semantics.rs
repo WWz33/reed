@@ -101,12 +101,59 @@ pub struct InfoAfCounts {
 ///   the record has no usable INFO (warn once);
 /// * AN must be present and > 0;
 /// * the summed ALT counts must not exceed AN — a record like
-///   `AC=200;AN=100` is malformed and both the head and the tail treat it as
-///   "no usable INFO" (the tail used to guard this alone).
+///   `AC=200;AN=100` is malformed; htslib reports `Incorrect AN/AC counts`
+///   and aborts the run.
 ///
 /// The REF count is `AN − ΣALT`, exactly how `bcf_calc_ac` fills `ac[0]`.
+///
+/// This lenient entry point (used by the tail's genotype-fallback path)
+/// folds every malformed case into `None`. [`info_af_outcome`] keeps the
+/// distinction the typed `-q/-Q` head needs.
 #[must_use]
 pub fn info_af(info: &[u8], n_alt: u32) -> Option<InfoAfCounts> {
+    match info_af_outcome(info, n_alt) {
+        InfoAfOutcome::Usable(counts) => Some(counts),
+        // bcftools' expression/fallback path recomputes from the genotypes
+        // when INFO is unusable; the mismatch warning has already fired.
+        InfoAfOutcome::Absent
+        | InfoAfOutcome::AcLength { .. }
+        | InfoAfOutcome::AcExceedsAn { .. } => None,
+    }
+}
+
+/// What [`info_af_outcome`] found, keeping the malformed cases apart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InfoAfOutcome {
+    /// AC and AN are present and consistent.
+    Usable(InfoAfCounts),
+    /// AC or AN is absent (or AN is 0): the caller falls back to the
+    /// genotype counts, which is what bcftools does when no INFO value
+    /// carries the cohort.
+    Absent,
+    /// AC is present with the wrong number of values. htslib warns once and
+    /// `-q/-Q` drops the record; reed keeps D12-13's genotype fallback
+    /// (recorded divergence — the expression path does fall back in
+    /// bcftools too).
+    AcLength {
+        /// Values AC carried.
+        got: usize,
+        /// ALT alleles the record declares.
+        want: u32,
+    },
+    /// ΣAC > AN. htslib prints `[E::bcf_calc_ac] Incorrect AN/AC counts`
+    /// and aborts the run (exit 1); the typed `-q/-Q` path must too.
+    AcExceedsAn {
+        /// Sum of the AC values.
+        alt_sum: u64,
+        /// INFO/AN.
+        an: u64,
+    },
+}
+
+/// The distinguishing reader; the warning-once side effect for an AC
+/// length mismatch lives here so every caller shares it.
+#[must_use]
+pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
     use reed_io::vcf::info::info_fragments;
 
     let mut ac: Option<Vec<u64>> = None;
@@ -115,38 +162,47 @@ pub fn info_af(info: &[u8], n_alt: u32) -> Option<InfoAfCounts> {
         let Some(value) = value else { continue };
         match tag {
             b"AC" => {
-                let text = std::str::from_utf8(value).ok()?;
+                let Ok(text) = std::str::from_utf8(value) else {
+                    return InfoAfOutcome::Absent;
+                };
                 let mut counts = Vec::new();
                 for part in text.split(',') {
-                    if part == "." {
-                        return None;
-                    }
-                    counts.push(part.parse::<u64>().ok()?);
+                    let Ok(count) = part.parse::<u64>() else {
+                        // `.` and any non-integer read as no INFO, not as a
+                        // length mismatch (bcftools' missing-value path).
+                        return InfoAfOutcome::Absent;
+                    };
+                    counts.push(count);
                 }
                 ac = Some(counts);
             }
             b"AN" => {
-                an = std::str::from_utf8(value).ok()?.parse::<u64>().ok();
+                an = std::str::from_utf8(value)
+                    .ok()
+                    .and_then(|t| t.parse::<u64>().ok());
             }
             _ => {}
         }
     }
     let (alts, an) = match (ac, an) {
         (Some(ac), Some(an)) if an > 0 => (ac, an),
-        _ => return None,
+        _ => return InfoAfOutcome::Absent,
     };
     if alts.len() != n_alt as usize {
         warn_ac_length_once(alts.len(), n_alt);
-        return None;
+        return InfoAfOutcome::AcLength {
+            got: alts.len(),
+            want: n_alt,
+        };
     }
     let alt_sum: u64 = alts.iter().sum();
     if alt_sum > an {
-        return None;
+        return InfoAfOutcome::AcExceedsAn { alt_sum, an };
     }
     let mut per_allele = Vec::with_capacity(alts.len() + 1);
     per_allele.push(an - alt_sum);
     per_allele.extend(alts);
-    Some(InfoAfCounts { per_allele, an })
+    InfoAfOutcome::Usable(InfoAfCounts { per_allele, an })
 }
 
 /// htslib warns once per run about a mismatched AC vector and then stays

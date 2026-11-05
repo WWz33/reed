@@ -5,7 +5,7 @@
 //! avoids the "two parsers drift apart" failure mode.
 
 
-use reed_io::vcf::line::LineRef;
+use reed_io::vcf::line::{RecordClass, classify_line};
 use reed_io::{IoError, Locus};
 use reed_engine::pipeline::{ChunkJob, OrderedSink};
 use reed_core::ChunkId;
@@ -156,27 +156,23 @@ impl ChunkJob for PcaJob {
     ) -> Result<Self::Partial, EngineError> {
         let mut out = GenotypeBlock::default();
         for line in body.split(|&c| c == b'\n') {
-            if line.is_empty() || line[0] == b'#' {
+            if line.first() == Some(&b'#') {
                 continue;
             }
-            // A malformed record is an error, not a skip: silently dropping
-            // it yields a wrong matrix on a truncated or mismatched file
-            // (doc_v20 R6).
-            let Some(lr) = LineRef::parse(line) else {
-                return Err(malformed_line(line, "record line has fewer than 8 columns"));
+            // doc_v25 V25-03: one classification for every record consumer.
+            // A genuine blank line (CRLF residue) is skipped like stats does;
+            // a malformed record stays fatal (doc_v20 R6: dropping it silently
+            // yields a wrong matrix on a truncated or mismatched file).
+            let lr = match classify_line(line, self.n_samples) {
+                RecordClass::Record(lr) => lr,
+                RecordClass::Blank => continue,
+                RecordClass::Malformed(why) => {
+                    return Err(malformed_line(
+                        line,
+                        format!("record line is malformed ({})", why.label()),
+                    ));
+                }
             };
-            if lr.validate_sample_cols(self.n_samples).is_err() {
-                return Err(malformed_line(
-                    line,
-                    "sample column count disagrees with the header",
-                ));
-            }
-            // doc_v20 review of R6: the position is not stored any more, but
-            // a non-numeric POS is still a malformed record and must not pass
-            // silently here while `filter`/`stats` reject the same line.
-            if !lr.pos_text().iter().all(u8::is_ascii_digit) || lr.pos_text().is_empty() {
-                return Err(malformed_line(line, "POS is not a positive integer"));
-            }
             // Allele count gate: only biallelic sites have a 0/1/2 dosage.
             let alts = lr.alts();
             let n_alt = if alts == b"." {
@@ -236,24 +232,22 @@ impl ChunkJob for PcaJob {
     ) -> Result<Self::Partial, EngineError> {
         // A record spanning a chunk boundary: process it like any other line.
         let mut out = GenotypeBlock::default();
-        if line.is_empty() || line[0] == b'#' {
+        if line.first() == Some(&b'#') {
             return Ok(out);
         }
-        // Malformed seam records are errors too, like the body path
-        // (doc_v20 R6).
-        let Some(lr) = LineRef::parse(line) else {
-            return Err(malformed_line(line, "record line has fewer than 8 columns"));
+        // doc_v25 V25-03: the seam goes through the same classification as the
+        // body (blank skipped, malformed fatal). doc_v20 R6: a malformed seam
+        // record is an error, like the body path.
+        let lr = match classify_line(line, self.n_samples) {
+            RecordClass::Record(lr) => lr,
+            RecordClass::Blank => return Ok(out),
+            RecordClass::Malformed(why) => {
+                return Err(malformed_line(
+                    line,
+                    format!("record line is malformed ({})", why.label()),
+                ));
+            }
         };
-        if lr.validate_sample_cols(self.n_samples).is_err() {
-            return Err(malformed_line(
-                line,
-                "sample column count disagrees with the header",
-            ));
-        }
-        // doc_v20 review of R6: same POS contract as `run_chunk`.
-        if !lr.pos_text().iter().all(u8::is_ascii_digit) || lr.pos_text().is_empty() {
-            return Err(malformed_line(line, "POS is not a positive integer"));
-        }
         let alts = lr.alts();
         let n_alt = if alts == b"." {
             0
@@ -439,7 +433,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("chr1:101"), "error must name the locus: {msg}");
         assert!(
-            msg.contains("sample column count"),
+            msg.contains("sample-column count"),
             "error must name the mismatch: {msg}"
         );
     }
@@ -457,6 +451,37 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("chr1:102"), "error must name the locus: {msg}");
         assert!(msg.contains("8 columns"), "error must name the reason: {msg}");
+    }
+
+    /// doc_v25 V25-03: a genuine blank line in the body (`"\r"` left by a CRLF
+    /// split) is not a record and must be skipped, not fail the run. The same
+    /// file is accepted by convert/stats/filter; pca had its own line checks.
+    #[test]
+    fn v25_03_run_chunk_skips_a_crlf_blank_line() {
+        let job = job(2);
+        let mut scratch = PcaScratch::default();
+        let body = b"chr1\t107\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\r\n\r\n\
+chr1\t108\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n";
+        let block = job
+            .run_chunk(&chunk_bytes(), body, &mut scratch)
+            .expect("a blank line must not fail the chunk (doc_v25 V25-03)");
+        assert_eq!(block.n_sites, 2, "both records must be counted");
+    }
+
+    /// doc_v25 V25-03: a blank seam line (`"\n"` or `"\r\n"` from the
+    /// stitcher) is skipped; before the fix it failed with "fewer than 8
+    /// columns" depending on where the chunk boundary landed.
+    #[test]
+    fn v25_03_run_seam_skips_a_blank_line() {
+        let job = job(2);
+        for blank in [b"\n".as_slice(), b"\r\n", b"\r", b""] {
+            let block = job
+                .run_seam(ChunkId(1), blank, &mut PcaScratch::default())
+                .unwrap_or_else(|err| {
+                    panic!("blank seam {blank:?} must be skipped, got: {err}")
+                });
+            assert_eq!(block.n_sites, 0);
+        }
     }
 
     /// doc_v20 R6: the seam path (a record spanning a chunk boundary)

@@ -374,6 +374,167 @@ chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\t0/0\t0/0\n";
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v25 review: the strict statistics scanner caps an allele token at five
+/// digits, but convert's row targets (and bcftools) accept a zero-padded
+/// allele (`0000000` = 0). The scanner cap must exclude the record from the
+/// composed `--sfs` target only, never from `--012`/`--phylip` — the first
+/// version of the `--sfs` policy alignment marked it `bad` for every target.
+#[test]
+fn zero_padded_allele_stays_in_the_row_targets_but_not_the_sfs() {
+    let dir = fixture_dir("v25-zeropad");
+    let text = "\
+##fileformat=VCFv4.2\n\
+##contig=<ID=chr1,length=1000>\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0000000/0\t0/0\n\
+chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\n";
+    let vcf = write_fixture(&dir, "in.vcf", text);
+    let request = ConvertRequest {
+        targets: vec![
+            ConvertTarget::CountMatrix,
+            ConvertTarget::Sfs {
+                request: SfsRequest {
+                    projections: vec![4],
+                    folded: false,
+                },
+                int_dtype: false,
+            },
+        ],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    assert_eq!(
+        read(&dir.join("out.012.pos")),
+        "chr1\t100\nchr1\t200\n",
+        "the zero-padded allele is a valid row-target record"
+    );
+    let spectrum = read(&dir.join("out_sfs/dadi/all-4.sfs"));
+    let counts: Vec<u64> = spectrum
+        .lines()
+        .nth(1)
+        .expect("the spectrum's count line")
+        .split_whitespace()
+        .map(|c| c.parse().expect("a count"))
+        .collect();
+    assert_eq!(
+        counts.iter().sum::<u64>(),
+        1,
+        "only chr1:200 reaches the strict SFS scanner: {spectrum}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 V25-01 (F1): the composed `--sfs` target follows convert's B13-9
+/// policy for a GT outside the ALT domain — count it malformed, skip it, exit
+/// 0. It used to reach the strict statistics scanner, so `convert --phylip`
+/// succeeded on a file that `convert --phylip --sfs` failed on.
+#[test]
+fn v25_01_convert_sfs_skips_the_same_out_of_domain_record_as_the_row_targets() {
+    let dir = fixture_dir("v25-sfs-domain");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let with_bad = format!(
+        "{header}chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\n\
+         chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\n\
+         chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/1\n"
+    );
+    let clean = format!(
+        "{header}chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\n\
+         chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/1\n"
+    );
+    let with = write_fixture(&dir, "with.vcf", &with_bad);
+    let without = write_fixture(&dir, "without.vcf", &clean);
+    let run = |input: &Path, tag: &str, malformed: u64| -> String {
+        let request = ConvertRequest {
+            targets: vec![
+                ConvertTarget::Phylo {
+                    formats: PhyloFormats {
+                        phylip: true,
+                        ..PhyloFormats::default()
+                    },
+                    options: PhyloOptions::default(),
+                },
+                ConvertTarget::Sfs {
+                    request: SfsRequest {
+                        projections: vec![4],
+                        folded: false,
+                    },
+                    int_dtype: false,
+                },
+            ],
+            prefix: dir.join(tag),
+            ..ConvertRequest::default()
+        };
+        let report = run_convert(Some(input), &request, &budget())
+            .expect("convert --phylip --sfs must keep B13-9's exit-0 policy");
+        assert_eq!(report.counters.expect("counters").malformed, malformed);
+        read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs")))
+    };
+    assert_eq!(
+        run(&with, "with", 1),
+        run(&without, "without", 0),
+        "the out-of-domain record must not change the spectrum"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v25 review: an input where the SFS projector never sees a site (every
+/// record skipped by the row targets: out-of-domain GT, ALT `.`, polyploid,
+/// or all-multiallelic) used to abort with the "spectra partial" invariant.
+/// The empty spectrum is a legitimate result — `stats` writes one for a
+/// 0-site request — so `--sfs` must exit 0 and write the all-zero spectrum.
+#[test]
+fn convert_sfs_writes_an_empty_spectrum_when_no_site_is_projectable() {
+    let dir = fixture_dir("v25-sfs-empty");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let cases = [
+        ("ood", "chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/9\n"),
+        ("altdot", "chr1\t1\t.\tA\t.\t50\tPASS\t.\tGT\t0/1\t0/1\n"),
+        ("poly", "chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/0/1\t0/1/1\n"),
+        ("multi", "chr1\t1\t.\tA\tG,T\t50\tPASS\t.\tGT\t1/2\t1/2\n"),
+    ];
+    for (tag, body) in cases {
+        let vcf = write_fixture(&dir, &format!("{tag}.vcf"), &format!("{header}{body}"));
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Sfs {
+                request: SfsRequest {
+                    projections: vec![4],
+                    folded: false,
+                },
+                int_dtype: false,
+            }],
+            prefix: dir.join(tag),
+            ..ConvertRequest::default()
+        };
+        run_convert(Some(&vcf), &request, &budget())
+            .expect("an empty spectrum must not abort the run");
+        let spectrum = read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs")));
+        let counts: Vec<&str> = spectrum
+            .lines()
+            .nth(1)
+            .expect("the spectrum's count line")
+            .split_whitespace()
+            .collect();
+        assert_eq!(counts.len(), 5, "{tag}: one bin per projection state");
+        assert!(
+            counts.iter().all(|c| *c == "0"),
+            "{tag}: every bin must be zero, got {spectrum}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// doc_v25 V25-02: `FORMAT=DP:GT` (GT not first) parses like `GT:DP` on the
 /// count-matrix target — the old `memchr(b':')` handed the DP value to the
 /// genotype parser, so every sample was malformed (or, once V25-01 rejects

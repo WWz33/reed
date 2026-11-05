@@ -367,7 +367,12 @@ fn value<'a>(expr: &'a Expr, site: &'a SiteValues<'a>) -> Option<Val<'a>> {
                 .find(|(t, _)| t.as_slice() == tag.as_bytes())
                 .and_then(|(_, num)| num.map_or(Some(Val::Missing), |n| Some(Val::Num(n))))
         }),
-        Expr::Info(tag) | Expr::Bare(tag) => {
+        // An explicit `INFO/TAG` read is never genotype-derived: it names the
+        // record's own INFO value (bcftools evaluates `-i/-e` before
+        // `bcf_subset`). Only the bare built-in names fall back to the
+        // genotype counts, so only they route through `field_value`.
+        Expr::Info(tag) => info_operand(site, tag.as_bytes()).scalar(),
+        Expr::Bare(tag) => {
             if let Some(field) = Field::from_name(tag) {
                 return field_value(field, site);
             }
@@ -1008,14 +1013,18 @@ mod tests {
         assert!(ev("AN==100", &s, &tags));
         assert!(ev("AF==0.03", &s, &tags));
         assert!(ev("MAC==3", &s, &tags));
-        // The built-in is gated regardless of spelling: `INFO/AC` resolves
-        // to the same Field::Ac node as the bare `AC`.
-        assert!(ev("INFO/AC==3", &s, &tags));
-        // Direct INFO/TAG reads are NOT gated — only the derived-statistic
-        // built-ins switch source (exactly like `af_of`).
+        // The bare names are the genotype-derived built-ins; the explicit
+        // `INFO/` spelling is a plain INFO read and keeps the record value.
+        // This split is what bcftools' evaluation order produces: `-i/-e`
+        // runs before `bcf_subset` (`vcfview.c:322` vs `:341`), so
+        // `INFO/AC` is the input cohort's count. V25-04 collapsed the two
+        // spellings; doc_v25 review restored the split.
+        assert!(ev("INFO/AC==80", &s, &tags));
+        // Direct INFO/TAG reads are NOT gated either — only the bare
+        // derived-statistic built-ins switch source (exactly like `af_of`).
         assert!(ev("DP==40", &s, &tags));
         // The same record pre-mask (`info_trusted == true`, the head
-        // context) still prefers the INFO values.
+        // context) prefers the INFO values for both spellings.
         let mut head = SiteValues::from_line(&line, 100, Some(gt), true);
         head.tags = Some(&t);
         assert!(ev("MAF==0.5", &head, &tags));
@@ -1047,12 +1056,20 @@ mod tests {
         );
         // doc_v25 V25-04: the `INFO/` spelling of a genotype-derived
         // built-in routes like the bare name; a plain INFO tag stays in the
-        // head stage.
+        // doc_v25 review: an explicit `INFO/` read is a plain INFO value
+        // (bcftools evaluates `-i/-e` before `bcf_subset`), so it stays in
+        // the head stage even for a genotype-derived name. The bare name
+        // still routes to the genotype path.
         assert!(
-            parser::parse("INFO/AC>1")
+            !parser::parse("INFO/AC>1")
                 .expect("inv")
                 .references_genotypes()
         );
+        assert!(parser::parse("AC>1").expect("inv").references_genotypes());
+        // `--set-gts .` still cannot depend on a genotype-derived site
+        // field under either spelling: on the mask stage a bare `AC` would
+        // read the post-mask count and `INFO/AC` a stale cohort's INFO.
+        assert!(parser::parse("AC>1").expect("inv").reads_gt_fields());
         assert!(parser::parse("INFO/AC>1").expect("inv").reads_gt_fields());
         assert!(
             !parser::parse("INFO/DP>10")

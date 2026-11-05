@@ -194,6 +194,8 @@ impl RecordPipeline {
         let pos1 = site.pos1;
 
         // ---- head stage (§11.2: order is semantics) ----
+        // `ΣAC > AN` aborts the run like bcftools' `[E::bcf_calc_ac]`
+        // (doc_v25 V25-04): a job error, so it exits 1, not 2.
         let head_passed = eval_head(
             &lr,
             pos1,
@@ -201,8 +203,8 @@ impl RecordPipeline {
             &mut funnel.head_hits,
             &mut self.head,
             &plan.tags,
-            plan.info_trusted,
-        );
+        )
+        .map_err(|e| EngineError::job(e.to_string()))?;
         if !head_passed {
             return Ok(Processed::default());
         }
@@ -296,8 +298,8 @@ impl RecordPipeline {
             &mut funnel.head_hits,
             &mut self.head,
             &plan.tags,
-            plan.info_trusted,
-        );
+        )
+        .map_err(|e| EngineError::job(e.to_string()))?;
         if !head_passed {
             return Ok(Processed::default());
         }
@@ -746,6 +748,9 @@ fn attribute_hit(
 
 #[cfg(test)]
 mod tests {
+    // Every test in this module is debug-only (the short-keep assertion is
+    // compiled out in release), so the module's only imports are too.
+    #[cfg(debug_assertions)]
     use super::*;
     #[cfg(debug_assertions)]
     use reed_core::tag_table::{TagNumber, TagTable, TagType};

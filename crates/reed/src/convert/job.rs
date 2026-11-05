@@ -28,7 +28,7 @@ use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
 use crate::convert::writers;
 use crate::convert::{ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions};
 use crate::stats::driver::{build_sfs_plan, resolve_groups, sfs_report};
-use crate::stats::request::SfsReport;
+use crate::stats::request::{SfsPartial, SfsReport};
 use crate::stats::run::{StatsJob, StatsPartial, StatsScratch};
 
 pub(crate) use super::spill::{RowsBlob, SPILL_THRESHOLD, SPILL_TOTAL_BUDGET, SpilledMsa};
@@ -158,6 +158,12 @@ pub(crate) struct GtSlots {
     pub(crate) overflow: bool,
     /// A token that is neither `.` nor an unsigned integer.
     pub(crate) bad: bool,
+    /// An allele token the *strict statistics scanner* rejects but convert
+    /// itself accepts: more than five digits (`0000000`) or an index that
+    /// does not fit the scanner's `u16`. Row targets parse it like the old
+    /// code did (bcftools accepts zero-padded alleles), but the composed
+    /// `--sfs` target must not hand the record to the strict scanner.
+    pub(crate) strict_bad: bool,
     /// The raw GT text does not start with `.` (vcf2phylip's presence rule).
     pub(crate) present: bool,
     /// The raw GT field range within the samples region (for GEN_BIN).
@@ -476,31 +482,65 @@ impl ChunkJob for ConvertJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let mut partial = ConvertPartial::default();
-        if let Some(stats) = &self.sfs {
-            let ConvertScratch {
-                sanitized,
-                stats: stats_scratch,
-                ..
-            } = scratch;
-            // The SFS target skips blank and malformed lines alike — the
-            // same statistics a row target produces (B13-2, doc_v25 V25-03).
-            // `sanitize_body` returns the input untouched when nothing must
-            // be dropped, so a clean run is still zero-copy and byte-equal to
-            // `stats --sfs`.
-            let sfs_body = sanitize_body(body, self.n_samples, sanitized);
-            partial.sfs = Some(stats.run_chunk(chunk, sfs_body, stats_scratch)?);
-        }
+        // The composed SFS body is rebuilt only when a record must be
+        // dropped: structural blanks need no dropping (the statistics job
+        // skips them itself), but malformed lines (doc_v25 V25-03) and
+        // records whose GT the strict scanner would reject — out-of-domain
+        // alleles, non-digit tokens, polyploids (doc_v25 V25-01) — must not
+        // reach it. Convert's policy for those is "count malformed, exit 0"
+        // (B13-9), so handing them to the strict scanner used to turn the
+        // same file into a fatal `--sfs` run. A clean chunk still hands the
+        // original slice over (zero copy).
+        let want_sfs = self.sfs.is_some();
+        let mut dropped: Vec<usize> = Vec::new();
         let mut line_no: u32 = 0;
-        for line in body.split(|&b| b == b'\n') {
+        for (index, line) in body.split(|&b| b == b'\n').enumerate() {
             let key = DrawKey {
                 chunk: chunk.id.get(),
                 line: line_no,
             };
             // Blank lines are not records: they do not consume a draw slot
             // (the key must stay aligned with the emitted rows).
-            if self.push_line(line, key, &mut partial, scratch) {
+            let outcome = self.push_line(line, key, &mut partial, scratch);
+            if outcome != LineOutcome::Blank {
                 line_no += 1;
             }
+            if want_sfs {
+                let keep = match outcome {
+                    LineOutcome::Record => sfs_accepts_gt(scratch),
+                    // `Blank` passes through: the statistics job skips it.
+                    LineOutcome::Blank => true,
+                    LineOutcome::Malformed => false,
+                };
+                if !keep {
+                    dropped.push(index);
+                }
+            }
+        }
+        if let Some(stats) = &self.sfs {
+            let ConvertScratch {
+                sanitized,
+                stats: stats_scratch,
+                ..
+            } = scratch;
+            let sfs_body = if dropped.is_empty() {
+                body
+            } else {
+                sanitized.clear();
+                let mut next_drop = dropped.iter().copied().peekable();
+                for (index, line) in body.split(|&b| b == b'\n').enumerate() {
+                    if next_drop.peek() == Some(&index) {
+                        next_drop.next();
+                        continue;
+                    }
+                    if !sanitized.is_empty() {
+                        sanitized.push(b'\n');
+                    }
+                    sanitized.extend_from_slice(line);
+                }
+                sanitized.as_slice()
+            };
+            partial.sfs = Some(stats.run_chunk(chunk, sfs_body, stats_scratch)?);
         }
         Ok(partial)
     }
@@ -512,29 +552,38 @@ impl ChunkJob for ConvertJob {
         scratch: &mut Self::Scratch,
     ) -> Result<Self::Partial, EngineError> {
         let mut partial = ConvertPartial::default();
-        if let Some(stats) = &self.sfs {
-            let ConvertScratch {
-                stats: stats_scratch,
-                ..
-            } = scratch;
-            // The seam line carries its terminator; classify it exactly as a
-            // body line. Blank and malformed lines are skipped (the SFS
-            // target's policy), so the statistics job never sees them.
-            if matches!(
-                classify_line(line, self.n_samples),
-                RecordClass::Record(_)
-            ) {
-                partial.sfs = Some(stats.run_seam(id, line, stats_scratch)?);
-            }
-        }
         // The seam record belongs to the previous chunk's stream.
         let key = DrawKey {
             chunk: id.get().saturating_sub(1),
             line: u32::MAX,
         };
-        self.push_line(line, key, &mut partial, scratch);
+        let outcome = self.push_line(line, key, &mut partial, scratch);
+        // Feed the SFS target only what convert accepts (the same policy as
+        // the body path: structural blanks/malformed and GT-domain rejects
+        // never reach the strict statistics scanner).
+        if let Some(stats) = &self.sfs
+            && outcome == LineOutcome::Record
+            && sfs_accepts_gt(scratch)
+        {
+            let ConvertScratch {
+                stats: stats_scratch,
+                ..
+            } = scratch;
+            partial.sfs = Some(stats.run_seam(id, line, stats_scratch)?);
+        }
         Ok(partial)
     }
+}
+
+/// Whether the genotype just parsed by [`ConvertJob::parse_gts`] passes the
+/// strict statistics scanner's grammar (doc_v25 V25-01): every sample's GT is
+/// diploid-or-haploid, digit-only within the scanner's five-digit token cap,
+/// and inside the record's allele domain.
+fn sfs_accepts_gt(scratch: &ConvertScratch) -> bool {
+    !scratch
+        .gts
+        .iter()
+        .any(|gt| gt.bad || gt.strict_bad || gt.overflow || gt.n > 2)
 }
 
 impl ConvertJob {
@@ -551,20 +600,20 @@ impl ConvertJob {
         key: DrawKey,
         partial: &mut ConvertPartial,
         scratch: &mut ConvertScratch,
-    ) -> bool {
+    ) -> LineOutcome {
         let lr = match classify_line(line, self.n_samples) {
             RecordClass::Record(lr) => lr,
             // `line_is_sane` used to call a blank seam line sane and hand it
             // to the statistics job; a blank line is now simply not a record
             // (doc_v25 V25-03).
-            RecordClass::Blank => return false,
+            RecordClass::Blank => return LineOutcome::Blank,
             RecordClass::Malformed(why) => {
                 // vcf2phylip counts every non-empty, non-`#` line as
                 // processed, malformed ones included (`snp_num` increments
                 // before its checks).
                 partial.counters.total_records += 1;
                 self.bump_malformed(partial, scratch, why.label());
-                return true;
+                return LineOutcome::Malformed;
             }
         };
         partial.counters.total_records += 1;
@@ -661,7 +710,7 @@ impl ConvertJob {
         self.push_count_matrix(&lr, present, partial, scratch);
         self.push_hapmap(&lr, present, partial, scratch);
         self.push_msa(&lr, pos0, partial, scratch);
-        true
+        LineOutcome::Record
     }
 
     /// The phylogenetic partial, created with the shape both branches agree
@@ -745,6 +794,13 @@ impl ConvertJob {
                 if token == b"." {
                     gt.slots[tokens] = None;
                 } else if !token.is_empty() && token.iter().all(u8::is_ascii_digit) {
+                    // The row targets' grammar: any digit run (bcftools
+                    // accepts zero-padded alleles), but the strict scanner
+                    // caps a token at five digits — record that separately
+                    // instead of failing this record for every target.
+                    if token.len() > 5 {
+                        gt.strict_bad = true;
+                    }
                     match std::str::from_utf8(token)
                         .ok()
                         .and_then(|t| t.parse::<u32>().ok())
@@ -1123,27 +1179,21 @@ impl ConvertJob {
     }
 }
 
+/// What one input line was for the row targets (`push_line`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LineOutcome {
+    /// Only line terminators: not a record, consumes no draw slot.
+    Blank,
+    /// A non-blank line that fails the structural checks: counted as
+    /// malformed (vcf2phylip's `snp_num` slot) and skipped.
+    Malformed,
+    /// A structurally valid record; GT-domain rejection is decided per
+    /// target from the parsed `gts`.
+    Record,
+}
+
 /// A malformed record for one target (skipped with a counter).
 struct Malformed;
-
-/// Copies `body`, dropping every line `classify_line` does not call a record
-/// (blank and malformed alike — the SFS target's policy, doc_v25 V25-03);
-/// returns the input untouched when nothing must be dropped (the common
-/// case, and what keeps `convert --sfs` byte-equal to `stats --sfs` on clean
-/// input).
-fn sanitize_body<'a>(body: &'a [u8], n_samples: usize, out: &'a mut Vec<u8>) -> &'a [u8] {
-    let is_record = |line: &[u8]| matches!(classify_line(line, n_samples), RecordClass::Record(_));
-    if body.split_inclusive(|&b| b == b'\n').all(is_record) {
-        return body;
-    }
-    out.clear();
-    for line in body.split_inclusive(|&b| b == b'\n') {
-        if is_record(line) {
-            out.extend_from_slice(line);
-        }
-    }
-    out.as_slice()
-}
 
 /// The raw ALT allele count (`.` counts zero; else commas + 1).
 fn raw_alt_count(lr: &LineRef<'_>) -> u32 {
@@ -1729,9 +1779,23 @@ pub fn run_convert_opened(
     if let (Some((_, int_dtype)), Some(plan), Some(partial)) =
         (&sfs_request, &sfs_plan, &merged.sfs)
     {
-        let partial_sfs = partial
-            .sfs_partial()
-            .expect("invariant: the SFS job produced a spectra partial");
+        // `SfsPartial` is seeded lazily by the first site that reaches the
+        // projector, so an input where every record is skipped (all
+        // multiallelic, ALT `.` with a GT call, out-of-domain GT, polyploid)
+        // leaves the accumulator unseeded. That is a legitimate empty
+        // spectrum, not a broken invariant: write the zero spectrum like
+        // `stats` does for a 0-site request instead of panicking (the
+        // `--sfs` panic is what made v25's stricter GT rejection abort runs
+        // the old build completed).
+        let empty;
+        let partial_sfs = match partial.sfs_partial() {
+            Some(sfs) => sfs,
+            None => {
+                empty = SfsPartial::new(plan)
+                    .ok_or_else(|| crate::Error::usage("invalid SFS projections"))?;
+                &empty
+            }
+        };
         let report = sfs_report(partial_sfs, plan);
         files.extend(crate::stats::writers::sfs::write_projected_sfs(
             prefix,
