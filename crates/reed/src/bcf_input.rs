@@ -184,6 +184,16 @@ impl<J: ChunkJob> InputJob<J> {
         if carried.is_empty() {
             body_start = skip;
             body_end = walk_records(text, skip);
+            // doc_v26 review item 2: the first-fragment branch publishes the
+            // crossing record below without the ceiling check the
+            // has-carry branch performs. `text[body_end..]` can be the whole
+            // chunk (a record that starts in this chunk and only ends after
+            // it), so a small --memory could admit a carried prefix far above
+            // its budget. The check must cover this branch too — and, when
+            // the length prefix is already complete in this chunk, the
+            // declared total is the tighter of the two bounds.
+            let crossing = text.len() - body_end;
+            self.check_carried(0, crossing, declared_len(&text[body_end..]))?;
         } else {
             // doc_v26 V26-07: the old code appended a whole chunk's text
             // and *then* compared a later chunk's declared length against the
@@ -219,6 +229,9 @@ impl<J: ChunkJob> InputJob<J> {
             carried.head.extend_from_slice(&text[..body_start]);
         }
         // Publish the crossing record of the *next* chunk before decoding.
+        // The ceiling was checked above on whichever branch produced
+        // `body_end` (doc_v26 review item 2: the no-carry branch had no
+        // check and could publish an over-budget prefix).
         guard.publish(Carried {
             head: text[body_end..].to_vec(),
             prefix_len: (text.len() - body_end) as u64,
@@ -373,4 +386,150 @@ fn declared_len_across(carried: &[u8], text: &[u8]) -> Option<usize> {
     head[..carried.len()].copy_from_slice(carried);
     head[carried.len()..].copy_from_slice(&text[..need]);
     declared_len(&head)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reed_engine::budget::{MemBudget, ThreadBudget};
+    use reed_engine::pipeline::ChunkJob;
+
+    /// A job that records nothing: these tests only exercise framing.
+    struct NoopJob;
+
+    impl ChunkJob for NoopJob {
+        type Partial = ();
+        type Scratch = ();
+        fn framing(&self) -> RecordFraming {
+            RecordFraming::Newline
+        }
+        fn run_chunk(
+            &self,
+            _chunk: &ChunkBytes,
+            _body: &[u8],
+            _scratch: &mut Self::Scratch,
+        ) -> Result<Self::Partial, EngineError> {
+            Ok(())
+        }
+        fn run_seam(
+            &self,
+            _id: reed_core::ChunkId,
+            _seam: &[u8],
+            _scratch: &mut Self::Scratch,
+        ) -> Result<Self::Partial, EngineError> {
+            Ok(())
+        }
+    }
+
+    /// A BCF record's bytes: an 8-byte length prefix declaring `total`, with
+    /// only `present` bytes actually materialised. `present < total` models a
+    /// record that starts in this chunk and continues in the next.
+    fn record_prefixed(total: usize, present: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        // `declared_len` = 8 + l_shared + l_indiv; l_indiv counts the sample
+        // block, which is empty for these framing-only fixtures.
+        let l_shared = u32::try_from(total - 8).expect("invariant: fits");
+        out.extend_from_slice(&l_shared.to_le_bytes());
+        out.extend_from_slice(&0_u32.to_le_bytes());
+        out.resize(present.min(total), 0x00);
+        out
+    }
+
+    /// Builds an `InputJob` whose BCF state exists but whose dictionary is
+    /// never consulted (framing only), with an explicit ceiling.
+    fn job_with_ceiling(ceiling: usize) -> InputJob<NoopJob> {
+        let abort = reed_engine::abort::abort();
+        let chain = Arc::new(FrameChain::new(abort.signal.clone()));
+        chain.publish(0, Carried::default());
+        let dict = Arc::new(
+            BcfDict::from_header(b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+                .expect("invariant: minimal BCF header"),
+        );
+        InputJob {
+            inner: NoopJob,
+            record_ceiling: ceiling,
+            bcf: Some(BcfState { chain, dict }),
+            native: None,
+        }
+    }
+
+    fn chunk(id: u64, compressed_start: u64, blocks: Vec<(u32, u32)>) -> ChunkBytes {
+        ChunkBytes {
+            id: reed_core::ChunkId(id),
+            compressed: reed_io::chunk::ChunkPayload::from(Vec::new()),
+            first_in_block_offset: 0,
+            plain: true,
+            compressed_start,
+            blocks,
+            truncate_to: None,
+        }
+    }
+
+    /// Review item 2: when a record starts inside this chunk and only ends in
+    /// a later one, the first fragment is published by the no-carry branch —
+    /// which used to skip the ceiling check entirely, so a small `--memory`
+    /// could publish a carried prefix of arbitrary size.
+    #[test]
+    fn the_first_crossing_fragment_is_checked_against_the_ceiling() {
+        // A record whose prefix declares 4096 bytes but only 64 of them are
+        // in this chunk: the carried fragment is 64 bytes, while the declared
+        // total (4096) is what the ceiling must judge.
+        let text = record_prefixed(4096, 64);
+        let job = job_with_ceiling(1024);
+        let chain = Arc::new(FrameChain::new(reed_engine::abort::abort().signal));
+        chain.publish(0, Carried::default());
+        let mut carried = Carried::default();
+        let c = chunk(0, 0, vec![]);
+        let err = job
+            .frame_chunk(&c, &text, &mut carried, &chain)
+            .expect_err("a declared 4096-byte record past a 1024-byte ceiling must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("ceiling"), "{msg}");
+
+        // The control: the same shape under a ceiling that admits it passes
+        // and publishes the crossing fragment.
+        let roomy = job_with_ceiling(1 << 20);
+        let chain = Arc::new(FrameChain::new(reed_engine::abort::abort().signal));
+        chain.publish(0, Carried::default());
+        let mut carried = Carried::default();
+        let out = roomy
+            .frame_chunk(&c, &text, &mut carried, &chain)
+            .expect("invariant: within the ceiling");
+        // The record does not end in this chunk, so the framed range is empty
+        // (`walk_records` returns the start when the first record does not
+        // fit); its whole text becomes the carried prefix.
+        assert_eq!(out, Some((0, 0)), "no complete record in this chunk");
+        // The successor's cell carries the rest of the record; that is where
+        // the published fragment is observable (the caller's `carried` is the
+        // *predecessor's*, which is not mutated in this branch).
+        let next = chain
+            .peek(1)
+            .expect("invariant: the successor cell was published");
+        assert_eq!(next.prefix_len, 64, "the whole chunk is carried");
+    }
+
+    /// The real budget path: a tiny `--memory` must bound the first carried
+    /// fragment too, not just the later accumulates.
+    #[test]
+    fn a_small_memory_budget_bounds_the_first_carried_fragment() {
+        let budget = ThreadBudget {
+            threads: 1,
+            mem: MemBudget::from_bytes(1),
+        };
+        let ceiling = reed_engine::pipeline::record_ceiling(&budget);
+        assert_eq!(ceiling, 1, "the ceiling follows the budget");
+
+        // The declared total is 136 bytes, over the 1-byte ceiling, with 64
+        // of them present: framing must refuse rather than carry it.
+        let text = record_prefixed(136, 64);
+        let job = job_with_ceiling(ceiling);
+        let chain = Arc::new(FrameChain::new(reed_engine::abort::abort().signal));
+        chain.publish(0, Carried::default());
+        let mut carried = Carried::default();
+        let c = chunk(0, 0, vec![]);
+        assert!(
+            job.frame_chunk(&c, &text, &mut carried, &chain).is_err(),
+            "a record past the --memory-derived ceiling must be refused"
+        );
+    }
 }

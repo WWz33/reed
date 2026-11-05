@@ -40,21 +40,31 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// How many candidate names one output may burn through before giving up.
 const TEMP_ATTEMPTS: usize = 16;
 
-/// Removes temporaries this process left for `target` that are older than
-/// the current run (a SIGKILL skips `Drop`, which is the one case the atomic
-/// writer cannot clean up itself).
+/// Removes temporaries left for `target` by a **crashed run of this same
+/// process** — the one case `Drop` cannot handle.
 ///
-/// Only names this process would generate are touched — `.{name}.reed-tmp-`
-/// with **any** pid is swept, because a crashed *previous* process's
-/// leftovers are the common case (a retried command in the same directory).
-/// A file younger than [`STALE_TEMP_SECS`] is left alone: it may belong to a
-/// concurrent run of the same command.
+/// The previous version swept every file matching `<name>.reed-tmp-*` older
+/// than 60 s, which was unsafe in two ways (review item 3):
+///
+/// * it did not verify the trailing `-<pid>-<counter>` shape, so a user file
+///   that merely shared the prefix would be deleted;
+/// * it judged by age, not by liveness, so a *concurrent* run of the same
+///   command that had been quiet for a minute would have its temporary
+///   removed mid-write, and its commit would then fail.
+///
+/// It now removes only names whose pid field names this very process
+/// (`<name>.reed-tmp-<our pid>-<digits>`) and that are older than
+/// [`STALE_TEMP_SECS`]. Another process's temporary is never touched — a
+/// crashed *other* process's leftovers stay, which is the conservative
+/// choice: stale bytes are recoverable, deleted data is not. There is no
+/// portable, race-free way to prove another pid is dead from a filename, so
+/// this implementation does not pretend to.
 fn sweep_stale_temps(target: &Path) {
     let Some(parent) = target.parent() else { return };
     let name = target
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let prefix = format!("{name}.reed-tmp-");
+    let own_pid = std::process::id();
     let Ok(entries) = std::fs::read_dir(if parent.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -65,7 +75,19 @@ fn sweep_stale_temps(target: &Path) {
     let now = std::time::SystemTime::now();
     for entry in entries.flatten() {
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        if !file_name.starts_with(&prefix) {
+        // `<target name>.reed-tmp-<pid>-<counter>`, fully anchored: a suffix
+        // that is not exactly digits is a user file and is left alone.
+        let Some(suffix) = file_name
+            .strip_prefix(&format!("{name}.reed-tmp-"))
+        else {
+            continue;
+        };
+        let Some((pid_text, counter_text)) = suffix.split_once('-') else {
+            continue;
+        };
+        if pid_text.parse::<u32>().ok() != Some(own_pid)
+            || counter_text.parse::<u64>().is_err()
+        {
             continue;
         }
         let old = entry
@@ -80,7 +102,7 @@ fn sweep_stale_temps(target: &Path) {
     }
 }
 
-/// How old a leftover temporary must be before a new run removes it.
+/// How old a leftover temporary must be before this process removes its own.
 const STALE_TEMP_SECS: u64 = 60;
 
 /// The candidate temporary path for `final_path`, `counter` generations on.
@@ -327,34 +349,60 @@ mod tests {
     }
 
     /// A SIGKILL leaves the temporary behind (no Drop runs); the next run in
-    /// the same directory sweeps it, but only once it is clearly stale so a
-    /// concurrent run's temporary is safe.
+    /// the same directory sweeps its own leftovers — and only its own.
+    ///
+    /// Review item 3: the old sweep deleted anything with the prefix older
+    /// than 60 s, which could remove a user file or a concurrent process's
+    /// live temporary.
     #[test]
-    fn a_stale_temporary_is_swept_and_a_fresh_one_is_not() {
+    fn the_sweep_removes_only_our_own_stale_temporaries() {
         let dir = dir("sweep");
         let target = dir.join("out.txt");
-        let stale = temp_path(&target, 0);
-        let fresh = temp_path(&target, 1);
-        std::fs::write(&stale, b"leftover").expect("invariant: stale");
-        std::fs::write(&fresh, b"in flight").expect("invariant: fresh");
-        // Make `stale` look old; `fresh` keeps its current mtime.
+        let pid = std::process::id();
+
+        // Ours, old: swept.
+        let ours_stale = temp_path(&target, 0);
+        // Ours, fresh: kept (it may be a live run in this process).
+        let ours_fresh = temp_path(&target, 1);
+        // Another process's, old: kept (we cannot prove it is dead).
+        let other_pid = dir.join(format!("out.txt.reed-tmp-{}-0", pid + 1));
+        // A user file that merely shares the prefix: kept.
+        let user_prefix = dir.join("out.txt.reed-tmp-notes");
+        // A user file with a non-numeric pid field: kept.
+        let user_pid = dir.join("out.txt.reed-tmp-backup-2026");
+        // A different target's temporary: kept.
+        let other_target = dir.join("other.txt.reed-tmp-0-0");
+
+        for path in [
+            &ours_stale,
+            &ours_fresh,
+            &other_pid,
+            &user_prefix,
+            &user_pid,
+            &other_target,
+        ] {
+            std::fs::write(path, b"x").expect("invariant: write fixture");
+        }
+        // Age ours_stale and other_pid past the limit.
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&stale)
-            .expect("invariant: open stale");
-        f.set_modified(old).expect("invariant: age the file");
-        drop(f);
-        let unrelated = dir.join("other.txt.reed-tmp-1-0");
-        std::fs::write(&unrelated, b"other file's temporary").expect("invariant: unrelated");
-        let alive = dir.join("out.txt.reed-tmp-1-2");
-        std::fs::write(&alive, b"alive").expect("invariant: alive");
+        for path in [&ours_stale, &other_pid] {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .expect("invariant: open");
+            f.set_modified(old).expect("invariant: age");
+        }
 
         let (out, _file) = AtomicFile::create(&target).expect("invariant: create");
-        assert!(!stale.exists(), "the stale temporary must be swept");
-        assert!(fresh.exists(), "a fresh temporary belongs to a live run");
-        assert!(unrelated.exists(), "another file's temporary is not ours to remove");
-        assert!(alive.exists());
+        assert!(!ours_stale.exists(), "our own stale temporary is swept");
+        assert!(ours_fresh.exists(), "a fresh temporary may be a live run");
+        assert!(
+            other_pid.exists(),
+            "another process's temporary is never touched"
+        );
+        assert!(user_prefix.exists(), "a shared-prefix user file is kept");
+        assert!(user_pid.exists(), "a non-numeric pid field is not ours");
+        assert!(other_target.exists(), "another target's file is not ours");
         drop(out);
         let _ = std::fs::remove_dir_all(&dir);
     }

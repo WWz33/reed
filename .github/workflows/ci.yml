@@ -72,12 +72,13 @@ jobs:
           # doc_v26 V26-14: the parity step used to read out/reed.vcf.gz
           # without ever producing it, so it compared whatever a previous
           # self-hosted run had left behind. Build this checkout's binary and
-          # run the reed branch explicitly; the parity input is then provably
-          # from the commit under test.
+          # export REED: `run_all.sh` joins the reed branch (see
+          # review item 6 -- the explicit `run_reed.sh` after it ran the same
+          # large computation twice), so the parity input is provably from the
+          # commit under test.
           cargo build --release -p reed-cli
           export REED="$PWD/target/release/reed"
           bash gold/scripts/run_all.sh
-          bash gold/scripts/run_reed.sh
           test -s "$REED_SCRATCH/out/reed.vcf.gz"
           python3 gold/scripts/check_parity.py "$REED_SCRATCH/out/reed.vcf.gz" \
             --gold "$REED_SCRATCH/out/gold.vcf.gz"

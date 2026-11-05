@@ -27,14 +27,32 @@
 | V26-21 faer bypasses thread budget | confirmed | **已修** | `reed-reduce::Parallel`（`Serial`/`Threads(n)`）贯穿 `gram_divide`/`sym_eig`/`sym_eig_top_k`、PCA 三入口与 `StreamConfig`；改为 faer 显式 `matmul`/`evd`（原 `*` 运算符读 faer 全局设置）。实测 2500 样本：修复前 `--threads 1` 耗 53.4 s CPU / 21.0 s wall；修复后 23.4 s CPU / 23.5 s wall。满秩输入在 1/2/8 线程下逐字节相同。 |
 | v25 false-positive review notes | 已复核 | 关闭/更正 | 不变（HWE midp 是文档化限制；N_MISSING/half-call 是不同定义；reed-reduce 有测试）。 |
 
+## 2026-11-06 复核发现（6 项）及处理
+
+复核从 v25 基线到当前 HEAD 的 IO/VCF/BCF/filter/预算/输出/CI 改动后确认的问题。
+逐条修复，每条都先补能失败的测试。
+
+| # | 问题 | 处理 | 证据 |
+|---|---|---|---|
+| R-1 | `MmapChunkSource::open` 是安全 `pub fn`，但前提要求映射期间文件不被任何进程修改 —— 调用者仍能从安全代码触发 UB | 改为 `pub unsafe fn`，`# Safety` 写明"只读打开不足以建立前提"；内部 `unsafe` 块的 SAFETY 引用该契约；测试调用点显式 `#[allow(unsafe_code)]` + SAFETY 注释 | 仍满足"唯一生产 unsafe 站点"守卫（97/97） |
+| R-2 | BCF 首段 carry：`carried.is_empty()` 分支直接 `text[body_end..].to_vec()` 并发布，**完全没有上限检查**；只有"已存在 carry"的分支检查 | 该分支发布前调用 `check_carried(0, crossing, declared_len(...))`，用声明的总长作更紧的界 | 新增 2 个测试；**把修复回退后 2 个测试都失败**，恢复后通过 |
+| R-3 | 临时文件清理按"60 s 年龄 + 前缀"删除：会删掉共享前缀的用户文件，也会删掉另一进程仍在写的活动临时文件 | 只清理 `<目标名>.reed-tmp-<本进程 pid>-<纯数字>` 且超龄的文件；其他进程的临时文件一律不动（无法从文件名可靠证明 pid 已死，宁可留陈旧字节也不删） | 测试覆盖 6 类文件：本进程陈旧（删）、本进程新鲜（留）、他进程（留）、共享前缀用户文件（留）、非数字 pid 字段（留）、其他目标的临时文件（留） |
+| R-4 | cgroup 探测只读根路径。若进程在子 cgroup 而根为 `max`，真实限额漏掉 | 解析 `/proc/self/cgroup`（v2 `0::/p`、v1 `N:memory:/p`），沿**自己的 cgroup 及其全部祖先**取最小；**并修正 v1 布局** —— 真实 v1 是 `<root>/memory/<rel>/...`（controller 在前），原实现猜的是 `<root>/<rel>/memory/...` | 新增 2 个测试（根无限/子有限、祖先更低、v1、sentinel、不可读回退）；并在本机实证 v1 路径 `/sys/fs/cgroup/memory/system.slice/sshd.service/...` 确实存在 |
+| R-5 | `validate_info` 每条记录 `Vec` 分配 + `contains` 的 O(k²)；注释却写"allocation-free and linear" | 改为无分配的"与前缀重比"，注释如实写 O(k²) 及其理由（k 是个位数）；新增独立计数分配器测试 | 新测试：旧实现 **4000 次调用 6000 次分配**，新实现 **0** |
+| R-6 | CI 的 data-gate 把 reed 分支跑两次（`run_all.sh` 已并入 + 又显式跑 `run_reed.sh`） | 删除显式的第二次调用，保留 `REED` 导出 + `run_all.sh` 一条路径 | YAML 中 `run_reed.sh` 只剩注释里的一处说明 |
+
 ## 本轮验收
 
-- `ci/test-parallel.sh`：**1055 passed / 0 failed**（56 个二进制，17 s）。
+- `ci/test-parallel.sh`：**1059 passed / 0 failed**（56 个二进制，16 s）。
 - `cargo +stable clippy --workspace --all-targets -- -D warnings`：**0 告警**。
 - `ci/check-doc-drift.sh`：**97 项 ok**；`ci/check-structure.sh`：**16 项 ok**。
 - `cargo +1.91 check --workspace --all-targets`：通过（MSRV 实测）。
 - 真实数据：7 GB `clean.vcf.gz`（3,315,604 记录）filter 结果记录数不变；8 GB `clean.bcf` 走 native BCF 路径通过；BCF→stats 往返通过。
 - 未跑：全量 gold/data-gates（本机 plink2 在该子集上另有自身失败，与 reed 无关，故只做了区域烟测）；长时资源压力；完整性能基准回归。
+
+## 复核后追加的偏差说明
+
+R-3 的取舍值得单独记一笔：复核建议"不要跨进程按年龄删除，或至少严格验证文件名并确认所属进程已退出"。采用前半句的**收窄**版本 —— 只删本进程自己的。理由是"确认所属进程已退出"没有可移植且无竞态的实现（`kill(pid,0)` 的 PID 复用、/proc 可见性都依赖平台），而误删已提交数据的代价远大于留下陈旧临时文件。代价：另一进程崩溃留下的临时文件不会被自动清理，需要人工或后续维护。
 
 ## 实施中记录的两处方案偏差
 

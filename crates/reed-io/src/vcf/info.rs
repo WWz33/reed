@@ -91,26 +91,54 @@ pub struct DuplicateInfoKey {
 /// Validates an INFO column for the record contract shared by every consumer
 /// (doc_v26 V26-04): today that is the no-duplicate-tag rule.
 ///
-/// The check is allocation-free and linear over the fragments, so
-/// [`crate::vcf::line::classify_line`] can run it on every record and no
-/// INFO reader has to choose a first/last convention.
+/// # Cost
+///
+/// **Allocation-free.** The first version built a `Vec<&[u8]>` and used
+/// `contains`, so every record with INFO paid a heap allocation and an
+/// O(k²) scan (review item 5; its doc comment claimed "allocation-free and
+/// linear", which the implementation contradicted). This version walks the
+/// fragments and compares each key against the keys *before* it by re-slicing
+/// `info`, so it allocates nothing.
+///
+/// It is O(k²) in the number of tags, which is the honest description: k is a
+/// handful (`DP`, `AC`, `AN`, `MQ`, …) in every real call, and the constant is
+/// a `memcmp` of short keys. A linear check would need per-worker scratch and
+/// a hash of the keys, which costs more than it saves at this k. A caller
+/// that already builds an [`InfoIndex`] gets the check for free from
+/// [`InfoIndex::build`] (same rule, one walk); [`crate::vcf::line::classify_line`]
+/// uses this function because it has no scratch of its own.
 ///
 /// # Errors
 ///
 /// [`DuplicateInfoKey`] when a tag repeats.
 pub fn validate_info(info: &[u8]) -> Result<(), DuplicateInfoKey> {
-    let mut seen: Vec<&[u8]> = Vec::new();
     for (tag, _) in info_fragments(info) {
-        if seen.contains(&tag) {
-            let key_start = tag.as_ptr() as usize - info.as_ptr() as usize;
+        let key_start = tag.as_ptr() as usize - info.as_ptr() as usize;
+        // Compare against every earlier key: the earlier region is
+        // `info[..key_start]`, so re-walking that prefix keeps the check
+        // allocation-free and identical to the index's rule.
+        if prefix_has_key(&info[..key_start], tag) {
             return Err(DuplicateInfoKey {
                 key_start,
                 key_len: tag.len(),
             });
         }
-        seen.push(tag);
     }
     Ok(())
+}
+
+/// Whether `prefix` (the INFO text before the current fragment) already
+/// carries the fragment `tag`.
+///
+/// `prefix` ends with the `;` that starts `tag`, so it is a run of
+/// `key[=value];` entries; each entry's key is its text up to `=` or `;`.
+fn prefix_has_key(prefix: &[u8], tag: &[u8]) -> bool {
+    for (key, _) in info_fragments(prefix) {
+        if key == tag {
+            return true;
+        }
+    }
+    false
 }
 
 /// One record's INFO fragments as byte ranges — built once per record and

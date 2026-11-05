@@ -403,20 +403,22 @@ impl MmapChunkSource {
     ///
     /// # Safety
     ///
-    /// The caller must guarantee that no process modifies or truncates
-    /// `file` while the returned source (and any chunk of it) is alive —
-    /// see the type-level note. reed's own input path does not use this
-    /// entry (doc_v26 V26-00).
-    pub fn open(file: std::fs::File) -> Result<(Self, crate::header::HeaderFacts), IoError> {
-        // SAFETY: `Mmap::map` is unsafe because the file must not be modified
-        // for the lifetime of the mapping (the worst case is a SIGBUS on
-        // truncation). "reed opens it read-only and never writes it" is *not*
-        // sufficient: another process can still truncate or rewrite it. The
-        // precondition is therefore a caller contract of `open` (an immutable
-        // snapshot), and the default input path no longer uses this source
-        // (doc_v26 V26-00). This remains the single audited `unsafe` site in
-        // the workspace (doc_v6 06 Y0 deleted the AVX-512 count kernel).
-        #[allow(unsafe_code)]
+    /// `memmap2::Mmap::map` is sound only while the backing file is not
+    /// modified or truncated by **any** process for the lifetime of the
+    /// mapping — including every chunk the returned source hands out. The
+    /// caller must establish that (a private, immutable snapshot); "I opened
+    /// it read-only" is not sufficient, because another process can still
+    /// truncate or rewrite the file, which is undefined behaviour (SIGBUS at
+    /// best). This function is `unsafe` for exactly that reason (doc_v26
+    /// V26-00 review): a safe `pub fn` would let safe code reach the
+    /// contract-free case. reed's own input path does not call it.
+    #[allow(unsafe_code)]
+    pub unsafe fn open(file: std::fs::File) -> Result<(Self, crate::header::HeaderFacts), IoError> {
+        // SAFETY: the caller of this `unsafe fn` guarantees the backing file is
+        // not modified for the mapping's lifetime (see the function's
+        // `# Safety`). This remains the single audited `unsafe` site in the
+        // workspace (doc_v6 06 Y0 deleted the AVX-512 count kernel).
+        // Safety: the caller's contract (this fn is `unsafe`).
         let map = unsafe { memmap2::Mmap::map(&file) }?;
         let map = Arc::new(map);
         // The header scan reuses the streaming reader over the mapped bytes:
@@ -881,7 +883,9 @@ mod tests {
             let file = std::fs::File::open(&path).expect("invariant: file exists");
             let _ = std::fs::remove_file(&path);
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let (mut source, _) = MmapChunkSource::open(file)?;
+                // SAFETY: the temp file is not modified while the source lives.
+                #[allow(unsafe_code)]
+                let (mut source, _) = unsafe { MmapChunkSource::open(file) }?;
                 loop {
                     match crate::chunk::ChunkSource::next_chunk(&mut source) {
                         Ok(Some(_)) => {}
@@ -970,9 +974,13 @@ mod tests {
         path.push(format!("reed_isize0_{}.bgz", std::process::id()));
         std::fs::write(&path, &with_header).expect("invariant: temp file");
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (mut source, _) = MmapChunkSource::open(
-                std::fs::File::open(&path).expect("invariant: file exists"),
-            )?;
+            // SAFETY: the temp file is not modified while the source lives.
+            #[allow(unsafe_code)]
+            let (mut source, _) = unsafe {
+                MmapChunkSource::open(
+                    std::fs::File::open(&path).expect("invariant: file exists"),
+                )
+            }?;
             loop {
                 match crate::chunk::ChunkSource::next_chunk(&mut source) {
                     Ok(Some(_)) => {}
@@ -1051,9 +1059,12 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::write(&path, &stream).expect("invariant: temp file writable");
-        let (mut mmap_source, _) =
+        // SAFETY: the temp file is not modified while the source lives.
+        #[allow(unsafe_code)]
+        let (mut mmap_source, _) = unsafe {
             MmapChunkSource::open(std::fs::File::open(&path).expect("invariant: file exists"))
-                .expect("invariant: mmap source opens");
+        }
+        .expect("invariant: mmap source opens");
         mmap_source.chunk_target = 96; // same boundaries as the streaming reader
 
         let mut n_chunks = 0;

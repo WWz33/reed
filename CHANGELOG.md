@@ -8,7 +8,7 @@ are the stability promise (`docs/spec/cli.md` §0).
 ## [Unreleased] — doc_v26：IO/filter 遗留缺陷与并行资源（2026-11-06）
 
 对 v25 之后的 IO/filter/并行审查（`docs/rounds/v26/`）逐条落地：V26-00…V26-21。
-每条先补能失败的输入测试，再改共享底层契约。验收：1055 项测试全绿、clippy 0、
+每条先补能失败的输入测试，再改共享底层契约。含 2026-11-06 复核的 6 项追加修复。验收：1059 项测试全绿、clippy 0、
 doc-drift 97/97、structure 16/16、MSRV 1.91 实测通过。
 
 ### Fixed（安全 / 正确性）
@@ -66,6 +66,23 @@ doc-drift 97/97、structure 16/16、MSRV 1.91 实测通过。
 
 ### Removed
 - `reed-io` 重复的 noodles dev-dependency；spill 测试锁（测试改持私有命名源）。
+
+### Fixed（2026-11-06 复核追加，6 项）
+- **io mmap API**：`MmapChunkSource::open` 改为 `pub unsafe fn`。它是安全 `pub fn`
+  时，调用者可以从不安全前提之外的代码调用它；`# Safety` 写明"只读打开不足以建立
+  映射期间文件不变"。
+- **reed BCF carry**：首段 carry（`carried.is_empty()` 分支）发布前完全没有上限
+  检查，大记录的起始片段可以超过 `--memory` 或 1 GiB 硬上限；现在发布前按声明的
+  记录总长检查。
+- **io 原子输出清理**：临时文件清理从"前缀 + 60 s 年龄"收窄为"仅本进程
+  `<name>.reed-tmp-<pid>-<digits>` 且超龄"。旧逻辑会删共享前缀的用户文件和另一
+  进程仍在写的临时文件。
+- **engine cgroup 探测**：读 `/proc/self/cgroup` 并沿进程自己的 cgroup 及其祖先取
+  最小限额；同时修正 v1 布局（controller 在前：`<root>/memory/<rel>/…`）。只读根
+  路径时，子 cgroup 的真实限额会漏掉。
+- **io `validate_info`**：去掉每条记录的 `Vec` 分配（旧注释错误地称其
+  "allocation-free and linear"）；新测试以计数分配器固定"0 分配"。
+- **CI**：data-gate 只跑一次 reed 分支（`run_all.sh` 已并入，删除多余的显式调用）。
 
 ## [Unreleased] — doc_v25 复核修复：三域 review 的六条实测 bug（2026-11-05）
 

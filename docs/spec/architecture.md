@@ -1763,8 +1763,9 @@ debug = true
   且 348 样本下永不向量化）；若将来重新引入 SIMD，必须先恢复本文档与 `ci/check-doc-drift.sh` 的计数守卫。
 - **doc_v26 V26-00**：`memmap2` 的安全合同要求映射存活期间底层文件不被**任何进程**修改；
   "reed 只读打开、自己不写" 不能建立该前提。因此 `reed` 的默认输入路径改为流式读取，
-  `MmapChunkSource` 只作为 `reed-io` 的显式 API 保留，其 `open` 的 `# Safety` 要求调用方提供
-  不可变快照。实测 7 GB BGZF 输入上两者 wall time 分别为 100.8 s / 101.1 s，记录字节一致，
+  `MmapChunkSource` 只作为 `reed-io` 的显式 API 保留，且 `open` 是 **`pub unsafe fn`**
+  （doc_v26 复核 R-1）—— 安全的 `pub fn` 会让安全代码绕过前提触发 UB。
+  实测 7 GB BGZF 输入上两者 wall time 分别为 100.8 s / 101.1 s，记录字节一致，
   所以默认切换无性能代价。
 - 每个 unsafe 块都要写 `// SAFETY:` 说明前置条件；标量路径跑 Miri；解析器跑 fuzz。
 
