@@ -6,7 +6,7 @@ title: Installation
 
 Prebuilt archives are available from [GitHub Releases](https://github.com/WWz33/reed/releases) for Linux x86_64/ARM64 (glibc 2.17 or newer) and macOS Intel/Apple Silicon (macOS 11.0 or newer). Runtime use does not require Rust, Cargo, htslib or bcftools. The macOS binaries are not signed or notarized.
 
-Source builds require Rust 1.91 or newer and use the Rust toolchain active in your environment. A C compiler is needed for bundled libdeflate; no separately installed libdeflate or htslib is needed. CI tests current stable and checks the 1.91.1 MSRV; tagged release binaries are built with 1.91.1.
+Source builds require Rust 1.91 or newer and use the Rust toolchain active in your environment. A C compiler is needed for bundled libdeflate; no separately installed libdeflate or htslib is needed. Development CI runs the full checks on current stable; main checks source builds on stable and the 1.91.1 MSRV. Tagged release binaries are built with 1.91.1 and smoke-tested on all four platforms.
 
 ## Install a release archive
 

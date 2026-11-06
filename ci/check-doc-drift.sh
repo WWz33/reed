@@ -171,7 +171,7 @@ check "per-contig caps use budget.auxiliary (doc_v8 D8-4)" \
 # doc_v9 D9-7: spec §7.7 describes backpressure, not "over budget → error".
 # The implementation follows v2/03 §4.2; the spec line was stale.
 check "spec §7.7 describes backpressure, not an error (doc_v9 D9-7)" \
-    bash -c '! sed -n "/### 7.7/,/^### 7.8/p" docs/spec/architecture.md | grep -q "超出时报 \`EngineError::MemBudgetExceeded\`"'
+    bash -c 'test -f docs/spec/architecture.md && ! sed -n "/### 7.7/,/^### 7.8/p" docs/spec/architecture.md | grep -q "超出时报 \`EngineError::MemBudgetExceeded\`"'
 
 # doc_v9 D9-2: the pipeline channels must honour the send result
 # (`res.is_ok()`), never bind it to `_` and report success on a disconnect.

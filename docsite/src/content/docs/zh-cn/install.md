@@ -6,7 +6,7 @@ title: 安装
 
 [GitHub Releases](https://github.com/WWz33/reed/releases) 提供 Linux x86_64/ARM64（glibc 2.17 或更高）和 macOS Intel/Apple Silicon（macOS 11.0 或更高）的预编译包。运行时不需要 Rust、Cargo、htslib 或 bcftools。macOS 二进制尚未签名或公证。
 
-源码编译需要 Rust 1.91 或更高版本，使用当前环境已启用的 Rust 工具链。编译随依赖提供的 libdeflate 需要 C 编译器，不需要另行安装 libdeflate 或 htslib。CI 使用当前 stable 测试，并检查 Rust 1.91.1 MSRV；正式发布的二进制固定用 Rust 1.91.1 构建。
+源码编译需要 Rust 1.91 或更高版本，使用当前环境已启用的 Rust 工具链。编译随依赖提供的 libdeflate 需要 C 编译器，不需要另行安装 libdeflate 或 htslib。开发分支 CI 使用当前 stable 跑完整检查；main 仅检查 stable 和 Rust 1.91.1 MSRV 下的源码构建。正式发布的二进制固定用 Rust 1.91.1 构建，并在四个平台上做冒烟检查。
 
 ## 安装发布包
 

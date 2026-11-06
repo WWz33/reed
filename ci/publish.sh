@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-# The public subset: source, manifests, tool config and the CI guards. Kept
+# The public subset: source, manifests, tool config and CI. Kept
 # in sync with origin/main's tree (LICENSE-*, .github/, the lint configs).
 PUB_PATHS=".gitignore .github Cargo.toml Cargo.lock LICENSE-APACHE LICENSE-MIT \
 README.md README.zh-CN.md clippy.toml deny.toml rustfmt.toml crates ci"
@@ -28,7 +28,8 @@ idx="$(mktemp -u /tmp/reed-pub-idx.XXXXXX)"
 export GIT_INDEX_FILE="$idx"
 trap 'rm -f "$GIT_INDEX_FILE"' EXIT
 git read-tree --empty
-git add $PUB_PATHS
+# The Pages workflow needs docsite/, which is not part of the public subset.
+git add -- $PUB_PATHS ':!.github/workflows/docs.yml'
 tree="$(git write-tree)"
 
 if git ls-tree -r --name-only "$tree" | grep -qE '^(DESIGN\.md|docs/|bench/)'; then
