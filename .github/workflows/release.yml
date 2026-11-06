@@ -1,0 +1,193 @@
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - ci/release-*.sh
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TARGET_DIR: target
+  # Rust and C dependencies must use portable CPU instructions.
+  CFLAGS: ""
+  CXXFLAGS: ""
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve the archive version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if [[ "$GITHUB_EVENT_NAME" == release ]]; then
+            test "$RELEASE_TAG" = "v$version" || {
+              echo "Release tag must match Cargo.toml: v$version" >&2
+              exit 1
+            }
+            test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
+            echo "version=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=v$version-$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            compatibility: glibc217
+            cpu: x86-64
+            manylinux: quay.io/pypa/manylinux2014_x86_64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            compatibility: glibc217
+            cpu: generic
+            manylinux: quay.io/pypa/manylinux2014_aarch64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            compatibility: macos11
+            cpu: generic
+            manylinux: ""
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            compatibility: macos11
+            cpu: x86-64
+            manylinux: ""
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      COMPATIBILITY: ${{ matrix.compatibility }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CPU: ${{ matrix.cpu }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.91.1"
+          target: ${{ matrix.target }}
+          # The project's lints are a CI gate, not compiler flags for artifacts.
+          rustflags: ""
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: "3.12"
+      - name: Install the GNU compatibility toolchain
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install --disable-pip-version-check ziglang==0.16.0
+          zig=$(command -v python-zig)
+          test -x "$zig"
+          echo "CARGO_ZIGBUILD_ZIG_PATH=$zig" >> "$GITHUB_ENV"
+          "$zig" version
+          cargo install --locked --version 0.24.1 cargo-zigbuild --root "$RUNNER_TEMP/zigbuild"
+          echo "$RUNNER_TEMP/zigbuild/bin" >> "$GITHUB_PATH"
+      - name: Build Linux against glibc 2.17
+        if: runner.os == 'Linux'
+        run: |
+          cargo zigbuild --version
+          unset CARGO_ENCODED_RUSTFLAGS
+          RUSTFLAGS="-C target-cpu=$CPU" cargo zigbuild --release --locked -p reed-cli --bin reed --target "$TARGET.2.17"
+      - name: Build macOS for 11.0 and newer
+        if: runner.os == 'macOS'
+        run: |
+          unset CARGO_ENCODED_RUSTFLAGS
+          RUSTFLAGS="-C target-cpu=$CPU" cargo build --release --locked -p reed-cli --bin reed --target "$TARGET"
+      - name: Check the GNU ABI
+        if: runner.os == 'Linux'
+        run: |
+          readelf --wide --version-info --dyn-syms "target/$TARGET/release/reed" > "$RUNNER_TEMP/versions.txt"
+          python3 - "$RUNNER_TEMP/versions.txt" <<'PY'
+          import pathlib, re, sys
+          text = pathlib.Path(sys.argv[1]).read_text()
+          versions = {tuple(map(int, v.split('.'))) for v in re.findall(r'Name: GLIBC_([0-9.]+)\s+Flags:', text)}
+          if not versions or max(versions) > (2, 17) or 'Name: GLIBC_PRIVATE' in text:
+              raise SystemExit(f"glibc 2.17 ABI check failed: {sorted(versions)}")
+          print(f"Highest required glibc: {'.'.join(map(str, max(versions)))}")
+          PY
+          readelf -d "target/$TARGET/release/reed" | grep NEEDED
+      - name: Check the macOS ABI
+        if: runner.os == 'macOS'
+        run: |
+          binary="target/$TARGET/release/reed"
+          minimum=$(otool -l "$binary" | awk '$1 == "minos" { print $2 }')
+          awk -v version="$minimum" 'BEGIN { split(version, p, "."); exit (p[1] + 0 < 11) }'
+          # Reject a dependency on a Homebrew or runner-specific library.
+          otool -L "$binary"
+          otool -L "$binary" | tail -n +2 | awk '
+            $1 !~ /^\/(usr\/lib|System\/Library)\// { bad = 1 }
+            END { exit bad }
+          '
+      - name: Package and smoke-test the extracted binary
+        run: |
+          bash ci/release-package.sh "target/$TARGET/release/reed" "$VERSION" "$TARGET" "$COMPATIBILITY" dist
+          mkdir extracted
+          tar -xzf "dist/reed-$VERSION-$TARGET-$COMPATIBILITY.tar.gz" -C extracted
+          bash ci/release-smoke.sh "$PWD/extracted/reed-$VERSION-$TARGET-$COMPATIBILITY/reed"
+      - name: Run on the glibc 2.17 userspace
+        if: runner.os == 'Linux'
+        env:
+          MANYLINUX_IMAGE: ${{ matrix.manylinux }}
+        run: |
+          docker run --rm \
+            -v "$PWD/extracted:/artifacts:ro" \
+            -v "$PWD/ci:/checks:ro" \
+            "$MANYLINUX_IMAGE" \
+            bash /checks/release-smoke.sh "/artifacts/reed-$VERSION-$TARGET-$COMPATIBILITY/reed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reed-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reed-*
+          merge-multiple: true
+          path: dist
+      - name: Hash and attach all four archives
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4
+          sha256sum *.tar.gz > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          gh release upload "$RELEASE_TAG" ./*.tar.gz SHA256SUMS --clobber

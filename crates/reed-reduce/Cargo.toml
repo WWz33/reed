@@ -12,7 +12,14 @@ default = ["faer-backend"]
 faer-backend = ["dep:faer"]
 
 [dependencies]
-faer = { version = "0.20", optional = true }
+# Default features trimmed: faer's `npy` pulls npyz -> pest -> stacker -> psm,
+# and psm compiles C (a `cc` build dependency). reed never reads or writes
+# .npy, so dropping it removes one of the two C build requirements.
+faer = { version = "0.20", optional = true, default-features = false, features = [
+    "std",
+    "rayon",
+    "linalg",
+] }
 reed-core.workspace = true
 reed-distance = { path = "../reed-distance" }
 tracing.workspace = true

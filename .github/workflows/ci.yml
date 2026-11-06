@@ -11,45 +11,45 @@ on:
 
 jobs:
   gates:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          # The clippy gate below needs the component; the toolchain file
-          # alone does not install it (every run failed on
-          # "'cargo-clippy' is not installed for the toolchain '1.99'").
+          toolchain: stable
           components: clippy
+      - name: Install the BCF test oracle
+        run: sudo apt-get update && sudo apt-get install -y bcftools
       # Compiling the workspace is the first gate (doc_v5 A5-4: the trunk
       # must never sit in a "tests do not compile" state).
       - name: build (release, all targets)
-        run: cargo build --release --workspace --all-targets
+        run: cargo build --release --locked --workspace --all-targets
       # Debug first: `debug_assert!` is compiled out of the release run below,
       # so a red assertion test is invisible there (doc_v9 D9-8: the stitcher
       # test survived two rounds because only release ran).
       - name: test (debug)
-        run: cargo test --workspace
+        env:
+          # One Lanczos unit fixture exceeds the default 2 MiB test-thread stack on MSRV.
+          RUST_MIN_STACK: 8388608
+        run: cargo test --locked --workspace
       - name: test (release)
-        run: cargo test --release --workspace
+        run: cargo test --release --locked --workspace
       - name: doctests (facade)
-        run: cargo test --doc -p reed
+        run: cargo test --locked --doc -p reed
       - name: clippy
-        run: cargo clippy --release --workspace --all-targets -- -D warnings
+        run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
       - name: doc-drift guards
         run: bash ci/check-doc-drift.sh
 
-  # doc_v26 V26-11: the manifest claims MSRV 1.91 but every other job used the
-  # pinned 1.99 toolchain, so a dependency update could raise the real floor
-  # while CI stayed green. This job proves the claim on the declared version.
   msrv:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: "1.91"
-      - name: cargo check on the declared MSRV (1.91)
-        run: cargo check --workspace --all-targets
+          toolchain: "1.91.1"
+      - name: Check all targets on the minimum supported Rust version
+        run: cargo check --locked --workspace --all-targets
 
   data-gates:
     # The subset numeric gates and the gold parity run need clean.vcf.gz and
@@ -58,6 +58,13 @@ jobs:
     runs-on: [self-hosted, reed-data]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.91.1"
+      - name: Build the checkout used by every data gate
+        run: |
+          cargo build --release --locked -p reed-cli --target-dir target
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
       - name: subset numeric gates (263,420 / 381,672)
         run: |
           export REED_SCRATCH=target/gold
@@ -71,12 +78,11 @@ jobs:
           export REED_SCRATCH=target/gold
           # doc_v26 V26-14: the parity step used to read out/reed.vcf.gz
           # without ever producing it, so it compared whatever a previous
-          # self-hosted run had left behind. Build this checkout's binary and
+          # self-hosted run had left behind. Use the binary built above and
           # export REED: `run_all.sh` joins the reed branch (see
           # review item 6 -- the explicit `run_reed.sh` after it ran the same
           # large computation twice), so the parity input is provably from the
           # commit under test.
-          cargo build --release -p reed-cli
           export REED="$PWD/target/release/reed"
           bash gold/scripts/run_all.sh
           test -s "$REED_SCRATCH/out/reed.vcf.gz"
