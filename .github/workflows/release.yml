@@ -112,7 +112,6 @@ jobs:
       - name: Build Linux against glibc 2.17
         if: runner.os == 'Linux'
         run: |
-          cargo zigbuild --version
           unset CARGO_ENCODED_RUSTFLAGS
           RUSTFLAGS="-C target-cpu=$CPU" cargo zigbuild --release --locked -p reed-cli --bin reed --target "$TARGET.2.17"
       - name: Build macOS for 11.0 and newer
