@@ -6,12 +6,34 @@ reed 是用 Rust 写的群体遗传学命令行工具。它读 VCF/BCF，按窗�
 
 ## 安装
 
+从 [GitHub Releases](https://github.com/WWz33/reed/releases) 下载对应平台的压缩包，运行时无需安装 Rust、Cargo、htslib
+或 bcftools。
+
+| 平台 | 压缩包后缀 | 最低系统要求 |
+|---|---|---|
+| Linux x86_64 | `x86_64-unknown-linux-gnu-glibc217.tar.gz` | glibc 2.17+，内核 3.2+ |
+| Linux ARM64 | `aarch64-unknown-linux-gnu-glibc217.tar.gz` | glibc 2.17+，内核 4.1+ |
+| macOS Apple Silicon | `aarch64-apple-darwin-macos11.tar.gz` | macOS 11.0 |
+| macOS Intel | `x86_64-apple-darwin-macos11.tar.gz` | macOS 11.0 |
+
+压缩包名称为 `reed-v<版本>-<后缀>`。同时下载 `SHA256SUMS`，Linux 使用
+`sha256sum --ignore-missing --check SHA256SUMS`，macOS 使用
+`shasum -a 256 --ignore-missing --check SHA256SUMS` 校验，然后解压并将 `reed`
+放到 PATH。每个包内附许可证和 `BUILD-INFO.txt`，记录目标平台、源码提交与编译器版本。
+macOS 二进制尚未签名或公证。
+
+也可以在源码 checkout 中安装：
+
 ```bash
-cargo install --path crates/reed-cli
+cargo install --locked --path crates/reed-cli
 reed --version
 ```
 
-需要 Rust 1.91 或更高版本。
+源码编译支持 Rust 1.91 或更高版本，使用当前环境已启用的 Rust 工具链。编译随依赖提供的
+libdeflate 需要 C 编译器，不需要另行安装 libdeflate 或 htslib。CI 使用当前 stable 测试，
+并检查 Rust 1.91.1 MSRV；正式发布的二进制固定用 Rust 1.91.1 构建。
+
+`--threads N` 接受 1–1024。发布包使用 CPU 基础指令集，不要求与构建 runner 相同的 CPU 型号。
 
 ## 快速开始
 
