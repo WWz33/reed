@@ -102,11 +102,13 @@ jobs:
       - name: Install the GNU compatibility toolchain
         if: runner.os == 'Linux'
         run: |
-          python -m pip install --disable-pip-version-check ziglang==0.16.0
+          # Match cargo-zigbuild's release image; Zig 0.16 fails libdeflate's evex512 dispatch.
+          python -m pip install --disable-pip-version-check ziglang==0.17.1
           zig=$(command -v python-zig)
           test -x "$zig"
           echo "CARGO_ZIGBUILD_ZIG_PATH=$zig" >> "$GITHUB_ENV"
           "$zig" version
+          "$zig" cc --version
           cargo install --locked --version 0.24.1 cargo-zigbuild --root "$RUNNER_TEMP/zigbuild"
           echo "$RUNNER_TEMP/zigbuild/bin" >> "$GITHUB_PATH"
       - name: Build Linux against glibc 2.17
