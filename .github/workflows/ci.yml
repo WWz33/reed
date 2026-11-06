@@ -1,16 +1,27 @@
-# CI (docs/rounds/v5/07-roadmap.md X7): the portable gates run on every push
-# and pull request. The data-dependent gates (the subset numeric gates
-# 263,420 / 381,672 and the gold parity run) need the 7 GB input and the
-# reference tools, so they run only on a runner with the data checkout
-# (self-hosted label `reed-data`).
+# Development branches keep the full gates; main checks the public source build.
+# For pull requests, use the target branch to select the checks. Release tags
+# are handled by release.yml, since the public tree omits development fixtures.
 name: ci
 
 on:
   push:
+    branches: ['**']
   pull_request:
 
 jobs:
+  build:
+    if: (github.base_ref || github.ref_name) == 'main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Build public source (release)
+        run: cargo build --release --locked --workspace
+
   gates:
+    if: (github.base_ref || github.ref_name) != 'main'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -48,13 +59,17 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: "1.91.1"
-      - name: Check all targets on the minimum supported Rust version
+      - name: Check public source on the minimum supported Rust version
+        if: (github.base_ref || github.ref_name) == 'main'
+        run: cargo check --locked --workspace
+      - name: Check all development targets on the minimum supported Rust version
+        if: (github.base_ref || github.ref_name) != 'main'
         run: cargo check --locked --workspace --all-targets
 
   data-gates:
     # The subset numeric gates and the gold parity run need clean.vcf.gz and
     # the reference tools; only a runner with the data can execute them.
-    if: contains(github.event.pull_request.labels.*.name, 'run-data-gates')
+    if: (github.base_ref || github.ref_name) != 'main' && contains(github.event.pull_request.labels.*.name, 'run-data-gates')
     runs-on: [self-hosted, reed-data]
     steps:
       - uses: actions/checkout@v4
