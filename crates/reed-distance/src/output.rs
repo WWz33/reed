@@ -59,15 +59,46 @@ pub fn write_matrix(
 ) -> std::io::Result<()> {
     // Row-major matrices are written value by value; without buffering that
     // is one syscall per value (doc_v24 V24-08).
+    //
     let file = std::fs::File::create(path)?;
     let mut f = BufWriter::with_capacity(1 << 16, file);
-    match format {
-        MatrixFormat::Bin => write_bin(&mut f, m)?,
-        MatrixFormat::Triangle => write_triangle(&mut f, m)?,
-        MatrixFormat::Square => write_square(&mut f, m, false)?,
-        MatrixFormat::Square0 => write_square(&mut f, m, true)?,
-    }
+    write_matrix_to(&mut f, m, format)?;
     f.flush()
+}
+
+/// [`write_matrix`] over a caller-provided writer.
+///
+/// The front end opens the file atomically (doc_v26 V26-08) and passes the
+/// handle here: this crate deliberately has no I/O publisher of its own
+/// (`reed-distance` is an L1 sibling of `reed-io`, and same-layer
+/// dependencies are forbidden by `docs/spec/architecture.md` §14.6).
+///
+/// # Errors
+///
+/// I/O failures from the writer.
+pub fn write_matrix_to<W: Write>(
+    f: &mut W,
+    m: &MatrixResult,
+    format: MatrixFormat,
+) -> std::io::Result<()> {
+    match format {
+        MatrixFormat::Bin => write_bin(f, m),
+        MatrixFormat::Triangle => write_triangle(f, m),
+        MatrixFormat::Square => write_square(f, m, false),
+        MatrixFormat::Square0 => write_square(f, m, true),
+    }
+}
+
+/// [`write_ids`] over a caller-provided writer.
+///
+/// # Errors
+///
+/// I/O failures from the writer.
+pub fn write_ids_to<W: Write>(f: &mut W, ids: &[String]) -> std::io::Result<()> {
+    for id in ids {
+        writeln!(f, "{id}\t{id}")?;
+    }
+    Ok(())
 }
 
 fn write_bin<W: Write>(f: &mut W, m: &MatrixResult) -> std::io::Result<()> {
@@ -120,9 +151,7 @@ fn write_square<W: Write>(f: &mut W, m: &MatrixResult, zero_upper: bool) -> std:
 pub fn write_ids(path: &std::path::Path, ids: &[String]) -> std::io::Result<()> {
     let file = std::fs::File::create(path)?;
     let mut f = BufWriter::with_capacity(1 << 16, file);
-    for id in ids {
-        writeln!(f, "{id}\t{id}")?;
-    }
+    write_ids_to(&mut f, ids)?;
     f.flush()
 }
 

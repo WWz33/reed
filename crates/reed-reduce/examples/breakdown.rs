@@ -54,13 +54,13 @@ fn main() {
     println!("GRM = W W'/m:      {:8.3} s", grm_secs);
 
     let t = Instant::now();
-    let (vals, _vecs, _be) = sym_eig_top_k(&grm.a, k);
+    let (vals, _vecs, _be) = sym_eig_top_k(&grm.a, k, reed_reduce::Parallel::Serial);
     let partial_secs = t.elapsed().as_secs_f64();
     println!("partial eig:       {:8.3} s   lam1 = {:.9}", partial_secs, vals[0]);
 
     // Dense full spectrum on the same matrix, for the comparison.
     let t = Instant::now();
-    let full = sym_eig(&grm.a);
+    let full = sym_eig(&grm.a, reed_reduce::Parallel::Serial);
     let dense_secs = t.elapsed().as_secs_f64();
     println!("dense full eig:    {:8.3} s   lam1 = {:.9}", dense_secs, full.values[full.values.len() - 1]);
 

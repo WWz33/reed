@@ -411,16 +411,14 @@ pub(crate) fn prelude(
     // the header happens inside the driver (08 §6.2).
     let site = (!site_spec_is_empty(&site_spec)).then_some(site_spec);
 
+    // doc_v26 V26-10: the header is an opaque value now; names and lengths
+    // come from its parallel accessors instead of the noodles maps.
     let mut contig_lengths: HashMap<Vec<u8>, u64> = facts
         .header
-        .contigs()
-        .iter()
-        .filter_map(|(name, contig)| {
-            contig
-                .length()
-                .and_then(|len| u64::try_from(len).ok())
-                .map(|len| (name.as_bytes().to_vec(), len))
-        })
+        .contig_names()
+        .into_iter()
+        .zip(facts.header.contig_lengths())
+        .filter_map(|(name, len)| len.map(|len| (name.into_bytes(), len)))
         .collect();
     if let Some(path) = contig_lengths_arg {
         // Name the file: the raw `io::Error` text ("No such file or

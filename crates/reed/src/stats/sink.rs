@@ -102,7 +102,14 @@ pub(super) struct StatsSink {
     /// The streaming `--ld-pairs` table ([`LdPlan::pairs_path`]): opened
     /// lazily on the first pair and appended in contig order (doc_v23
     /// V23-14).
-    pub(super) pairs_file: Option<std::fs::File>,
+    /// The streaming `--ld-pairs` file: opened on the first pair (an all-pairless
+    /// run writes no file), written for the whole run, published at `finish`
+    /// (doc_v26 V26-08). Kept as a `(writer, atomic owner)` pair so the commit
+    /// spans the run rather than one contig.
+    pub(super) pairs_file: Option<(
+        std::io::BufWriter<std::fs::File>,
+        reed_io::write::atomic::AtomicFile,
+    )>,
     pub(super) genome_span: u64,
     pub(super) n_windows: u64,
     pub(super) n_records: u64,
@@ -214,6 +221,13 @@ impl OrderedSink<StatsPartial> for StatsSink {
                 self.n_records
             )));
         }
+        // Publish the streaming pair table only now that the run succeeded;
+        // a failed run leaves the previous `.ld` in place (doc_v26 V26-08).
+        if let Some((mut writer, atomic)) = self.pairs_file.take() {
+            std::io::Write::flush(&mut writer).map_err(EngineError::Io)?;
+            drop(writer);
+            atomic.commit().map_err(EngineError::Io)?;
+        }
         *self.out.lock().expect("invariant: stats slot not poisoned") = Some(SinkOutput {
             ld,
             windows: std::mem::take(&mut self.windows),
@@ -234,22 +248,25 @@ impl OrderedSink<StatsPartial> for StatsSink {
 /// same bytes `writers::ld` writes for the in-memory report, so a streamed
 /// run and an accumulated run produce identical files (doc_v23 V23-14).
 fn write_pairs(
-    file: &mut Option<std::fs::File>,
+    file: &mut Option<(
+        std::io::BufWriter<std::fs::File>,
+        reed_io::write::atomic::AtomicFile,
+    )>,
     path: &std::path::Path,
     rows: &[(Vec<u8>, u64, u64, f64)],
 ) -> Result<(), EngineError> {
-    use std::io::Write as _;
     if rows.is_empty() {
         return Ok(());
     }
     if file.is_none() {
-        let mut opened = std::fs::File::create(path).map_err(EngineError::Io)?;
-        opened
-            .write_all(crate::stats::writers::ld::PAIRS_HEADER)
+        let (atomic, handle) =
+            reed_io::write::atomic::AtomicFile::create(path).map_err(EngineError::Io)?;
+        let mut writer = std::io::BufWriter::with_capacity(1 << 16, handle);
+        std::io::Write::write_all(&mut writer, crate::stats::writers::ld::PAIRS_HEADER)
             .map_err(EngineError::Io)?;
-        *file = Some(opened);
+        *file = Some((writer, atomic));
     }
-    let sink = file.as_mut().expect("invariant: opened above");
+    let (sink, _) = file.as_mut().expect("invariant: opened above");
     let mut buf = String::with_capacity(rows.len() * 40);
     for (contig, a, b, r2) in rows {
         crate::stats::writers::ld::render_pair_row(
@@ -260,7 +277,7 @@ fn write_pairs(
             *r2,
         );
     }
-    sink.write_all(buf.as_bytes()).map_err(EngineError::Io)
+    std::io::Write::write_all(sink, buf.as_bytes()).map_err(EngineError::Io)
 }
 
 impl StatsSink {

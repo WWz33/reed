@@ -303,9 +303,19 @@ fn prefixed(prefix: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// Writes one SFS file, creating its `_sfs/{dadi,fastsimcoal2}` parent.
+///
+/// This is the only output family whose parent directories are part of the
+/// layout rather than the operator's `-o`, so it is the one caller that asks
+/// [`reed_io::write::atomic::AtomicFile::create_with_parents`] to create them
+/// (doc_v26 V26-08).
 fn write_file(path: &Path, text: String) -> Result<(), EngineError> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(EngineError::Io)?;
-    }
-    std::fs::write(path, text).map_err(EngineError::Io)
+    use std::io::Write as _;
+    let (atomic, mut file) =
+        reed_io::write::atomic::AtomicFile::create_with_parents(path, true)
+            .map_err(EngineError::Io)?;
+    file.write_all(text.as_bytes()).map_err(EngineError::Io)?;
+    file.flush().map_err(EngineError::Io)?;
+    drop(file);
+    atomic.commit().map_err(EngineError::Io)
 }

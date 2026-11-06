@@ -20,13 +20,15 @@ reed-distance.workspace = true
 reed-reduce.workspace = true
 reed-graph.workspace = true
 sha2.workspace = true
-noodles.workspace = true
 bstr.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+# The integration tests read built CSI/TBI indexes through noodles to verify
+# what reed wrote; the library itself no longer depends on it (doc_v26 V26-10).
+noodles.workspace = true
 
 [lints]
 workspace = true

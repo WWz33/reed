@@ -482,7 +482,7 @@ impl Positions for [u8] {
 ///
 /// The `fs::write` failure (Runtime).
 pub fn write_bcftools_stats(path: &std::path::Path, text: &str) -> Result<(), crate::error::Error> {
-    std::fs::write(path, text).map_err(crate::error::Error::from)
+    reed_io::write::atomic::write_atomic(path, text).map_err(crate::error::Error::from)
 }
 
 /// Renders the `bcftools stats`-compatible text (§10.3).

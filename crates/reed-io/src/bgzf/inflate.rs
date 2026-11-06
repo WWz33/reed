@@ -80,6 +80,32 @@ impl Inflater {
         }
         Ok(written)
     }
+
+    /// Proves that `block` really is an empty member (doc_v26 V26-01).
+    ///
+    /// The reader records a member as empty from its ISIZE footer alone; that
+    /// footer is exactly what a damaged block can corrupt to zero, and the
+    /// old skip path then dropped the block's records with no CRC check. A
+    /// zero-length output window makes libdeflate validate the whole member:
+    /// an empty payload reports `Ok(0)`, a non-empty one is
+    /// `InsufficientSpace`, and a bad CRC is `BadData`. Nothing is allocated.
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedBgzf`] when the member is not empty or is corrupt.
+    pub fn verify_empty_member(&mut self, block: &[u8]) -> Result<(), IoError> {
+        match self.decompressor.gzip_decompress(block, &mut []) {
+            Ok(0) => Ok(()),
+            Ok(_) => Err(IoError::MalformedBgzf {
+                locus: None,
+                reason: "block claims to be empty but inflates to bytes".to_string(),
+            }),
+            Err(_) => Err(IoError::MalformedBgzf {
+                locus: None,
+                reason: "empty member is corrupt (bad CRC or payload)".to_string(),
+            }),
+        }
+    }
 }
 
 #[cfg(test)]

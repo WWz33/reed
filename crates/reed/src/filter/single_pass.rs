@@ -28,18 +28,18 @@ use super::record_pipeline::{
 /// noodles' B2 encoder behind `REED_BCF_ENCODER=noodles` (the two must
 /// produce equivalent records; the comparison is part of the B4 gate).
 pub(super) struct BcfEncoders {
-    header: Arc<noodles::vcf::Header>,
+    /// The output header, as the format layer's opaque value (doc_v26
+    /// V26-10: a noodles type no longer appears in this crate).
+    header: Arc<reed_io::header::VcfHeader>,
     native: NativeEncoder,
     noodles: Option<BcfEncoder>,
 }
 
 impl BcfEncoders {
-    fn new(header: Arc<noodles::vcf::Header>) -> Result<Self, reed_io::IoError> {
-        let native = NativeEncoder::new(&header)?;
+    fn new(header: Arc<reed_io::header::VcfHeader>) -> Result<Self, reed_io::IoError> {
+        let native = header.native_encoder()?;
         let noodles = if std::env::var("REED_BCF_ENCODER").is_ok_and(|v| v == "noodles") {
-            let mut encoder = BcfEncoder::new()?;
-            encoder.write_header(&header)?;
-            Some(encoder)
+            Some(header.noodles_encoder()?)
         } else {
             None
         };
@@ -52,10 +52,11 @@ impl BcfEncoders {
 
     /// Encodes the edited text through noodles (the oracle A/B path).
     fn encode_noodles(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<(), reed_io::IoError> {
-        self.noodles
+        let encoder = self
+            .noodles
             .as_mut()
-            .expect("invariant: the noodles branch checks the encoder exists")
-            .encode_record(&self.header, line, out)
+            .expect("invariant: the noodles branch checks the encoder exists");
+        self.header.encode_record_noodles(encoder, line, out)
     }
 }
 
@@ -91,7 +92,7 @@ pub(super) struct FilterJob {
     /// BCF output (`-Ob/-Ou`): the header the dictionary keys come from.
     /// Each worker builds its own encoder from it (and the environment
     /// selects the native encoder over noodles' B2 fallback for A/B tests).
-    pub(super) bcf: Option<Arc<noodles::vcf::Header>>,
+    pub(super) bcf: Option<Arc<reed_io::header::VcfHeader>>,
     /// BCF *input* (doc_v4 O-4): when set, the job takes the native record
     /// path — the site line plus decoded GT/FORMAT columns — instead of
     /// rendered text.

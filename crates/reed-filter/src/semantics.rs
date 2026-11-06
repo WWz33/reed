@@ -117,7 +117,8 @@ pub fn info_af(info: &[u8], n_alt: u32) -> Option<InfoAfCounts> {
         // when INFO is unusable; the mismatch warning has already fired.
         InfoAfOutcome::Absent
         | InfoAfOutcome::AcLength { .. }
-        | InfoAfOutcome::AcExceedsAn { .. } => None,
+        | InfoAfOutcome::AcExceedsAn { .. }
+        | InfoAfOutcome::AcOverflow { .. } => None,
     }
 }
 
@@ -148,42 +149,80 @@ pub enum InfoAfOutcome {
         /// INFO/AN.
         an: u64,
     },
+    /// The AC values sum past `u64::MAX` (doc_v26 V26-02). The old
+    /// `alts.iter().sum()` wrapped in release builds and *panicked* in
+    /// debug, so a record like `AC=18446744073709551615,1` was either a
+    /// crash or a silently wrong allele frequency. It is a malformed INFO
+    /// value, never usable counts.
+    AcOverflow {
+        /// Values AC carried.
+        got: usize,
+    },
 }
 
 /// The distinguishing reader; the warning-once side effect for an AC
 /// length mismatch lives here so every caller shares it.
 #[must_use]
 pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
-    use reed_io::vcf::info::info_fragments;
+    use reed_io::vcf::info::{InfoIndex, info_fragments};
 
+    // doc_v26 V26-04: one lookup convention for every INFO reader. The
+    // expression/head path reads through `InfoIndex` (first match, like
+    // htslib); this reader used to keep the *last* AC/AN, so
+    // `AC=1;AC=3;AN=4` filtered differently depending on the rule that ran.
+    // `classify_line` now rejects duplicate tags outright, and this reader
+    // uses the same index so the convention cannot drift again.
+    let mut index = InfoIndex::default();
+    if index.build(info).is_err() {
+        // Unreachable for records that passed `classify_line`; a directly
+        // constructed call still must not pick an element silently.
+        return InfoAfOutcome::Absent;
+    }
     let mut ac: Option<Vec<u64>> = None;
     let mut an: Option<u64> = None;
-    for (tag, value) in info_fragments(info) {
-        let Some(value) = value else { continue };
-        match tag {
-            b"AC" => {
-                let Ok(text) = std::str::from_utf8(value) else {
+    for tag in [&b"AC"[..], &b"AN"[..]] {
+        let Some(Some(value)) = index.get(info, tag) else {
+            continue;
+        };
+        if tag == b"AC" {
+            let Ok(text) = std::str::from_utf8(value) else {
+                return InfoAfOutcome::Absent;
+            };
+            // doc_v26 V26-02: a value list that cannot even match the
+            // record's ALT count is rejected before it is materialised, so a
+            // multi-megabyte AC field cannot force a proportional allocation.
+            // Count first, then parse only when the length is plausible.
+            let mut count = 0_usize;
+            for part in text.split(',') {
+                if count > n_alt as usize {
+                    warn_ac_length_once(count, n_alt);
+                    return InfoAfOutcome::AcLength {
+                        got: count,
+                        want: n_alt,
+                    };
+                }
+                // `.` and any non-integer read as no INFO, not as a length
+                // mismatch (bcftools' missing-value path).
+                if part.parse::<u64>().is_err() {
+                    return InfoAfOutcome::Absent;
+                }
+                count += 1;
+            }
+            let mut counts = Vec::with_capacity(count);
+            for part in text.split(',') {
+                let Ok(count_value) = part.parse::<u64>() else {
                     return InfoAfOutcome::Absent;
                 };
-                let mut counts = Vec::new();
-                for part in text.split(',') {
-                    let Ok(count) = part.parse::<u64>() else {
-                        // `.` and any non-integer read as no INFO, not as a
-                        // length mismatch (bcftools' missing-value path).
-                        return InfoAfOutcome::Absent;
-                    };
-                    counts.push(count);
-                }
-                ac = Some(counts);
+                counts.push(count_value);
             }
-            b"AN" => {
-                an = std::str::from_utf8(value)
-                    .ok()
-                    .and_then(|t| t.parse::<u64>().ok());
-            }
-            _ => {}
+            ac = Some(counts);
+        } else {
+            an = std::str::from_utf8(value)
+                .ok()
+                .and_then(|t| t.parse::<u64>().ok());
         }
     }
+    let _ = info_fragments;
     let (alts, an) = match (ac, an) {
         (Some(ac), Some(an)) if an > 0 => (ac, an),
         _ => return InfoAfOutcome::Absent,
@@ -195,7 +234,15 @@ pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
             want: n_alt,
         };
     }
-    let alt_sum: u64 = alts.iter().sum();
+    // doc_v26 V26-02: checked accumulation. A wrapped sum could pass the
+    // `> an` test below and produce a wrong AF instead of an error.
+    let mut alt_sum: u64 = 0;
+    for &count in &alts {
+        let Some(next) = alt_sum.checked_add(count) else {
+            return InfoAfOutcome::AcOverflow { got: alts.len() };
+        };
+        alt_sum = next;
+    }
     if alt_sum > an {
         return InfoAfOutcome::AcExceedsAn { alt_sum, an };
     }
@@ -298,5 +345,50 @@ mod tests {
         assert!(info_af(b"AN=4", 1).is_none(), "no AC");
         assert!(info_af(b"AC=5;AN=4", 1).is_none(), "ΣALT > AN");
         assert!(info_af(b"AC=.;AN=4", 1).is_none(), "missing AC element");
+    }
+
+    /// doc_v26 V26-02: AC values that sum past `u64::MAX` are a malformed
+    /// value, not a wrapped frequency. `18446744073709551615,1` used to panic
+    /// in debug and wrap in release.
+    #[test]
+    fn info_af_rejects_ac_overflow_instead_of_wrapping() {
+        let case = b"AC=18446744073709551615,1;AN=100";
+        assert_eq!(
+            info_af_outcome(case, 2),
+            InfoAfOutcome::AcOverflow { got: 2 },
+            "a wrapped sum could pass the > AN test and report a wrong AF"
+        );
+        assert!(info_af(case, 2).is_none(), "no usable counts");
+        // The boundary itself is fine: a sum that equals u64::MAX is
+        // representable and then simply exceeds AN.
+        let edge = b"AC=18446744073709551614,1;AN=100";
+        assert!(matches!(
+            info_af_outcome(edge, 2),
+            InfoAfOutcome::AcExceedsAn { .. }
+        ));
+    }
+
+    /// doc_v26 V26-04: AC/AN are read through the same first-match index as
+    /// every other INFO reader; a duplicated column yields no counts (the
+    /// record is rejected earlier by `classify_line`).
+    #[test]
+    fn info_af_escalates_duplicate_tags_to_absent() {
+        assert_eq!(
+            info_af_outcome(b"AC=1;AC=3;AN=4", 1),
+            InfoAfOutcome::Absent
+        );
+    }
+
+    /// doc_v26 V26-02: a value list that cannot match the ALT count is
+    /// rejected while counting, before any per-element parse or vector.
+    #[test]
+    fn info_af_bounds_the_ac_list_before_parsing() {
+        // 4 values for a 1-ALT record: the length mismatch is detected at the
+        // second value and reported with the count seen so far.
+        let got = info_af_outcome(b"AC=1,2,3,4;AN=100", 1);
+        assert!(
+            matches!(got, InfoAfOutcome::AcLength { want: 1, .. }),
+            "{got:?}"
+        );
     }
 }

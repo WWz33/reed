@@ -143,6 +143,14 @@ pub use reed_filter::{expr, funnel, plan, spec};
 // Input opening (the binary's one-shot opens); hidden from the docs.
 #[doc(hidden)]
 pub use crate::input::open_regions;
+/// An output file that appears only when complete (doc_v26 V26-08). Exposed
+/// because the front end writes a few report files itself; every command
+/// output goes through the same primitive.
+pub use reed_io::write::atomic::write_atomic;
+
+/// The atomic-output type itself, for a front-end writer that needs a handle
+/// before it knows whether the file will be published (doc_v26 V26-08).
+pub use reed_io::write::atomic as atomic_file;
 
 // Front-end re-exports (08 §6.2): the parallel budgets, the region type and
 // the BGZF chunk helpers the front end and its integration tests seek with
@@ -152,6 +160,9 @@ pub use crate::input::open_regions;
 pub use reed_core::tag_table::{TagNumber, TagTable, TagType};
 /// Builds the tag table from an opened input's header.
 pub use reed_io::header::tag_table;
+/// The VCF header as an opaque value (doc_v26 V26-10): the operations a
+/// downstream user needs, without a third-party type in the surface.
+pub use reed_io::header::{self as header, HeaderFacts, VcfHeader};
 pub use reed_core::coord::{Interval0, Pos0};
 pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_engine::budget;

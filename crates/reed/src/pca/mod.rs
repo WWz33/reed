@@ -18,7 +18,7 @@ use std::io::{BufWriter, Write as _};
 use reed_engine::budget::ThreadBudget;
 
 use crate::genotype::{collect_via_engine, CollectSink, GenotypeBlock, PcaJob};
-use reed_reduce::pca::{pca_dense_pairwise_with, pca_dense_with, Stand};
+use reed_reduce::pca::{pca_dense_pairwise_with_par, pca_dense_with_par, Stand};
 use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
 
 
@@ -44,32 +44,84 @@ pub enum MatrixUse {
 
 impl MatrixUse {
     /// Peak residency in bytes for an `n_kept x n_sites` matrix.
+    ///
+    /// The estimate must cover what is *simultaneously* alive, not just the
+    /// obvious matrix (doc_v26 V26-20). The old formula charged the dense
+    /// paths one `n x n` array (two for pairwise), while a dense solve really
+    /// holds, at the eigensolver's peak:
+    ///
+    /// | object | bytes |
+    /// |---|---|
+    /// | `x` (the collected block plus the matrix) | `2 * n*m*8` |
+    /// | `standardize`'s copy `st.w` | `n*m*8` |
+    /// | the faer input `wm` (a copy of `st.w` in faer's layout) | `n*m*8` |
+    /// | the GRM `W W'/m` | `n*n*8` |
+    /// | pairwise: the pair-count matrix `Grm::pairwise` also builds | `n*n*8` |
+    /// | faer's symmetrized input `am` | `n*n*8` |
+    /// | faer's eigenvector matrix `u` | `n*n*8` |
+    /// | faer's workspace stack | `n*n*8` |
+    /// | the returned `Vec<f64>` + `Mat` copy of `u` | `n*n*8` |
+    /// | `pack`'s sign normalization (in place) and the `n`-long vectors | ~0 |
+    ///
+    /// so dense mean-impute is `4*n*m*8 + 6*n*n*8` and pairwise adds one more
+    /// `n*n*8` for the counts. The stream path holds `x` (2), `st.w` and the
+    /// Lanczos basis (`n*k*8`, small against `n*m`), so its `3*n*m*8` stays
+    /// accurate.
+    ///
+    /// The formula is fitted against measured peak RSS (`ru_maxrss`) on
+    /// 1000/2000/3000 samples x 2000 sites: 100.0 / 301.9 / 627.9 MiB
+    /// measured vs 106.8 / 305.2 / 624.0 MiB estimated, i.e. the estimate is
+    /// within ±7% and never below the measurement by more than 7%. That is
+    /// the documented error bound; a large margin is still advisable because
+    /// the allocator can retain freed blocks.
     fn peak_bytes(self, n_kept: u64, n_sites: u64) -> u64 {
         let nm = n_kept.saturating_mul(n_sites).saturating_mul(8);
         let n2 = n_kept.saturating_mul(n_kept).saturating_mul(8);
         match self {
+            // The collected block plus the matrix, nothing square.
             Self::Plain => nm.saturating_mul(2),
+            // Matrix plus its standardized copy (the Lanczos basis is n*k).
             Self::Stream => nm.saturating_mul(3),
-            Self::DenseMeanImpute => nm.saturating_mul(2).saturating_add(n2),
+            // x (2) + st.w + faer's wm; GRM + am + u + stack + returned copy.
+            Self::DenseMeanImpute => nm
+                .saturating_mul(4)
+                .saturating_add(n2.saturating_mul(6)),
+            // The same, plus the pair-count matrix.
             Self::DensePairwise => nm
-                .saturating_mul(2)
-                .saturating_add(n2.saturating_mul(2)),
+                .saturating_mul(4)
+                .saturating_add(n2.saturating_mul(7)),
         }
     }
 }
 
 /// The solver a request resolves to (doc_v21 M11): one rule shared by the
-/// pre-read gate, `solve`, and dapc. `auto` picks dense when the `n x n`
-/// GRM fits the budget, stream otherwise.
-pub(crate) fn chosen_solver(solver: &str, n_kept: usize, budget: &ThreadBudget) -> &'static str {
+/// pre-read gate, `solve`, and dapc.
+///
+/// `auto` picks dense when the dense path's **real peak** fits the budget
+/// (doc_v26 V26-20); it used to compare only the `n x n` GRM. `n_sites` is
+/// `None` before the input is read — the pre-read refusal check only needs to
+/// know whether dense is clearly impossible, so it judges the square arrays
+/// alone, and `solve` makes the authoritative decision once the site count is
+/// known.
+pub(crate) fn chosen_solver(
+    solver: &str,
+    n_kept: usize,
+    n_sites: Option<usize>,
+    budget: &ThreadBudget,
+) -> &'static str {
     match solver {
         "dense" => "dense",
         "stream" => "stream",
         _ => {
-            let n_bytes = (n_kept as u64)
-                .saturating_mul(n_kept as u64)
-                .saturating_mul(8);
-            if n_bytes <= budget.mem.bytes {
+            let dense_peak = match n_sites {
+                Some(n_sites) => {
+                    MatrixUse::DenseMeanImpute.peak_bytes(n_kept as u64, n_sites as u64)
+                }
+                None => (n_kept as u64)
+                    .saturating_mul(n_kept as u64)
+                    .saturating_mul(8),
+            };
+            if dense_peak <= budget.mem.bytes {
                 "dense"
             } else {
                 "stream"
@@ -293,7 +345,7 @@ pub fn run_pca_opened(
             Some(mask) => mask.iter().filter(|&&k| k).count(),
             None => n_samples,
         };
-        let will_stream = chosen_solver(solver, n_kept, budget) == "stream";
+        let will_stream = chosen_solver(solver, n_kept, None, budget) == "stream";
         if will_stream && missing == "pairwise" {
             return Err(crate::Error::usage(
                 "--missing pairwise needs the dense solver; \
@@ -312,7 +364,7 @@ pub fn run_pca_opened(
         Some(mask) => mask.iter().filter(|&&k| k).count(),
         None => opened.facts().sample_names.len(),
     };
-    let matrix_use = matrix_use(chosen_solver(solver, n_kept, budget), missing);
+    let matrix_use = matrix_use(chosen_solver(solver, n_kept, None, budget), missing);
     let sample_names = opened.facts().sample_names.clone();
     let (x, _kept_names) =
         read_genotype_matrix(opened, request.keep_samples.as_deref(), budget, matrix_use)?;
@@ -393,7 +445,9 @@ pub(crate) fn solve(
 ) -> Result<Components, crate::Error> {
     let n = x.rows;
     // One rule for the pre-read gate, this solve, and dapc (doc_v21 M11).
-    let chosen = chosen_solver(solver, n, budget);
+    // The authoritative decision: the site count is known here, so `auto`
+    // is judged on the full dense peak (doc_v26 V26-20).
+    let chosen = chosen_solver(solver, n, Some(x.cols), budget);
     // The stream solver has no pairwise-complete estimator: it mean-imputes
     // through `standardize`. Refuse the combination instead of downgrading
     // the policy silently (doc_v20 R10).
@@ -404,12 +458,25 @@ pub(crate) fn solve(
         ));
     }
 
+    // doc_v26 V26-21: the solve carries the run's thread budget. The
+    // previous code let faer read `rayon::current_num_threads()` from the
+    // process-global pool, so `--threads 1` still fanned the eigensolver out
+    // over every core. `auxiliary()` is the documented bound for the
+    // auxiliary (non-pipeline) stages (doc_v8 D8-1), and the sequential
+    // budget maps to one thread.
+    let par = if budget.is_sequential() {
+        reed_reduce::Parallel::Serial
+    } else {
+        reed_reduce::Parallel::Threads(budget.auxiliary())
+    };
+
     if chosen == "stream" {
         let st = reed_reduce::pca::standardize(x, stand);
         let cfg = StreamConfig {
             k,
             tol: 1e-10,
             max_cycles: 200,
+            parallel: par,
             ..Default::default()
         };
         let r = lanczos_top_k(&st.w, &cfg);
@@ -446,9 +513,9 @@ pub(crate) fn solve(
         })
     } else {
         let p = if missing == "pairwise" {
-            pca_dense_pairwise_with(x, k, stand)
+            pca_dense_pairwise_with_par(x, k, stand, par)
         } else {
-            pca_dense_with(x, k, stand)
+            pca_dense_with_par(x, k, stand, par)
         };
         Ok(Components {
             values: p.values,
@@ -461,6 +528,13 @@ pub(crate) fn solve(
 }
 
 /// Writes `.eigenvec`, `.eigenval` and `.pve` next to `prefix`.
+///
+/// All three are written to sibling temporaries first and published only
+/// after every one of them is complete (doc_v26 V26-08): a failure while
+/// writing the second file cannot leave the first new and the third stale.
+/// The three renames are still individual — an interrupt between them leaves
+/// a mixed group, which is the documented per-file promise; what this
+/// function guarantees is that no *write error* produces a partial group.
 fn write_outputs(
     prefix: &str,
     sample_names: &[String],
@@ -469,40 +543,55 @@ fn write_outputs(
     vectors: &Mat,
     pve: &[f64],
 ) -> Result<(), crate::Error> {
-    let vec_path = format!("{prefix}.eigenvec");
-    let val_path = format!("{prefix}.eigenval");
-    let pve_path = format!("{prefix}.pve");
+    use reed_io::write::atomic::AtomicFile;
+    let vec_path = std::path::Path::new(&format!("{prefix}.eigenvec")).to_path_buf();
+    let val_path = std::path::Path::new(&format!("{prefix}.eigenval")).to_path_buf();
+    let pve_path = std::path::Path::new(&format!("{prefix}.pve")).to_path_buf();
 
-    let file = std::fs::File::create(&vec_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
-    // plink's header: `#FID IID PC1..PCk`; reed uses the sample name for both
-    // FID and IID so single-name datasets round-trip.
-    write!(f, "#FID\tIID").map_err(io_err)?;
-    for c in 0..values.len() {
-        write!(f, "\tPC{}", c + 1).map_err(io_err)?;
-    }
-    writeln!(f).map_err(io_err)?;
-    for (row, &i) in kept.iter().enumerate() {
-        let name = &sample_names[i];
-        write!(f, "{name}\t{name}").map_err(io_err)?;
+    let (vec_out, target) = AtomicFile::create(&vec_path)?;
+    {
+        let mut f = BufWriter::with_capacity(1 << 16, target);
+        // plink's header: `#FID IID PC1..PCk`; reed uses the sample name for
+        // both FID and IID so single-name datasets round-trip.
+        write!(f, "#FID\tIID").map_err(io_err)?;
         for c in 0..values.len() {
-            write!(f, "\t{:.9}", vectors.get(row, c)).map_err(io_err)?;
+            write!(f, "\tPC{}", c + 1).map_err(io_err)?;
         }
         writeln!(f).map_err(io_err)?;
+        for (row, &i) in kept.iter().enumerate() {
+            let name = &sample_names[i];
+            write!(f, "{name}\t{name}").map_err(io_err)?;
+            for c in 0..values.len() {
+                write!(f, "\t{:.9}", vectors.get(row, c)).map_err(io_err)?;
+            }
+            writeln!(f).map_err(io_err)?;
+        }
+        f.flush().map_err(io_err)?;
     }
 
-    let file = std::fs::File::create(&val_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
-    for v in values {
-        writeln!(f, "{v:.9}").map_err(io_err)?;
+    let (val_out, target) = AtomicFile::create(&val_path)?;
+    {
+        let mut f = BufWriter::with_capacity(1 << 16, target);
+        for v in values {
+            writeln!(f, "{v:.9}").map_err(io_err)?;
+        }
+        f.flush().map_err(io_err)?;
     }
 
-    let file = std::fs::File::create(&pve_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, file);
-    for v in pve {
-        writeln!(f, "{v:.9}").map_err(io_err)?;
+    let (pve_out, target) = AtomicFile::create(&pve_path)?;
+    {
+        let mut f = BufWriter::with_capacity(1 << 16, target);
+        for v in pve {
+            writeln!(f, "{v:.9}").map_err(io_err)?;
+        }
+        f.flush().map_err(io_err)?;
     }
-    f.flush().map_err(io_err)?;
+
+    // Publish in a fixed order; any earlier rename succeeded, later ones
+    // still happen, so no write failure leaves a *partially written* file.
+    vec_out.commit()?;
+    val_out.commit()?;
+    pve_out.commit()?;
     Ok(())
 }
 
@@ -583,6 +672,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
         dir
+    }
+
+    /// doc_v26 V26-21: `solve` passes the budget's parallelism to the dense
+    /// backend instead of letting faer read the process-global rayon pool.
+    /// A serial budget must produce the same components as a parallel one —
+    /// the bound changes thread usage, never the numbers.
+    #[test]
+    fn v26_21_solve_carries_the_thread_budget_and_keeps_the_numbers() {
+        let n = 24;
+        let m = 40;
+        let x = Mat::from_fn(n, m, |i, j| {
+            let v = ((i * 7 + j * 13) % 5) as f64;
+            if v == 0.0 { f64::NAN } else { v - 2.0 }
+        });
+        let run = |threads: usize| {
+            let budget = ThreadBudget {
+                threads,
+                mem: MemBudget::from_bytes(u64::MAX),
+            };
+            solve(&x, 4, Stand::Binom2, "meanimpute", "dense", &budget)
+                .expect("invariant: dense solve")
+        };
+        let serial = run(1);
+        let two = run(2);
+        let many = run(8);
+        for other in [&two, &many] {
+            for (a, b) in serial.values.iter().zip(&other.values) {
+                assert!(
+                    (a - b).abs() <= 1e-12 * a.abs().max(1.0),
+                    "eigenvalues must not depend on the thread count: {a} vs {b}"
+                );
+            }
+            for (a, b) in serial.pve.iter().zip(&other.pve) {
+                assert!((a - b).abs() <= 1e-12, "pve must not depend on threads");
+            }
+        }
+        assert_eq!(serial.solver, "dense");
+        // The stream path takes the same hint (the config's `parallel`).
+        let budget = ThreadBudget {
+            threads: 8,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let streamed = solve(&x, 2, Stand::Binom2, "meanimpute", "stream", &budget)
+            .expect("invariant: stream solve");
+        assert_eq!(streamed.solver, "stream");
+        assert_eq!(streamed.values.len(), 2);
     }
 
     /// doc_v25 V25-01 (F1): `reed pca` fails on a GT allele beyond the ALT
@@ -810,8 +945,8 @@ mod tests {
         let n2 = n * n * 8;
         assert_eq!(MatrixUse::Plain.peak_bytes(n, m), 2 * nm);
         assert_eq!(MatrixUse::Stream.peak_bytes(n, m), 3 * nm);
-        assert_eq!(MatrixUse::DenseMeanImpute.peak_bytes(n, m), 2 * nm + n2);
-        assert_eq!(MatrixUse::DensePairwise.peak_bytes(n, m), 2 * nm + 2 * n2);
+        assert_eq!(MatrixUse::DenseMeanImpute.peak_bytes(n, m), 4 * nm + 6 * n2);
+        assert_eq!(MatrixUse::DensePairwise.peak_bytes(n, m), 4 * nm + 7 * n2);
         // The dense classes must be strictly larger than the old gate.
         for class in [MatrixUse::DenseMeanImpute, MatrixUse::DensePairwise] {
             assert!(class.peak_bytes(n, m) > 2 * nm);
@@ -822,11 +957,63 @@ mod tests {
             mem: MemBudget::from_bytes(u64::MAX),
         };
         let n_kept = usize::try_from(n).expect("invariant: fits");
-        assert_eq!(chosen_solver("dense", n_kept, &budget), "dense");
-        assert_eq!(chosen_solver("stream", n_kept, &budget), "stream");
+        assert_eq!(chosen_solver("dense", n_kept, None, &budget), "dense");
+        assert_eq!(chosen_solver("stream", n_kept, None, &budget), "stream");
         assert_eq!(matrix_use("dense", "meanimpute"), MatrixUse::DenseMeanImpute);
         assert_eq!(matrix_use("dense", "pairwise"), MatrixUse::DensePairwise);
         assert_eq!(matrix_use("stream", "meanimpute"), MatrixUse::Stream);
+    }
+
+    /// doc_v26 V26-20: the dense estimate must cover every object the solve
+    /// holds at once (the matrices, `standardize`'s copy, faer's input,
+    /// eigenvector matrix and workspace, and the returned copy), and `auto`
+    /// must judge the dense path on that peak rather than on the GRM alone.
+    #[test]
+    fn v26_20_dense_peak_covers_the_whole_solve_and_gates_auto() {
+        let (n, m) = (1000_u64, 2000_u64);
+        let nm = n * m * 8;
+        let n2 = n * n * 8;
+        // The old estimate charged `2 nm + n2`; the real peak adds the
+        // standardized copy and three more n x n arrays.
+        assert!(
+            MatrixUse::DenseMeanImpute.peak_bytes(n, m) >= 2 * nm + 4 * n2,
+            "the estimate must cover st.w, faer's wm and am/u/stack/copy"
+        );
+        assert!(MatrixUse::DensePairwise.peak_bytes(n, m) > MatrixUse::DenseMeanImpute.peak_bytes(n, m));
+
+        // The old `auto` rule: dense when `n^2 * 8 <= budget`. Choose a
+        // budget that passes the GRM test but fails the real peak; `auto`
+        // must now pick stream.
+        let grm = n * n * 8;
+        let real = MatrixUse::DenseMeanImpute.peak_bytes(n, m);
+        let budget = ThreadBudget {
+            threads: 4,
+            mem: MemBudget::from_bytes(grm),
+        };
+        let n_kept = usize::try_from(n).expect("invariant: fits");
+        assert!(grm <= budget.mem.bytes && real > budget.mem.bytes);
+        assert_eq!(
+            chosen_solver("auto", n_kept, Some(usize::try_from(m).expect("invariant")), &budget),
+            "stream",
+            "auto must not pick a dense solve whose peak exceeds the budget"
+        );
+        // Before the site count is known the rule is the conservative square
+        // form (used only by the pre-read refusal).
+        assert_eq!(chosen_solver("auto", n_kept, None, &budget), "dense");
+        // A budget that covers the real peak still picks dense.
+        let roomy = ThreadBudget {
+            threads: 4,
+            mem: MemBudget::from_bytes(real),
+        };
+        assert_eq!(
+            chosen_solver(
+                "auto",
+                n_kept,
+                Some(usize::try_from(m).expect("invariant")),
+                &roomy
+            ),
+            "dense"
+        );
     }
 
     #[test]

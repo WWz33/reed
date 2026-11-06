@@ -38,6 +38,19 @@ jobs:
       - name: doc-drift guards
         run: bash ci/check-doc-drift.sh
 
+  # doc_v26 V26-11: the manifest claims MSRV 1.91 but every other job used the
+  # pinned 1.99 toolchain, so a dependency update could raise the real floor
+  # while CI stayed green. This job proves the claim on the declared version.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.91"
+      - name: cargo check on the declared MSRV (1.91)
+        run: cargo check --workspace --all-targets
+
   data-gates:
     # The subset numeric gates and the gold parity run need clean.vcf.gz and
     # the reference tools; only a runner with the data can execute them.
@@ -56,6 +69,16 @@ jobs:
       - name: gold parity
         run: |
           export REED_SCRATCH=target/gold
+          # doc_v26 V26-14: the parity step used to read out/reed.vcf.gz
+          # without ever producing it, so it compared whatever a previous
+          # self-hosted run had left behind. Build this checkout's binary and
+          # export REED: `run_all.sh` joins the reed branch (see
+          # review item 6 -- the explicit `run_reed.sh` after it ran the same
+          # large computation twice), so the parity input is provably from the
+          # commit under test.
+          cargo build --release -p reed-cli
+          export REED="$PWD/target/release/reed"
           bash gold/scripts/run_all.sh
+          test -s "$REED_SCRATCH/out/reed.vcf.gz"
           python3 gold/scripts/check_parity.py "$REED_SCRATCH/out/reed.vcf.gz" \
             --gold "$REED_SCRATCH/out/gold.vcf.gz"

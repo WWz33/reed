@@ -69,6 +69,13 @@ pub fn render_site_part(
     let n_info = (na_ni & 0xFFFF) as usize;
     let n_fmt = (nf_ns >> 24) as usize;
     let n_sample = (nf_ns & 0x00FF_FFFF) as usize;
+    // doc_v26 V26-05: REF is required. The renderer used to emit REF/ALT as
+    // `.` and carry on, so a corrupt BCF produced a "valid" text line.
+    if n_allele == 0 {
+        return Err(malformed(
+            "BCF record declares zero alleles (n_allele = 0); REF is required",
+        ));
+    }
 
     let contig_name = dict
         .contig(chrom)
@@ -100,13 +107,9 @@ pub fn render_site_part(
         out.extend_from_slice(id);
     }
 
-    // Alleles: REF then ALT (a lone allele prints `.`).
+    // Alleles: REF then ALT (a lone allele prints `.` for ALT).
     out.push(b'\t');
-    if n_allele == 0 {
-        out.push(b'.');
-    } else {
-        out.extend_from_slice(c.typed_string()?);
-    }
+    out.extend_from_slice(c.typed_string()?);
     out.push(b'\t');
     if n_allele <= 1 {
         out.push(b'.');
@@ -528,6 +531,38 @@ mod tests {
             err.to_string().contains("telomere sentinel"),
             "{err}"
         );
+    }
+
+    /// doc_v26 V26-05: a record with `n_allele == 0` has no REF at all.
+    /// The renderer used to print `.` for REF and ALT and hand on a "valid"
+    /// line; it must report `MalformedRecord` instead.
+    #[test]
+    fn v26_render_rejects_zero_alleles() {
+        let header_text = "##fileformat=VCFv4.2\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header: noodles::vcf::Header = header_text.parse().expect("invariant: header");
+        let dict_text = crate::bcf::bcf_header_text(&header).expect("invariant: bcf header text");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom = Chr01
+        shared.extend_from_slice(&9_i32.to_le_bytes()); // 0-based pos 9
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&FLOAT_MISSING.to_le_bytes()); // qual = .
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // n_allele = 0, n_info = 0
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // 0 FORMAT, 0 samples
+        shared.extend_from_slice(&[0x07]); // ID: empty
+        shared.extend_from_slice(&[0x01]); // FILTER: count 0
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &[],
+        };
+        let mut out = Vec::new();
+        let err = render_site_part(&rec, &dict, &mut out)
+            .expect_err("n_allele = 0 must be MalformedRecord");
+        assert!(matches!(err, IoError::MalformedRecord { .. }), "{err:?}");
+        assert!(err.to_string().contains("zero alleles"), "{err}");
+        assert!(out.is_empty(), "nothing may be rendered for a rejected record");
     }
 
     /// A BCF record with no FORMAT keys (`n_fmt == 0`, what htslib writes

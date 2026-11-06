@@ -209,6 +209,40 @@ impl<'a> LineRef<'a> {
         }
     }
 
+    /// The first required column that is empty (doc_v26 V26-06).
+    ///
+    /// `ID` and `REF` semantics differ: `ID` may be `.` (the missing-value
+    /// symbol), while an empty `ID` is still a column-count error only if the
+    /// line is short. Everything checked here is a field that carries data.
+    /// `FORMAT` is only checked when the column is present (a sites-only
+    /// record has none), and a FORMAT column of `.` is legal — htslib treats
+    /// it as "no data" (`vcf_parse_format_empty1`, `vcf.c:3213`).
+    #[must_use]
+    pub fn first_empty_required(&self) -> Option<EmptyField> {
+        if self.chrom().is_empty() {
+            return Some(EmptyField::Chrom);
+        }
+        if self.reference().is_empty() {
+            return Some(EmptyField::Ref);
+        }
+        if self.alts().is_empty() {
+            return Some(EmptyField::Alt);
+        }
+        if self.qual_text().is_empty() {
+            return Some(EmptyField::Qual);
+        }
+        if self.filter_text().is_empty() {
+            return Some(EmptyField::Filter);
+        }
+        if self.info_text().is_empty() {
+            return Some(EmptyField::Info);
+        }
+        if self.n_tabs >= 8 && self.format_text().is_empty() {
+            return Some(EmptyField::Format);
+        }
+        None
+    }
+
     /// Validates the sample columns against a header declaring `expected`
     /// samples (doc_v22 R22-3).
     ///
@@ -254,6 +288,48 @@ impl<'a> LineRef<'a> {
     }
 }
 
+/// A fixed column that must carry text but is empty (doc_v26 V26-06).
+///
+/// VCF's missing-value symbol `.` is legal in `ID`, `ALT`, `QUAL`, `FILTER`
+/// and `INFO`, but an **empty** field is not: a record like
+/// `chr1\t1\t.\t\tG\t.\tPASS\t.` used to classify as a valid record and
+/// then flow through filter, stats and convert unchanged, producing output
+/// that no other VCF tool accepts. The check is structural only — it does not
+/// interpret the column — so every consumer keeps reading the same bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmptyField {
+    /// The CHROM column is empty.
+    Chrom,
+    /// The REF column is empty.
+    Ref,
+    /// The ALT column is empty.
+    Alt,
+    /// The QUAL column is empty.
+    Qual,
+    /// The FILTER column is empty.
+    Filter,
+    /// The INFO column is empty.
+    Info,
+    /// The FORMAT column is empty (only checked when the column exists).
+    Format,
+}
+
+impl EmptyField {
+    /// The column's name, for diagnostics.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Chrom => "CHROM",
+            Self::Ref => "REF",
+            Self::Alt => "ALT",
+            Self::Qual => "QUAL",
+            Self::Filter => "FILTER",
+            Self::Info => "INFO",
+            Self::Format => "FORMAT",
+        }
+    }
+}
+
 /// The first structural check a line failed (`classify_line`; doc_v25 V25-03).
 ///
 /// Kept as data rather than a message so each consumer can render its own
@@ -267,6 +343,19 @@ pub enum MalformedLine {
     SampleColumns(SampleColumnsError),
     /// POS is not a 1-based decimal (`0` included: VCF positions start at 1).
     Position,
+    /// A required column is empty (doc_v26 V26-06). `.` is the legal
+    /// missing-value symbol and passes; zero bytes does not.
+    Empty(EmptyField),
+    /// A tag appears more than once in INFO (doc_v26 V26-04). htslib's own
+    /// readers take the first match (`bcf_get_info_id`, `vcf.c:6207-6216`),
+    /// while reed's index and AC/AN readers disagreed (first vs last), so one
+    /// record could filter two different ways. The column is rejected instead
+    /// of choosing a convention per consumer — a deliberate divergence from
+    /// htslib, which accepts the record silently.
+    ///
+    /// Also carries the INFO tag-count ceiling (doc_v26 review item 2), which
+    /// bounds the duplicate check's quadratic scan.
+    InfoColumn(super::info::InfoColumnError),
 }
 
 impl MalformedLine {
@@ -277,6 +366,13 @@ impl MalformedLine {
             Self::FewerThanEightColumns => "fewer than 8 columns",
             Self::SampleColumns(_) => "a sample-column count differing from the header",
             Self::Position => "an unparsable POS",
+            Self::Empty(_) => "an empty required column",
+            Self::InfoColumn(super::info::InfoColumnError::Duplicate(_)) => {
+                "a duplicate INFO tag"
+            }
+            Self::InfoColumn(super::info::InfoColumnError::TooManyTags { .. }) => {
+                "too many INFO tags"
+            }
         }
     }
 }
@@ -332,6 +428,16 @@ pub fn classify_line(line: &[u8], n_samples: usize) -> RecordClass<'_> {
     let Some(lr) = LineRef::parse(line) else {
         return RecordClass::Malformed(MalformedLine::FewerThanEightColumns);
     };
+    // Required-field emptiness is judged before the sample-count agreement:
+    // a record with no REF is broken regardless of how many sample columns
+    // it carries, and reporting it as a column-count mismatch would hide the
+    // real defect (doc_v26 V26-06).
+    if let Some(field) = lr.first_empty_required() {
+        return RecordClass::Malformed(MalformedLine::Empty(field));
+    }
+    if let Err(err) = crate::vcf::info::validate_info(lr.info_text()) {
+        return RecordClass::Malformed(MalformedLine::InfoColumn(err));
+    }
     if let Err(err) = lr.validate_sample_cols(n_samples) {
         return RecordClass::Malformed(MalformedLine::SampleColumns(err));
     }
@@ -572,6 +678,60 @@ mod tests {
             classify_line(b" ", 0),
             RecordClass::Malformed(MalformedLine::FewerThanEightColumns)
         ));
+    }
+
+    /// doc_v26 V26-06: required columns must carry text. `.` is the legal
+    /// missing-value symbol and passes; zero bytes does not. The record that
+    /// motivated the check is the empty REF below, which every other VCF tool
+    /// rejects and reed used to pass through unchanged.
+    #[test]
+    fn empty_required_columns_are_malformed() {
+        let cases: &[(&[u8], EmptyField)] = &[
+            (b"\t1\t.\tA\tG\t50\tPASS\t.\n", EmptyField::Chrom),
+            (b"chr1\t1\t.\t\tG\t50\tPASS\t.\n", EmptyField::Ref),
+            (b"chr1\t1\t.\tA\t\t50\tPASS\t.\n", EmptyField::Alt),
+            (b"chr1\t1\t.\tA\tG\t\tPASS\t.\n", EmptyField::Qual),
+            (b"chr1\t1\t.\tA\tG\t50\t\t.\n", EmptyField::Filter),
+            (b"chr1\t1\t.\tA\tG\t50\tPASS\t\n", EmptyField::Info),
+            (b"chr1\t1\t.\tA\tG\t50\tPASS\t.\t\t0/1\n", EmptyField::Format),
+        ];
+        for (line, field) in cases {
+            assert!(
+                matches!(
+                    classify_line(line, 1),
+                    RecordClass::Malformed(MalformedLine::Empty(seen)) if seen == *field
+                ),
+                "{:?} must report {:?}",
+                String::from_utf8_lossy(line),
+                field
+            );
+        }
+        // The legal missing-value symbols all pass.
+        assert!(matches!(
+            classify_line(b"chr1\t1\t.\tA\t.\t.\t.\t.\tGT\t0/1\n", 1),
+            RecordClass::Record(_)
+        ));
+        // A sites-only record has no FORMAT column to be empty.
+        assert!(matches!(
+            classify_line(b"chr1\t1\t.\tA\tG\t.\tPASS\t.\n", 0),
+            RecordClass::Record(_)
+        ));
+    }
+
+    /// doc_v26 V26-04: a duplicated INFO tag is rejected by the classifier,
+    /// so every consumer sees the same judgement instead of the index's
+    /// first match and the AC/AN reader's last one disagreeing.
+    #[test]
+    fn duplicate_info_tags_are_malformed() {
+        let line = b"chr1\t1\t.\tA\tG\t50\tPASS\tAC=1;AC=3;AN=4\tGT\t0/1\n";
+        match classify_line(line, 1) {
+            RecordClass::Malformed(MalformedLine::InfoColumn(
+                crate::vcf::info::InfoColumnError::Duplicate(key),
+            )) => {
+                assert_eq!(key.key_len, 2);
+            }
+            other => panic!("expected a duplicate-INFO rejection, got {other:?}"),
+        }
     }
 
     /// `body_lines` drops only the piece after the body's final terminator;

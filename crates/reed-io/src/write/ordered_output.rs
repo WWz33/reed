@@ -15,6 +15,7 @@ use std::sync::Arc;
 use crate::bgzf::block::EOF_BLOCK;
 use crate::bgzf::deflate::Deflater;
 use crate::error::IoError;
+use crate::write::atomic::AtomicFile;
 use crate::write::block_writer::{BGZF_BLOCK_SIZE, ChunkOutput, IndexRecord};
 use crate::write::index::Indexer;
 
@@ -39,6 +40,10 @@ pub struct OrderedOutput {
     /// Deflate time observed on the chunks handed in (A6-4), reported to the
     /// engine through `OrderedSink::deflate_time`.
     deflate_nanos: u64,
+    /// The atomic owner of the output file when the path was opened here
+    /// (doc_v26 V26-08). `None` for a caller-supplied writer (stdout, a
+    /// temp spill, a test buffer), where there is no file to publish.
+    atomic: Option<AtomicFile>,
 }
 
 impl OrderedOutput {
@@ -64,7 +69,48 @@ impl OrderedOutput {
             pending_record: None,
             last_block_end: 0,
             deflate_nanos: 0,
+            atomic: None,
         }
+    }
+
+    /// Makes this sink the owner of `atomic`: [`Self::finish`] publishes it.
+    ///
+    /// Used when the caller opened the file itself (the filter clones the
+    /// handle for its `BufWriter`).
+    #[must_use]
+    pub fn adopting(mut self, atomic: AtomicFile) -> Self {
+        self.atomic = Some(atomic);
+        self
+    }
+
+    /// Creates the sink for a **file** output: the bytes go to a sibling
+    /// temporary and the file only appears on [`Self::finish`]
+    /// (doc_v26 V26-08).
+    ///
+    /// The index sidecar is written to its own temporary and published in
+    /// `finish` too, so a failure before `finish` leaves neither a truncated
+    /// VCF nor an index that describes a file that never appeared. The two
+    /// renames are still individual: an interrupt between them leaves the new
+    /// VCF with the old index — the per-file promise documented on
+    /// [`crate::write::atomic`].
+    ///
+    /// # Errors
+    ///
+    /// I/O failures creating the temporary file.
+    pub fn create(
+        output: &Path,
+        compressed: bool,
+        level: u8,
+        indexer: Option<Indexer>,
+        index_path: Option<PathBuf>,
+        contig_names: Arc<[Vec<u8>]>,
+    ) -> Result<Self, IoError> {
+        let (atomic, file) = AtomicFile::create(output)?;
+        let writer: Box<dyn Write + Send> =
+            Box::new(std::io::BufWriter::with_capacity(1 << 20, file));
+        let mut out = Self::new(writer, compressed, level, indexer, index_path, contig_names);
+        out.atomic = Some(atomic);
+        Ok(out)
     }
 
     /// Writes the (already rendered) header bytes as BGZF block(s).
@@ -127,6 +173,14 @@ impl OrderedOutput {
         if let Some(pending) = self.pending_record.take() {
             // The last record's chunk runs to the end of the last block.
             self.close_index_record(pending, self.last_block_end)?;
+        }
+        // doc_v26 V26-08: publish the data file first, then its index. A new
+        // VCF with a stale index is a visible mismatch (bcftools warns and
+        // `reed index -f` rebuilds it); a new index over an old VCF would
+        // answer region queries with the wrong records, silently. Both files
+        // are individually atomic.
+        if let Some(atomic) = self.atomic.take() {
+            atomic.commit()?;
         }
         if let (Some(indexer), Some(path)) = (self.indexer.take(), self.index_path.take()) {
             indexer.write(&path)?;

@@ -59,6 +59,12 @@ check "the shared Verbosity enum exists (doc_v4 03 §3.3)" \
 check "exactly one production allow(unsafe_code) site (doc_v6 06 Y0)" \
     bash -c '[ "$(grep -rl "allow(unsafe_code)" crates --include=*.rs | grep -v "/tests/" | wc -l)" -eq 1 ]'
 
+# doc_v26 V26-03 / review item 3: the --threads ceiling is a user-facing
+# constraint, so the spec row and the code constant must agree.
+check "the --threads ceiling is documented in the CLI spec (doc_v26 V26-03)" \
+    bash -c 'grep -q "上限 1024" docs/spec/cli.md &&
+        grep -q "pub const MAX_THREADS: usize = 1024;" crates/reed-engine/src/budget.rs'
+
 # doc_v5 03 §6 / A5-3: the stale names are gone from the code.
 check "no code says sample.max_missing (doc_v5 A5-3)" \
     bash -c '! grep -rq "sample\.max_missing" crates/*/src'
@@ -222,9 +228,12 @@ check "plain gzip is decoded multi-member (doc_v10 D10-6)" \
 
 # doc_v10 D10-7: the output header declares PASS even when the input does
 # not (htslib injects it on both sides).
+# doc_v26 V26-10: the mutation moved behind the opaque header type, so the
+# guard follows the behaviour (the filter calls with_pass_filter) and the
+# implementation (reed-io declares PASS) rather than an old helper name.
 check "the output header declares PASS (doc_v10 D10-7)" \
-    bash -c 'grep -q "fn ensure_pass_filter" crates/reed/src/filter/mod.rs &&
-        grep -q "ensure_pass_filter(out_header)" crates/reed/src/filter/mod.rs'
+    bash -c 'grep -q "with_pass_filter()" crates/reed/src/filter/mod.rs &&
+        grep -q "fn with_pass_filter" crates/reed-io/src/header/vcf_header.rs'
 
 # doc_v10 D10-8: record field sizes go through the checked `field_bytes`
 # helper, never a raw `type_width(ty) * count` product.

@@ -13,7 +13,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use reed_core::ChunkId;
 
-use crate::bgzf::block::{BGZF_HEADER_LEN, parse_block_size};
+use crate::bgzf::block::{BGZF_HEADER_LEN, block_entry, parse_block_size};
 use crate::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes};
 use crate::error::IoError;
 
@@ -28,6 +28,11 @@ pub struct Region {
     pub end1: Option<u64>,
 }
 
+/// One block as read by [`RegionChunkSource::read_block`]: its bytes, its
+/// compressed offset, and the validated `(compressed length, inflated
+/// length)` entry.
+type BlockRead = (Vec<u8>, u64, (u32, u32));
+
 /// Reads only the compressed byte range covering `regions`.
 pub struct RegionChunkSource<R: Read + Seek> {
     inner: R,
@@ -40,6 +45,8 @@ pub struct RegionChunkSource<R: Read + Seek> {
     chunk_target: u64,
     next_chunk_id: u64,
     first_in_block_offset: u64,
+    /// Validates members (doc_v26 V26-01).
+    inflater: crate::bgzf::inflate::Inflater,
     done: bool,
 }
 
@@ -71,13 +78,14 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             first_in_block_offset: start & 0xFFFF,
+            inflater: crate::bgzf::inflate::Inflater::new(),
             done: false,
         })
     }
 
     /// Reads one block; `None` once the region's range is exhausted or the
     /// underlying stream ends.
-    fn read_block(&mut self) -> Result<Option<(Vec<u8>, u64)>, IoError> {
+    fn read_block(&mut self) -> Result<Option<BlockRead>, IoError> {
         if self.done {
             return Ok(None);
         }
@@ -112,7 +120,12 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         block.resize(total, 0);
         let block_offset = position;
         self.inner.read_exact(&mut block[BGZF_HEADER_LEN..])?;
-        Ok(Some((block, block_offset)))
+        // doc_v26 V26-01: the region source used to accept any member whose
+        // footer it could read, leaving validation to `inflate_chunk`. It now
+        // shares the block entry, so a damaged empty member and an oversized
+        // ISIZE fail here like in the other two sources.
+        let entry = block_entry(&block, &mut self.inflater)?;
+        Ok(Some((block, block_offset, entry)))
     }
 
     /// The next chunk of the range, or `None` at its end.
@@ -124,17 +137,17 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         if self.done {
             return Ok(None);
         }
-        let Some((first, compressed_start)) = self.read_block()? else {
+        let Some((first, compressed_start, first_entry)) = self.read_block()? else {
             return Ok(None);
         };
-        let mut blocks = vec![block_pair(&first)];
+        let mut blocks = vec![first_entry];
         let mut compressed = first;
         let mut last_block_offset = compressed_start;
         while (compressed.len() as u64) < self.chunk_target {
             match self.read_block()? {
-                Some((block, offset)) => {
+                Some((block, offset, entry)) => {
                     last_block_offset = offset;
-                    blocks.push(block_pair(&block));
+                    blocks.push(entry);
                     compressed.extend_from_slice(&block);
                 }
                 None => break,
@@ -183,17 +196,10 @@ impl<R: Read + Seek> RegionChunkSource<R> {
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             first_in_block_offset: 0,
+            inflater: crate::bgzf::inflate::Inflater::new(),
             done: true,
         }
     }
-}
-
-/// One block's `(compressed length, inflated length)`.
-fn block_pair(block: &[u8]) -> (u32, u32) {
-    (
-        u32::try_from(block.len()).unwrap_or(u32::MAX),
-        crate::bgzf::block::block_inflated_size(block),
-    )
 }
 
 /// The slice of the index API the region source needs (keeps reed-io free of
@@ -417,6 +423,40 @@ mod tests {
 
     fn voff(coffset: u64, uoffset: u64) -> u64 {
         (coffset << 16) | uoffset
+    }
+
+    /// doc_v26 V26-01: the region source used to record any member's ISIZE
+    /// without checking it, leaving validation to `inflate_chunk`. A member
+    /// whose footer was zeroed must now fail at the read itself.
+    #[test]
+    fn isize_zeroed_member_is_rejected_by_the_region_source() {
+        let b1: &[u8] = b"chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let b2: &[u8] = b"chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let mut bytes = bgzf(&[b1, b2]);
+        // Zero the ISIZE footer of the first data block (its total length is
+        // declared by BSIZE in the header, so the block walk still finds it).
+        let first_total = usize::from(u16::from_le_bytes([bytes[16], bytes[17]])) + 1;
+        bytes[first_total - 4..first_total].copy_from_slice(&0_u32.to_le_bytes());
+        let index = StubIndex {
+            start: voff(0, 0),
+            end: voff(1, 0),
+            names: vec!["chr1"],
+        };
+        let mut source = RegionChunkSource::open(
+            std::io::Cursor::new(bytes),
+            &index,
+            &[Region {
+                contig: "chr1".into(),
+                start1: Some(1),
+                end1: Some(100),
+            }],
+            &["chr1".to_string()],
+        )
+        .expect("invariant: source opens");
+        let err = source
+            .next_chunk()
+            .expect_err("a zeroed ISIZE must be MalformedBgzf");
+        assert!(matches!(err, IoError::MalformedBgzf { .. }), "{err:?}");
     }
 
     /// doc_v21 M3: the index's end virtual offset is a record boundary inside

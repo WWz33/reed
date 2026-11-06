@@ -1004,15 +1004,15 @@ struct ReportSink {
     plan: ReportPlan,
     n_samples: usize,
     sample_names: Vec<String>,
-    afreq: Option<BufWriter<std::fs::File>>,
-    singletons: Option<BufWriter<std::fs::File>>,
-    hardy: Option<BufWriter<std::fs::File>>,
-    vmiss: Option<BufWriter<std::fs::File>>,
-    ldepth: Option<BufWriter<std::fs::File>>,
+    afreq: Option<AtomicSink>,
+    singletons: Option<AtomicSink>,
+    hardy: Option<AtomicSink>,
+    vmiss: Option<AtomicSink>,
+    ldepth: Option<AtomicSink>,
     /// `--pop --freq`: `PREFIX.afreq.pop`.
-    freq_pop: Option<BufWriter<std::fs::File>>,
+    freq_pop: Option<AtomicSink>,
     /// `--pop --missing`: `PREFIX.vmiss.pop`.
-    vmiss_pop: Option<BufWriter<std::fs::File>>,
+    vmiss_pop: Option<AtomicSink>,
     missing: Vec<u64>,
     depth_sums: Vec<(f64, u64)>,
     individual: IndividualFAcc,
@@ -1027,18 +1027,78 @@ struct ReportSink {
 }
 
 impl ReportSink {
-    fn open(prefix: &Path, suffix: &str) -> Result<BufWriter<std::fs::File>, EngineError> {
+    /// Opens a report file atomically (doc_v26 V26-08): the returned sink
+    /// writes to a sibling temporary and publishes on [`AtomicSink::commit`].
+    /// Callers that finish the sink immediately use
+    /// [`AtomicSink::write_all_and_commit`].
+    fn open(prefix: &Path, suffix: &str) -> Result<AtomicSink, EngineError> {
         let mut path = prefix.as_os_str().to_os_string();
         path.push(suffix);
-        let file = std::fs::File::create(PathBuf::from(&path)).map_err(EngineError::Io)?;
-        Ok(BufWriter::new(file))
+        AtomicSink::create(&PathBuf::from(&path)).map_err(EngineError::Io)
     }
+}
+
+/// One report file: a buffered writer over an atomic temporary.
+///
+/// The report sink opens its files *before* the run and streams rows into
+/// them, so a plain `File::create` truncated the user's previous report at
+/// start-up and left it truncated if the run failed. The temporary is
+/// published at `finish` (or by [`AtomicSink::write_all_and_commit`] for the
+/// files rendered at the end).
+pub(super) struct AtomicSink {
+    writer: BufWriter<std::fs::File>,
+    atomic: reed_io::write::atomic::AtomicFile,
+}
+
+impl std::io::Write for AtomicSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.writer.write(buf)
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.writer.write_all(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+impl AtomicSink {
+    /// Creates the temporary for `path` and a buffered writer over it.
+    pub(super) fn create(path: &Path) -> std::io::Result<Self> {
+        let (atomic, file) = reed_io::write::atomic::AtomicFile::create(path)?;
+        Ok(Self {
+            writer: BufWriter::new(file),
+            atomic,
+        })
+    }
+
+    /// Writes bytes, unbuffered by the caller (the writer buffers).
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.writer.write_all(bytes)
+    }
+
+    /// Flushes, closes the handle and publishes the file.
+    ///
+    /// The writer must be closed before the rename: the temporary's data is
+    /// only complete once the `BufWriter` has flushed, and `commit` reopens
+    /// the path to `fsync` it.
+    fn commit(mut self) -> std::io::Result<()> {
+        self.writer.flush()?;
+        // Drop the writer (closing the handle) before the sync+rename.
+        let temp = self.atomic.temp_path().to_path_buf();
+        drop(std::mem::replace(
+            &mut self.writer,
+            BufWriter::new(std::fs::File::open(&temp)?),
+        ));
+        self.atomic.commit()
+    }
+
 }
 
 impl OrderedSink<ReportPartial> for ReportSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut ReportPartial) -> Result<(), EngineError> {
         self.n_records += partial.n_records;
-        let append = |writer: &mut Option<BufWriter<std::fs::File>>, bytes: &[u8]| {
+        let append = |writer: &mut Option<AtomicSink>, bytes: &[u8]| {
             if let Some(w) = writer {
                 w.write_all(bytes).map_err(EngineError::Io)?;
             }
@@ -1081,32 +1141,34 @@ impl OrderedSink<ReportPartial> for ReportSink {
             p.push(suffix);
             PathBuf::from(p)
         };
-        if let Some(mut w) = self.afreq.take() {
-            w.flush().map_err(EngineError::Io)?;
+        // doc_v26 V26-08: commit publishes the temporary; an error before
+        // this point leaves every previous report file untouched.
+        if let Some(w) = self.afreq.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".afreq"));
         }
-        if let Some(mut w) = self.singletons.take() {
-            w.flush().map_err(EngineError::Io)?;
+        if let Some(w) = self.singletons.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".singletons"));
         }
-        if let Some(mut w) = self.hardy.take() {
-            w.flush().map_err(EngineError::Io)?;
+        if let Some(w) = self.hardy.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".hardy"));
         }
-        if let Some(mut w) = self.vmiss.take() {
-            w.flush().map_err(EngineError::Io)?;
+        if let Some(w) = self.vmiss.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".vmiss"));
         }
-        if let Some(mut w) = self.ldepth.take() {
-            w.flush().map_err(EngineError::Io)?;
+        if let Some(w) = self.ldepth.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".ldepth.mean"));
         }
-        if let Some(mut w) = self.freq_pop.take() {
-            w.flush().map_err(EngineError::Io)?;
+        if let Some(w) = self.freq_pop.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".afreq.pop"));
         }
-        if let Some(mut w) = self.vmiss_pop.take() {
-            w.flush().map_err(EngineError::Io)?;
+        if let Some(w) = self.vmiss_pop.take() {
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".vmiss.pop"));
         }
         if self.request.depth {
@@ -1121,7 +1183,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 };
                 writeln!(w, "{name}\t{n}\t{mean}").map_err(EngineError::Io)?;
             }
-            w.flush().map_err(EngineError::Io)?;
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".idepth"));
         }
         if self.request.het {
@@ -1140,7 +1202,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 writeln!(w, "{name}\t{o_hom}\t{}\t{obs}\t{f_cell}", g6(e_hom))
                     .map_err(EngineError::Io)?;
             }
-            w.flush().map_err(EngineError::Io)?;
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".het"));
         }
         if self.request.missing {
@@ -1158,7 +1220,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
                 writeln!(w, "{name}\t{missing}\t{obs}\t{f_miss}").map_err(EngineError::Io)?;
             }
-            w.flush().map_err(EngineError::Io)?;
+            w.commit().map_err(EngineError::Io)?;
             files.push(path(".smiss"));
         }
         // `--hist`: one `PREFIX.<m>.hist` per metric (doc_v14 02 §3.2).
@@ -1175,7 +1237,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 let mut w = ReportSink::open(&self.request.prefix, &suffix)?;
                 let text = crate::stats::writers::histogram::render_hist(out);
                 w.write_all(text.as_bytes()).map_err(EngineError::Io)?;
-                w.flush().map_err(EngineError::Io)?;
+                w.commit().map_err(EngineError::Io)?;
                 files.push(path(&suffix));
             }
             // The library caller gets the same histograms the files carry
@@ -1434,7 +1496,7 @@ pub fn run_stats_opened(
         writeln!(w, "#CHROM\tID\tPOP\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
     }
     let abort = reed_engine::abort::abort_for(budget);
-    let job = crate::bcf_input::InputJob::new(job, &opened, &abort);
+    let job = crate::bcf_input::InputJob::new(job, &opened, &abort, budget);
     let crate::input::OpenedInput {
         mut source, facts, ..
     } = opened;

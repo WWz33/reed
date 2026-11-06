@@ -298,43 +298,43 @@ pub fn write(
     let mut written = Vec::new();
     if kinds.iter().any(|k| matches!(k, StatKind::Pi { .. })) {
         let path = with_suffix(prefix, "_pi.txt");
-        std::fs::write(&path, pi_rows)?;
+        reed_io::write::atomic::write_atomic(&path, pi_rows)?;
         written.push(path);
     }
     if kinds.iter().any(|k| matches!(k, StatKind::Dxy { .. })) {
         let path = with_suffix(prefix, "_dxy.txt");
-        std::fs::write(&path, dxy_rows)?;
+        reed_io::write::atomic::write_atomic(&path, dxy_rows)?;
         written.push(path);
     }
     if kinds.iter().any(|k| matches!(k, StatKind::ThetaW { .. })) {
         let path = with_suffix(prefix, "_watterson_theta.txt");
-        std::fs::write(&path, theta_rows)?;
+        reed_io::write::atomic::write_atomic(&path, theta_rows)?;
         written.push(path);
     }
     if pbs_buffers.len() == 1 {
         let path = with_suffix(prefix, "_pbs.txt");
-        std::fs::write(&path, &pbs_buffers[0])?;
+        reed_io::write::atomic::write_atomic(&path, &pbs_buffers[0])?;
         written.push(path);
     } else if !pbs_buffers.is_empty() {
         for (stem, text) in pbs_stems.iter().zip(&pbs_buffers) {
             let path = with_suffix(prefix, &format!("_pbs.{stem}.txt"));
-            std::fs::write(&path, text)?;
+            reed_io::write::atomic::write_atomic(&path, text)?;
             written.push(path);
         }
     }
     if fst_method.is_some() {
         let path = with_suffix(prefix, "_fst.txt");
-        std::fs::write(&path, fst_rows)?;
+        reed_io::write::atomic::write_atomic(&path, fst_rows)?;
         written.push(path);
     }
     if kinds.iter().any(|k| matches!(k, StatKind::TajimaD { .. })) {
         let path = with_suffix(prefix, "_tajima_d.txt");
-        std::fs::write(&path, tajima_rows)?;
+        reed_io::write::atomic::write_atomic(&path, tajima_rows)?;
         written.push(path);
     }
     if kinds.iter().any(|k| matches!(k, StatKind::FstGlobal)) {
         let path = with_suffix(prefix, "_fst_global.txt");
-        std::fs::write(&path, fst_global_rows)?;
+        reed_io::write::atomic::write_atomic(&path, fst_global_rows)?;
         written.push(path);
     }
     let log = format!(
@@ -344,7 +344,7 @@ pub fn write(
         layout.invariant, report.n_windows, report.n_records, report.n_invariant_sites
     );
     let path = with_suffix(prefix, ".log");
-    std::fs::write(&path, log)?;
+    reed_io::write::atomic::write_atomic(&path, log)?;
     written.push(path);
     Ok(written)
 }

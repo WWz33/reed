@@ -349,6 +349,7 @@ pub fn run_popgen_opened(
                 ),
                 &opened,
                 &abort,
+                budget,
             );
             let mut source = opened.source;
             let report = run(source.as_mut(), &job, sink, budget, &abort)?;
@@ -360,6 +361,7 @@ pub fn run_popgen_opened(
                 job,
                 &opened,
                 &abort,
+                budget,
                 StatsJob::run_bcf_records,
             );
             let mut source = opened.source;

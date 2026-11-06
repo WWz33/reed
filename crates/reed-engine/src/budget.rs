@@ -1,10 +1,21 @@
 //! Resource budgets (`docs/spec/architecture.md` §7.3, §7.7).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// In-flight chunks per worker (§7.4): the ticket window capacity is
 /// `TICKETS_PER_WORKER × workers`.
 pub const TICKETS_PER_WORKER: usize = 2;
+
+/// The largest `--threads` value reed accepts (doc_v26 V26-03).
+///
+/// The old parser rejected only `0`, so an arbitrary `usize` reached the
+/// derived capacities — `threads + 4` abort tokens, `TICKETS_PER_WORKER ×
+/// workers` channel slots and reorder cells, `threads` thread spawns. A
+/// four-digit cap keeps every derivation inside a sane resource envelope
+/// (tickets ≤ 2048 slots), is machine-independent so CI and production
+/// agree, and is far above any supported deployment (the reference grid is
+/// 348 samples on 56 cores).
+pub const MAX_THREADS: usize = 1024;
 
 /// A validated `--threads` value (doc_v25 V25-06).
 ///
@@ -38,6 +49,11 @@ impl std::str::FromStr for Threads {
             .map_err(|_| format!("--threads: {text:?} is not a thread count"))?;
         if value == 0 {
             return Err("--threads: must be >= 1 (0 does not mean \"all cores\")".to_string());
+        }
+        if value > MAX_THREADS {
+            return Err(format!(
+                "--threads: {value} exceeds the supported maximum of {MAX_THREADS}"
+            ));
         }
         Ok(Self(value))
     }
@@ -170,9 +186,13 @@ impl ThreadBudget {
     }
 
     /// Ticket-window capacity: the hard upper bound on in-flight chunks.
+    ///
+    /// `--threads` is capped at [`MAX_THREADS`], so the product cannot
+    /// overflow; the saturating form keeps the function total for budgets
+    /// built directly in library code (doc_v26 V26-03).
     #[must_use]
     pub fn tickets(&self) -> usize {
-        TICKETS_PER_WORKER * self.workers()
+        TICKETS_PER_WORKER.saturating_mul(self.workers())
     }
 
     /// Whether the run takes the single-threaded sequential path.
@@ -331,10 +351,59 @@ impl BytePermits {
     }
 }
 
-/// Physical memory in bytes (Linux `/proc/meminfo`), `None` if unknown.
+/// Physical memory in bytes, `None` if unknown (doc_v26 V26-09 / review item 4).
+///
+/// The default budget used to be half the *host's* `MemTotal`, so a container
+/// limited to 2 GiB on a 512 GiB host was allowed a 256 GiB budget and then
+/// killed by the OOM killer. The budget is now the smallest of:
+///
+/// * `/proc/meminfo`'s `MemTotal`,
+/// * the cgroup v2 limit on **the process's own cgroup and its ancestors**,
+/// * the cgroup v1 limit on the same path.
+///
+/// Reading only the cgroup *root* was wrong (review item 4): a process under
+/// systemd, Slurm or a container runtime lives in a child cgroup, and the
+/// root usually says `max` while the child carries the real limit. The path
+/// comes from `/proc/self/cgroup` (v2: `0::/path`; v1: `N:memory:/path`).
+///
+/// `max` (v2's "no limit") and v1's "unlimited" sentinel are ignored, a
+/// missing or unreadable file is ignored, and the host value is the fallback
+/// when no limit can be read. Every root is injectable so tests can point at
+/// a fixture tree.
 #[must_use]
 fn physical_memory_bytes() -> Option<u64> {
-    let info = std::fs::read_to_string(Path::new("/proc/meminfo")).ok()?;
+    physical_memory_bytes_at(
+        Path::new("/proc/meminfo"),
+        Path::new("/proc/self/cgroup"),
+        &[
+            Path::new("/sys/fs/cgroup"),
+            Path::new("/sys/fs/cgroup/unified"),
+        ],
+    )
+}
+
+/// [`physical_memory_bytes`] over explicit proc files and cgroup mounts.
+///
+/// `cgroup_mounts` are the candidate mount points (a host may mount v2 at
+/// the unified root or at `/sys/fs/cgroup/unified` under a hybrid layout).
+#[must_use]
+fn physical_memory_bytes_at(
+    meminfo: &Path,
+    self_cgroup: &Path,
+    cgroup_mounts: &[&Path],
+) -> Option<u64> {
+    let mut smallest = meminfo_total(meminfo);
+    for mount in cgroup_mounts {
+        for limit in cgroup_limits(mount, self_cgroup) {
+            smallest = Some(smallest.map_or(limit, |host| host.min(limit)));
+        }
+    }
+    smallest
+}
+
+/// `/proc/meminfo`'s `MemTotal` in bytes.
+fn meminfo_total(path: &Path) -> Option<u64> {
+    let info = std::fs::read_to_string(path).ok()?;
     for line in info.lines() {
         if let Some(rest) = line.strip_prefix("MemTotal:") {
             let kib: u64 = rest.trim().trim_end_matches(" kB").trim().parse().ok()?;
@@ -342,6 +411,121 @@ fn physical_memory_bytes() -> Option<u64> {
         }
     }
     None
+}
+
+/// The memory limits that apply to the process whose cgroup file is at
+/// `self_cgroup`, under the mount `root`.
+///
+/// Both hierarchies are tried, because a host may run either (or both):
+///
+/// * **v2** (unified): `<root>/<rel>/memory.max` up to `<root>/memory.max`;
+/// * **v1**: the memory controller is a **sibling of the hierarchy**, so the
+///   limit file is `<root>/memory/<rel>/memory.limit_in_bytes` up to
+///   `<root>/memory/memory.limit_in_bytes`. The controller-first layout is
+///   what a v1 host actually exposes (`/sys/fs/cgroup/memory/system.slice/…`);
+///   the old probe's `<root>/<rel>/memory/…` guess matched neither layout.
+///
+/// The limit that binds a process is the smallest of its own cgroup's and
+/// every ancestor's (a parent's limit caps the child), so the walk takes the
+/// minimum up the path rather than only the leaf.
+fn cgroup_limits(root: &Path, self_cgroup: &Path) -> Vec<u64> {
+    let mut limits = Vec::new();
+    let rel = self_cgroup_path(self_cgroup);
+    // The v1 memory controller tree, if this mount has one.
+    let v1_root = root.join("memory");
+    for ancestor in ancestors_of(&rel) {
+        // v2 (unified hierarchy): <root>/<rel>/memory.max.
+        let v2 = join_rel(root, &ancestor).join("memory.max");
+        if let Ok(text) = std::fs::read_to_string(v2)
+            && let Some(bytes) = parse_cgroup_limit(&text)
+        {
+            limits.push(bytes);
+        }
+        // v1: <root>/memory/<rel>/memory.limit_in_bytes (controller first).
+        let v1 = join_rel(&v1_root, &ancestor).join("memory.limit_in_bytes");
+        if let Ok(text) = std::fs::read_to_string(v1)
+            && let Some(bytes) = parse_cgroup_limit(&text)
+        {
+            limits.push(bytes);
+        }
+    }
+    limits
+}
+
+/// The process's cgroup path from a `/proc/self/cgroup` file, as a relative
+/// path with no leading `/`.
+///
+/// v2 lines look like `0::/user.slice/foo`; v1 lines like
+/// `9:memory:/user.slice/foo`. The first memory-bearing line wins, and a v2
+/// unified line is preferred when both exist. An unreadable or unexpected
+/// file yields the empty path (the root), which is the old behaviour rather
+/// than an error.
+fn self_cgroup_path(path: &Path) -> PathBuf {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return PathBuf::new();
+    };
+    let mut v1: Option<PathBuf> = None;
+    for line in text.lines() {
+        // `hierarchy-id:controllers:path`
+        let mut fields = line.splitn(3, ':');
+        let (Some(id), Some(controllers), Some(rel)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let rel = PathBuf::from(rel.trim_start_matches('/'));
+        // v2's unified line has an empty controller list.
+        if id == "0" && controllers.is_empty() {
+            return rel;
+        }
+        if controllers.split(',').any(|c| c == "memory") && v1.is_none() {
+            v1 = Some(rel);
+        }
+    }
+    v1.unwrap_or_default()
+}
+
+/// The relative path and every ancestor up to the root (shortest last).
+fn ancestors_of(rel: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut current = rel.to_path_buf();
+    loop {
+        // The root is appended exactly once, whether `rel` was empty or not.
+        if current.as_os_str().is_empty() {
+            out.push(current);
+            break;
+        }
+        out.push(current.clone());
+        current = current
+            .parent()
+            .map_or_else(PathBuf::new, Path::to_path_buf);
+    }
+    out
+}
+
+/// `root` joined with a relative cgroup path.
+fn join_rel(root: &Path, rel: &Path) -> PathBuf {
+    if rel.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel)
+    }
+}
+
+/// Parses a cgroup limit file; `None` for `max`, the v1 unlimited sentinel,
+/// zero and non-numeric text.
+fn parse_cgroup_limit(text: &str) -> Option<u64> {
+    let text = text.trim();
+    if text.is_empty() || text == "max" {
+        return None;
+    }
+    let bytes: u64 = text.parse().ok()?;
+    // cgroup v1's PAGE_COUNTER_MAX sentinel: 0x7FFFFFFFFFFFF000.
+    const V1_UNLIMITED: u64 = 0x7FFF_FFFF_FFFF_F000;
+    if bytes == 0 || bytes >= V1_UNLIMITED {
+        return None;
+    }
+    Some(bytes)
 }
 
 #[cfg(test)]
@@ -353,6 +537,30 @@ mod tests {
             threads: n,
             mem: MemBudget::from_bytes(u64::MAX),
         }
+    }
+
+    /// doc_v26 V26-03: the parser rejects 0 and anything above the cap, and
+    /// accepts the cap itself.
+    #[test]
+    fn the_thread_parser_has_a_documented_upper_bound() {
+        assert_eq!(MAX_THREADS, 1024, "the CLI contract test pins this value");
+        assert_eq!("1".parse::<Threads>().expect("invariant: 1").get(), 1);
+        assert_eq!(
+            MAX_THREADS.to_string().parse::<Threads>().expect("invariant: cap").get(),
+            MAX_THREADS
+        );
+        for bad in ["0", "0 ", &(MAX_THREADS + 1).to_string(), "18446744073709551615"] {
+            let err = bad.parse::<Threads>().expect_err("must be refused");
+            assert!(
+                err.contains(">= 1") || err.contains("exceeds the supported maximum"),
+                "{bad:?}: {err}"
+            );
+        }
+        // A budget built directly in library code cannot overflow the derived
+        // capacities (the CLI would refuse it, but the library is public).
+        let huge = threads(usize::MAX);
+        assert_eq!(huge.tickets(), usize::MAX);
+        assert_eq!(huge.workers(), usize::MAX - 2);
     }
 
     #[test]
@@ -388,6 +596,128 @@ mod tests {
         assert_eq!(seen(&threads(56)), 54);
         assert_eq!(seen(&threads(1)), rayon::current_num_threads());
         assert_eq!(seen(&threads(2)), rayon::current_num_threads());
+    }
+
+    /// doc_v26 V26-09 / review item 4: the default budget is the smallest of
+    /// the host's MemTotal and the limits on the process's **own** cgroup and
+    /// its ancestors. Reading only the root missed the binding limit.
+    #[test]
+    fn the_default_budget_walks_the_process_cgroup_path() {
+        let dir = std::env::temp_dir().join(format!("reed-cgroup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meminfo = dir.join("meminfo");
+        let self_cgroup = dir.join("self.cgroup");
+        let root = dir.join("cgroup");
+        std::fs::create_dir_all(&root).expect("invariant: fixture root");
+        std::fs::write(&meminfo, "MemTotal:       33554432 kB\nMemFree: 1 kB\n")
+            .expect("invariant: meminfo");
+        let mounts: Vec<&Path> = vec![&root];
+
+        // The process lives in a child cgroup; the root says "max".
+        std::fs::write(&self_cgroup, "0::/system.slice/sshd.service\n")
+            .expect("invariant: self cgroup");
+        std::fs::write(root.join("memory.max"), "max\n").expect("invariant: root max");
+        let child = root.join("system.slice").join("sshd.service");
+        std::fs::create_dir_all(&child).expect("invariant: child");
+        std::fs::write(child.join("memory.max"), "2147483648\n")
+            .expect("invariant: child limit");
+
+        // Root unlimited, child limited: the child's 2 GiB must win over the
+        // host's 32 GiB.
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &self_cgroup, &mounts),
+            Some(2 * 1024 * 1024 * 1024),
+            "the child cgroup's limit must beat an unlimited root"
+        );
+
+        // A limit on an *ancestor* also binds (a parent caps its children).
+        std::fs::write(root.join("system.slice").join("memory.max"), "1073741824\n")
+            .expect("invariant: parent limit");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &self_cgroup, &mounts),
+            Some(1024 * 1024 * 1024),
+            "an ancestor's lower limit must win over the leaf's"
+        );
+
+        // With every cgroup limit unlimited, the host value is the answer.
+        std::fs::write(root.join("system.slice").join("memory.max"), "max\n")
+            .expect("invariant: parent max");
+        std::fs::write(child.join("memory.max"), "max\n").expect("invariant: child max");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &self_cgroup, &mounts),
+            Some(32 * 1024 * 1024 * 1024)
+        );
+
+        // v1 layout: `N:memory:/path` and `memory/memory.limit_in_bytes`.
+        std::fs::write(&self_cgroup, "9:memory:/user.slice/foo\n")
+            .expect("invariant: v1 self cgroup");
+        // v1 exposes the memory controller as a sibling of the hierarchy.
+        let v1_child = root.join("memory").join("user.slice").join("foo");
+        std::fs::create_dir_all(&v1_child).expect("invariant: v1 child");
+        std::fs::write(v1_child.join("memory.limit_in_bytes"), "4294967296\n")
+            .expect("invariant: v1 limit");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &self_cgroup, &mounts),
+            Some(4 * 1024 * 1024 * 1024)
+        );
+
+        // v1's unlimited sentinel and zero are ignored; with no usable limit
+        // the host value returns.
+        std::fs::write(
+            v1_child.join("memory.limit_in_bytes"),
+            "9223372036854771712\n",
+        )
+        .expect("invariant: v1 sentinel");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &self_cgroup, &mounts),
+            Some(32 * 1024 * 1024 * 1024)
+        );
+
+        // An unreadable `/proc/self/cgroup` collapses to the root path (the
+        // old behaviour, not an error).
+        std::fs::write(root.join("memory.max"), "8589934592\n")
+            .expect("invariant: root limit");
+        assert_eq!(
+            physical_memory_bytes_at(&meminfo, &dir.join("missing.cgroup"), &mounts),
+            Some(8 * 1024 * 1024 * 1024)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The cgroup-path parser handles both hierarchies and ignores the other
+    /// controllers' lines.
+    #[test]
+    fn the_cgroup_path_parser_reads_both_hierarchies() {
+        let dir = std::env::temp_dir().join(format!("reed-cgroup-parse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: dir");
+        let file = dir.join("self.cgroup");
+
+        std::fs::write(&file, "0::/a/b\n").expect("invariant: v2");
+        assert_eq!(self_cgroup_path(&file), PathBuf::from("a/b"));
+
+        std::fs::write(&file, "12:cpu,cpuacct:/x\n9:memory:/y/z\n")
+            .expect("invariant: v1");
+        assert_eq!(self_cgroup_path(&file), PathBuf::from("y/z"));
+
+        // A v2 unified line wins when both are present.
+        std::fs::write(&file, "9:memory:/y/z\n0::/\n").expect("invariant: hybrid");
+        assert_eq!(self_cgroup_path(&file), PathBuf::new());
+
+        // Ancestors run from the leaf to the root.
+        assert_eq!(
+            ancestors_of(Path::new("a/b/c")),
+            vec![
+                PathBuf::from("a/b/c"),
+                PathBuf::from("a/b"),
+                PathBuf::from("a"),
+                PathBuf::new(),
+            ]
+        );
+        assert_eq!(ancestors_of(Path::new("")), vec![PathBuf::new()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -270,17 +270,22 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
     }
 }
 
-/// Opens a BGZF file: memory-mapped when possible (doc_v4 03 §3.4 step 3 —
-/// no copies, no read syscalls), else the streaming reader. Both cut chunks
-/// by the same rule, so the choice cannot change the output.
+/// Opens a BGZF file with the streaming reader.
+///
+/// This used to prefer the memory-mapped source (doc_v4 03 §3.4 step 3 — no
+/// copies, no read syscalls). `memmap2::Mmap::map` is only sound while the
+/// backing file is not modified by *any* process for the lifetime of the
+/// mapping, and "reed opened it read-only" does not establish that: a shared
+/// working directory, an NFS export or a concurrent in-place rewrite all
+/// violate it, with silent corruption or SIGBUS as the failure mode
+/// (doc_v26 V26-00). The default is therefore the streaming reader, which
+/// reads into a private buffer that cannot be invalidated underneath the run.
+///
+/// [`reed_io::chunk::bgzf::MmapChunkSource`] remains available to callers
+/// that can prove an immutable snapshot; `reed`'s own commands do not use it.
 fn open_bgzf(p: &Path) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
-    match reed_io::chunk::bgzf::MmapChunkSource::open(open_path(p)?) {
-        Ok((source, facts)) => Ok((Box::new(source), facts)),
-        Err(_) => {
-            let (source, facts) = BgzfChunkSource::open(open_path(p)?)?;
-            Ok((Box::new(source), facts))
-        }
-    }
+    let (source, facts) = BgzfChunkSource::open(open_path(p)?)?;
+    Ok((Box::new(source), facts))
 }
 
 /// Streams stdin: the format probe's prefix is chained back so the source

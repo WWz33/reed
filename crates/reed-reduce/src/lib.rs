@@ -54,7 +54,9 @@ pub mod pca;
 pub mod umap;
 pub mod xval;
 
-pub use backend::{gram_divide, sym_eig, sym_eig_top_k, Backend, SymEigResult, COMPILED_BACKEND};
+pub use backend::{
+    gram_divide, sym_eig, sym_eig_top_k, Backend, Parallel, SymEigResult, COMPILED_BACKEND,
+};
 pub use eig::SymEig;
 pub use extra::{
     LleError, LLE_MAX_SAMPLES, lle, lle_from_sq_distances, nmf, ppca, try_lle,
@@ -67,4 +69,8 @@ pub use lanczos::{lanczos_top_k, LanczosConfig, PartialEig, StreamConfig, Stream
 pub use lda::{fit as fit_lda, Lda, LdaError, LdaProjection};
 pub use xval::{candidate_counts, XvalConfig, XvalError, XvalReport, XvalResult};
 pub use umap::{fuzzy_simplicial_set, fuzzy_simplicial_set_from_distances, umap, umap_from_distances, UmapConfig};
-pub use pca::{pca_dense, pca_dense_pairwise, pca_dense_pairwise_with, pca_dense_with, pca_top_k, pca_top_k_with, standardize, standardize_binom2, Grm, Pca, Stand, Standardized};
+pub use pca::{
+    pca_dense, pca_dense_pairwise, pca_dense_pairwise_with, pca_dense_pairwise_with_par,
+    pca_dense_with, pca_dense_with_par, pca_top_k, pca_top_k_with, pca_top_k_with_par,
+    standardize, standardize_binom2, Grm, Pca, Stand, Standardized,
+};

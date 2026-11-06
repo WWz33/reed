@@ -31,10 +31,63 @@ fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Opens a buffered atomic writer for `path`.
+///
+/// doc_v26 V26-08: the file is written to a sibling temporary and published
+/// by [`AtomicWriter::commit`]. The call sites flush and then commit; a
+/// caller that returns early drops the value unpublished, which removes the
+/// temporary and leaves the previous file untouched.
+struct AtomicWriter {
+    writer: Option<BufWriter<File>>,
+    atomic: reed_io::write::atomic::AtomicFile,
+}
+
+impl AtomicWriter {
+    fn create(path: &Path) -> Result<Self, EngineError> {
+        let (atomic, file) =
+            reed_io::write::atomic::AtomicFile::create(path).map_err(EngineError::Io)?;
+        Ok(Self {
+            writer: Some(BufWriter::new(file)),
+            atomic,
+        })
+    }
+
+    /// Flushes, closes the handle and publishes the file.
+    fn commit(mut self) -> std::io::Result<()> {
+        let mut writer = self.writer.take().ok_or_else(|| {
+            std::io::Error::other("the convert writer was already committed")
+        })?;
+        writer.flush()?;
+        drop(writer);
+        // `atomic` is still in place; `commit` consumes it.
+        self.atomic.commit()
+    }
+}
+
+impl Write for AtomicWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.writer.as_mut() {
+            Some(w) => w.write(buf),
+            None => Err(std::io::Error::other("the convert writer was committed")),
+        }
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        match self.writer.as_mut() {
+            Some(w) => w.write_all(buf),
+            None => Err(std::io::Error::other("the convert writer was committed")),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self.writer.as_mut() {
+            Some(w) => w.flush(),
+            None => Err(std::io::Error::other("the convert writer was committed")),
+        }
+    }
+}
+
 /// Opens a buffered writer for `path`.
-fn writer(path: &Path) -> Result<BufWriter<File>, EngineError> {
-    let file = File::create(path).map_err(EngineError::Io)?;
-    Ok(BufWriter::new(file))
+fn writer(path: &Path) -> Result<AtomicWriter, EngineError> {
+    AtomicWriter::create(path)
 }
 
 /// The row order: the outgroup first (when named), then the header order.
@@ -114,7 +167,7 @@ pub(crate) fn write_phylo(
         for &i in &order {
             write_padded_row(&mut out, &names[i], width, &partial.cols[i])?;
         }
-        out.flush().map_err(EngineError::Io)?;
+        out.commit().map_err(EngineError::Io)?;
         files.push(path);
     }
     if formats.fasta {
@@ -128,7 +181,7 @@ pub(crate) fn write_phylo(
             partial.cols[i].write_to(&mut out)?;
             out.write_all(b"\n").map_err(EngineError::Io)?;
         }
-        out.flush().map_err(EngineError::Io)?;
+        out.commit().map_err(EngineError::Io)?;
         files.push(path);
     }
     if formats.nexus {
@@ -139,7 +192,7 @@ pub(crate) fn write_phylo(
             write_padded_row(&mut out, &names[i], width, &partial.cols[i])?;
         }
         out.write_all(b";\nEND;\n").map_err(EngineError::Io)?;
-        out.flush().map_err(EngineError::Io)?;
+        out.commit().map_err(EngineError::Io)?;
         files.push(path);
     }
     if plan.bin {
@@ -151,7 +204,7 @@ pub(crate) fn write_phylo(
             write_padded_row(&mut out, &names[i], width, &partial.bin_cols[i])?;
         }
         out.write_all(b";\nEND;\n").map_err(EngineError::Io)?;
-        out.flush().map_err(EngineError::Io)?;
+        out.commit().map_err(EngineError::Io)?;
         files.push(path);
     }
     if plan.options.write_used_sites {
@@ -160,7 +213,7 @@ pub(crate) fn write_phylo(
         out.write_all(b"#CHROM\tPOS\tNUM_SAMPLES\n")
             .map_err(EngineError::Io)?;
         partial.used.write_to(&mut out)?;
-        out.flush().map_err(EngineError::Io)?;
+        out.commit().map_err(EngineError::Io)?;
         files.push(path);
     }
     Ok(files)
@@ -209,14 +262,14 @@ pub(crate) fn write_count_matrix(
         indv.write_all(name.as_bytes()).map_err(EngineError::Io)?;
         indv.write_all(b"\n").map_err(EngineError::Io)?;
     }
-    indv.flush().map_err(EngineError::Io)?;
+    indv.commit().map_err(EngineError::Io)?;
 
     let pos_path = with_suffix(prefix, ".012.pos");
     let mut pos = writer(&pos_path)?;
     if let Some(partial) = partial {
         partial.pos.write_to(&mut pos)?;
     }
-    pos.flush().map_err(EngineError::Io)?;
+    pos.commit().map_err(EngineError::Io)?;
 
     let matrix_path = with_suffix(prefix, ".012");
     let mut matrix = writer(&matrix_path)?;
@@ -238,7 +291,7 @@ pub(crate) fn write_count_matrix(
         }
         matrix.write_all(b"\n").map_err(EngineError::Io)?;
     }
-    matrix.flush().map_err(EngineError::Io)?;
+    matrix.commit().map_err(EngineError::Io)?;
     Ok(vec![matrix_path, pos_path, idx_path])
 }
 
@@ -267,7 +320,7 @@ pub(crate) fn write_hapmap(
     if let Some(rows) = rows {
         rows.write_to(&mut out)?;
     }
-    out.flush().map_err(EngineError::Io)?;
+    out.commit().map_err(EngineError::Io)?;
     Ok(vec![path])
 }
 
@@ -391,7 +444,7 @@ pub(crate) fn write_msa(
                 .map_err(EngineError::Io)?;
             out.write_all(b"\n").map_err(EngineError::Io)?;
         }
-        out.flush().map_err(EngineError::Io)?;
+        out.commit().map_err(EngineError::Io)?;
         files.push(path);
     }
     Ok(files)
