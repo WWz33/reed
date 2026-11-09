@@ -285,7 +285,10 @@ fn tree_rejects_similarity_matrices() {
     let input = write_fixture(&dir);
     // `grm` is the default --type, so this is the first thing a user tries.
     let out = run(&dir, &["distance", &input, "--tree", "nj", "-o", "t"]);
-    assert!(!out.status.success(), "grm is a similarity, --tree must fail");
+    assert!(
+        !out.status.success(),
+        "grm is a similarity, --tree must fail"
+    );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("similarity"), "{err}");
     assert!(err.contains("1-ibs"), "{err}");
@@ -331,16 +334,38 @@ fn dapc_var_agrees_between_solvers() {
     let a = run(
         &dir,
         &[
-            "pca", &input, "--dapc", "--pop", &pops, "--pcs", "2", "--solver", "dense",
-            "--missing", "meanimpute", "-o", "dense_out",
+            "pca",
+            &input,
+            "--dapc",
+            "--pop",
+            &pops,
+            "--pcs",
+            "2",
+            "--solver",
+            "dense",
+            "--missing",
+            "meanimpute",
+            "-o",
+            "dense_out",
         ],
     );
     assert!(a.status.success(), "dense failed");
     let b = run(
         &dir,
         &[
-            "pca", &input, "--dapc", "--pop", &pops, "--pcs", "2", "--solver", "stream",
-            "--missing", "meanimpute", "-o", "stream_out",
+            "pca",
+            &input,
+            "--dapc",
+            "--pop",
+            &pops,
+            "--pcs",
+            "2",
+            "--solver",
+            "stream",
+            "--missing",
+            "meanimpute",
+            "-o",
+            "stream_out",
         ],
     );
     assert!(b.status.success(), "stream failed");
@@ -366,8 +391,20 @@ fn xval_writes_the_cross_validation_file() {
     let out = run(
         &dir,
         &[
-            "pca", &input, "--dapc", "--pop", &pops, "--xval", "--xval-rep", "5",
-            "--xval-pca", "1,2", "--pcs", "2", "-o", "res",
+            "pca",
+            &input,
+            "--dapc",
+            "--pop",
+            &pops,
+            "--xval",
+            "--xval-rep",
+            "5",
+            "--xval-pca",
+            "1,2",
+            "--pcs",
+            "2",
+            "-o",
+            "res",
         ],
     );
     assert!(
@@ -395,8 +432,20 @@ fn xval_selects_a_candidate_from_the_list() {
     let out = run(
         &dir,
         &[
-            "pca", &input, "--dapc", "--pop", &pops, "--xval", "--xval-rep", "5",
-            "--xval-pca", "1,2", "--pcs", "2", "-o", "res",
+            "pca",
+            &input,
+            "--dapc",
+            "--pop",
+            &pops,
+            "--xval",
+            "--xval-rep",
+            "5",
+            "--xval-pca",
+            "1,2",
+            "--pcs",
+            "2",
+            "-o",
+            "res",
         ],
     );
     assert!(out.status.success());
@@ -407,7 +456,10 @@ fn xval_selects_a_candidate_from_the_list() {
         .and_then(|l| l.split('\t').nth(1))
         .and_then(|v| v.trim().parse().ok())
         .expect("best_n_pca");
-    assert!(best == 1 || best == 2, "best {best} not in the candidate list");
+    assert!(
+        best == 1 || best == 2,
+        "best {best} not in the candidate list"
+    );
     // The selected component count is what the DAPC used.
     let ind = std::fs::read_to_string(dir.join("res.dapc.ind")).expect("ind");
     let header = ind.lines().next().expect("header");
@@ -424,8 +476,22 @@ fn xval_is_reproducible_for_a_fixed_seed() {
         let out = run(
             &dir,
             &[
-                "pca", &input, "--dapc", "--pop", &pops, "--xval", "--xval-rep", "8",
-                "--xval-seed", "777", "--xval-pca", "1,2", "--pcs", "2", "-o", tag,
+                "pca",
+                &input,
+                "--dapc",
+                "--pop",
+                &pops,
+                "--xval",
+                "--xval-rep",
+                "8",
+                "--xval-seed",
+                "777",
+                "--xval-pca",
+                "1,2",
+                "--pcs",
+                "2",
+                "-o",
+                tag,
             ],
         );
         assert!(out.status.success());
@@ -442,8 +508,18 @@ fn xval_rejects_a_bad_candidate_list() {
     let out = run(
         &dir,
         &[
-            "pca", &input, "--dapc", "--pop", &pops, "--xval", "--xval-pca", "1,zz",
-            "--pcs", "2", "-o", "res",
+            "pca",
+            &input,
+            "--dapc",
+            "--pop",
+            &pops,
+            "--xval",
+            "--xval-pca",
+            "1,zz",
+            "--pcs",
+            "2",
+            "-o",
+            "res",
         ],
     );
     assert!(!out.status.success(), "a bad candidate list should fail");
@@ -466,8 +542,16 @@ fn bootstrap_writes_node_labels() {
     let out = run(
         &dir,
         &[
-            "distance", &input, "--type", "1-ibs", "--tree", "upgma",
-            "--bootstrap", "10", "-o", "t",
+            "distance",
+            &input,
+            "--type",
+            "1-ibs",
+            "--tree",
+            "upgma",
+            "--bootstrap",
+            "10",
+            "-o",
+            "t",
         ],
     );
     assert!(
@@ -496,8 +580,18 @@ fn bootstrap_is_reproducible_for_a_fixed_seed() {
         let out = run(
             &dir,
             &[
-                "distance", &input, "--type", "1-ibs", "--tree", "nj",
-                "--bootstrap", "8", "--bootstrap-seed", "1234", "-o", tag,
+                "distance",
+                &input,
+                "--type",
+                "1-ibs",
+                "--tree",
+                "nj",
+                "--bootstrap",
+                "8",
+                "--bootstrap-seed",
+                "1234",
+                "-o",
+                tag,
             ],
         );
         assert!(out.status.success());
@@ -513,8 +607,18 @@ fn bootstrap_cutoff_drops_low_support_labels() {
     let out = run(
         &dir,
         &[
-            "distance", &input, "--type", "1-ibs", "--tree", "upgma",
-            "--bootstrap", "10", "--bootstrap-cutoff", "101", "-o", "t",
+            "distance",
+            &input,
+            "--type",
+            "1-ibs",
+            "--tree",
+            "upgma",
+            "--bootstrap",
+            "10",
+            "--bootstrap-cutoff",
+            "101",
+            "-o",
+            "t",
         ],
     );
     assert!(out.status.success());
@@ -536,9 +640,21 @@ fn bootstrap_requires_tree() {
     let input = write_fixture(&dir);
     let out = run(
         &dir,
-        &["distance", &input, "--type", "1-ibs", "--bootstrap", "10", "-o", "t"],
+        &[
+            "distance",
+            &input,
+            "--type",
+            "1-ibs",
+            "--bootstrap",
+            "10",
+            "-o",
+            "t",
+        ],
     );
-    assert!(!out.status.success(), "--bootstrap without --tree should fail");
+    assert!(
+        !out.status.success(),
+        "--bootstrap without --tree should fail"
+    );
 }
 
 #[test]
@@ -548,8 +664,16 @@ fn bootstrap_rejects_zero_replicates() {
     let out = run(
         &dir,
         &[
-            "distance", &input, "--type", "1-ibs", "--tree", "nj",
-            "--bootstrap", "0", "-o", "t",
+            "distance",
+            &input,
+            "--type",
+            "1-ibs",
+            "--tree",
+            "nj",
+            "--bootstrap",
+            "0",
+            "-o",
+            "t",
         ],
     );
     assert!(!out.status.success(), "0 replicates should fail");
@@ -588,8 +712,19 @@ fn s37_bootstrap_discordance_respects_mismatch_count() {
     let out = run(
         &dir,
         &[
-            "distance", &input, "--type", "discordance", "--mismatch-count",
-            "--tree", "nj", "--bootstrap", "12", "--bootstrap-seed", "77", "-o", "t",
+            "distance",
+            &input,
+            "--type",
+            "discordance",
+            "--mismatch-count",
+            "--tree",
+            "nj",
+            "--bootstrap",
+            "12",
+            "--bootstrap-seed",
+            "77",
+            "-o",
+            "t",
         ],
     );
     assert!(
@@ -602,7 +737,12 @@ fn s37_bootstrap_discordance_respects_mismatch_count() {
     assert!(nwk.ends_with(")100;"), "root label missing: {nwk}");
     assert_eq!(
         support_labels(&nwk),
-        vec!["58".to_string(), "25".to_string(), "42".to_string(), "100".to_string()],
+        vec![
+            "58".to_string(),
+            "25".to_string(),
+            "42".to_string(),
+            "100".to_string()
+        ],
         "support must come from mismatch-count replicates: {nwk}"
     );
 }
@@ -623,9 +763,20 @@ fn s37_bootstrap_error_probability_reaches_the_replicates() {
         let out = run(
             &dir,
             &[
-                "distance", &input, "--type", "discordance", "--tree", "nj",
-                "--bootstrap", "12", "--bootstrap-seed", "77",
-                "--error-probability", err, "-o", tag,
+                "distance",
+                &input,
+                "--type",
+                "discordance",
+                "--tree",
+                "nj",
+                "--bootstrap",
+                "12",
+                "--bootstrap-seed",
+                "77",
+                "--error-probability",
+                err,
+                "-o",
+                tag,
             ],
         );
         assert!(
@@ -638,7 +789,10 @@ fn s37_bootstrap_error_probability_reaches_the_replicates() {
     };
     let low = run_with("lo", "1");
     let high = run_with("hi", "40");
-    assert_ne!(low, high, "--error-probability did not reach the replicates");
+    assert_ne!(
+        low, high,
+        "--error-probability did not reach the replicates"
+    );
 }
 
 /// doc_v20 S37: `--threads` must reach the estimators through a scoped pool.
@@ -653,9 +807,21 @@ fn s37_thread_count_does_not_change_distance_output() {
         let out = run(
             &dir,
             &[
-                "distance", &input, "--type", "discordance", "--mismatch-count",
-                "--tree", "nj", "--bootstrap", "12", "--bootstrap-seed", "77",
-                "--threads", threads, "-o", tag,
+                "distance",
+                &input,
+                "--type",
+                "discordance",
+                "--mismatch-count",
+                "--tree",
+                "nj",
+                "--bootstrap",
+                "12",
+                "--bootstrap-seed",
+                "77",
+                "--threads",
+                threads,
+                "-o",
+                tag,
             ],
         );
         assert!(
@@ -673,11 +839,20 @@ fn s37_thread_count_does_not_change_distance_output() {
         let out = run(
             &dir,
             &[
-                "distance", &input, "--type", "discordance", "--threads", threads,
-                "-o", tag,
+                "distance",
+                &input,
+                "--type",
+                "discordance",
+                "--threads",
+                threads,
+                "-o",
+                tag,
             ],
         );
-        assert!(out.status.success(), "--threads {threads} matrix run failed");
+        assert!(
+            out.status.success(),
+            "--threads {threads} matrix run failed"
+        );
     }
     let one = std::fs::read_to_string(dir.join("m1.gtcheck")).expect("m1.gtcheck");
     let four = std::fs::read_to_string(dir.join("m4.gtcheck")).expect("m4.gtcheck");

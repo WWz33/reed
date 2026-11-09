@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    InvariantMode, LdRequest, Levels, Populations, PopgenRequest, WindowLayoutOptions, run_popgen,
+    InvariantMode, LdRequest, Levels, PopgenRequest, Populations, WindowLayoutOptions, run_popgen,
 };
 
 const VCF: &str = "\
@@ -62,14 +62,15 @@ fn request(ld: LdRequest) -> PopgenRequest {
             contig: false,
             genome: true,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         layout: Some(WindowLayoutOptions {
             invariant: InvariantMode::VariantOnly,
         }),
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         force_samples: false,
@@ -96,7 +97,7 @@ fn pairwise_r2_matches_plink2() {
             decay_max_bp: Some(100_000),
             decay_bin_bp: 1000,
             pairs: true,
-    pairs_path: None,
+            pairs_path: None,
         }),
         &budget,
     )
@@ -298,7 +299,7 @@ fn ld_is_identical_across_thread_counts() {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,
-    pairs_path: None,
+                pairs_path: None,
             }),
             &budget,
         )
@@ -330,7 +331,7 @@ fn ld_decay_carries_per_population_curves() {
         decay_max_bp: Some(100_000),
         decay_bin_bp: 1000,
         pairs: false,
-    pairs_path: None,
+        pairs_path: None,
     });
     // Two populations of three samples each.
     req.populations = Populations::File(pops_two_file(dir.as_path()));
@@ -535,7 +536,7 @@ fn ld_cohort_excludes_removed_samples() {
         decay_max_bp: Some(100_000),
         decay_bin_bp: 1000,
         pairs: true,
-    pairs_path: None,
+        pairs_path: None,
     };
 
     let mut kept = request(ld());
@@ -669,7 +670,7 @@ fn ld_sink_caps_in_flight_decay_jobs() {
                 decay_max_bp: Some(100_000),
                 decay_bin_bp: 1000,
                 pairs: true,
-    pairs_path: None,
+                pairs_path: None,
             }),
             &budget,
         )
@@ -743,23 +744,28 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
         reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     let got = std::fs::read_to_string(prefix.with_extension("ld")).expect("invariant: .ld written");
-    assert_eq!(got, expected, "streamed pairs differ from the report render");
+    assert_eq!(
+        got, expected,
+        "streamed pairs differ from the report render"
+    );
 
     // The decay writer must not recreate or truncate the streamed file.
     let decay_prefix = dir.join("decay_only");
     let mut report = accumulated.clone();
     report.pairs.clear();
-    let files = reed::ld::write_ld(&decay_prefix, &report, &[]).expect("invariant: write");
-    assert!(files.iter().all(|p| !p.to_string_lossy().ends_with(".ld")),
-        "-.ld must not be written when the rows were streamed: {files:?}");
+    let files = reed::ld::write_ld(&decay_prefix, &report, &[], false).expect("invariant: write");
+    assert!(
+        files.iter().all(|p| !p.to_string_lossy().ends_with(".ld")),
+        "-.ld must not be written when the rows were streamed: {files:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A run with no pair at all (a single site) must not create the `.ld` file:
-/// the sink opens it lazily on the first row.
+/// A run with no pair at all (a single site) publishes the header-only
+/// pair table: the request determines the output, not whether a pair arrived.
 #[test]
-fn streamed_pairs_file_is_not_created_without_pairs() {
+fn streamed_pairs_file_is_header_only_without_pairs() {
     let dir = std::env::temp_dir().join(format!("reed-ld-nopair-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let text = "##fileformat=VCFv4.2\n\
@@ -786,13 +792,17 @@ fn streamed_pairs_file_is_not_created_without_pairs() {
         &budget,
     )
     .expect("invariant: run");
-    assert!(!path.exists(), "no pair means no .ld file");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("invariant: pair table"),
+        String::from_utf8_lossy(reed::ld::PAIRS_HEADER),
+        "no pair means a valid header-only .ld, never a stale previous table"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The streaming writer is lazy per *pair*, not per contig: a contig with a
-/// single site yields no pairs and must not create the file, while a later
-/// contig with pairs must still create it and append in contig order.
+/// The streaming writer's header is opened at run start; a pairless leading
+/// contig contributes no rows, and a later contig with pairs appends them in
+/// contig order.
 #[test]
 fn streamed_pairs_skip_a_pairless_leading_contig() {
     let dir = std::env::temp_dir().join(format!("reed-ld-lead-{}", std::process::id()));
@@ -855,6 +865,302 @@ chr2\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1
     assert_eq!(
         std::fs::read_to_string(&path).expect("the later contig creates the file"),
         expected
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-02: a run that fails *after* the sink finished used to publish
+/// its (truncated) streaming `.ld` over the previous run's good file — the
+/// sink committed the `AtomicFile`, and only then did `job.finish` detect a
+/// BCF record truncated at the end of the stream.
+///
+/// The fixture is a legal BGZF stream whose last record is incomplete, so
+/// every check before `job.finish` passes. After the fix the previous `.ld`
+/// must be byte-for-byte unchanged and no temp file may survive.
+#[test]
+fn failed_run_leaves_the_previous_ld_untouched() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-v2702-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+
+    // Enough records to span several BGZF members, so the truncation lands
+    // inside the last member's payload and is only detectable once the
+    // stream ends (the record sits in the framing carry).
+    let mut text = String::from(
+        "##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+",
+    );
+    for pos in 1..=800 {
+        let gts = if pos % 2 == 0 { "0/1\t0/0" } else { "0/0\t0/1" };
+        let _ = writeln!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t{gts}");
+    }
+    let vcf = dir.join("in.vcf");
+    std::fs::write(&vcf, text).expect("invariant: write vcf");
+
+    // A BCF through the facade's own filter writer, then recompressed with
+    // the last few payload bytes dropped: still one valid BGZF member, with
+    // the final record incomplete.
+    let good = dir.join("good.bcf");
+    reed::run_filter(
+        Some(&vcf),
+        &reed::spec::FilterSpec::default(),
+        &reed::FilterOptions {
+            threads: 1,
+            output: Some(good.clone()),
+            write_index: reed::WriteIndex::None,
+            compress_level: 6,
+            strategy: None,
+            command_line: String::new(),
+            timing: None,
+            report_json: None,
+            force_samples: false,
+            regions: Vec::new(),
+            tmp_dir: None,
+            output_compressed: Some(true),
+            output_bcf: Some(6),
+            mem_bytes: None,
+            no_version: true,
+            no_command: true,
+        },
+    )
+    .expect("invariant: build the BCF fixture");
+
+    let mut raw = Vec::new();
+    {
+        let bytes = std::fs::read(&good).expect("invariant: read bcf");
+        let mut inflater = reed::bgzf::inflate::Inflater::new();
+        let mut pos = 0;
+        while pos + 18 <= bytes.len() {
+            // `inflate_block` wants exactly one member: slice by BSIZE.
+            let bsize = u16::from_le_bytes([bytes[pos + 16], bytes[pos + 17]]) as usize + 1;
+            if pos + bsize > bytes.len() {
+                break;
+            }
+            let block = &bytes[pos..pos + bsize];
+            if reed::bgzf::block::is_eof_block(block) {
+                break;
+            }
+            inflater
+                .inflate_block(block, &mut raw)
+                .expect("invariant: inflate one member");
+            pos += bsize;
+        }
+    }
+    assert!(raw.len() > 32, "the BCF payload must be non-trivial");
+
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut truncated = Vec::new();
+    deflater
+        .deflate_block(&raw[..raw.len() - 8], &mut truncated)
+        .expect("invariant: deflate");
+    truncated.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    let cut = dir.join("cut.bcf");
+    std::fs::write(&cut, &truncated).expect("invariant: write cut bcf");
+
+    let prefix = dir.join("out");
+    let pairs_path = prefix.with_extension("ld");
+    let budget = ThreadBudget {
+        threads: 1,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let ld = |pairs_path: Option<std::path::PathBuf>| LdRequest {
+        decay_max_bp: Some(100_000),
+        decay_bin_bp: 1000,
+        pairs: true,
+        pairs_path,
+    };
+
+    let accumulated = run_popgen(Some(&good), &request(ld(None)), &budget)
+        .expect("invariant: clean run")
+        .ld
+        .expect("invariant: ld requested");
+    assert!(
+        !accumulated.pairs.is_empty(),
+        "the fixture must yield one pair"
+    );
+    let mut expected = String::from_utf8_lossy(reed::ld::PAIRS_HEADER).into_owned();
+    for (contig, a, b, r2) in &accumulated.pairs {
+        reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+    }
+    std::fs::write(&pairs_path, &expected).expect("invariant: seed the old .ld");
+
+    let err = run_popgen(Some(&cut), &request(ld(Some(pairs_path.clone()))), &budget)
+        .expect_err("invariant: the truncated BCF must fail");
+    assert!(
+        err.to_string().contains("inside a record"),
+        "unexpected error: {err}"
+    );
+
+    let after = std::fs::read_to_string(&pairs_path).expect("invariant: .ld readable");
+    assert_eq!(
+        after, expected,
+        "a failed run must leave the previous .ld byte-for-byte unchanged"
+    );
+
+    let leftovers: Vec<String> = std::fs::read_dir(&dir)
+        .expect("invariant: read dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("reed-tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "no temp may survive: {leftovers:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-07: LD's genome-wide matrix analysis has no window-clipping
+/// dependency, so it accepts a contig declaration without a length.
+#[test]
+fn genome_wide_ld_does_not_require_contig_lengths() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-nolen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("ld.vcf");
+    std::fs::write(
+        &vcf,
+        VCF.replace("##contig=<ID=chr1,length=100000>", "##contig=<ID=chr1>"),
+    )
+    .expect("invariant: fixture write");
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let report = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: None,
+        }),
+        &budget,
+    )
+    .expect("invariant: no-length LD run");
+    assert_ne!(report.ld.expect("invariant: LD report").pairs.len(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-05/V27-20: a successful zero-pair run publishes a header-only
+/// pair table and the corresponding 0/NA decay bins. Reusing a prefix must
+/// replace, not preserve, the previous run's pair rows.
+#[test]
+fn an_empty_ld_run_publishes_header_only_pairs_and_zero_decay() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("one.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=100000>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+        chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n";
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let path = dir.join("out.ld");
+    std::fs::write(&path, "stale pair rows\n").expect("invariant: stale file");
+    let budget = ThreadBudget {
+        threads: 1,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let report = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(2_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: Some(path.clone()),
+        }),
+        &budget,
+    )
+    .expect("invariant: empty LD run");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("invariant: pair table"),
+        String::from_utf8_lossy(reed::ld::PAIRS_HEADER)
+    );
+    assert_eq!(report.pairs_path, Some(path));
+    let ld = report.ld.expect("invariant: LD report");
+    assert_eq!(ld.decay.len(), 2);
+    assert!(
+        ld.decay
+            .iter()
+            .all(|&(_, _, n, mean)| n == 0 && mean.is_none())
+    );
+    let files = reed::ld::write_ld(&dir.join("out"), &ld, &["all".into()], false)
+        .expect("invariant: decay writer");
+    assert!(files.iter().any(|p| p.ends_with("out.ld.decay")));
+    assert!(
+        files.iter().all(|p| !p.ends_with("out.ld")),
+        "streamed pairs are not rewritten"
+    );
+    let decay = std::fs::read_to_string(dir.join("out.ld.decay")).expect("invariant: decay");
+    assert!(decay.contains("all\t0\t1000\t0\tNA"), "{decay}");
+    assert!(decay.contains("all\t1000\t2000\t0\tNA"), "{decay}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-16/V27-17: LD work shares the run's thread budget and is
+/// cancelled when the library call fails. This is a library-level check:
+/// a CLI's immediate process exit would hide a leaked worker pool.
+#[test]
+fn ld_error_cancels_workers_and_leaves_no_auxiliary_threads() {
+    let dir = std::env::temp_dir().join(format!("reed-ld-abort-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("bad.vcf");
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=30000>\n\
+         ##contig=<ID=chr2,length=100>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+    );
+    for pos in 1..=20_000 {
+        writeln!(
+            text,
+            "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t0/1"
+        )
+        .expect("invariant: write to String");
+    }
+    text.push_str("chr2\t999999\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/0\n");
+    std::fs::write(&vcf, text).expect("invariant: fixture");
+    let threads_before = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|line| line.strip_prefix("Threads:")?.trim().parse::<usize>().ok())
+        })
+        .unwrap_or(1);
+    let err = run_popgen(
+        Some(&vcf),
+        &request(LdRequest {
+            decay_max_bp: Some(100_000),
+            decay_bin_bp: 1000,
+            pairs: true,
+            pairs_path: None,
+        }),
+        &ThreadBudget {
+            threads: 8,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
+    )
+    .expect_err("the out-of-range record must fail");
+    assert!(err.to_string().contains("exceeds contig"), "{err}");
+    // Dropping the sink triggers abort and drops the one LD pool. Allow a
+    // small settling margin for rayon workers to observe the signal; the
+    // assertion is about ownership, not a wall-clock performance promise.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let threads_after = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|line| line.strip_prefix("Threads:")?.trim().parse::<usize>().ok())
+        })
+        .unwrap_or(1);
+    assert!(
+        threads_after <= threads_before + 1,
+        "LD workers survived the failed run: before={threads_before}, after={threads_after}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

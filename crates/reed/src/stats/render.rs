@@ -16,7 +16,7 @@ use reed_stats::request::StatKind;
 use reed_core::args::push_flag as flag;
 use reed_core::grid::WindowGrid;
 
-use crate::stats::request::{FStatTest, InvariantMode, Levels, Populations, PopgenRequest};
+use crate::stats::request::{FStatTest, InvariantMode, Levels, PopgenRequest, Populations};
 
 impl PopgenRequest {
     /// Renders the windowed form of this request (`layout: Some`) to the
@@ -24,7 +24,8 @@ impl PopgenRequest {
     /// (`--pop` resolved), required by the name-based spellings.
     ///
     /// Not rendered (no lossless flag spelling): `keep_samples` (a resolved
-    /// mask), `regions`/`targets`/`targets_exclude`, the header-merged
+    /// mask), `regions`/`select` (the parse loses the original spellings
+    /// and the seek need not be replayed), the header-merged
     /// `contig_lengths`, a `Regions` grid (the grid carries no source
     /// path), and the wide-table kind set (`layout: None`).
     ///

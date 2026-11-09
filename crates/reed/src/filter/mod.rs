@@ -157,10 +157,7 @@ fn ferr(err: EngineError) -> FilterError {
 /// How to open the output stream: a file (atomic, doc_v26 V26-08) or stdout.
 enum OutputTarget {
     /// A file: the writer plus the atomic owner that publishes it.
-    File(
-        Box<dyn Write + Send>,
-        reed_io::write::atomic::AtomicFile,
-    ),
+    File(Box<dyn Write + Send>, reed_io::write::atomic::AtomicFile),
     /// stdout, which has no file to publish.
     Stdout(Box<dyn Write + Send>),
 }
@@ -178,14 +175,7 @@ fn output_sink(
         OutputTarget::File(w, a) => (w, Some(a)),
         OutputTarget::Stdout(w) => (w, None),
     };
-    let out = OrderedOutput::new(
-        writer,
-        compressed,
-        level,
-        indexer,
-        index_path,
-        contig_names,
-    );
+    let out = OrderedOutput::new(writer, compressed, level, indexer, index_path, contig_names);
     OutputSink {
         // doc_v26 V26-08: with a file output the sink owns the atomic
         // temporary; `finish` publishes it after the data is complete.
@@ -221,14 +211,7 @@ where
     J: reed_engine::pipeline::ChunkJob<Partial = FilterPartial> + Sync + 'static,
 {
     let started = Instant::now();
-    let report = run(
-        opened.source.as_mut(),
-        &job,
-        sink,
-        ctx.budget,
-        ctx.abort,
-    )
-    .map_err(ferr)?;
+    let report = run(opened.source.as_mut(), &job, sink, ctx.budget, ctx.abort).map_err(ferr)?;
     timing_phases.push(("pass1", started.elapsed().as_secs_f64()));
     timing_engine.merge(&report.metrics);
     job.finish(report.n_chunks, ctx.seek_regions.is_empty())
@@ -338,13 +321,10 @@ pub fn run_filter(
                     .format(&String::from_utf8_lossy(&field.name))
                     .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
         })
-        && plan
-            .float_fields
-            .iter()
-            .all(|field| {
-                tags.format(&String::from_utf8_lossy(field))
-                    .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
-            });
+        && plan.float_fields.iter().all(|field| {
+            tags.format(&String::from_utf8_lossy(field))
+                .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
+        });
     let strategy = match opts.strategy {
         Some(forced) => forced,
         // The sketch path's record-count estimate is line-based; BCF input
@@ -914,7 +894,8 @@ pub fn run_filter(
         timing,
     };
     if let Some(path) = &opts.timing {
-        reed_io::write::atomic::write_atomic(path, report.timing_text()).map_err(FilterError::from)?;
+        reed_io::write::atomic::write_atomic(path, report.timing_text())
+            .map_err(FilterError::from)?;
     }
     if let Some(path) = &opts.report_json {
         let json = serde_json::to_string_pretty(&report)
@@ -1002,7 +983,9 @@ fn keep_list_from_names(
 /// V26-10: the header mutation itself lives in `reed-io`).
 ///
 /// Canonical Numbers: AC and HWE are `A` (one value per ALT).
-fn recompute_definitions(recompute: &reed_filter::plan::RecomputeFlags) -> Vec<reed_io::header::InfoDefinition> {
+fn recompute_definitions(
+    recompute: &reed_filter::plan::RecomputeFlags,
+) -> Vec<reed_io::header::InfoDefinition> {
     use reed_io::header::{InfoDefinition, InfoNumber, InfoType};
     let mut defs = Vec::new();
     if recompute.ac {

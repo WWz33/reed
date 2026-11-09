@@ -7,7 +7,8 @@ use std::fmt::Write as _;
 use std::io::Write;
 
 use reed::{
-    InvariantMode, Levels, Populations, PopgenRequest, WindowLayoutOptions, run_popgen, window_kinds,
+    InvariantMode, Levels, PopgenRequest, Populations, WindowLayoutOptions, run_popgen,
+    window_kinds,
 };
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::request::StatKind;
@@ -195,10 +196,11 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     // Rows run window-major: pop2 of window [1,10] comes next.
     let second: Vec<&str> = lines.next().expect("row").split('\t').collect();
     assert_eq!(&second[..4], ["pop2", "chr1", "1", "10"]);
-    // Window [11,20] is empty → NA with zero counts (pixy layout).
+    // Variant-only: empty positions are monomorphic, so avg_pi is 0 with
+    // zero occupied sites (doc_v27 V27-10). Require/Bypass still print NA.
     let empty: Vec<&str> = lines.next().expect("row").split('\t').collect();
     assert_eq!(&empty[..4], ["pop1", "chr1", "11", "20"]);
-    assert_eq!(&empty[4..], ["NA", "0", "0", "0", "0"]);
+    assert_eq!(&empty[4..], ["0", "0", "0", "0", "0"]);
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
 
@@ -274,7 +276,10 @@ fn fst_hudson_and_wc84_hand_computed() {
             "{name}: got {value}, expected -1/3"
         );
         let (_, no_snps) = w0.accs[0].fst_columns(&fst_kind).expect("columns");
-        assert_eq!(no_snps, 2, "{name}: window [1,10] holds 2 sites");
+        assert_eq!(
+            no_snps, 1,
+            "{name}: pixy no_snps counts only the variant site"
+        );
     }
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }

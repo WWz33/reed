@@ -99,7 +99,13 @@ pub struct AuxCounts {
 
 impl MatrixResult {
     fn new(n: usize, kind: MatrixKind, ids: Vec<String>) -> Self {
-        Self { values: vec![0.0; n * n], n, kind, ids, aux: None }
+        Self {
+            values: vec![0.0; n * n],
+            n,
+            kind,
+            ids,
+            aux: None,
+        }
     }
 
     #[inline]
@@ -126,16 +132,15 @@ pub struct DistanceOptions {
 
 impl Default for DistanceOptions {
     fn default() -> Self {
-        Self { hwe_missing_correction: true }
+        Self {
+            hwe_missing_correction: true,
+        }
     }
 }
 
 /// plink `--distance`: `A_ij = Σ |dosage_i − dosage_j|` over jointly called
 /// sites, with plink's HWE-weighted missing correction (01 §1.1-1.2).
-pub fn allele_ct_distance(
-    st: &Standardized,
-    opts: &DistanceOptions,
-) -> MatrixResult {
+pub fn allele_ct_distance(st: &Standardized, opts: &DistanceOptions) -> MatrixResult {
     let n = st.n_samples();
     let m = st.n_sites;
     let mut out = MatrixResult::new(n, MatrixKind::AlleleCountDistance, Vec::new());
@@ -252,11 +257,7 @@ pub fn ibs(st: &Standardized, opts: &DistanceOptions) -> MatrixResult {
     let d = allele_ct_distance(st, opts);
     let m = st.n_sites as f64;
     let mut out = MatrixResult::new(d.n, MatrixKind::Ibs, Vec::new());
-    out.values = d
-        .values
-        .iter()
-        .map(|v| 1.0 - v * 0.5 / m)
-        .collect();
+    out.values = d.values.iter().map(|v| 1.0 - v * 0.5 / m).collect();
     out
 }
 
@@ -283,11 +284,7 @@ pub enum MissingPolicy {
 ///
 /// `variance_standardize = false` gives `--make-rel cov` (mean-centred
 /// covariance).
-pub fn grm(
-    st: &Standardized,
-    missing: MissingPolicy,
-    variance_standardize: bool,
-) -> MatrixResult {
+pub fn grm(st: &Standardized, missing: MissingPolicy, variance_standardize: bool) -> MatrixResult {
     let n = st.n_samples();
     let m = st.n_sites;
     let kind = if variance_standardize {
@@ -335,7 +332,11 @@ pub fn grm(
                         MissingPolicy::MeanImpute => m as f64,
                         MissingPolicy::Pairwise => both as f64,
                     };
-                    if denom > 0.0 { acc / denom } else { 0.0 }
+                    if denom > 0.0 {
+                        acc / denom
+                    } else {
+                        0.0
+                    }
                 })
                 .collect()
         })
@@ -387,8 +388,7 @@ pub fn king(st: &Standardized) -> (MatrixResult, Vec<KingCounts>) {
     for i in 0..n {
         for j in 0..m {
             if st.is_called(i, j) {
-                dose[i * m + j] =
-                    (st.w.get(i, j) * st.sd[j] + st.mean[j]).round() as i8;
+                dose[i * m + j] = (st.w.get(i, j) * st.sd[j] + st.mean[j]).round() as i8;
             } else {
                 dose[i * m + j] = -1;
             }
@@ -533,7 +533,15 @@ pub fn pi_hat(st: &Standardized, opts: &PiHatOptions) -> (MatrixResult, Vec<PiHa
                         z2 = pi * pi;
                         pi = z1 * 0.5 + z2;
                     }
-                    let r = PiHatResult { z0, z1, z2, pi_hat: pi, n_valid, ibs1, ibs0 };
+                    let r = PiHatResult {
+                        z0,
+                        z1,
+                        z2,
+                        pi_hat: pi,
+                        n_valid,
+                        ibs1,
+                        ibs0,
+                    };
                     (pi, r)
                 })
                 .collect()
@@ -781,7 +789,10 @@ pub struct DiscordanceOptions {
 
 impl Default for DiscordanceOptions {
     fn default() -> Self {
-        Self { mode: DiscordanceMode::Probability, error_probability: 40 }
+        Self {
+            mode: DiscordanceMode::Probability,
+            error_probability: 40,
+        }
     }
 }
 
@@ -789,10 +800,7 @@ impl Default for DiscordanceOptions {
 ///
 /// Returns the score matrix plus the per-pair `n_compared` and `n_matching`
 /// counts bcftools prints alongside it.
-pub fn discordance(
-    st: &Standardized,
-    opts: &DiscordanceOptions,
-) -> (MatrixResult, AuxCounts) {
+pub fn discordance(st: &Standardized, opts: &DiscordanceOptions) -> (MatrixResult, AuxCounts) {
     let n = st.n_samples();
     let m = st.n_sites;
     let mut out = MatrixResult::new(n, MatrixKind::Discordance, Vec::new());
@@ -997,7 +1005,12 @@ mod tests {
     fn allele_ct_distance_matches_manual_sum() {
         let x = fixture();
         let st = standardize_binom2(&x);
-        let d = allele_ct_distance(&st, &DistanceOptions { hwe_missing_correction: false });
+        let d = allele_ct_distance(
+            &st,
+            &DistanceOptions {
+                hwe_missing_correction: false,
+            },
+        );
         // No missing data, so the value is the plain sum of dosage differences.
         for i in 0..6 {
             for j in 0..6 {
@@ -1093,11 +1106,26 @@ mod tests {
         // inflating it; the two matrices are bit-identical.
         let with_ref = Mat::from_fn(6, 5, |i, j| {
             let v = with_alt.get(i, j);
-            if j == 1 { 0.0 } else { v }
+            if j == 1 {
+                0.0
+            } else {
+                v
+            }
         });
-        let a = grm(&standardize_binom2(&with_alt), MissingPolicy::Pairwise, true);
-        let b = grm(&standardize_binom2(&with_ref), MissingPolicy::Pairwise, true);
-        assert_eq!(a.values, b.values, "fixed-ALT column must not inflate the GRM");
+        let a = grm(
+            &standardize_binom2(&with_alt),
+            MissingPolicy::Pairwise,
+            true,
+        );
+        let b = grm(
+            &standardize_binom2(&with_ref),
+            MissingPolicy::Pairwise,
+            true,
+        );
+        assert_eq!(
+            a.values, b.values,
+            "fixed-ALT column must not inflate the GRM"
+        );
     }
 
     #[test]
@@ -1151,7 +1179,12 @@ mod tests {
 
     #[test]
     fn king_formula_matches_the_reference_expression() {
-        let c = KingCounts { ibs0: 2, hethet: 5, het1hom2: 3, het2hom1: 3 };
+        let c = KingCounts {
+            ibs0: 2,
+            hethet: 5,
+            het1hom2: 3,
+            het2hom1: 3,
+        };
         let want = 0.5 - (4.0 * 2.0 + 3.0 + 3.0) / (4.0 * (5.0 + 3.0));
         assert!((c.kinship() - want).abs() < 1e-12);
     }
@@ -1176,10 +1209,7 @@ mod tests {
             for j in 0..6 {
                 let r = &res[i * 6 + j];
                 let sum = r.z0 + r.z1 + r.z2;
-                assert!(
-                    (sum - 1.0).abs() < 1e-6,
-                    "Z0+Z1+Z2 = {sum} at ({i},{j})"
-                );
+                assert!((sum - 1.0).abs() < 1e-6, "Z0+Z1+Z2 = {sum} at ({i},{j})");
                 let v = p.get(i, j);
                 assert!((0.0..=1.0).contains(&v), "PI_HAT {v} out of range");
             }
@@ -1248,14 +1278,21 @@ mod tests {
             sites += 1;
         }
         let want = acc / sites as f64;
-        assert!((a.get(0, 3) - want).abs() < 1e-9, "{} vs {want}", a.get(0, 3));
+        assert!(
+            (a.get(0, 3) - want).abs() < 1e-9,
+            "{} vs {want}",
+            a.get(0, 3)
+        );
     }
 
     #[test]
     fn discordance_count_matches_genotype_differences() {
         let x = fixture();
         let st = standardize_binom2(&x);
-        let opts = DiscordanceOptions { mode: DiscordanceMode::Count, error_probability: 0 };
+        let opts = DiscordanceOptions {
+            mode: DiscordanceMode::Count,
+            error_probability: 0,
+        };
         let (d, aux) = discordance(&st, &opts);
         for i in 0..6 {
             for j in 0..6 {
@@ -1278,7 +1315,11 @@ mod tests {
         let opts = DiscordanceOptions::default();
         let (d, _) = discordance(&st, &opts);
         for i in 0..6 {
-            assert!(d.get(i, i).abs() < 1e-12, "self discordance {}", d.get(i, i));
+            assert!(
+                d.get(i, i).abs() < 1e-12,
+                "self discordance {}",
+                d.get(i, i)
+            );
         }
     }
 
@@ -1297,8 +1338,14 @@ mod tests {
             x.set(i, 5, 2.0); // all-ALT: degenerate column
         }
         let st = standardize_binom2(&x);
-        let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let four = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let one = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let four = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
 
         let bits = |a: &[f64], b: &[f64], what: &str| {
             assert_eq!(a.len(), b.len(), "{what} length");

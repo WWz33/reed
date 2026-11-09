@@ -72,7 +72,8 @@ impl Error {
         match &*self.0 {
             ErrorInner::Usage(_)
             | ErrorInner::Core(_)
-            | ErrorInner::Spec(FilterError::Spec(_) | FilterError::Format(_)) => ErrorKind::Usage,
+            | ErrorInner::Spec(FilterError::Spec(_) | FilterError::Format(_))
+            | ErrorInner::Engine(EngineError::Usage(_)) => ErrorKind::Usage,
             ErrorInner::Io(_)
             | ErrorInner::Spec(FilterError::Io(_) | FilterError::Decode { .. })
             | ErrorInner::Engine(_)

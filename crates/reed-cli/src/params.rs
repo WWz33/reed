@@ -23,9 +23,7 @@ pub(crate) fn command_line() -> String {
 /// Quotes one argument for a POSIX shell when it contains anything outside
 /// the safe set; a single quote becomes `'\''`.
 fn shell_quote(arg: &str) -> String {
-    let safe = |c: char| {
-        c.is_ascii_alphanumeric() || "-_./:=,+%@^".contains(c)
-    };
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=,+%@^".contains(c);
     if !arg.is_empty() && arg.chars().all(safe) {
         arg.to_string()
     } else {
@@ -65,9 +63,7 @@ impl OutputType {
 /// An empty spelling, an unknown type letter, or a level outside 1–9.
 pub(crate) fn parse_output_type(spec: &str, spellings: &str) -> Result<OutputType, Error> {
     if spec.is_empty() {
-        return Err(Error::usage(format!(
-            "invalid -O '': expected {spellings}"
-        )));
+        return Err(Error::usage(format!("invalid -O '': expected {spellings}")));
     }
     let kind = spec.chars().next().expect("invariant: non-empty");
     let rest = &spec[kind.len_utf8()..];
@@ -143,8 +139,7 @@ mod tests {
 
     #[test]
     fn text_output_rejects_bcf() {
-        let (compressed, level) =
-            parse_text_output_type("z3", "v or z", "text only").expect("z3");
+        let (compressed, level) = parse_text_output_type("z3", "v or z", "text only").expect("z3");
         assert!(compressed);
         assert_eq!(level, 3);
         let err = parse_text_output_type("b", "v or z", "text only").expect_err("b");

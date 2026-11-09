@@ -94,7 +94,11 @@ fn separation(m: &Mat, n_per: usize) -> f64 {
 }
 
 fn report(name: &str, m: &Mat, n_per: usize, secs: f64) {
-    println!("{name:<26} {:8.3}s  ratio={:10.2}", secs, separation(m, n_per));
+    println!(
+        "{name:<26} {:8.3}s  ratio={:10.2}",
+        secs,
+        separation(m, n_per)
+    );
 }
 
 fn main() {
@@ -115,20 +119,40 @@ fn main() {
     // --- PCA family -------------------------------------------------------
     let t = Instant::now();
     let p = pca_dense(&x, 2);
-    report("pca_dense (binom2,mi)", &p.scores(), n_per, t.elapsed().as_secs_f64());
+    report(
+        "pca_dense (binom2,mi)",
+        &p.scores(),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
 
     let t = Instant::now();
     let pb = pca_dense_with(&x, 2, Stand::Binom);
-    report("pca_dense (binom,mi)", &pb.scores(), n_per, t.elapsed().as_secs_f64());
+    report(
+        "pca_dense (binom,mi)",
+        &pb.scores(),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
 
     let st = standardize(&x, Stand::Binom2);
-    let cfg = StreamConfig { k: 2, tol: 1e-10, max_cycles: 200, ..Default::default() };
+    let cfg = StreamConfig {
+        k: 2,
+        tol: 1e-10,
+        max_cycles: 200,
+        ..Default::default()
+    };
     let t = Instant::now();
     let s = lanczos_top_k(&st.w, &cfg);
     let scores = Mat::from_fn(s.vectors.rows, s.vectors.cols, |i, c| {
         s.vectors.get(i, c) * s.values[c].max(0.0).sqrt()
     });
-    report("stream lanczos (binom2)", &scores, n_per, t.elapsed().as_secs_f64());
+    report(
+        "stream lanczos (binom2)",
+        &scores,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
 
     let t = Instant::now();
     let g = Grm::mean_impute(&st.w);
@@ -138,7 +162,12 @@ fn main() {
     // --- distance / kernel family ----------------------------------------
     let d = reed_reduce::graph::pairwise_distances(&x);
     let t = Instant::now();
-    report("pcoa (euclid)", &pcoa(&d, 2).coords, n_per, t.elapsed().as_secs_f64());
+    report(
+        "pcoa (euclid)",
+        &pcoa(&d, 2).coords,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
 
     let t = Instant::now();
     report(
@@ -165,24 +194,74 @@ fn main() {
     // --- graph family -----------------------------------------------------
     let w = knn_graph(&x, 10, 0.0);
     let t = Instant::now();
-    report("laplacian", &laplacian_eigenmaps(&w, 2).coords, n_per, t.elapsed().as_secs_f64());
+    report(
+        "laplacian",
+        &laplacian_eigenmaps(&w, 2).coords,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
-    report("diffusion", &diffusion_map(&w, 2, 1.0).coords, n_per, t.elapsed().as_secs_f64());
+    report(
+        "diffusion",
+        &diffusion_map(&w, 2, 1.0).coords,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
-    report("isomap", &isomap(&x, 10, 2).coords, n_per, t.elapsed().as_secs_f64());
+    report(
+        "isomap",
+        &isomap(&x, 10, 2).coords,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
     let gl = reed_reduce::grm_laplacian(&g, 2, 10);
-    report("grm_laplacian", &gl.coords, n_per, t.elapsed().as_secs_f64());
+    report(
+        "grm_laplacian",
+        &gl.coords,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
-    report("grm_diffusion", &reed_reduce::grm_diffusion(&g, 2, 10, 1.0).coords, n_per, t.elapsed().as_secs_f64());
+    report(
+        "grm_diffusion",
+        &reed_reduce::grm_diffusion(&g, 2, 10, 1.0).coords,
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
-    let grm_tsne_cfg = TsneConfig { perplexity: 10.0, n_iter: 300, seed: 3, ..Default::default() };
-    report("grm_tsne", &reed_reduce::grm_tsne(&g, &grm_tsne_cfg).expect("grm tsne"), n_per, t.elapsed().as_secs_f64());
+    let grm_tsne_cfg = TsneConfig {
+        perplexity: 10.0,
+        n_iter: 300,
+        seed: 3,
+        ..Default::default()
+    };
+    report(
+        "grm_tsne",
+        &reed_reduce::grm_tsne(&g, &grm_tsne_cfg).expect("grm tsne"),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
-    let grm_umap_cfg = UmapConfig { n_neighbors: 10, n_epochs: 200, seed: 7, ..Default::default() };
-    report("grm_umap", &reed_reduce::grm_umap(&g, &grm_umap_cfg), n_per, t.elapsed().as_secs_f64());
+    let grm_umap_cfg = UmapConfig {
+        n_neighbors: 10,
+        n_epochs: 200,
+        seed: 7,
+        ..Default::default()
+    };
+    report(
+        "grm_umap",
+        &reed_reduce::grm_umap(&g, &grm_umap_cfg),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
-    report("grm_lle", &reed_reduce::grm_lle(&g, &st.w, 8, 2), n_per, t.elapsed().as_secs_f64());
+    report(
+        "grm_lle",
+        &reed_reduce::grm_lle(&g, &st.w, 8, 2),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
 
     // --- manifold learning ------------------------------------------------
     let t = Instant::now();
@@ -191,7 +270,12 @@ fn main() {
 
     // --- probabilistic / matrix factorisation -----------------------------
     let t = Instant::now();
-    report("ppca (em)", &ppca(&x, 2, 60, 5), n_per, t.elapsed().as_secs_f64());
+    report(
+        "ppca (em)",
+        &ppca(&x, 2, 60, 5),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
     let t = Instant::now();
     let (wm, hm) = nmf(&x, 3, 200, 1);
     let recon = wm.matmul(&hm);
@@ -211,11 +295,26 @@ fn main() {
     );
 
     // --- nonlinear embeddings ---------------------------------------------
-    let cfg = UmapConfig { n_neighbors: 10, n_epochs: 200, seed: 7, ..Default::default() };
+    let cfg = UmapConfig {
+        n_neighbors: 10,
+        n_epochs: 200,
+        seed: 7,
+        ..Default::default()
+    };
     let t = Instant::now();
     report("umap", &umap(&x, &cfg), n_per, t.elapsed().as_secs_f64());
     let perplexity = (x.rows as f64 / 8.0).clamp(5.0, 50.0);
-    let tc = TsneConfig { perplexity, n_iter: 500, seed: 3, ..Default::default() };
+    let tc = TsneConfig {
+        perplexity,
+        n_iter: 500,
+        seed: 3,
+        ..Default::default()
+    };
     let t = Instant::now();
-    report("tsne", &tsne(&x, &tc).expect("tsne"), n_per, t.elapsed().as_secs_f64());
+    report(
+        "tsne",
+        &tsne(&x, &tc).expect("tsne"),
+        n_per,
+        t.elapsed().as_secs_f64(),
+    );
 }

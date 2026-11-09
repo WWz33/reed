@@ -516,15 +516,8 @@ fn quantifier_any_requires_a_satisfying_element() {
         let lr = reed_io::vcf::line::LineRef::parse(line.as_bytes()).expect("parses");
         let mut hits = vec![0_u64; plan.head.len()];
         let mut scratch = reed_filter::eval::head::HeadScratch::new();
-        reed_filter::eval::head::eval_head(
-            &lr,
-            10,
-            &plan.head,
-            &mut hits,
-            &mut scratch,
-            &tags,
-        )
-        .expect("invariant: the typed AC rule does not read AC/AN")
+        reed_filter::eval::head::eval_head(&lr, 10, &plan.head, &mut hits, &mut scratch, &tags)
+            .expect("invariant: the typed AC rule does not read AC/AN")
     };
 
     assert!(

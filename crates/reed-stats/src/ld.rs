@@ -211,9 +211,14 @@ impl LdDecayAcc {
                 dst.merge(src);
             },
         );
-        crate::merge_zip_eq("LdDecaySet counts", &mut self.counts, &other.counts, |dst, src| {
-            *dst += src;
-        });
+        crate::merge_zip_eq(
+            "LdDecaySet counts",
+            &mut self.counts,
+            &other.counts,
+            |dst, src| {
+                *dst += src;
+            },
+        );
     }
 
     /// Mean r² per bin (`None` for empty bins).

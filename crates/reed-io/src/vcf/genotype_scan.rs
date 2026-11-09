@@ -197,9 +197,14 @@ impl GenotypeScanner {
             split_needed(subfields, field, last_needed);
 
             let code = match gt_index.and_then(|gi| subfields.get(gi)) {
-                Some(range) => {
-                    decode_gt(&field[range.clone()], site, site.n_alt(), policies, counters, token)?
-                }
+                Some(range) => decode_gt(
+                    &field[range.clone()],
+                    site,
+                    site.n_alt(),
+                    policies,
+                    counters,
+                    token,
+                )?,
                 None => {
                     *token = [None, None];
                     GtCode::MISSING
@@ -690,7 +695,7 @@ mod tests {
         let bad: &[(&[u8], &[u8])] = &[
             (b"G", b"0/9"),
             (b"G", b"1|2"),
-            (b"G", b"9"),    // haploid out-of-domain call
+            (b"G", b"9"), // haploid out-of-domain call
             (b"G", b"9/9"),
             (b"G,T", b"0/3"),
             // ALT='.' leaves only the REF allele: allele 1 does not exist.
@@ -875,10 +880,7 @@ mod tests {
     fn sites_only_and_trailing_empty_columns_decode() {
         // 8 columns, no samples: nothing to decode, no phantom sample column.
         let mut scanner = GenotypeScanner::new(0, &[], &[], permissive());
-        let (out, _) = scan(
-            &mut scanner,
-            b"c\t1\t.\tA\tG\t.\tPASS\tDP=5\n",
-        );
+        let (out, _) = scan(&mut scanner, b"c\t1\t.\tA\tG\t.\tPASS\tDP=5\n");
         assert_eq!(out.codes, []);
         assert!(!out.has_gt);
         // A record ending in one (or more) empty sample columns keeps the

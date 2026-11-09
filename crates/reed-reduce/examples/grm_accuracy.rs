@@ -174,7 +174,10 @@ struct Score {
 }
 
 fn score(m: &Mat, labels: &[usize]) -> Score {
-    Score { sil: silhouette(m, labels), acc: knn_acc(m, labels, 10) }
+    Score {
+        sil: silhouette(m, labels),
+        acc: knn_acc(m, labels, 10),
+    }
 }
 
 fn main() {
@@ -191,109 +194,122 @@ fn main() {
         "{:<22} {:>18} {:>18} {:>10}",
         "method", "raw geometry", "GRM geometry", "delta(sil)"
     );
-    println!("{:<22} {:>18} {:>18} {:>10}", "", "sil / knn_acc", "sil / knn_acc", "");
+    println!(
+        "{:<22} {:>18} {:>18} {:>10}",
+        "", "sil / knn_acc", "sil / knn_acc", ""
+    );
 
     for spec in [Spectrum::Rare, Spectrum::Uniform, Spectrum::Common] {
-    // Accumulators.
-    type Acc = (f64, f64, f64, f64);
-    let mut acc: std::collections::BTreeMap<&str, Acc> = std::collections::BTreeMap::new();
+        // Accumulators.
+        type Acc = (f64, f64, f64, f64);
+        let mut acc: std::collections::BTreeMap<&str, Acc> = std::collections::BTreeMap::new();
 
-    for rep in 0..reps {
-        let seed = 0x9E3779B97F4A7C15u64.wrapping_mul(rep as u64 + 1);
-        let (x, labels) = simulate(n_per, n_snp, seed, spec);
-        let st = standardize(&x, Stand::Binom2);
-        let grm = Grm::mean_impute(&st.w);
+        for rep in 0..reps {
+            let seed = 0x9E3779B97F4A7C15u64.wrapping_mul(rep as u64 + 1);
+            let (x, labels) = simulate(n_per, n_snp, seed, spec);
+            let st = standardize(&x, Stand::Binom2);
+            let grm = Grm::mean_impute(&st.w);
 
-        let d_raw = pairwise_distances(&x);
-        let d_grm = grm_distances(&grm);
-        // Squared distances for t-SNE and LLE.
-        let sq = |d: &Mat| {
-            let mut out = Mat::zeros(d.rows, d.cols);
-            for i in 0..d.rows {
-                for j in 0..d.cols {
-                    let v = d.get(i, j);
-                    out.set(i, j, v * v);
+            let d_raw = pairwise_distances(&x);
+            let d_grm = grm_distances(&grm);
+            // Squared distances for t-SNE and LLE.
+            let sq = |d: &Mat| {
+                let mut out = Mat::zeros(d.rows, d.cols);
+                for i in 0..d.rows {
+                    for j in 0..d.cols {
+                        let v = d.get(i, j);
+                        out.set(i, j, v * v);
+                    }
                 }
+                out
+            };
+            let d_raw2 = sq(&d_raw);
+            let d_grm2 = sq(&d_grm);
+
+            let w_raw = reed_reduce::graph::knn_graph(&x, 10, 0.0);
+            let w_grm = reed_reduce::grm_knn_weights(&grm, 10);
+
+            let tsne_cfg = TsneConfig {
+                perplexity: 10.0,
+                n_iter: 400,
+                seed: 3,
+                ..Default::default()
+            };
+            let umap_cfg = UmapConfig {
+                n_neighbors: 10,
+                n_epochs: 250,
+                seed: 7,
+                ..Default::default()
+            };
+
+            let pairs: Vec<(&str, Mat, Mat)> = vec![
+                ("pca", pca_dense(&x, 2).scores(), pca_dense(&x, 2).scores()),
+                ("pcoa", pcoa(&d_raw, 2).coords, pcoa(&d_grm, 2).coords),
+                (
+                    "kernel_pca(rbf)",
+                    kernel_pca(&x, 2, Kernel::Rbf, 0.0).coords,
+                    reed_reduce::grm_kernel(&grm, 2, Kernel::Rbf).coords,
+                ),
+                (
+                    "laplacian",
+                    laplacian_eigenmaps(&w_raw, 2).coords,
+                    laplacian_eigenmaps(&w_grm, 2).coords,
+                ),
+                (
+                    "diffusion",
+                    reed_reduce::graph::diffusion_map(&w_raw, 2, 1.0).coords,
+                    reed_reduce::graph::diffusion_map(&w_grm, 2, 1.0).coords,
+                ),
+                (
+                    "isomap",
+                    reed_reduce::graph::isomap(&x, 10, 2).coords,
+                    reed_reduce::grm_isomap(&grm, 2, 10).coords,
+                ),
+                (
+                    "tsne",
+                    tsne_from_sq_distances(&d_raw2, &tsne_cfg).expect("tsne (raw)"),
+                    tsne_from_sq_distances(&d_grm2, &tsne_cfg).expect("tsne (grm)"),
+                ),
+                (
+                    "umap",
+                    umap_from_distances(&d_raw, &umap_cfg),
+                    umap_from_distances(&d_grm, &umap_cfg),
+                ),
+                (
+                    "lle",
+                    lle_from_sq_distances(&x, &d_raw2, 8, 2),
+                    lle_from_sq_distances(&st.w, &d_grm2, 8, 2),
+                ),
+            ];
+
+            for (name, raw, grm_m) in pairs {
+                let t = Instant::now();
+                let s_raw = score(&raw, &labels);
+                let s_grm = score(&grm_m, &labels);
+                let e = acc.entry(name).or_insert((0.0, 0.0, 0.0, 0.0));
+                e.0 += s_raw.sil;
+                e.1 += s_raw.acc;
+                e.2 += s_grm.sil;
+                e.3 += s_grm.acc;
+                let _ = t;
             }
-            out
-        };
-        let d_raw2 = sq(&d_raw);
-        let d_grm2 = sq(&d_grm);
-
-        let w_raw = reed_reduce::graph::knn_graph(&x, 10, 0.0);
-        let w_grm = reed_reduce::grm_knn_weights(&grm, 10);
-
-        let tsne_cfg = TsneConfig { perplexity: 10.0, n_iter: 400, seed: 3, ..Default::default() };
-        let umap_cfg = UmapConfig { n_neighbors: 10, n_epochs: 250, seed: 7, ..Default::default() };
-
-        let pairs: Vec<(&str, Mat, Mat)> = vec![
-            ("pca", pca_dense(&x, 2).scores(), pca_dense(&x, 2).scores()),
-            ("pcoa", pcoa(&d_raw, 2).coords, pcoa(&d_grm, 2).coords),
-            (
-                "kernel_pca(rbf)",
-                kernel_pca(&x, 2, Kernel::Rbf, 0.0).coords,
-                reed_reduce::grm_kernel(&grm, 2, Kernel::Rbf).coords,
-            ),
-            (
-                "laplacian",
-                laplacian_eigenmaps(&w_raw, 2).coords,
-                laplacian_eigenmaps(&w_grm, 2).coords,
-            ),
-            (
-                "diffusion",
-                reed_reduce::graph::diffusion_map(&w_raw, 2, 1.0).coords,
-                reed_reduce::graph::diffusion_map(&w_grm, 2, 1.0).coords,
-            ),
-            (
-                "isomap",
-                reed_reduce::graph::isomap(&x, 10, 2).coords,
-                reed_reduce::grm_isomap(&grm, 2, 10).coords,
-            ),
-            (
-                "tsne",
-                tsne_from_sq_distances(&d_raw2, &tsne_cfg).expect("tsne (raw)"),
-                tsne_from_sq_distances(&d_grm2, &tsne_cfg).expect("tsne (grm)"),
-            ),
-            (
-                "umap",
-                umap_from_distances(&d_raw, &umap_cfg),
-                umap_from_distances(&d_grm, &umap_cfg),
-            ),
-            (
-                "lle",
-                lle_from_sq_distances(&x, &d_raw2, 8, 2),
-                lle_from_sq_distances(&st.w, &d_grm2, 8, 2),
-            ),
-        ];
-
-        for (name, raw, grm_m) in pairs {
-            let t = Instant::now();
-            let s_raw = score(&raw, &labels);
-            let s_grm = score(&grm_m, &labels);
-            let e = acc.entry(name).or_insert((0.0, 0.0, 0.0, 0.0));
-            e.0 += s_raw.sil;
-            e.1 += s_raw.acc;
-            e.2 += s_grm.sil;
-            e.3 += s_grm.acc;
-            let _ = t;
         }
-    }
 
-    println!("=== spectrum: {:?} ===", spec);
-    for (name, (rs, ra, gs, ga)) in &acc {
-        let n = reps as f64;
-        let (rs, ra, gs, ga) = (rs / n, ra / n, gs / n, ga / n);
-        println!(
-            "{:<22} {:8.3} / {:6.3}  {:8.3} / {:6.3}  {:>+9.3}",
-            name,
-            rs,
-            ra,
-            gs,
-            ga,
-            gs - rs
-        );
-    }
-    println!();
+        println!("=== spectrum: {:?} ===", spec);
+        for (name, (rs, ra, gs, ga)) in &acc {
+            let n = reps as f64;
+            let (rs, ra, gs, ga) = (rs / n, ra / n, gs / n, ga / n);
+            println!(
+                "{:<22} {:8.3} / {:6.3}  {:8.3} / {:6.3}  {:>+9.3}",
+                name,
+                rs,
+                ra,
+                gs,
+                ga,
+                gs - rs
+            );
+        }
+        println!();
     }
     println!("pca uses the same input on both sides (it is already GRM-based).");
     println!("delta > 0 means GRM geometry separated the known populations better.");

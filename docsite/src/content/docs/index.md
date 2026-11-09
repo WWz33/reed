@@ -47,4 +47,4 @@ Input: VCF, bgzip-compressed VCF, BCF, or stdin (`-`). Region queries (`-r/-R`) 
 
 Output: `filter`, `rename`, `convert` and `index` treat `-o` as the output file name; `stats`, `popg`, `pca` and `distance` treat it as an output prefix and append suffixes (`.pi.txt`, `.eigenvec`, ...). Estimates with a zero denominator are written as `NA`, not 0. Coordinates are 1-based closed intervals (BED input excepted, read as 0-based half-open).
 
-`--threads N` controls worker threads (default: all cores). `--memory MB` sets the in-flight memory budget in MiB (default: half of physical memory). Length parameters accept `100000`, `100k`, `100kb`, `1M` and `1Mb`; suffixes are case-insensitive.
+`--threads N` controls worker threads (default: all cores); the accepted range is 1–1024, and zero or larger values are usage errors. `--memory MB` sets the in-flight memory budget in MiB (default: half of physical memory). Length parameters accept `100000`, `100k`, `100kb`, `1M` and `1Mb`; suffixes are case-insensitive.

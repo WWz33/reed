@@ -68,9 +68,9 @@ Patterson et al. 2012 的定义，逐位点用等位频率（含缺失时按已�
 - `f3(C;A,B) = Σ (pC − pA)(pC − pB)`（减 `pC(1−pC)/(nC−1)`）；
 - `f4(A,B;C,D) = Σ (pA − pB)(pC − pD)`；`D = Σ num / Σ den`，`num = (pA−pB)(pC−pD)`、`den = (pA+pB−2pApB)(pC+pD−2pCpD)`；
 - `f4-ratio = f4(A,O;X,C) / f4(A,O;B,C)`（admixtools 的 α 估计，群体顺序写在参数里）。
-分号分隔角色组，逗号分隔组内群体；可重复。标准误：block jackknife（`BlockJackknife`），块按 `--block-size`（默认 `5M` bp）切，`Z = est / SE`。
+分号分隔角色组，逗号分隔组内群体；可重复。标准误：ADMIXTOOLS 观察位点 block jackknife（`BpBlockJackknife`），块按 `--block-size`（默认 `5M` bp）切，`Z = est / SE`。当前位置距**当前块首位点**至少 `block_bp` 时开新块，换 contig 也开新块；不是固定 `pos / block_bp` 桶，也不是距上一位点超过阈值就切。物理位置采用 ADMIXTOOLS `setgfromp` 的 1 Morgan = 100 Mb，故 5 Mb 对应 0.05 M。全部检验共享位置网格，各检验按实际可用位点数做 Busing et al. 1999 加权；有序 sink 先合并共享位置，再统一决定块边界，结果不随线程/chunk 改变。少于两个有效块时 SE/Z 为 NA；零权重块及无定义删块估计不进入 SE。point estimate 保留上述 Σnum / Σden 定义，不替换成 ADMIXTOOLS 的 bias-corrected estimate（doc_v27 V27-35）。
 
-输出 `PREFIX.fstats`：`stat pops estimate se z n_blocks n_snps`，一行一个检验。对拍：`gold/popgen/compare_fstats.py` 对 scikit-allel `average_patterson_f3/d`（`blen` 对应块大小）与 `patterson_f2`；门：fixture `fstats.vcf` 逐值 1e-12，全量三群体 1e-9。
+输出 `PREFIX.fstats`：`stat pops estimate se z n_blocks n_snps`，一行一个检验。对拍：`gold/popgen/compare_fstats.py` 对 scikit-allel `average_patterson_f3/d`（`blen` 对应块大小）与 `patterson_f2`；point estimate 门：fixture `fstats.vcf` 逐值 1e-12，全量三群体 1e-9。scikit-allel 默认按位点数分块，不能充当本物理 bp 网格的 SE 对拍；SE 由独立 ADMIXTOOLS 公式夹具、块边界、有效权重和所有有序切分等价测试验收。
 
 ### 3.4 LD：`--indep-pairwise W[kb] [S] R2`（过滤规则，裁决 2026-10-10）与 `--ld-decay [MAX_BP]`（stats）
 

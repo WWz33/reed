@@ -65,10 +65,7 @@ impl NameSource for TestCounter {
 
 /// The candidate spill path `counter` generations on in `dir`.
 fn spill_path(dir: &Path, tag: &str, ext: &str, counter: u64) -> PathBuf {
-    dir.join(format!(
-        "reed-{tag}-{}-{counter}.{ext}",
-        std::process::id()
-    ))
+    dir.join(format!("reed-{tag}-{}-{counter}.{ext}", std::process::id()))
 }
 
 /// Creates the next spill file in `dir`, exclusively.
@@ -225,8 +222,8 @@ mod tests {
             std::fs::write(spill_path(&dir, "stdin", "vcf", n), b"victim")
                 .expect("invariant: plant candidate");
         }
-        let err = create_spill_file_from(&dir, "stdin", "vcf", &names)
-            .expect_err("every name is taken");
+        let err =
+            create_spill_file_from(&dir, "stdin", "vcf", &names).expect_err("every name is taken");
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         for n in first..first + SPILL_ATTEMPTS as u64 {
             assert_eq!(

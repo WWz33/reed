@@ -36,7 +36,11 @@ pub fn round_half_even(x: f64) -> f64 {
     let frac = x - floor;
     if frac == 0.5 {
         // Exactly halfway: pick the even neighbour.
-        if (floor / 2.0).fract() == 0.0 { floor } else { floor + 1.0 }
+        if (floor / 2.0).fract() == 0.0 {
+            floor
+        } else {
+            floor + 1.0
+        }
     } else if frac < 0.5 {
         floor
     } else {
@@ -215,7 +219,11 @@ mod tests {
                 let is_tie = x - floor == 0.5;
                 let got = round_half_even(x);
                 let want = if is_tie {
-                    if (floor / 2.0).fract() == 0.0 { floor } else { floor + 1.0 }
+                    if (floor / 2.0).fract() == 0.0 {
+                        floor
+                    } else {
+                        floor + 1.0
+                    }
                 } else if x - floor < 0.5 {
                     floor
                 } else {
@@ -248,10 +256,7 @@ mod tests {
             pretty_sequence(50, 10),
             vec![5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
         );
-        assert_eq!(
-            pretty_sequence(300, 10),
-            vec![50, 100, 150, 200, 250, 300]
-        );
+        assert_eq!(pretty_sequence(300, 10), vec![50, 100, 150, 200, 250, 300]);
     }
 
     /// doc_v23 V23-44: `n != 10` is a documented, tested fallback — every

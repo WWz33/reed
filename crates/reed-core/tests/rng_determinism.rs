@@ -12,7 +12,9 @@ use reed_core::rng::Rng;
 /// repetition, do the work, collect in repetition order.
 fn per_repetition(seed: u64, reps: usize, work: impl Fn(&mut Rng) -> u64 + Sync) -> Vec<u64> {
     let base = Rng::from_seed(seed);
-    (0..reps).map(|i| work(&mut base.derive(i as u64))).collect()
+    (0..reps)
+        .map(|i| work(&mut base.derive(i as u64)))
+        .collect()
 }
 
 #[test]
@@ -24,7 +26,9 @@ fn serial_and_parallel_runs_agree() {
     let serial = per_repetition(seed, reps, |r| {
         let mut v: Vec<u32> = (0..32).collect();
         r.shuffle(&mut v);
-        v.iter().fold(0u64, |acc, &x| acc.wrapping_mul(31).wrapping_add(u64::from(x)))
+        v.iter().fold(0u64, |acc, &x| {
+            acc.wrapping_mul(31).wrapping_add(u64::from(x))
+        })
     });
 
     // What a parallel driver does: workers claim indices out of order and
@@ -46,9 +50,9 @@ fn serial_and_parallel_runs_agree() {
                         let mut r = base.derive(i as u64);
                         let mut v: Vec<u32> = (0..32).collect();
                         r.shuffle(&mut v);
-                        let acc = v
-                            .iter()
-                            .fold(0u64, |acc, &x| acc.wrapping_mul(31).wrapping_add(u64::from(x)));
+                        let acc = v.iter().fold(0u64, |acc, &x| {
+                            acc.wrapping_mul(31).wrapping_add(u64::from(x))
+                        });
                         mine.push((i, acc));
                         i += workers;
                     }
@@ -64,7 +68,10 @@ fn serial_and_parallel_runs_agree() {
     });
     let parallel: Vec<u64> = slots.into_iter().map(|v| v.expect("slot filled")).collect();
 
-    assert_eq!(serial, parallel, "thread count changed the resampling output");
+    assert_eq!(
+        serial, parallel,
+        "thread count changed the resampling output"
+    );
 }
 
 #[test]
@@ -110,7 +117,10 @@ fn repetitions_get_distinct_streams() {
     let mut seen = std::collections::HashSet::new();
     for i in 0..512 {
         let mut r = base.derive(i);
-        assert!(seen.insert(r.next_u64()), "repetition {i} repeated a stream");
+        assert!(
+            seen.insert(r.next_u64()),
+            "repetition {i} repeated a stream"
+        );
     }
 }
 
@@ -120,9 +130,11 @@ fn repetitions_get_distinct_streams() {
 #[test]
 fn bootstrap_replicates_vary() {
     let base = Rng::from_seed(19);
-    let draws: Vec<Vec<usize>> = (0..16)
-        .map(|i| base.derive(i).resample_n(10, 20))
-        .collect();
+    let draws: Vec<Vec<usize>> = (0..16).map(|i| base.derive(i).resample_n(10, 20)).collect();
     let unique: std::collections::HashSet<_> = draws.iter().collect();
-    assert_eq!(unique.len(), draws.len(), "two replicates drew identical samples");
+    assert_eq!(
+        unique.len(),
+        draws.len(),
+        "two replicates drew identical samples"
+    );
 }

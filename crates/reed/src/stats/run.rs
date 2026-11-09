@@ -17,10 +17,17 @@ use reed_io::vcf::site::SiteView;
 use reed_stats::request::StatAcc;
 use reed_stats::sfs::{ProjectionCache, WeightsArc};
 use reed_stats::window::{BpBinning, ContigBins, RegionAccs};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// A contig's shared BED accumulator. Partial segments carry this `Arc`;
+/// the sink merges it once, rather than once per chunk (doc_v27 V27-19).
+type SharedRegionAcc = Arc<std::sync::Mutex<RegionAccs>>;
+type SharedRegionMap = Arc<std::sync::Mutex<HashMap<Vec<u8>, SharedRegionAcc>>>;
+
 /// One contig's run of sites: bin accumulators plus the span it covers.
+#[derive(Clone)]
 pub(super) struct SegmentPartial {
     pub(super) contig: Vec<u8>,
     pub(super) acc: ContigAcc,
@@ -28,12 +35,25 @@ pub(super) struct SegmentPartial {
     pub(super) last_pos0: u64,
 }
 
+/// One raw site in the streaming Bp path. The row is small compared with a
+/// full `StatAcc` and is consumed by the sink before the next chunk arrives.
+#[derive(Clone, Debug)]
+pub(super) struct SiteRow {
+    pub(super) pos0: u64,
+    pub(super) counts: SmallVec<[SiteGroupCounts; 4]>,
+    pub(super) all_variant: bool,
+}
+
 /// The per-contig accumulation state, one variant per grid kind: `Bp` bins
 /// (watermark window emission) or per-region accumulators (`--bed-file`).
 #[derive(Clone, Debug)]
 pub(super) enum ContigAcc {
     Bins(ContigBins),
-    Regions(RegionAccs),
+    /// Raw per-site rows for the CLI's streaming window path. Keeping one
+    /// `StatAcc` per site is what made `--window 1` allocate hundreds of MiB;
+    /// rows are merged into the sink's reusable bins instead (V27-18).
+    Rows(Vec<SiteRow>),
+    Regions(SharedRegionAcc),
     /// No window bookkeeping at all: the SFS-only composition the convert
     /// driver builds (`StatsJob::for_sfs`, doc_v13 §7.5 plan A).
     None,
@@ -43,18 +63,15 @@ impl ContigAcc {
     pub(super) fn push_site(&mut self, pos0: u64, row: &[SiteGroupCounts], all_variant: bool) {
         match self {
             Self::Bins(bins) => bins.push_site(pos0, row, all_variant),
-            Self::Regions(regions) => regions.push_site(pos0, row, all_variant),
-            Self::None => {}
-        }
-    }
-
-    /// Registers a present-but-uncountable site (a skipped multiallelic
-    /// record) so the variant-only pi/dxy denominator counts it as present
-    /// (doc_v7 D7-11).
-    pub(super) fn push_skipped(&mut self, pos0: u64) {
-        match self {
-            Self::Bins(bins) => bins.push_skipped(pos0),
-            Self::Regions(regions) => regions.push_skipped(pos0),
+            Self::Rows(rows) => rows.push(SiteRow {
+                pos0,
+                counts: SmallVec::from_slice(row),
+                all_variant,
+            }),
+            Self::Regions(regions) => regions
+                .lock()
+                .expect("invariant: region accumulator not poisoned")
+                .push_site(pos0, row, all_variant),
             Self::None => {}
         }
     }
@@ -62,7 +79,17 @@ impl ContigAcc {
     pub(super) fn fold(&self, totals: &mut [StatAcc]) {
         match self {
             Self::Bins(bins) => bins.fold(totals),
-            Self::Regions(regions) => regions.fold(totals),
+            Self::Rows(rows) => {
+                for row in rows {
+                    for acc in totals.iter_mut() {
+                        acc.push(&row.counts, row.all_variant);
+                    }
+                }
+            }
+            Self::Regions(regions) => regions
+                .lock()
+                .expect("invariant: region accumulator not poisoned")
+                .fold(totals),
             Self::None => {}
         }
     }
@@ -71,7 +98,22 @@ impl ContigAcc {
     pub(super) fn merge(&mut self, other: &mut Self) {
         match (self, other) {
             (Self::Bins(dst), Self::Bins(src)) => dst.merge_bins(src),
-            (Self::Regions(dst), Self::Regions(src)) => dst.merge_regions(src),
+            (Self::Bins(dst), Self::Rows(src)) => {
+                for row in src {
+                    dst.push_site(row.pos0, &row.counts, row.all_variant);
+                }
+            }
+            (Self::Rows(dst), Self::Rows(src)) => dst.append(src),
+            (Self::Regions(dst), Self::Regions(src)) => {
+                if !Arc::ptr_eq(dst, src) {
+                    dst.lock()
+                        .expect("invariant: region accumulator not poisoned")
+                        .merge_regions(
+                            &src.lock()
+                                .expect("invariant: region accumulator not poisoned"),
+                        );
+                }
+            }
             (Self::None, Self::None) => {}
             _ => unreachable!("invariant: one grid kind per run"),
         }
@@ -119,13 +161,19 @@ pub struct StatsJob {
     pub(super) gt_groups: Arc<[Option<u32>]>,
     pub(super) n_samples: usize,
     pub(super) seed: Arc<[StatAcc]>,
-    /// Streamed target regions (`-t/-T`): kept when inside any include and
-    /// no exclude; empty lists keep everything.
-    pub(super) targets: Arc<[reed_filter::spec::region::RegionTriple]>,
-    pub(super) targets_exclude: Arc<[reed_filter::spec::region::RegionTriple]>,
+    /// The record-level site selection (`-r/-R` ∧ `-t/-T` ∧
+    /// `--sites-file`; doc_v27 V27-14/V27-15). Shared by every worker, so
+    /// it sits behind an `Arc`; an empty selector keeps everything.
+    pub(super) select: Arc<reed_filter::spec::region::SiteSelector>,
     /// Declared contig lengths (header + `--contig-lengths`); positions
     /// beyond the declared length are rejected (01-review D8).
     pub(super) contig_len: Arc<HashMap<Vec<u8>, u64>>,
+    /// Use raw rows instead of full per-site accumulators for Bp windows.
+    pub(super) stream_windows: bool,
+    /// One shared accumulator per contig for BED windows. Every worker and
+    /// seam uses the same `Arc`; the sink merges each contig's state once,
+    /// while each partial keeps its own local position span (V27-19).
+    pub(super) region_accs: SharedRegionMap,
     /// The BCF-native fast path (doc_v3 02-bcf.md §2.4/§2.5): present only
     /// when the input is BCF.
     pub(super) bcf: Option<BcfNative>,
@@ -177,7 +225,7 @@ impl LdScratch {
 /// The positional-block size of the parallel decay scan: coarse enough that
 /// the per-block lookback span stays a small multiple of the block, fine
 /// enough to fill every thread.
-const LD_BLOCK: usize = 4096;
+pub(super) const LD_BLOCK: usize = 4096;
 
 /// Positional-block parallel decay over one contig's matrix
 /// (docs/rounds/v6/02-models.md §2.2). Each block pairs its sites with
@@ -243,8 +291,10 @@ pub struct StatsScratch {
 }
 
 /// The statistics decode policies: haploid calls are half calls and ALT
-/// indices above 1 collapse onto the single ALT allele (the biallelic
-/// view; multi-allelic records are skipped before the scan anyway).
+/// indices above 1 collapse onto the single ALT allele. `StatsJob` rejects
+/// multiallelic records at its site gate before this decoder runs (V27-39).
+/// The `stats` QC reports also use these policies and retain their existing
+/// collapsed-ALT convention; they do not pass through that popg-only gate.
 pub(super) fn stats_policies() -> GenotypePolicies {
     GenotypePolicies {
         ploidy: PloidyPolicy::HaploidAsHalfCall,
@@ -267,14 +317,15 @@ impl StatsJob {
     ) -> Self {
         Self {
             grid: GridMode::None,
+            stream_windows: false,
             n_groups: plan.projections.len(),
             gt_groups: gt_groups.into(),
             n_samples,
             seed: Vec::<StatAcc>::new().into(),
-            targets: Vec::new().into(),
-            targets_exclude: Vec::new().into(),
+            select: Arc::new(reed_filter::spec::region::SiteSelector::default()),
             contig_len,
             bcf: None,
+            region_accs: Arc::new(std::sync::Mutex::new(HashMap::new())),
             sfs: Some(plan),
             fstats: None,
             ld_layout: None,
@@ -358,9 +409,11 @@ impl StatsJob {
     }
 
     /// The site stage both record sources share (text and native BCF): the
-    /// streamed-target predicate, the contig segment bookkeeping, the POS
-    /// contract and the invariant/multiallelic accounting. Returns the
-    /// 0-based position when the record continues to the genotype stage.
+    /// streamed-target predicate, the biallelic gate, contig segment
+    /// bookkeeping, the POS contract and invariant accounting. Multiallelic
+    /// records are rejected here, before any segment or accumulator is
+    /// touched (doc_v27 V27-39). Returns the 0-based position when the
+    /// record continues to the genotype stage.
     fn site_prefix(
         &self,
         contig: &[u8],
@@ -370,16 +423,34 @@ impl StatsJob {
         current: &mut Option<SegmentPartial>,
         partial: &mut StatsPartial,
     ) -> Result<Option<u64>, EngineError> {
-        // Streamed targets (`-t/-T`): the region predicate gates every record
-        // before it reaches an accumulator.
-        if (!self.targets.is_empty() || !self.targets_exclude.is_empty())
-            && !reed_filter::spec::region::region_allows(
-                &self.targets,
-                &self.targets_exclude,
-                contig,
-                pos1,
-            )
+        // The site selection gates every record before it reaches an
+        // accumulator: `-r/-R`, `-t/-T` and `--sites-file` are three
+        // families that intersect (doc_v27 V27-14/V27-15).
+        if !self.select.is_empty() && !self.select.allows(contig, pos1) {
+            return Ok(None);
+        }
+        // Position validation is independent of the multiallelic filter.
+        // A filtered record must not turn an otherwise descending input
+        // into a successful run (doc_v27 V27-28).
+        if let Some(segment) = current.as_ref()
+            && segment.contig == contig
+            && pos1
+                .checked_sub(1)
+                .is_some_and(|pos0| pos0 < segment.last_pos0)
         {
+            return Err(EngineError::from(
+                reed_core::CoreError::PositionNotAscending {
+                    prev_pos0: segment.last_pos0,
+                    pos0: pos1.saturating_sub(1),
+                },
+            ));
+        }
+        // The default `-M 2` gate lives before segment creation. A filtered
+        // multiallelic record therefore cannot advance the trailing window,
+        // cannot enter a denominator, and cannot bypass the ascending-POS
+        // check of a later biallelic record (doc_v27 V27-39/V27-28).
+        if n_alt > 1 {
+            partial.n_multiallelic_skipped += 1;
             return Ok(None);
         }
         match current {
@@ -390,13 +461,27 @@ impl StatsJob {
                 }
                 let acc = match &self.grid {
                     GridMode::Bp { width, .. } => {
-                        ContigAcc::Bins(ContigBins::new(BpBinning::new(*width), &self.seed))
+                        if self.stream_windows {
+                            ContigAcc::Rows(Vec::new())
+                        } else {
+                            ContigAcc::Bins(ContigBins::new(BpBinning::new(*width), &self.seed))
+                        }
                     }
                     GridMode::Regions(regions) => {
                         let set = regions
                             .get(contig)
                             .unwrap_or_else(|| Arc::new(RegionSet::default()));
-                        ContigAcc::Regions(RegionAccs::new(set, &self.seed))
+                        let mut shared = self
+                            .region_accs
+                            .lock()
+                            .expect("invariant: region accumulator map not poisoned");
+                        let acc = shared
+                            .entry(contig.to_vec())
+                            .or_insert_with(|| {
+                                Arc::new(std::sync::Mutex::new(RegionAccs::new(set, &self.seed)))
+                            })
+                            .clone();
+                        ContigAcc::Regions(acc)
                     }
                     GridMode::None => ContigAcc::None,
                 };
@@ -430,21 +515,6 @@ impl StatsJob {
         }
         if is_invariant {
             partial.n_no_alt_records += 1;
-        }
-        if n_alt > 1 {
-            partial.n_multiallelic_skipped += 1;
-            // The file contains this site even though pi/dxy skip it, so the
-            // variant-only denominator must not treat it as absent
-            // (doc_v7 D7-11).
-            if let Some(segment) = current.as_mut() {
-                // The skipped site still occupies its position: the trailing
-                // window walk must reach it even when it is the last record
-                // (doc_v15 D15-20).
-                segment.first_pos0 = segment.first_pos0.min(pos0);
-                segment.last_pos0 = segment.last_pos0.max(pos0);
-                segment.acc.push_skipped(pos0);
-            }
-            return Ok(None);
         }
         Ok(Some(pos0))
     }
@@ -557,6 +627,7 @@ impl StatsJob {
         let stats = partial
             .fstats
             .get_or_insert_with(|| FStatsPartial::new(plan));
+        stats.push_grid(contig, pos0);
         for acc in &mut stats.per_test {
             acc.push(contig, pos0, row);
         }
@@ -841,6 +912,34 @@ mod tests {
         }
     }
 
+    /// doc_v27 V27-04: the real 4096-site block partition must retain the
+    /// cross-block pairs of a single-site tail. These are pair counts, not
+    /// merely a smoke test: 4097 sites used to lose 4096 pairs, and the
+    /// whole 4096k+1 family was affected.
+    #[test]
+    fn ld_block_boundaries_keep_all_pairs_including_a_single_site_tail() {
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX),
+        };
+        for n in [4095_usize, 4096, 4097, 4098, 8193] {
+            let layout = Arc::new(reed_stats::SampleLayout::from_assignments(
+                &[Some(0); 4],
+                1,
+                None,
+            ));
+            let mut matrix = reed_stats::ContigMatrix::new(b"chr1".to_vec(), layout);
+            for pos0 in 0..n as u64 {
+                // Four samples at dosages 0/1/2/1: every pair has r² = 1.
+                matrix.push_run(vec![0b1010, 0, 0b1100, 0], vec![pos0]);
+            }
+            let set = decay_contig(&matrix, u64::MAX, &[0, u64::MAX], true, &budget);
+            let want = (n * (n - 1) / 2) as u64;
+            assert_eq!(set.pairs.len() as u64, want, "n={n}");
+            assert_eq!(set.cohort.counts().iter().sum::<u64>(), want, "n={n}");
+        }
+    }
+
     /// The stats line policy (doc_v25 V25-03): a blank seam record (`"\n"`)
     /// or a CRLF blank line in the body is skipped; a malformed line stays
     /// fatal, with the old diagnostic still in the message.
@@ -861,8 +960,7 @@ mod tests {
             .run_chunk(&plain_chunk(), body, &mut scratch)
             .expect("a blank body line is not a record");
         assert_eq!(partial.n_records, 2);
-        let Err(err) = job.run_seam(reed_core::ChunkId(1), b"chr1\t1\t.\n", &mut scratch)
-        else {
+        let Err(err) = job.run_seam(reed_core::ChunkId(1), b"chr1\t1\t.\n", &mut scratch) else {
             panic!("a malformed line must stay fatal");
         };
         assert!(err.to_string().contains("fewer than 8 columns"), "{err}");

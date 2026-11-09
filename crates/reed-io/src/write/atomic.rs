@@ -86,7 +86,9 @@ const TEMP_ATTEMPTS: usize = 16;
 /// no temporary can be created between the check and the removal (review
 /// item 1).
 fn sweep_stale_temps(target: &Path, live: &[PathBuf]) {
-    let Some(parent) = target.parent() else { return };
+    let Some(parent) = target.parent() else {
+        return;
+    };
     let name = target
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -103,17 +105,16 @@ fn sweep_stale_temps(target: &Path, live: &[PathBuf]) {
         let file_name = entry.file_name().to_string_lossy().into_owned();
         // `<target name>.reed-tmp-<pid>-<counter>`, fully anchored: a suffix
         // that is not exactly digits is a user file and is left alone.
-        let Some(suffix) = file_name
-            .strip_prefix(&format!("{name}.reed-tmp-"))
-        else {
+        let Some(suffix) = file_name.strip_prefix(&format!("{name}.reed-tmp-")) else {
             continue;
         };
         let Some((pid_text, counter_text)) = suffix.split_once('-') else {
             continue;
         };
-        if pid_text.parse::<u32>().ok() != Some(own_pid)
-            || counter_text.parse::<u64>().is_err()
-        {
+        let Some(pid) = pid_text.parse::<u32>().ok() else {
+            continue;
+        };
+        if counter_text.parse::<u64>().is_err() {
             continue;
         }
         // A temporary this process still owns is active, however quiet it
@@ -127,8 +128,18 @@ fn sweep_stale_temps(target: &Path, live: &[PathBuf]) {
             .ok()
             .and_then(|m| now.duration_since(m).ok())
             .is_some_and(|age| age.as_secs() >= STALE_TEMP_SECS);
-        if old {
+        if old && pid == own_pid {
             let _ = std::fs::remove_file(entry.path());
+        } else if old {
+            // Another process's temporary is never deleted: a reused PID
+            // cannot be distinguished from a live writer. Do surface the
+            // leftover so SIGINT's 261 MiB temporary is not silently
+            // forgotten on the next run (doc_v27 V27-29).
+            tracing::warn!(
+                path = %entry.path().display(),
+                pid,
+                "stale temporary file remains; remove it manually"
+            );
         }
     }
 }
@@ -147,10 +158,7 @@ pub fn temp_path(final_path: &Path, counter: u64) -> PathBuf {
     let name = final_path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    final_path.with_file_name(format!(
-        "{name}.reed-tmp-{}-{counter}",
-        std::process::id()
-    ))
+    final_path.with_file_name(format!("{name}.reed-tmp-{}-{counter}", std::process::id()))
 }
 
 /// An output file that becomes visible only on commit.
@@ -468,11 +476,10 @@ mod tests {
         // The first writer: open, then aged past the staleness window.
         let (first, mut file) = AtomicFile::create(&target).expect("invariant: first");
         let first_temp = first.temp_path().to_path_buf();
-        file.write_all(b"still being written").expect("invariant: write");
-        file.set_modified(
-            std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
-        )
-        .expect("invariant: age the file");
+        file.write_all(b"still being written")
+            .expect("invariant: write");
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .expect("invariant: age the file");
 
         // A second writer for the same target sweeps its own stale names.
         let (second, _file2) = AtomicFile::create(&target).expect("invariant: second");

@@ -271,11 +271,27 @@ reed stats [通用] [选择参数] --freq/--hardy/--het/--missing/--depth/--summ
 | `--levels window,contig,genome` | 输出层级，默认 window | 已实现 |
 | `--skip-empty` | 不输出没有位点落入的窗口（默认输出并写 `NA`） | 已实现 |
 | `--contig-lengths FILE` | header 缺 `##contig` 长度时补充（`.fai` 两列）；缺失即报错，不编造 | 已实现 |
-| `--variant-only` | 声明只有变异位点：窗口内未出现的位置视为单态且全部调用，计入 π/dxy/θ 分母 | 已实现（== vcftools `--window-pi`） |
+| `--variant-only` | 声明只有变异位点：窗口内未出现的位置视为单态且全部调用，计入 π/dxy/θ 分母。`|S|` 按 pixy：π/θ 为该群体有调用的位点数，dxy 为两组均有调用的交集；全缺失与多等位记录不占 `|S|`。contig/genome 分母取声明长度或 BED 区间并集，不随 `--step` 改变（`denom_bp`） | 已实现（== vcftools `--window-pi`；doc_v27 V27-11/12/13） |
 | `--bypass-invariant-check` | 不含不变位点也不声明时强行只统计出现的位点（高估 π/dxy，警告） | 已实现 |
 | `--bed-file BED`、`--sites-file FILE` | BED3（0-based 半开）给定窗口，区间可重叠、各自成窗；`CHROM<TAB>POS`（1-based）只统计列出的位点；`--bed-file` 与 `--window/--step` 互斥 | 已实现（BED 与 pixy `--bed_file` 逐列对拍，`gold/popgen/run_pixy_bed.sh`） |
+| `-M/--max-alleles`（popg） | 本项目不支持多等位：默认在统计前剔除并计数，`-M 2` 与默认等价；`-M > 2` 是 usage 错误（exit 2）。多等位不占 `|S|`，窗口 stderr 与 `.log` 报 `multiallelic skipped` | 已实现（doc_v27 V27-39；`stats` QC 的 collapsed-ALT 语义不变） |
+| `-r/-R`、`-t/-T`、`--sites-file` 的组合 | **三族独立，记录级判定 = `(在 -r/-R 内) AND (在 -t/-T include 内) AND NOT exclude AND (在 --sites-file 内)`**；同一族内重复给出仍并集（V23-60），空族不加约束；只有一族时退化为该族自身语义 | 已实现（`reed_filter::spec::region::SiteSelector`；`popg` 窗口/裸路由与 `stats --freq` 共用）。doc_v27 V27-14/V27-15：三族曾共用同一列表而全部变成并集——`-r chr1:201-400 -t chr1:1-60` 曾统计 2 条，而 `reed filter`/`bcftools view` 是 0 条 |
 
 ### 7.4 输出（`-o PREFIX`；坐标 1-based 闭区间；缺失写 `NA`）
+
+`no_sites` 与 `no_snps` 采用 pixy 口径：π/θ 的 `no_sites` 是该群体有调用的位点数，
+dxy 是两群体交集；Fst/PBS 的 `no_snps` 只数变异位点。Hudson Fst 在任一群体 `n < 2`
+时从分子分母同时剔除该位点（不是只剔除分子）。
+`--variant-only` 的空窗口输出 0（absent 位置视为单态），而不是 NA；Require/Bypass 的空窗仍写 NA。
+`.log` 的 `methods` 按实际请求写 π/dxy/θ/Tajima/Fst/PBS/SFS/f 统计/LD，不再固定写 π/dxy；
+裸 SFS/LD 也写 `.log`，并记录 `sfs sites absorbed` 与 `sfs skipped (m < n)`（doc_v27 V27-26）。
+
+未显式指定统计开关的裸 `popg` 路由写单个宽 TSV（`-o` 是文件路径），不是 PREFIX。
+其 π/dxy 的 `.pair` 列是完整可比配对估计；`.bp` 列是 `Σ_i(diffs_i/comps_i) / L` 的物理 bp 量，
+variant-only 未出现位置贡献 0 给分子、贡献 L 给分母，不额外补配对数。`theta_w.total` 是 `θ_raw`，
+`theta_w.bp` 是 `θ_raw/L`；窗口文件的 `avg_watterson_theta` 仍是 `θ_raw/no_sites`。
+裸 pair 列与窗口 avg 在 variant-only 下相等，裸 bp 与 pair 在部分无缺失夹具中可能恰好相等，
+但不表示它们是同一个定义（doc_v27 V27-38）。
 
 | 统计 | 文件 | 列（实测 writer） |
 |---|---|---|
@@ -538,7 +554,17 @@ reed pca in.vcf.gz --pcs 10 -o out
   `pca` 三件套、`dapc` 四件套、`convert --012`/SFS 布局）。组内写错误不会留下
   半写的文件（全部写完才逐个发布），但进程在发布过程中被中断可能留下"新新
   旧旧"的混合结果。整组事务（staging 目录 + 回滚）不在当前承诺内。
-- 无 pair 的 `--ld-pairs` 仍不创建 `.ld` 文件（惰性创建保持不变）。
+- **`popg` 的输出集合由请求决定，而不是由结果是否非空决定**（doc_v27 V27-05/V27-20）：
+  `--ld-pairs` 即使没有一对可计算也发布只含表头的 `.ld`；`--ld-decay` 对请求的每个 bin
+  写 `0` / `NA`；空 SFS 写合法零谱，空 f 统计保留一行（加和型估计为 0、SE 为 NA）。
+  因而同前缀的空结果运行会替换上一轮文件，不会留下陈旧配对、谱或 f 统计。
+  流式 `.ld` 的临时文件在运行开始创建，但仍须等输入完整性检查通过才发布（V27-02），
+  并出现在成功运行的文件清单中。
+- 窗口类 `popg` 输出采用流式会话：窗口完成即写同目录临时文件，输入完整性检查通过后逐文件发布。
+  空结果同样写表头/零谱，失败不发布临时文件。库 API 保留完整窗口累加器，CLI 不把它们保留到运行结束
+  （doc_v27 V27-18）。`--memory` 只限制输入在途块，并不承诺整个进程的 RSS 上限。
+- 只请求 SFS、f 统计或 LD（没有窗口级统计量）时，contig 没有 `length` 也可以运行；
+  这些统计没有尾窗裁剪需求（doc_v27 V27-07）。`--bed-file` 仍要求窗口级统计量。
 - `filter -W`/`rename -W` 的索引 sidecar 也是原子文件，且**先发布数据文件、
   再发布索引**：反过来的顺序会让旧索引指向新数据，区域查询静默返回错的记录。
 - 进程被 `SIGKILL` 时临时文件来不及删除；下一次在同一目录运行会清理 60 秒

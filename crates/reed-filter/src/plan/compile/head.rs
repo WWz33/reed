@@ -5,7 +5,10 @@ use reed_core::tag_table::{TagNumber, TagTable};
 
 use super::HeadOutcome;
 use crate::FilterError;
-use crate::plan::{HeadRule, InfoRule, af_info_sides, af_threshold, compile_regions, validate_numeric, warn_stale_af, warn_stale_info};
+use crate::plan::{
+    HeadRule, InfoRule, af_info_sides, af_threshold, compile_regions, validate_numeric,
+    warn_stale_af, warn_stale_info,
+};
 use crate::spec::{FilterSpec, OnMissing, Quantifier};
 
 /// Compiles the head section (doc_v25 08 §3 ④: moved from `compile()`).
@@ -20,8 +23,7 @@ pub(super) fn compile(
     // The indexed family (`-r/-R`) and the streaming family (`-t/-T`) are two
     // separate predicates, so a site must satisfy both — bcftools'
     // intersection (doc_v23 V23-61).
-    let indexed =
-        crate::spec::region::parse_regions_strict(&spec.targets.indexed, tags.contigs())?;
+    let indexed = crate::spec::region::parse_regions_strict(&spec.targets.indexed, tags.contigs())?;
     if !indexed.is_empty() {
         head.push(HeadRule::Regions {
             include: indexed,

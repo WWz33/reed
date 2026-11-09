@@ -362,3 +362,38 @@ fn pruner_bp_window_advances_past_the_trigger() {
     // against it): ordinals 0 and 4.
     assert_eq!(pruner.kept_sites(), vec![0, 4]);
 }
+
+/// doc_v27 V27-04: a one-site range still owns every pair whose later site
+/// is that site and whose earlier site lies outside the range. The `< 2`
+/// early return used to discard the whole tail block of the 4096-site LD
+/// partition (4097 sites lost 4096 pairs).
+#[test]
+fn one_site_decay_range_keeps_pairs_to_the_preceding_sites() {
+    use reed_stats::{ContigMatrix, SampleLayout, decay_range};
+    use std::sync::Arc;
+    let layout = Arc::new(SampleLayout::from_assignments(&[Some(0); 4], 1, None));
+    let mut matrix = ContigMatrix::new(b"chr1".to_vec(), layout);
+    // Four diploid samples: sample 0 is hom-ref, sample 1 is het, sample 2
+    // is hom-alt, sample 3 is het. Every pair has nonzero dosage variance
+    // and r² = 1. Planes are [alt0, miss0, alt1, miss1], one word each.
+    for i in 0..4097_u64 {
+        matrix.push_run(vec![0b1010, 0, 0b1100, 0], vec![i]);
+    }
+    let set = decay_range(&matrix, 4096..4097, 100_000, &[0, 100_000], true);
+    assert_eq!(
+        set.pairs.len(),
+        4096,
+        "the tail site pairs with every predecessor"
+    );
+    assert_eq!(set.cohort.counts().iter().sum::<u64>(), 4096);
+    let first = set.pairs.first().expect("invariant: first pair");
+    let last = set.pairs.last().expect("invariant: last pair");
+    assert_eq!(first.0, 1);
+    assert_eq!(last.0, 4096);
+    assert_eq!(last.1, 4097);
+    assert!(
+        set.pairs
+            .iter()
+            .all(|&(_, _, r2)| (r2 - 1.0).abs() <= f64::EPSILON)
+    );
+}

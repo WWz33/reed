@@ -44,7 +44,11 @@
 
 ## 3. reed 的定义（唯一，参数中只出现方法名）
 
-记号：某窗口内文件中出现的位点集合为 S；位点 i 上群体 A 的已调用等位数为 n_i，其中 ALT 计数为 k_i（多等位时按等位分别计数）。
+记号：某窗口内群体中**至少有一条已调用等位**的位点集合为 S（pixy 的 `no_sites` 口径；
+π/θ 按各群体分别计算，dxy 的 S 为两群体集合并集的**交集**，即两组均有调用）。
+位点 i 上群体 A 的已调用等位数为 n_i，其中 ALT 计数为 k_i。
+全缺失记录不占 S，但仍进入 `count_missing` 审计列。
+本项目 popg 不支持多等位：这类记录在统计前被过滤，不占 S，也不贡献分母（doc_v27 V27-12/13/39）。
 
 | 统计量 | 定义 | 文献 |
 |---|---|---|
@@ -62,8 +66,14 @@
 说明：
 
 - 以上就是 pixy 2.2.4 对 π、dxy、θ、Tajima's D、两种 Fst 的定义；reed 只额外提供 `--variant-only` 的分母补全。
+  `no_sites` / `no_snps` 也采用 pixy 口径：π/θ 按群体有调用计数，dxy 按两组交集，Fst/PBS 只数变异位点。
+  contig/genome 行的公开 `bp` 仍是窗口跨度；variant-only 的分母另用 `denom_bp`，取声明的 contig 长度，
+  BED 则取裁剪到 contig 长度的区间并集，不随 `--step` 改变（doc_v27 V27-11）。
   这个补全与 vcftools `--window-pi` 的做法相同（窗口内其余位置视为单态且全部调用），因此 `--variant-only` 下的 π 可以直接用 vcftools 对拍。
 - Fst、PBS、Tajima's D 是比值统计量，单态位点对分子分母的贡献都是 0，不受 `--variant-only` 影响。
+- 裸宽表的 `pi.bp` / `dxy.bp` 是另一种物理量：`Σ_i(diffs_i/comps_i) / L`，不是 pair 公式的别名；
+  variant-only 未出现位置贡献 0 给分子、L 给分母，不需补 comparable pairs。`theta_w.total = θ_raw`，
+  `theta_w.bp = θ_raw/L`；pixy 文件的 `avg_watterson_theta` 仍为 `θ_raw/no_sites`（doc_v27 V27-38）。
 - pixy 只有不重叠窗口；reed 的 `--step` 产生的重叠窗口，等价于把这些窗口写成 BED 交给 pixy 的 `--bed_file`。
 
 ---

@@ -15,3 +15,4 @@ pub mod writers;
 
 pub use driver::*;
 pub use request::*;
+pub use writers::session::WindowOutputConfig;

@@ -55,6 +55,10 @@ pub enum EngineError {
     /// The run was aborted before completion.
     #[error("aborted")]
     Aborted,
+    /// The request or an input declaration is invalid. The CLI maps this to
+    /// exit 2, unlike a runtime job failure (doc_v27 V27-25).
+    #[error("{0}")]
+    Usage(String),
 }
 
 impl From<reed_core::error::CoreError> for EngineError {
@@ -69,5 +73,11 @@ impl EngineError {
     #[must_use]
     pub fn job(message: impl Into<String>) -> Self {
         Self::Job(message.into().into())
+    }
+
+    /// Creates a usage failure (exit 2 in the CLI).
+    #[must_use]
+    pub fn usage(message: impl Into<String>) -> Self {
+        Self::Usage(message.into())
     }
 }

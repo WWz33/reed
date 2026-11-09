@@ -20,10 +20,7 @@ use super::common::prelude;
 ///
 /// Usage messages for an unknown metric, an unknown tag, or a non-numeric
 /// tag type.
-fn parse_hist(
-    list: Option<&str>,
-    tags: &reed::TagTable,
-) -> Result<Vec<HistMetric>, reed::Error> {
+fn parse_hist(list: Option<&str>, tags: &reed::TagTable) -> Result<Vec<HistMetric>, reed::Error> {
     use reed::TagType;
     let Some(list) = list else {
         return Ok(Vec::new());
@@ -106,10 +103,33 @@ fn parse_hist(
 /// (doc_v14 02 §2.4): the redirect is a usage error with the exact rewrite,
 /// never a silent alias (the `--max-missing` family's pattern, cli.md §4.4).
 const MOVED: &[&str] = &[
-    "--pi", "--dxy", "--theta", "--tajima-d", "--fst", "--fst-global", "--pbs", "--pbs-normed",
-    "--f2", "--f3", "--f4", "--dstat", "--f4-ratio", "--block-size", "--ld-decay", "--ld-pairs",
-    "--sfs", "--proj", "--sfs-int", "--variant-only", "--bypass-invariant-check",
-    "--contig-lengths", "--window", "--bed-file", "--step", "--levels", "--skip-empty",
+    "--pi",
+    "--dxy",
+    "--theta",
+    "--tajima-d",
+    "--fst",
+    "--fst-global",
+    "--pbs",
+    "--pbs-normed",
+    "--f2",
+    "--f3",
+    "--f4",
+    "--dstat",
+    "--f4-ratio",
+    "--block-size",
+    "--ld-decay",
+    "--ld-pairs",
+    "--sfs",
+    "--proj",
+    "--sfs-int",
+    "--variant-only",
+    "--bypass-invariant-check",
+    "--contig-lengths",
+    "--window",
+    "--bed-file",
+    "--step",
+    "--levels",
+    "--skip-empty",
 ];
 
 /// The first moved flag present on the command line, if any.
@@ -143,10 +163,7 @@ fn moved_flag(args: &StatsCli) -> Option<&'static str> {
         ("--levels", args.levels.is_some()),
         ("--skip-empty", args.skip_empty),
     ];
-    present
-        .iter()
-        .find(|(_, on)| *on)
-        .map(|(name, _)| *name)
+    present.iter().find(|(_, on)| *on).map(|(name, _)| *name)
 }
 
 /// Runs the QC-report driver for the parsed flags.
@@ -170,9 +187,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
     // `--pop` stratifies --freq/--missing/--singletons (doc_v14 02 §2.2);
     // a popfile without any of those is a silent no-op, so it is refused
     // (the D7-6 house pattern).
-    if args.pop.is_some()
-        && !(args.freq || args.missing || args.singletons)
-    {
+    if args.pop.is_some() && !(args.freq || args.missing || args.singletons) {
         return Err(reed::Error::usage(
             "--pop stratifies --freq/--missing/--singletons; pass at least one of them or drop \
              --pop",
@@ -220,9 +235,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
     }
     // The empty `--hist` list is decidable from the text alone; tag checks
     // (which need the header) stay after the open.
-    if args.hist.as_deref().is_some_and(|hist| {
-        hist.split(',').map(str::trim).all(str::is_empty)
-    }) {
+    if args
+        .hist
+        .as_deref()
+        .is_some_and(|hist| hist.split(',').map(str::trim).all(str::is_empty))
+    {
         return Err(reed::Error::usage(
             "--hist: the list is empty (want qual/dp/dp-site/gq/idl/af or INFO/<TAG>/FMT/<TAG>)",
         ));
@@ -260,8 +277,7 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
             .as_deref()
             .map(|p| reed::Populations::File(std::path::PathBuf::from(p))),
         force_samples: args.force_samples,
-        targets: p.targets.clone(),
-        targets_exclude: p.targets_exclude.clone(),
+        select: p.select.clone(),
         prefix: PathBuf::from(&prefix),
     };
     let source = p
@@ -310,10 +326,8 @@ mod tests {
     #[test]
     fn moved_flags_redirect_to_popg() {
         use clap::Parser;
-        let cli = crate::cli::Cli::try_parse_from([
-            "reed", "stats", "in.vcf", "--pi", "-o", "p",
-        ])
-        .expect("the 0.3.x spelling parses so the redirect can fire");
+        let cli = crate::cli::Cli::try_parse_from(["reed", "stats", "in.vcf", "--pi", "-o", "p"])
+            .expect("the 0.3.x spelling parses so the redirect can fire");
         let crate::cli::Command::Stats(stats) = cli.command else {
             panic!("stats subcommand");
         };
@@ -323,10 +337,8 @@ mod tests {
         assert!(err.to_string().contains("reed popg"), "{err}");
         assert!(err.to_string().contains("--pi"), "{err}");
 
-        let cli = crate::cli::Cli::try_parse_from([
-            "reed", "stats", "in.vcf", "--freq", "-o", "p",
-        ])
-        .expect("parse");
+        let cli = crate::cli::Cli::try_parse_from(["reed", "stats", "in.vcf", "--freq", "-o", "p"])
+            .expect("parse");
         let crate::cli::Command::Stats(stats) = cli.command else {
             panic!("stats subcommand");
         };
@@ -338,8 +350,8 @@ mod tests {
     #[test]
     fn bare_stats_is_a_usage_error() {
         use clap::Parser;
-        let cli = crate::cli::Cli::try_parse_from(["reed", "stats", "in.vcf", "-o", "p"])
-            .expect("parse");
+        let cli =
+            crate::cli::Cli::try_parse_from(["reed", "stats", "in.vcf", "-o", "p"]).expect("parse");
         let crate::cli::Command::Stats(stats) = cli.command else {
             panic!("stats subcommand");
         };
@@ -365,14 +377,27 @@ mod tests {
             stats
         };
         let stats = parse(&[
-            "reed", "stats", "in.vcf", "--pop", pops.to_str().unwrap(), "-o", "p",
+            "reed",
+            "stats",
+            "in.vcf",
+            "--pop",
+            pops.to_str().unwrap(),
+            "-o",
+            "p",
         ]);
         let err = run_stats_cli(stats).expect_err("--pop alone is a silent no-op");
         assert_eq!(err.kind(), reed::ErrorKind::Usage);
         assert!(err.to_string().contains("--freq"), "{err}");
 
         let stats = parse(&[
-            "reed", "stats", "in.vcf", "--pop", pops.to_str().unwrap(), "--freq", "-o", "p",
+            "reed",
+            "stats",
+            "in.vcf",
+            "--pop",
+            pops.to_str().unwrap(),
+            "--freq",
+            "-o",
+            "p",
         ]);
         // The input does not exist, so the run fails at open time — after
         // the --pop checks, proving the stratified route accepted it.

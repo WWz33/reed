@@ -998,7 +998,11 @@ impl MatrixSink {
             // (doc_v7 D7-19), so the budget covers their **sum**: ten contigs
             // each just under the limit used to be admitted one at a time and
             // then all stayed resident (doc_v23 V23-10).
-            ResidentBudget::admit(&mut self.resident_bytes, matrix.size_bytes(), self.budget_bytes)?;
+            ResidentBudget::admit(
+                &mut self.resident_bytes,
+                matrix.size_bytes(),
+                self.budget_bytes,
+            )?;
             self.matrices.push(matrix);
             return Ok(());
         }

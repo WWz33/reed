@@ -105,12 +105,11 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
             missing: true,
             depth: true,
             summary: true,
-        hist: Vec::new(),
-        singletons: false,
-        populations: None,
-        force_samples: false,
-            targets: Vec::new(),
-            targets_exclude: Vec::new(),
+            hist: Vec::new(),
+            singletons: false,
+            populations: None,
+            force_samples: false,
+            select: reed::spec::region::SiteSelector::default(),
             prefix: prefix.clone(),
         };
         let outcome =

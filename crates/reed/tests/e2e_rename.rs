@@ -73,7 +73,10 @@ fn sample_contig_and_id_planes_edit_both_sides() {
     let text = read(&out);
     assert!(text.contains("##contig=<ID=Chr01,length=100000>"), "{text}");
     assert!(text.contains("\tFORMAT\tsampleA\tsampleB\n"), "{text}");
-    assert!(text.contains("Chr01\t1\tChr01:1:A:G\tA\tG\t50\tPASS\tDP=10\tGT\t0/1\t0/0"), "{text}");
+    assert!(
+        text.contains("Chr01\t1\tChr01:1:A:G\tA\tG\t50\tPASS\tDP=10\tGT\t0/1\t0/0"),
+        "{text}"
+    );
     assert_eq!(report.n_records, 3);
     assert_eq!(report.n_contigs, 1);
     assert_eq!(report.n_samples, 2);
@@ -97,8 +100,14 @@ fn contig_rename_touches_header_and_records_together() {
     let out = d.join("out.vcf");
     run(&spec, &input, &out, 1);
     let text = read(&out);
-    assert!(text.contains("##contig=<ID=Chr01"), "the header must follow: {text}");
-    assert!(!text.contains("\nchr1\t"), "no record may keep the old name: {text}");
+    assert!(
+        text.contains("##contig=<ID=Chr01"),
+        "the header must follow: {text}"
+    );
+    assert!(
+        !text.contains("\nchr1\t"),
+        "no record may keep the old name: {text}"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -118,7 +127,10 @@ fn non_edited_fields_pass_through() {
     let before: Vec<&str> = VCF.lines().filter(|l| !l.starts_with('#')).collect();
     let after_text = read(&out);
     let after: Vec<&str> = after_text.lines().filter(|l| !l.starts_with('#')).collect();
-    assert_eq!(before, after, "records must be unchanged by a sample rename");
+    assert_eq!(
+        before, after,
+        "records must be unchanged by a sample rename"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -207,8 +219,7 @@ fn validation_rejects_bad_input() {
         },
     ];
     for spec in &bad {
-        let err = run_rename(Some(&input), spec, &out, &budget(1))
-            .expect_err("must be refused");
+        let err = run_rename(Some(&input), spec, &out, &budget(1)).expect_err("must be refused");
         assert_eq!(err.kind(), reed::ErrorKind::Usage, "{spec:?}");
     }
     let _ = std::fs::remove_dir_all(&d);
@@ -257,7 +268,10 @@ fn header_meta_edits() {
     };
     let out2 = d.join("out2.vcf");
     run(&spec, &input, &out2, 1);
-    assert!(!read(&out2).contains("##INFO="), "remove-meta drops the lines");
+    assert!(
+        !read(&out2).contains("##INFO="),
+        "remove-meta drops the lines"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -289,7 +303,11 @@ fn write_index_produces_a_sidecar() {
     let mut csi = out.as_os_str().to_os_string();
     csi.push(".csi");
     let csi = PathBuf::from(csi);
-    assert!(csi.is_file(), "the index must be written: {}", csi.display());
+    assert!(
+        csi.is_file(),
+        "the index must be written: {}",
+        csi.display()
+    );
     assert!(
         std::fs::metadata(&csi).expect("invariant: stat").len() > 0,
         "the index must not be empty"
@@ -391,7 +409,12 @@ fn dedup_batches_keep_order_index_and_bytes() {
     );
     for i in 0..80_000_u64 {
         use std::fmt::Write as _;
-        let _ = writeln!(text, "chr1\t{}\trs{}\tA\tG\t50\t.\t.\tGT\t0/1", i + 1, i % 7);
+        let _ = writeln!(
+            text,
+            "chr1\t{}\trs{}\tA\tG\t50\t.\t.\tGT\t0/1",
+            i + 1,
+            i % 7
+        );
     }
     write(&input, &text);
 
@@ -417,7 +440,11 @@ fn dedup_batches_keep_order_index_and_bytes() {
         outputs.push(out);
     }
     let body = inflate(&outputs[0]);
-    assert!(body.len() > 2 << 20, "several batches: {} bytes", body.len());
+    assert!(
+        body.len() > 2 << 20,
+        "several batches: {} bytes",
+        body.len()
+    );
     assert_eq!(
         std::fs::read(&outputs[0]).expect("invariant: read"),
         std::fs::read(&outputs[1]).expect("invariant: read"),
@@ -451,9 +478,7 @@ fn dedup_batches_keep_order_index_and_bytes() {
     // (The helper walks the index's bins, whose order is the map's, not
     // the file's — the record order itself is what the suffix loop above
     // asserts.)
-    let pos = |l: &String| -> u64 {
-        l.split('\t').nth(1).expect("POS").parse().expect("POS")
-    };
+    let pos = |l: &String| -> u64 { l.split('\t').nth(1).expect("POS").parse().expect("POS") };
     let mut got = query(&sidecar(&outputs[0]), &outputs[0], "chr1");
     let mut want: Vec<String> = lines.iter().map(|l| (*l).to_owned()).collect();
     got.sort_by_key(&pos);
@@ -638,7 +663,10 @@ fn contig_less_input_is_accepted_without_an_index() {
     // The replacement header declares c1, so the index is buildable here;
     // the run must succeed and the sidecar must exist.
     run_rename(Some(&input), &spec, &io, &budget(2)).expect("invariant: index run");
-    assert!(out.with_extension("vcf.csi").exists(), "the sidecar is written");
+    assert!(
+        out.with_extension("vcf.csi").exists(),
+        "the sidecar is written"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 

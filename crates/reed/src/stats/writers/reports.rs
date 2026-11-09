@@ -66,11 +66,12 @@ pub struct StatsReportRequest {
     /// `--force-samples`: population-file rows naming samples absent from the
     /// header are skipped with a warning instead of failing.
     pub force_samples: bool,
-    /// Streamed targets (`-t/-T`, `^` = exclude): the region predicate gates
-    /// every record (doc_v4 01 F4-10: report mode used to reject them).
-    pub targets: Vec<reed_filter::spec::region::RegionTriple>,
-    /// See [`Self::targets`].
-    pub targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
+    /// The record-level site selection (`-r/-R`, `-t/-T`, `--sites-file`),
+    /// three families that **AND** (doc_v27 V27-14/V27-15). Report mode used
+    /// to take only the streamed target pair, which is why `--sites-file`
+    /// never reached it (doc_v7 D7-6) and why `-r` could not be combined
+    /// with `-t` the way `reed filter` combines them.
+    pub select: reed_filter::spec::region::SiteSelector,
     /// Output prefix (`-o PREFIX`).
     pub prefix: PathBuf,
 }
@@ -114,8 +115,8 @@ pub fn validate_report_tags(
     request: &StatsReportRequest,
     tags: &reed_core::tag_table::TagTable,
 ) -> Result<(), crate::error::Error> {
-    use reed_core::tag_table::TagType;
     use crate::error::Error;
+    use reed_core::tag_table::TagType;
     let text = |ty: TagType| format!("{ty:?}");
     let needs_depth = request.depth || request.summary;
     let hist_dp = request
@@ -299,9 +300,9 @@ struct ReportJob {
     /// file) and the group names in first-appearance order (empty = no
     /// `--pop`).
     groups: Option<(Vec<Option<u32>>, Vec<String>)>,
-    /// Streamed target predicate (`-t/-T`).
-    targets: Vec<reed_filter::spec::region::RegionTriple>,
-    targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
+    /// The record-level site selection (`-r/-R` ∧ `-t/-T` ∧
+    /// `--sites-file`, doc_v27 V27-14/V27-15).
+    select: reed_filter::spec::region::SiteSelector,
 }
 
 /// Reused per-worker buffers.
@@ -339,9 +340,7 @@ impl ReportScratch {
         // The QC accumulator's DP sections and `--hist dp` both read the
         // depth column: FMT/DP, or the AD sum when the record has no DP key
         // (bcftools `calc_sample_depth`).
-        let needs_dp = depth
-            || summary
-            || hist.is_some_and(|m| m.iter().any(HistMetric::needs_dp));
+        let needs_dp = depth || summary || hist.is_some_and(|m| m.iter().any(HistMetric::needs_dp));
         Self {
             // DP is decoded for `--depth`, `--summary` (whose DP sections
             // read the genotype depth) and `--hist dp`; the QC accumulator
@@ -483,16 +482,10 @@ impl ReportJob {
         };
         let site = SiteView::parse(&lr).map_err(EngineError::from)?;
         let pos1 = site.pos1;
-        // Streamed targets gate every record before any accumulator (the
-        // same predicate the windowed path applies).
-        if (!self.targets.is_empty() || !self.targets_exclude.is_empty())
-            && !reed_filter::spec::region::region_allows(
-                &self.targets,
-                &self.targets_exclude,
-                site.contig_name,
-                pos1,
-            )
-        {
+        // The site selection gates every record before any accumulator (the
+        // same predicate the windowed path applies); `-r/-R`, `-t/-T` and
+        // `--sites-file` intersect (doc_v27 V27-14/V27-15).
+        if !self.select.is_empty() && !self.select.allows(site.contig_name, pos1) {
             return Ok(());
         }
         // The scanner adds its policy triggers; reset the per-record slot.
@@ -633,12 +626,7 @@ impl ReportJob {
     /// of 2 with a homozygous carrier. With `--pop` a sixth column carries
     /// the carrier's population (`.` for a sample outside every group);
     /// counting still runs over the whole cohort (doc_v14 02 §2.2).
-    fn render_singletons(
-        &self,
-        lr: &LineRef<'_>,
-        out: &ScanOutput<'_>,
-        buf: &mut Vec<u8>,
-    ) {
+    fn render_singletons(&self, lr: &LineRef<'_>, out: &ScanOutput<'_>, buf: &mut Vec<u8>) {
         let Some(alleles) = out.alleles else {
             return;
         };
@@ -776,17 +764,17 @@ impl ReportJob {
             // key the record's FORMAT lacks is one missing observation per
             // sample (the opportunity count), not one per record.
             let Some(key) = key_index(&mut fmt_keys, tag_bytes) else {
-                bump_missing_n(
-                    acc,
-                    idx,
-                    u64::try_from(self.n_samples).unwrap_or(u64::MAX),
-                );
+                bump_missing_n(acc, idx, u64::try_from(self.n_samples).unwrap_or(u64::MAX));
                 continue;
             };
             // The scanner accepts trailing empty columns (doc_v22 V22-5);
             // they are not samples, so never count them as missing
             // observations (V22-R4).
-            for sample in lr.samples_text().split(|&b| b == b'\t').take(self.n_samples) {
+            for sample in lr
+                .samples_text()
+                .split(|&b| b == b'\t')
+                .take(self.n_samples)
+            {
                 let token = sample.split(|&b| b == b':').nth(key).unwrap_or(b".");
                 // A Number=A/G/R subfield carries several comma-separated
                 // values; each is one observation (the INFO path's rule).
@@ -806,7 +794,8 @@ impl ReportJob {
                         crate::stats::writers::histogram::HistKind::Float => {
                             match parse_float_token(value) {
                                 Some(v) => {
-                                    if let Some(f) = acc.float.get_mut(idx).and_then(Option::as_mut) {
+                                    if let Some(f) = acc.float.get_mut(idx).and_then(Option::as_mut)
+                                    {
                                         f.push(Some(v));
                                     }
                                 }
@@ -1092,7 +1081,6 @@ impl AtomicSink {
         ));
         self.atomic.commit()
     }
-
 }
 
 impl OrderedSink<ReportPartial> for ReportSink {
@@ -1296,11 +1284,7 @@ fn bump_missing(acc: &mut crate::stats::writers::histogram::HistAcc, idx: usize)
 }
 
 /// Counts `n` unreadable observations for the metric at `idx`.
-fn bump_missing_n(
-    acc: &mut crate::stats::writers::histogram::HistAcc,
-    idx: usize,
-    n: u64,
-) {
+fn bump_missing_n(acc: &mut crate::stats::writers::histogram::HistAcc, idx: usize, n: u64) {
     if let Some(m) = acc.missing.get_mut(idx) {
         *m += n;
     }
@@ -1407,8 +1391,12 @@ pub fn run_stats_opened(
     // be all headers.
     let groups = match &request.populations {
         Some(populations) => {
-            let (slots, names) =
-                resolve_groups(populations, request.force_samples, &opened.facts.sample_names, None)?;
+            let (slots, names) = resolve_groups(
+                populations,
+                request.force_samples,
+                &opened.facts.sample_names,
+                None,
+            )?;
             if names.is_empty() {
                 return Err(crate::error::Error::usage(
                     "the populations file assigns no sample from the header",
@@ -1429,8 +1417,7 @@ pub fn run_stats_opened(
         // The one stats decode policy (doc_v25 V25-07): the report job used
         // to hand-copy it, so a policy change had to touch two files.
         policies: crate::stats::run::stats_policies(),
-        targets: request.targets.clone(),
-        targets_exclude: request.targets_exclude.clone(),
+        select: request.select.clone(),
     };
     let mut afreq = request
         .freq
@@ -1447,13 +1434,11 @@ pub fn run_stats_opened(
         // With `--pop` the vcftools five columns gain the POP column
         // (doc_v14 02 §2.2: `.` for a carrier outside every group).
         if n_groups > 0 {
-            writeln!(
-                w,
-                "CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV\tPOP"
-            )
-            .map_err(EngineError::Io)?;
+            writeln!(w, "CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV\tPOP")
+                .map_err(EngineError::Io)?;
         } else {
-            writeln!(w, "CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV").map_err(EngineError::Io)?;
+            writeln!(w, "CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV")
+                .map_err(EngineError::Io)?;
         }
     }
     let mut hardy = request

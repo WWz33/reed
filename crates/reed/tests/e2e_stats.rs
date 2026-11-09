@@ -3,9 +3,10 @@
 //! (§8.5) and the window/contig/genome levels (§8.7).
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::Write;
 
-use reed::{Levels, Populations, PopgenRequest, assign_groups, default_kinds, run_popgen};
+use reed::{Levels, PopgenRequest, Populations, assign_groups, default_kinds, run_popgen};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_stats::fst::FstKind;
 use reed_stats::request::StatKind;
@@ -162,9 +163,9 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
          sfs.unfolded.0\ttheta_w.total.0\ttheta_w.bp.0\ttajima_d.0\n",
     );
     // Window [1,100]: π = 1/2; π_bp = (1 + 0)/100; dxy = 4/8; Hudson = 0/1;
-    // SFS alt=1 once; θ (layout: per-site n) = (1/a(2) + 0/a(2))/2 sites = 0.5,
-    // per bp 0.005; n = 2 gives Tajima variance 0 → '.'.
-    expected.push_str("chr1\t1\t100\t0.5\t0.01\t0.5\t0\t1\t0.5\t0.005\t.\n");
+    // SFS alt=1 once; θ_raw=1/a(2)=1, θ per bp = raw/L = 0.01;
+    // n = 2 gives Tajima variance 0 → '.' (V27-38).
+    expected.push_str("chr1\t1\t100\t0.5\t0.01\t0.5\t0\t1\t1\t0.01\t.\n");
     // Window [101,200]: no sites — undefined statistics stay '.', the SFS
     // bins are all zero.
     expected.push_str("chr1\t101\t200\t.\t.\t.\t.\t0\t.\t.\t.\n");
@@ -198,6 +199,62 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
         assert_eq!(report.n_records, 3);
         assert_eq!(report.n_multiallelic_skipped, 1);
     }
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
+}
+
+#[test]
+fn variant_only_wide_table_preserves_pair_bp_and_theta_units() {
+    let text = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
+";
+    let path = write_fixture("variant-wide", text);
+    let mut request = request(
+        vec![
+            StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            },
+            StatKind::Pi {
+                group: 0,
+                per_bp: true,
+            },
+            StatKind::ThetaW {
+                group: 0,
+                per_bp: false,
+            },
+            StatKind::ThetaW {
+                group: 0,
+                per_bp: true,
+            },
+        ],
+        Levels::default(),
+        false,
+    );
+    request.layout = Some(reed::WindowLayoutOptions {
+        invariant: reed::InvariantMode::VariantOnly,
+    });
+    request.compact_window_accumulators = true;
+    let report = run_popgen(
+        Some(path.as_path()),
+        &request,
+        &ThreadBudget {
+            threads: 1,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
+    )
+    .expect("invariant: variant-only wide run");
+    let text = reed::windows::render_tsv(&report.windows, &request.kinds, true);
+    assert!(
+        text.contains("\t0.01\t0.01\t1\t0.01\n"),
+        "{text}\nkind={:?} outputs={:?} accs={:?}",
+        request.kinds,
+        report.windows[0].outputs,
+        report.windows[0].accs,
+    );
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
 
@@ -262,15 +319,15 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     // Contig totals by hand: π diffs 1 over comps 1+1+1 = 3 (each site
     // has n = 2 chromosomes → one comparable pair);
     // dxy 8/12; Hudson num 1 over den 2; SFS [1]; θ (pixy) = raw 1 over the
-    // 3 sites with calls = 1/3; per-bp divides by the 300 bp span.
+    // θ_raw = 1 (the bare table's total column), avg = raw/3; per-bp = raw/L.
     let contig = &got[3];
     assert_cell(contig, 3, Some(1.0 / 3.0), "contig π");
     assert_cell(contig, 4, Some(1.0 / 300.0), "contig π_bp");
     assert_cell(contig, 5, Some(2.0 / 3.0), "contig dxy");
     assert_cell(contig, 6, Some(0.5), "contig Hudson");
     assert_eq!(contig[7], "1", "contig SFS");
-    assert_cell(contig, 8, Some(1.0 / 3.0), "contig θ");
-    assert_cell(contig, 9, Some(1.0 / 900.0), "contig θ_bp");
+    assert_cell(contig, 8, Some(1.0), "contig θ_raw");
+    assert_cell(contig, 9, Some(1.0 / 300.0), "contig θ_bp");
     // The genome row's values equal the contig row's (one contig in the
     // fixture); the label/span columns differ by construction.
     for (a, b) in got[3][3..].iter().zip(&got[4][3..]) {
@@ -617,14 +674,15 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
             contig: false,
             genome: false,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: false,
         contig_lengths: std::collections::HashMap::new(),
         layout: Some(reed::WindowLayoutOptions {
             invariant: reed::InvariantMode::Bypass,
         }),
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         force_samples: false,
@@ -718,12 +776,11 @@ fn malformed_record_under_site_filter_is_fatal() {
     let _ = std::fs::remove_dir_all(path.parent().expect("temp dir"));
 }
 
-/// doc_v15 D15-20: a skipped multiallelic record trailing the last counted
-/// site still advances the window walk — the trailing windows must be
-/// emitted, and the window rows must sum to the contig row exactly. The
-/// skipped site is "present but not comparable" (doc_v7 D7-11): the window
-/// holding it contributes 98 absent positions x 6 + 1 real site x 6, not
-/// 100 x 6.
+/// doc_v15 D15-20 / doc_v27 V27-39: the trailing windows are still emitted
+/// after a filtered multiallelic record. D7-11's skipped-present mechanism
+/// is gone: the record does not enter |S| or the contig span, so the
+/// trailing 100-bp window has 99 absent positions and the contig has 500.
+/// The old test's 594 and 2994 denominators are updated accordingly.
 #[test]
 fn trailing_skipped_site_advances_the_windows() {
     let text = "\
@@ -762,14 +819,15 @@ chr1\t500\t.\tA\tT,G\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/1
             contig: true,
             genome: true,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: false,
         contig_lengths: HashMap::new(),
         layout: Some(reed::WindowLayoutOptions {
             invariant: reed::InvariantMode::VariantOnly,
         }),
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         force_samples: false,
@@ -810,15 +868,22 @@ chr1\t500\t.\tA\tT,G\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/1
     assert_eq!(sum_sites, contig.0, "scored sites");
     assert_eq!(sum_diffs, contig.1, "differences");
 
-    // The trailing window: 3 diffs over 98 absent x 6 + 1 real site x 6.
+    // The trailing window: 3 diffs over 99 absent x 6 + 1 real site x 6.
+    // The filtered multiallelic site is no longer a second occupied site,
+    // so the denominator is 600 (not D7-11's 594).
     let (_, _, _, last_diffs, last_avg) = *windows.last().expect("trailing window");
     assert_eq!(last_diffs, 3);
     let last_avg = last_avg.expect("trailing avg");
-    assert!((last_avg - 3.0 / 594.0).abs() < 1e-12, "{last_avg}");
-    // Contig: 13 diffs over (4 present + 496 absent) x 6 = 2994.
+    assert!((last_avg - 3.0 / 600.0).abs() < 1e-12, "{last_avg}");
+    // Contig: the filtered multiallelic record no longer contributes to
+    // |S| or to the span, so 13 diffs over 500 x 6 = 3000.
     let contig_avg = contig.3.expect("contig avg");
-    assert!((contig_avg - 13.0 / 2994.0).abs() < 1e-12, "{contig_avg}");
-    assert_eq!(genome_avg, Some(contig_avg), "single contig: genome == contig");
+    assert!((contig_avg - 13.0 / 3000.0).abs() < 1e-12, "{contig_avg}");
+    assert_eq!(
+        genome_avg,
+        Some(contig_avg),
+        "single contig: genome == contig"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -856,12 +921,13 @@ fn multiple_pbs_triples_get_their_own_files() {
             contig: false,
             genome: false,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: false,
         contig_lengths: HashMap::new(),
         layout: Some(layout),
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         force_samples: false,
@@ -892,10 +958,10 @@ fn multiple_pbs_triples_get_their_own_files() {
         base.contains(&"multi_pbs.pop2-pop1-pop3.txt".to_string()),
         "{base:?}"
     );
-    let first = std::fs::read_to_string(dir.join("multi_pbs.pop1-pop2-pop3.txt"))
-        .expect("invariant: read");
-    let second = std::fs::read_to_string(dir.join("multi_pbs.pop2-pop1-pop3.txt"))
-        .expect("invariant: read");
+    let first =
+        std::fs::read_to_string(dir.join("multi_pbs.pop1-pop2-pop3.txt")).expect("invariant: read");
+    let second =
+        std::fs::read_to_string(dir.join("multi_pbs.pop2-pop1-pop3.txt")).expect("invariant: read");
     assert!(
         first.starts_with("pop1\tpop2\tpop3\tchromosome\t"),
         "{first}"
@@ -914,7 +980,11 @@ fn multiple_pbs_triples_get_their_own_files() {
             .map(|l| l.split('\t').skip(3).collect::<Vec<_>>().join("\t"))
             .collect()
     };
-    assert_ne!(values(&first), values(&second), "different triples, different values");
+    assert_ne!(
+        values(&first),
+        values(&second),
+        "different triples, different values"
+    );
 
     // One triple: the documented single-file name, unchanged layout.
     let single = dir.join("single");
@@ -932,9 +1002,277 @@ fn multiple_pbs_triples_get_their_own_files() {
         "a single triple must not get a per-triple file: {base:?}"
     );
     let text = std::fs::read_to_string(dir.join("single_pbs.txt")).expect("invariant: read");
-    assert!(
-        text.starts_with("pop1\tpop2\tpop3\tchromosome\t"),
-        "{text}"
-    );
+    assert!(text.starts_with("pop1\tpop2\tpop3\tchromosome\t"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-11: contig/genome variant-only denominators come from the
+/// declared contig length, not from the trailing span implied by `--step`.
+/// The public `bp` span is deliberately unchanged.
+#[test]
+fn contig_and_genome_variant_only_denominators_do_not_follow_step() {
+    let text = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+";
+    let path = write_fixture("denom-step.vcf.gz", text);
+    let pops = std::env::temp_dir().join(format!("reed-denom-pops-{}", std::process::id()));
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let run = |step: u64| {
+        let req = PopgenRequest {
+            kinds: vec![StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            populations: reed::Populations::File(pops.clone()),
+            grid: reed::WindowGrid::Bp { size: 100, step },
+            levels: reed::Levels {
+                window: true,
+                contig: true,
+                genome: true,
+            },
+            window_output: None,
+            compact_window_accumulators: false,
+            skip_empty: false,
+            layout: Some(reed::WindowLayoutOptions {
+                invariant: reed::InvariantMode::VariantOnly,
+            }),
+            ..PopgenRequest::default()
+        };
+        let report = run_popgen(
+            Some(&path),
+            &req,
+            &ThreadBudget {
+                threads: 2,
+                mem: MemBudget::from_bytes(u64::MAX),
+            },
+        )
+        .expect("invariant: run");
+        let contig = report
+            .windows
+            .iter()
+            .rev()
+            .find(|row| row.contig == "chr1")
+            .expect("contig row");
+        let genome = report
+            .windows
+            .iter()
+            .find(|row| row.contig == "genome")
+            .expect("genome row");
+        let reed_stats::StatAcc::Pi(contig_pi) = &contig.accs[0] else {
+            panic!("pi acc")
+        };
+        let reed_stats::StatAcc::Pi(genome_pi) = &genome.accs[0] else {
+            panic!("pi acc")
+        };
+        (
+            contig_pi.value_variant_only(contig.denom_bp),
+            genome_pi.value_variant_only(genome.denom_bp),
+            contig.bp,
+            contig.denom_bp,
+            genome.denom_bp,
+        )
+    };
+    let small = run(100);
+    let large = run(1_000_000);
+    assert_eq!(small.0, large.0, "contig π must not depend on step");
+    assert_eq!(small.1, large.1, "genome π must not depend on step");
+    assert_eq!(
+        small.2, 200,
+        "small-step contig span follows emitted windows"
+    );
+    assert_eq!(small.3, 1000);
+    assert_eq!(small.4, 1000);
+    assert_eq!(
+        large.2, 100,
+        "large-step span stays at the emitted frontier"
+    );
+    assert_eq!(
+        large.3, 1000,
+        "large-step denominator remains declared length"
+    );
+    assert_eq!(large.4, 1000);
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir"));
+    let _ = std::fs::remove_file(pops);
+}
+
+/// doc_v27 V27-11: a BED-limited contig/genome denominator is the union of
+/// the requested intervals (clipped to the contig length), not the full
+/// contig. Overlapping BED rows are not double-counted.
+#[test]
+fn bed_contig_and_genome_denominators_use_the_clipped_region_union() {
+    let text = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t120\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+";
+    let path = write_fixture("bed-denom.vcf.gz", text);
+    let dir = std::env::temp_dir().join(format!("reed-bed-denom-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let pops = dir.join("pops.tsv");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let bed = dir.join("windows.bed");
+    std::fs::write(&bed, "chr1\t0\t100\nchr1\t50\t150\n").expect("invariant: bed");
+    let grid = reed::WindowGrid::Regions(std::sync::Arc::new(
+        reed::ContigRegions::new([(
+            b"chr1".to_vec(),
+            vec![
+                reed_core::coord::Interval0::new(
+                    reed_core::coord::Pos0(0),
+                    reed_core::coord::Pos0(100),
+                ),
+                reed_core::coord::Interval0::new(
+                    reed_core::coord::Pos0(50),
+                    reed_core::coord::Pos0(150),
+                ),
+            ],
+        )])
+        .expect("invariant: regions"),
+    ));
+    let request = PopgenRequest {
+        kinds: vec![StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        }],
+        populations: reed::Populations::File(pops),
+        grid,
+        levels: reed::Levels {
+            window: true,
+            contig: true,
+            genome: true,
+        },
+        layout: Some(reed::WindowLayoutOptions {
+            invariant: reed::InvariantMode::VariantOnly,
+        }),
+        ..PopgenRequest::default()
+    };
+    let report = run_popgen(
+        Some(&path),
+        &request,
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
+    )
+    .expect("invariant: run");
+    let contig = report
+        .windows
+        .iter()
+        .rev()
+        .find(|row| row.contig == "chr1")
+        .expect("contig row");
+    let genome = report
+        .windows
+        .iter()
+        .find(|row| row.contig == "genome")
+        .expect("genome row");
+    assert_eq!(contig.denom_bp, 150, "BED union, not the full 1000 bp");
+    assert_eq!(genome.denom_bp, 150);
+    let reed_stats::StatAcc::Pi(pi) = &contig.accs[0] else {
+        panic!("pi acc")
+    };
+    let expected = pi.value_variant_only(150);
+    assert_eq!(pi.value_variant_only(contig.denom_bp), expected);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir"));
+}
+
+/// doc_v27 V27-19: BED accumulators are shared by a worker across chunks,
+/// not rebuilt per chunk. This fixture is large enough to cross the 1 MiB
+/// input chunk target; every row and the contig/genome totals must remain
+/// identical to the sequential run.
+#[test]
+fn bed_accumulators_merge_once_across_chunks_and_workers() {
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=40000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+    );
+    let mut state = 27_u64;
+    for pos in 1..=40_000_u64 {
+        let mut id = String::with_capacity(36);
+        for _ in 0..36 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            id.push(
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+                    [(state % 62) as usize] as char,
+            );
+        }
+        writeln!(
+            text,
+            "chr1\t{pos}\t{id}\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t0/1"
+        )
+        .expect("invariant: write to String");
+    }
+    let path = write_fixture("bed-shared.vcf.gz", &text);
+    let dir = std::env::temp_dir().join(format!("reed-bed-shared-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let pops = dir.join("pops.tsv");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let grid = reed::WindowGrid::Regions(std::sync::Arc::new(
+        reed::ContigRegions::new([(
+            b"chr1".to_vec(),
+            (0..100_u64)
+                .map(|i| {
+                    reed_core::coord::Interval0::new(
+                        reed_core::coord::Pos0(i * 400),
+                        reed_core::coord::Pos0((i + 1) * 400),
+                    )
+                })
+                .collect(),
+        )])
+        .expect("invariant: regions"),
+    ));
+    let run = |threads| {
+        let request = PopgenRequest {
+            kinds: vec![StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            populations: reed::Populations::File(pops.clone()),
+            grid: grid.clone(),
+            levels: reed::Levels {
+                window: true,
+                contig: true,
+                genome: true,
+            },
+            layout: Some(reed::WindowLayoutOptions {
+                invariant: reed::InvariantMode::VariantOnly,
+            }),
+            ..PopgenRequest::default()
+        };
+        run_popgen(
+            Some(&path),
+            &request,
+            &ThreadBudget {
+                threads,
+                mem: MemBudget::from_bytes(u64::MAX),
+            },
+        )
+        .expect("invariant: run")
+    };
+    let serial = run(1);
+    let parallel = run(8);
+    assert_eq!(serial.windows.len(), parallel.windows.len());
+    for (a, b) in serial.windows.iter().zip(&parallel.windows) {
+        assert_eq!((&a.contig, a.start1, a.end), (&b.contig, b.start1, b.end));
+        let kind = StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        };
+        assert_eq!(a.accs[0].value(&kind, a.bp), b.accs[0].value(&kind, b.bp));
+        assert_eq!(a.accs[0].pair_counts(), b.accs[0].pair_counts());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir"));
 }

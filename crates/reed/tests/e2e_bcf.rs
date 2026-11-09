@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use reed::{FilterOptions, run_filter};
-use reed::{Levels, Populations, PopgenRequest, WindowLayoutOptions, run_popgen};
+use reed::{Levels, PopgenRequest, Populations, WindowLayoutOptions, run_popgen};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_filter::spec::FilterSpec;
 
@@ -140,8 +140,7 @@ fn reports_are_identical_across_formats() {
         singletons: false,
         populations: None,
         force_samples: false,
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         prefix: prefix.to_path_buf(),
     };
     reed::reports::run_stats(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
@@ -790,17 +789,29 @@ fn m1_genotype_matrix_is_format_independent() {
     let vcf = fixture("fix.vcf.gz");
     let bcf = fixture("fix.bcf");
     let budget = budget();
-    let (from_vcf, ids_vcf) =
-        reed::read_genotype_matrix(reed::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"), None, &budget, reed::MatrixUse::Plain)
-            .expect("VCF input");
-    let (from_bcf, ids_bcf) =
-        reed::read_genotype_matrix(reed::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"), None, &budget, reed::MatrixUse::Plain)
-            .expect("BCF input must parse like VCF (doc_v21 M1)");
+    let (from_vcf, ids_vcf) = reed::read_genotype_matrix(
+        reed::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"),
+        None,
+        &budget,
+        reed::MatrixUse::Plain,
+    )
+    .expect("VCF input");
+    let (from_bcf, ids_bcf) = reed::read_genotype_matrix(
+        reed::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"),
+        None,
+        &budget,
+        reed::MatrixUse::Plain,
+    )
+    .expect("BCF input must parse like VCF (doc_v21 M1)");
     assert_eq!(ids_vcf, ids_bcf);
     assert_eq!(from_vcf.rows, from_bcf.rows);
     assert_eq!(from_vcf.cols, from_bcf.cols);
     let bits = |m: &reed::Mat| -> Vec<u64> { m.data.iter().map(|v| v.to_bits()).collect() };
-    assert_eq!(bits(&from_vcf), bits(&from_bcf), "dosages must match bit for bit");
+    assert_eq!(
+        bits(&from_vcf),
+        bits(&from_bcf),
+        "dosages must match bit for bit"
+    );
 }
 
 /// The native BCF path reads the same depth column as the text scanner: a

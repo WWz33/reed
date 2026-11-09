@@ -296,24 +296,23 @@ pub(crate) fn spec_from_flags(cli: &FilterCli) -> Result<reed::spec::FilterSpec,
     // `-t A -t ^B` on one line and applies both. Across families they AND,
     // which is the bcftools intersection: `-r chr2 -t chr1:10` selects
     // nothing, `-r chr1,chr2 -t chr2:10` selects chr2 only.
-    let mut add_regions =
-        |tokens: Vec<String>, family: RegionFamily| -> Result<(), String> {
-            for raw in tokens {
-                let (token, include) = match raw.strip_prefix('^') {
-                    Some(rest) => (rest, false),
-                    None => (raw.as_str(), true),
-                };
-                // Syntax/contig validation happens in the engine, where the
-                // header's contig vocabulary is available: `HLA-A*01:01` is a
-                // whole contig, not `HLA-A*01` position 1 (doc_v24 V24-04).
-                match (family, include) {
-                    (RegionFamily::Indexed, _) => spec.targets.indexed.push(token.to_string()),
-                    (RegionFamily::Target, true) => spec.targets.include.push(token.to_string()),
-                    (RegionFamily::Target, false) => spec.targets.exclude.push(token.to_string()),
-                }
+    let mut add_regions = |tokens: Vec<String>, family: RegionFamily| -> Result<(), String> {
+        for raw in tokens {
+            let (token, include) = match raw.strip_prefix('^') {
+                Some(rest) => (rest, false),
+                None => (raw.as_str(), true),
+            };
+            // Syntax/contig validation happens in the engine, where the
+            // header's contig vocabulary is available: `HLA-A*01:01` is a
+            // whole contig, not `HLA-A*01` position 1 (doc_v24 V24-04).
+            match (family, include) {
+                (RegionFamily::Indexed, _) => spec.targets.indexed.push(token.to_string()),
+                (RegionFamily::Target, true) => spec.targets.include.push(token.to_string()),
+                (RegionFamily::Target, false) => spec.targets.exclude.push(token.to_string()),
             }
-            Ok(())
-        };
+        }
+        Ok(())
+    };
     for (values, from_file, family) in [
         (&cli.regions_args.regions, false, RegionFamily::Indexed),
         (&cli.regions_args.regions_file, true, RegionFamily::Indexed),
@@ -389,7 +388,11 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     // extension is only inferred when -O is absent).
     let mut output_bcf = None;
     let (output, compress_level, output_compressed) = match output_type.as_deref() {
-        None => (out.as_deref().and_then(crate::units::output_path), *compress_level, None),
+        None => (
+            out.as_deref().and_then(crate::units::output_path),
+            *compress_level,
+            None,
+        ),
         Some(spec) => {
             // One `-O` parser for every subcommand (doc_v25 V25-06): the
             // letter/level grammar and its 1-9 domain live in `params`.
@@ -438,7 +441,9 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
             None => match output_compressed {
                 Some(compressed) => compressed,
                 None => matches!(
-                    std::path::Path::new(path).extension().and_then(|e| e.to_str()),
+                    std::path::Path::new(path)
+                        .extension()
+                        .and_then(|e| e.to_str()),
                     Some("gz") | Some("bgz")
                 ),
             },

@@ -18,8 +18,8 @@ use reed_core::linalg::Mat;
 // Standardization and the GRM now live in `reed-distance` (doc_v17): the
 // distance matrices and PCA must share one implementation or their numbers
 // diverge. These are re-exports so the v16 API keeps working.
-pub use reed_distance::standard::{standardize, standardize_binom2, Stand, Standardized};
 pub use reed_distance::grm::{Grm, MissingPolicy};
+pub use reed_distance::standard::{standardize, standardize_binom2, Stand, Standardized};
 
 /// Result of a PCA run.
 #[derive(Clone, Debug)]
@@ -86,7 +86,12 @@ fn pack(eig: crate::backend::SymEigResult, k: Option<usize>) -> Pca {
         .iter()
         .map(|v| if total != 0.0 { v / total } else { 0.0 })
         .collect();
-    Pca { values, vectors, pve, all_values: eig.values }
+    Pca {
+        values,
+        vectors,
+        pve,
+        all_values: eig.values,
+    }
 }
 
 /// Dense PCA: build the GRM and do a full symmetric eigendecomposition.
@@ -121,12 +126,7 @@ pub fn pca_dense_with(x: &Mat, k: usize, stand: Stand) -> Pca {
 ///
 /// The GRM GEMM and the eigensolver both take `par`; `reed pca` passes the
 /// run's `--threads` budget so the solve cannot fan out past it.
-pub fn pca_dense_with_par(
-    x: &Mat,
-    k: usize,
-    stand: Stand,
-    par: crate::backend::Parallel,
-) -> Pca {
+pub fn pca_dense_with_par(x: &Mat, k: usize, stand: Stand, par: crate::backend::Parallel) -> Pca {
     let st = standardize(x, stand);
     let grm = mean_impute_grm_par(&st.w, par);
     pack(sym_eig(&grm, par), Some(k))
@@ -152,12 +152,7 @@ pub fn pca_top_k_with(x: &Mat, k: usize, stand: Stand) -> Pca {
 }
 
 /// [`pca_top_k_with`] with an explicit parallelism bound (doc_v26 V26-21).
-pub fn pca_top_k_with_par(
-    x: &Mat,
-    k: usize,
-    stand: Stand,
-    par: crate::backend::Parallel,
-) -> Pca {
+pub fn pca_top_k_with_par(x: &Mat, k: usize, stand: Stand, par: crate::backend::Parallel) -> Pca {
     let st = standardize(x, stand);
     let grm = mean_impute_grm_par(&st.w, par);
     let n = grm.rows;
@@ -167,7 +162,12 @@ pub fn pca_top_k_with_par(
         .iter()
         .map(|v| if total != 0.0 { v / total } else { 0.0 })
         .collect();
-    Pca { values, vectors, pve, all_values: Vec::new() }
+    Pca {
+        values,
+        vectors,
+        pve,
+        all_values: Vec::new(),
+    }
 }
 
 /// Dense PCA with the pairwise-complete missing-data policy.
@@ -215,8 +215,7 @@ mod tests {
     fn standardized_columns_are_centred() {
         let st = standardize_binom2(&toy());
         for j in 0..st.w.cols {
-            let mean: f64 = (0..st.w.rows).map(|i| st.w.get(i, j)).sum::<f64>()
-                / st.w.rows as f64;
+            let mean: f64 = (0..st.w.rows).map(|i| st.w.get(i, j)).sum::<f64>() / st.w.rows as f64;
             assert!(mean.abs() < 1e-12, "column {j} mean {mean}");
         }
     }
@@ -231,7 +230,11 @@ mod tests {
         // to at most 1 (exactly 1 only when k == n).
         let s: f64 = p.pve.iter().sum();
         assert!(s <= 1.0 + 1e-12 && s > 0.0, "pve sum {s}");
-        let s_all: f64 = p.all_values.iter().map(|v| v / p.all_values.iter().sum::<f64>()).sum();
+        let s_all: f64 = p
+            .all_values
+            .iter()
+            .map(|v| v / p.all_values.iter().sum::<f64>())
+            .sum();
         assert!((s_all - 1.0).abs() < 1e-9);
     }
 

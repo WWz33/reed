@@ -6,11 +6,11 @@
 //! verbatim; tolerances are 1e-12 unless noted.
 
 use reed_oracle::estimators::fst::{fst, FstEstimator};
-use reed_oracle::estimators::pi::{pi, PiEstimator};
 use reed_oracle::estimators::fstats::{d_stat, f2, f3, f4};
 use reed_oracle::estimators::hwe::{hardy_weinberg_p_value, heterozygosity, hwe_exact};
 use reed_oracle::estimators::ld::{ld_r2_pairs, ld_r2_summary};
 use reed_oracle::estimators::pbs::{pbs, PbsEstimator};
+use reed_oracle::estimators::pi::{pi, PiEstimator};
 use reed_oracle::estimators::spectrum::{sfs, tajima_d, watterson_theta};
 use reed_oracle::{Ascertainment, Bits, ContigId, PopulationView, SiteCompleteness, WindowBuffer};
 
@@ -205,8 +205,8 @@ fn f_statistics_match_hand_values() {
     assert_eq!(r.n_sites, 3);
 
     let r = f3(&w, &pops, 2, 0, 1).unwrap(); // f3(S2; S0, S1)
-    // Corrected Σ (allel patterson_f3 nansum = 0.5): site0 (S2 hom-alt)
-    // (1−0)(1−0.5) − 0 = 0.5; site1 (S2 het) 0.25 − 0.5/2 = 0; site2 → 0.
+                                             // Corrected Σ (allel patterson_f3 nansum = 0.5): site0 (S2 hom-alt)
+                                             // (1−0)(1−0.5) − 0 = 0.5; site1 (S2 het) 0.25 − 0.5/2 = 0; site2 → 0.
     assert_close(r.value(), 0.5);
 
     let r = f4(&w, &pops, 0, 1, 2, 3).unwrap();
@@ -295,7 +295,10 @@ fn sfs_theta_and_tajima_are_complete_case_per_site() {
     let unfolded = sfs(&w, &pops, 0, false).unwrap();
     assert_eq!(unfolded.n_chroms, 8);
     assert_eq!(unfolded.n_sites, 1, "only the complete site is counted");
-    assert_eq!(unfolded.n_skipped_missing, 2, "both partial sites are skipped");
+    assert_eq!(
+        unfolded.n_skipped_missing, 2,
+        "both partial sites are skipped"
+    );
     // ALT counts: site0 skipped, site1 = 1, site2 skipped.
     assert_eq!(unfolded.counts, vec![1, 0, 0, 0, 0, 0, 0]);
 
@@ -364,14 +367,7 @@ fn weir_cockerham_keeps_c_for_an_all_missing_group() {
         6,
         &[(
             0,
-            vec![
-                [0, 0],
-                [0, 1],
-                [1, 1],
-                [-1, -1],
-                [-1, -1],
-                [-1, -1],
-            ],
+            vec![[0, 0], [0, 1], [1, 1], [-1, -1], [-1, -1], [-1, -1]],
         )],
     );
     let pops = PopulationView::from_assignment(6, &[0, 0, 0, 1, 1, 1], 2).unwrap();

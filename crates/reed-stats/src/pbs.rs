@@ -116,7 +116,7 @@ impl PbsAcc {
             u64::from(y.n_ref_alleles) as f64 * u64::from(y.n_alt_alleles) as f64
                 / (n_y * (n_y - 1) / 2) as f64
         });
-        let between = (n_x >= 1 && n_y >= 1).then(|| {
+        let between = (n_x >= 2 && n_y >= 2).then(|| {
             (u64::from(x.n_ref_alleles) * u64::from(y.n_alt_alleles)
                 + u64::from(x.n_alt_alleles) * u64::from(y.n_ref_alleles)) as f64
                 / (n_x * n_y) as f64
@@ -133,7 +133,15 @@ impl PbsAcc {
     /// Absorbs one site: each of the three Hudson pairs decides on its own
     /// coverage (04-algorithms.md §1 retires the v0.2 three-way
     /// intersection; the pairs are independent, as in Yi et al. 2010).
+    /// Absorbs one site for callers that do not track site-wide
+    /// variant/invariant status (the legacy unit-test and matrix APIs).
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
+        self.push_with_variant(row, true);
+    }
+
+    /// Absorbs one site and counts it in `no_snps` only when it is variant
+    /// (the reference convention; doc_v27 V27-27).
+    pub fn push_with_variant(&mut self, row: &[SiteGroupCounts], all_variant: bool) {
         let (a, b, c) = (&row[self.group_a], &row[self.group_b], &row[self.group_c]);
         let n_a = u64::from(a.n_ref_alleles + a.n_alt_alleles);
         let n_b = u64::from(b.n_ref_alleles + b.n_alt_alleles);
@@ -144,7 +152,9 @@ impl PbsAcc {
         Self::push_pair(&mut self.pair_ab, a, b);
         Self::push_pair(&mut self.pair_ac, a, c);
         Self::push_pair(&mut self.pair_bc, b, c);
-        self.n_sites += 1;
+        if all_variant {
+            self.n_sites += 1;
+        }
         if n_a == 0 || n_b == 0 || n_c == 0 {
             self.n_skipped += 1;
         }
@@ -164,15 +174,15 @@ impl PbsAcc {
         let comps_c = n_c * n_c.saturating_sub(1) / 2;
         self.within_a.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(a.n_alt_alleles),
-comps_a,
+            comps_a,
         );
         self.within_b.add_partial(
             u64::from(b.n_ref_alleles) * u64::from(b.n_alt_alleles),
-comps_b,
+            comps_b,
         );
         self.within_c.add_partial(
             u64::from(c.n_ref_alleles) * u64::from(c.n_alt_alleles),
-comps_c,
+            comps_c,
         );
         let ab = n_a * n_b;
         let ac = n_a * n_c;
@@ -180,17 +190,17 @@ comps_c,
         self.between_ab.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles),
-ab,
+            ab,
         );
         self.between_ac.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(c.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(c.n_ref_alleles),
-ac,
+            ac,
         );
         self.between_bc.add_partial(
             u64::from(b.n_ref_alleles) * u64::from(c.n_alt_alleles)
                 + u64::from(b.n_alt_alleles) * u64::from(c.n_ref_alleles),
-bc,
+            bc,
         );
     }
 

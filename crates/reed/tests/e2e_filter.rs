@@ -905,7 +905,10 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tDP:GT:GQ\t30:0/1:99\t30:0/0
     run_filter(Some(&path), &FilterSpec::default(), &opts_bcf)
         .expect("the -Ob encoder must find GT after DP");
     assert!(
-        std::fs::metadata(&out_bcf).expect("invariant: bcf written").len() > 0,
+        std::fs::metadata(&out_bcf)
+            .expect("invariant: bcf written")
+            .len()
+            > 0,
         "the BCF output must not be empty"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -1595,7 +1598,10 @@ fn mask_masks_a_float_declared_format_field() {
         .lines()
         .find(|l| !l.starts_with('#'))
         .expect("invariant: record");
-    assert!(record.contains("./.:5"), "low Float GQ must mask s0: {record}");
+    assert!(
+        record.contains("./.:5"),
+        "low Float GQ must mask s0: {record}"
+    );
     assert!(record.contains("0/0:30"), "s1 keeps its genotype: {record}");
 }
 
@@ -1837,10 +1843,7 @@ fn sketch_budget_covers_the_sum_of_every_resident_contig() {
     // One contig's matrix is small; the sum of six is not. Pick a budget
     // between the two: the run must stop with MemBudgetExceeded instead of
     // admitting all six.
-    let mut opts = options(
-        Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
-        &out,
-    );
+    let mut opts = options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &out);
     // 4 samples × 40 sites × 4 words/site × 8 B ≈ 5 KiB per contig; 16 KiB
     // admits two or three, not six.
     opts.mem_bytes = Some(16 * 1024);
@@ -1973,13 +1976,12 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
         let mut outputs = Vec::new();
         for &(strategy_tag, strategy) in strategies {
             let out = dir.join(format!("{tag}-{strategy_tag}.vcf"));
-            run_filter(
-                Some(input.as_path()),
-                spec,
-                &options(Some(strategy), &out),
-            )
-            .unwrap_or_else(|e| panic!("{tag}/{strategy_tag}: {e}"));
-            outputs.push((strategy_tag, std::fs::read(&out).expect("invariant: output")));
+            run_filter(Some(input.as_path()), spec, &options(Some(strategy), &out))
+                .unwrap_or_else(|e| panic!("{tag}/{strategy_tag}: {e}"));
+            outputs.push((
+                strategy_tag,
+                std::fs::read(&out).expect("invariant: output"),
+            ));
         }
         for (strategy_tag, bytes) in &outputs[1..] {
             assert_eq!(
@@ -2089,8 +2091,7 @@ fn missing_dp_masks_in_the_expression_context_but_not_by_default_in_mask_if() {
         ..FilterSpec::default()
     };
     let mask_out = dir.join("mask.vcf");
-    run_filter(Some(&input), &mask_spec, &options(None, &mask_out))
-        .expect("invariant: mask run");
+    run_filter(Some(&input), &mask_spec, &options(None, &mask_out)).expect("invariant: mask run");
 
     let gts = |path: &std::path::Path| -> Vec<String> {
         let text = std::fs::read_to_string(path).expect("invariant: read");

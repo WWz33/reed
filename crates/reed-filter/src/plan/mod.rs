@@ -407,7 +407,6 @@ impl FilterPlan {
     }
 }
 
-
 /// bcftools parses `-q/-Q` with `sscanf("%f")` into a **float**, so its
 /// threshold is the f32 nearest the written value; at an exact boundary
 /// (e.g. AC=34, AN=680 against 0.05) that rounds up and drops the site.
@@ -647,7 +646,6 @@ mod stale_info_tests {
             "a real selection must recompute from the subset"
         );
     }
-
 }
 
 /// doc_v22 D22-1: the depth fallback is an explicit policy on the mask rule,
@@ -751,11 +749,7 @@ mod depth_policy_tests {
         };
         assert!(text.contains("DP"), "{text}");
         let plan = compile(&fmt_dp_expr(), &tags(true), "", true).expect("invariant: DP declared");
-        let dp: Vec<_> = plan
-            .int_fields
-            .iter()
-            .filter(|f| f.name == b"DP")
-            .collect();
+        let dp: Vec<_> = plan.int_fields.iter().filter(|f| f.name == b"DP").collect();
         assert_eq!(dp.len(), 1);
         assert_eq!(dp[0].fallback, None, "an expression is literal DP");
     }
@@ -766,11 +760,7 @@ mod depth_policy_tests {
         spec.genotype.set_gts = Some(".".into());
         spec.site_after_mask.include = vec!["FMT/DP>10".into()];
         let plan = compile(&spec, &tags(true), "", true).expect("invariant: compiles");
-        let dp: Vec<_> = plan
-            .int_fields
-            .iter()
-            .filter(|f| f.name == b"DP")
-            .collect();
+        let dp: Vec<_> = plan.int_fields.iter().filter(|f| f.name == b"DP").collect();
         assert_eq!(dp.len(), 2, "the mask and the expression must not share");
         assert!(dp.iter().any(|f| f.fallback.as_deref() == Some(b"AD")));
         assert!(dp.iter().any(|f| f.fallback.is_none()));
@@ -813,7 +803,11 @@ mod region_contig_tests {
                     .any(|(c, s, e)| c == "HLA-A*01:01" && s.is_none() && e.is_none());
             }
         }
-        assert!(seen, "the whole HLA contig must be one region: {:?}", plan.head);
+        assert!(
+            seen,
+            "the whole HLA contig must be one region: {:?}",
+            plan.head
+        );
     }
 
     /// The same text with an explicit interval; without the vocabulary it
@@ -922,8 +916,8 @@ mod routing_tests {
             },
             ..FilterSpec::default()
         };
-        let err = compile(&spec, &tags(), "", false)
-            .expect_err("an INFO-only read belongs in [site]");
+        let err =
+            compile(&spec, &tags(), "", false).expect_err("an INFO-only read belongs in [site]");
         assert!(err.to_string().contains("[site]"), "{err}");
     }
 }

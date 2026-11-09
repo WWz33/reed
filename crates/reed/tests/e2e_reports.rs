@@ -67,8 +67,7 @@ fn reports_match_hand_computed_values() {
         singletons: false,
         populations: None,
         force_samples: false,
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         prefix: prefix.clone(),
     };
     let budget = ThreadBudget {
@@ -245,7 +244,8 @@ fn summary_depth_falls_back_to_ad() {
     std::fs::create_dir_all(&dir).expect("invariant: temp dir");
     let vcf = dir.join("in.vcf.gz");
     let mut file = std::fs::File::create(&vcf).expect("invariant: fixture file");
-    file.write_all(&bgzf(AD_FALLBACK)).expect("invariant: write");
+    file.write_all(&bgzf(AD_FALLBACK))
+        .expect("invariant: write");
     drop(file);
     let prefix = dir.join("out");
     let request = StatsReportRequest {

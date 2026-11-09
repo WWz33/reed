@@ -212,6 +212,32 @@ fn kinds() -> Vec<StatKind> {
     ]
 }
 
+/// pixy's Hudson ratio of sums: a site contributes to BOTH sums only when
+/// both groups have at least two called alleles. This deliberately does not
+/// call the frozen oracle, whose denominator-only n = 1 rule is the allel
+/// convention retired by doc_v27 V27-03.
+fn pixy_hudson(rows: &[Vec<SiteGroupCounts>], a: usize, b: usize) -> Option<f64> {
+    let (mut num, mut den) = (0.0_f64, 0.0_f64);
+    for row in rows {
+        let (x, y) = (&row[a], &row[b]);
+        let nx = u64::from(x.n_ref_alleles + x.n_alt_alleles);
+        let ny = u64::from(y.n_ref_alleles + y.n_alt_alleles);
+        if nx < 2 || ny < 2 {
+            continue;
+        }
+        let hx = u64::from(x.n_ref_alleles) as f64 * u64::from(x.n_alt_alleles) as f64
+            / (nx * (nx - 1) / 2) as f64;
+        let hy = u64::from(y.n_ref_alleles) as f64 * u64::from(y.n_alt_alleles) as f64
+            / (ny * (ny - 1) / 2) as f64;
+        let between = (u64::from(x.n_ref_alleles) * u64::from(y.n_alt_alleles)
+            + u64::from(x.n_alt_alleles) * u64::from(y.n_ref_alleles)) as f64
+            / (nx * ny) as f64;
+        num += between - f64::midpoint(hx, hy);
+        den += between;
+    }
+    (den != 0.0).then(|| num / den)
+}
+
 #[test]
 fn accumulators_match_oracle_on_random_windows() {
     let pops = PopulationView::from_assignment(N_SAMPLES as usize, &[0, 0, 1, 1, 2, 2], 3)
@@ -419,19 +445,37 @@ fn accumulators_match_oracle_on_random_windows() {
                 for row in &rows {
                     let (na, nb) = (an_of(row, a), an_of(row, b));
                     if (na == 1 || nb == 1) && na / 2 + nb / 2 > 0 {
-                        corner_c += f64::from(row[a].n_het + row[b].n_het)
-                            / (na / 2 + nb / 2) as f64;
+                        corner_c +=
+                            f64::from(row[a].n_het + row[b].n_het) / (na / 2 + nb / 2) as f64;
                         n_kept += 1;
                     }
                 }
                 let total = wc.a + wc.b + wc.c + corner_c;
                 ((wc.n_sites + n_kept > 0) && total != 0.0).then(|| wc.a / total)
             } else {
-                oracle.value()
+                pixy_hudson(&rows, a, b)
             };
             assert_close(fst_acc.value(kind), expected, estimator.id());
         }
 
+        // PBS uses the same three Hudson pair estimates. The frozen oracle
+        // remains an integer audit reference, not the numerical authority
+        // for this deliberately changed inclusion rule.
+        let (f_ab, f_ac, f_bc) = (
+            pixy_hudson(&rows, 0, 1),
+            pixy_hudson(&rows, 0, 2),
+            pixy_hudson(&rows, 1, 2),
+        );
+        let expected_pbs = match (f_ab, f_ac, f_bc) {
+            (Some(ab), Some(ac), Some(bc)) => {
+                let clip = |f: f64| f.clamp(0.0, 0.99999);
+                let t = |f: f64| -(1.0 - clip(f)).ln();
+                let (ab, ac, bc) = (t(ab), t(ac), t(bc));
+                let yi = (ab + ac - bc) / 2.0;
+                (yi, Some(yi / (1.0 + (ab + ac + bc) / 2.0)))
+            }
+            _ => (f64::NAN, None),
+        };
         for kind in [PbsKind::Yi2010, PbsKind::PbsN1] {
             let estimator = match kind {
                 PbsKind::Yi2010 => PbsEstimator::Yi2010,
@@ -447,9 +491,17 @@ fn accumulators_match_oracle_on_random_windows() {
                 unreachable!("built for Pbs")
             };
             let (n_sites, n_skipped) = pbs_acc.site_tally();
-            assert_eq!(n_sites, oracle.n_sites, "case {case} PBS sites");
             assert_eq!(n_skipped, oracle.n_skipped, "case {case} PBS skipped");
-            assert_close(pbs_acc.value(kind), oracle.value(), "PBS value");
+            let variant_sites = rows
+                .iter()
+                .filter(|row| row.iter().any(|g| g.n_alt_alleles > 0))
+                .count() as u64;
+            assert_eq!(n_sites, variant_sites, "case {case} PBS variant sites");
+            let expected = match kind {
+                PbsKind::Yi2010 => expected_pbs.0.is_finite().then_some(expected_pbs.0),
+                PbsKind::PbsN1 => expected_pbs.1,
+            };
+            assert_close(pbs_acc.value(kind), expected, "PBS value (pixy Hudson)");
         }
     }
 }

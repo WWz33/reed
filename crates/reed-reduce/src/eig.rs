@@ -55,7 +55,10 @@ pub fn sym_eig(a: &Mat) -> SymEig {
     let n = a.rows;
     assert_eq!(n, a.cols, "sym_eig needs a square matrix");
     if n == 0 {
-        return SymEig { values: Vec::new(), vectors: Mat::zeros(0, 0) };
+        return SymEig {
+            values: Vec::new(),
+            vectors: Mat::zeros(0, 0),
+        };
     }
 
     // Work on a full symmetric copy in row-major order.
@@ -81,7 +84,10 @@ pub fn sym_eig(a: &Mat) -> SymEig {
         "tql2: eigenvalue iteration did not converge after 100 sweeps ({n}x{n})"
     );
 
-    SymEig { values: d, vectors: v }
+    SymEig {
+        values: d,
+        vectors: v,
+    }
 }
 
 /// Householder reduction of a symmetric matrix to tridiagonal form.
@@ -277,7 +283,6 @@ fn tql2_with_limit(n: usize, v: &mut Mat, d: &mut [f64], e: &mut [f64], max_iter
     converged
 }
 
-
 /// Householder tridiagonalization with the accumulated orthogonal factor:
 /// returns `(q, diag, off)` with `q * T * q' = a` and `T` tridiagonal
 /// (`off[i]` is the element `(i+1, i)`).
@@ -332,9 +337,7 @@ fn tridiagonalize(a: &Mat) -> (Mat, Vec<f64>, Vec<f64>) {
             let row = k + 1 + i;
             for j in 0..len {
                 let col = k + 1 + j;
-                let val = m.get(row, col)
-                    - 2.0 * v[i] * av[j]
-                    - 2.0 * av[i] * v[j]
+                let val = m.get(row, col) - 2.0 * v[i] * av[j] - 2.0 * av[i] * v[j]
                     + 4.0 * vav * v[i] * v[j];
                 m.set(row, col, val);
             }
@@ -431,7 +434,11 @@ fn inverse_iteration(diag: &[f64], off: &[f64], mu: f64, iters: usize, seed: usi
     }
     piv[0] = p0;
     for i in 1..n {
-        let denom = if piv[i - 1].abs() < 1e-200 { 1e-200 } else { piv[i - 1] };
+        let denom = if piv[i - 1].abs() < 1e-200 {
+            1e-200
+        } else {
+            piv[i - 1]
+        };
         let mut p = diag[i] - shift - off[i - 1] * off[i - 1] / denom;
         if !p.is_finite() {
             p = diag[i] - shift;
@@ -564,7 +571,11 @@ pub fn sym_eig_top_k(a: &Mat, k: usize) -> (Vec<f64>, Mat) {
 
     // Sort descending (bisection may return near-ties out of order).
     let mut order: Vec<usize> = (0..k).collect();
-    order.sort_by(|&x, &y| values[y].partial_cmp(&values[x]).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|&x, &y| {
+        values[y]
+            .partial_cmp(&values[x])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut v2 = Vec::with_capacity(k);
     let mut m2 = Mat::zeros(n, k);
     for (dst, &src) in order.iter().enumerate() {
@@ -697,7 +708,10 @@ mod tests {
         for i in 0..n {
             for j in 0..n {
                 let want = if i == j { 1.0 } else { 0.0 };
-                assert!((g.get(i, j) - want).abs() < 1e-9, "q not orthogonal at ({i},{j})");
+                assert!(
+                    (g.get(i, j) - want).abs() < 1e-9,
+                    "q not orthogonal at ({i},{j})"
+                );
             }
         }
     }
@@ -759,7 +773,11 @@ mod tests {
         let n = 12;
         let a = Mat::from_fn(n, n, |i, j| {
             let v = ((i * 17 + j * 31) % 11) as f64 - 5.0;
-            if i == j { v + 20.0 } else { v * 0.3 }
+            if i == j {
+                v + 20.0
+            } else {
+                v * 0.3
+            }
         });
         let mut a = a;
         for i in 0..n {

@@ -58,8 +58,8 @@ fn render_ours(path: &std::path::Path, limit: usize) -> String {
             if let Some(len) = reed_io::bcf::record_len(&data[off..])
                 && data.len() >= off + len
             {
-                let rec = reed_io::bcf::record_ref(&data[off..off + len])
-                    .expect("invariant: record");
+                let rec =
+                    reed_io::bcf::record_ref(&data[off..off + len]).expect("invariant: record");
                 reed_io::bcf::render_record(&rec, d, &mut out).expect("invariant: renders");
                 off += len;
                 n += 1;

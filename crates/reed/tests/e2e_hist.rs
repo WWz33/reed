@@ -83,11 +83,21 @@ fn builtin_metrics_write_hist_files() {
     run_hist(
         &vcf,
         &prefix,
-        vec![HistMetric::Qual, HistMetric::Dp, HistMetric::DpSite, HistMetric::Gq, HistMetric::Idl, HistMetric::Af],
+        vec![
+            HistMetric::Qual,
+            HistMetric::Dp,
+            HistMetric::DpSite,
+            HistMetric::Gq,
+            HistMetric::Idl,
+            HistMetric::Af,
+        ],
         2,
     );
     let dp = read(&PathBuf::from(format!("{}.dp.hist", prefix.display())));
-    assert!(dp.starts_with("bin_lower\tbin_upper\tcount\tpercent\n"), "{dp}");
+    assert!(
+        dp.starts_with("bin_lower\tbin_upper\tcount\tpercent\n"),
+        "{dp}"
+    );
     // 12 genotypes with DP 5,15,25,35,45,55,10,20,30,40,50,60 → median 30.
     assert!(dp.contains("#median\t30"), "{dp}");
     assert!(dp.contains("#mean\t32.500000"), "{dp}");
@@ -215,34 +225,62 @@ fn pop_stratifies_freq_missing_and_singletons() {
     // The cohort afreq/vmiss are byte-identical with and without --pop (the
     // singletons file gains the POP column by design).
     for suffix in [".afreq", ".vmiss"] {
-        let a = read(&PathBuf::from(format!("{}{suffix}", d.join("cohort").display())));
-        let b = read(&PathBuf::from(format!("{}{suffix}", d.join("strat").display())));
+        let a = read(&PathBuf::from(format!(
+            "{}{suffix}",
+            d.join("cohort").display()
+        )));
+        let b = read(&PathBuf::from(format!(
+            "{}{suffix}",
+            d.join("strat").display()
+        )));
         assert_eq!(a, b, "{suffix}: --pop must not touch the cohort files");
     }
     // Stratified afreq: every site is 0/1 in s0 (popA) and 0/0 in s1
     // (popB), so ALT_FREQS is 0.5/0 with OBS_CT 2 per group.
-    let afreq = read(&PathBuf::from(format!("{}.afreq.pop", d.join("strat").display())));
+    let afreq = read(&PathBuf::from(format!(
+        "{}.afreq.pop",
+        d.join("strat").display()
+    )));
     assert!(
         afreq.starts_with("#CHROM\tID\tPOP\tREF\tALT\tALT_FREQS\tOBS_CT\n"),
         "{afreq}"
     );
-    assert!(afreq.contains("chr1\tchr1_1\tpopA\tA\tG\t0.5\t2\n"), "{afreq}");
-    assert!(afreq.contains("chr1\tchr1_1\tpopB\tA\tG\t0\t2\n"), "{afreq}");
-    assert_eq!(afreq.lines().count(), 13, "header + 6 sites × 2 groups: {afreq}");
+    assert!(
+        afreq.contains("chr1\tchr1_1\tpopA\tA\tG\t0.5\t2\n"),
+        "{afreq}"
+    );
+    assert!(
+        afreq.contains("chr1\tchr1_1\tpopB\tA\tG\t0\t2\n"),
+        "{afreq}"
+    );
+    assert_eq!(
+        afreq.lines().count(),
+        13,
+        "header + 6 sites × 2 groups: {afreq}"
+    );
     // Stratified vmiss: no missing genotypes in the fixture.
-    let vmiss = read(&PathBuf::from(format!("{}.vmiss.pop", d.join("strat").display())));
+    let vmiss = read(&PathBuf::from(format!(
+        "{}.vmiss.pop",
+        d.join("strat").display()
+    )));
     assert!(
         vmiss.starts_with("#CHROM\tID\tPOP\tMISSING_CT\tOBS_CT\tF_MISS\n"),
         "{vmiss}"
     );
     assert!(vmiss.contains("chr1_1\tpopA\t0\t1\t0\n"), "{vmiss}");
     // Singletons: the POP column names the carrier's group.
-    let singletons = read(&PathBuf::from(format!("{}.singletons", d.join("strat").display())));
+    let singletons = read(&PathBuf::from(format!(
+        "{}.singletons",
+        d.join("strat").display()
+    )));
     assert!(
         singletons.starts_with("CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV\tPOP\n"),
         "{singletons}"
     );
-    assert!(singletons.contains("chr1\t1\tS\tG\ts0\tpopA\n"), "{singletons}");
+    assert!(
+        singletons.contains("chr1\t1\tS\tG\ts0\tpopA\n"),
+        "{singletons}"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -273,7 +311,10 @@ fn pop_unknown_samples_follow_the_force_rule() {
         ..StatsReportRequest::default()
     };
     run_stats(Some(&vcf), &request, &budget(2)).expect("invariant: force run");
-    let afreq = read(&PathBuf::from(format!("{}.afreq.pop", d.join("qc").display())));
+    let afreq = read(&PathBuf::from(format!(
+        "{}.afreq.pop",
+        d.join("qc").display()
+    )));
     assert!(
         afreq.contains("popA"),
         "the known group still reports: {afreq}"
@@ -307,8 +348,14 @@ fn pop_reports_are_deterministic_across_threads() {
         run_stats(Some(&vcf), &request, &budget(threads)).expect("invariant: pop run");
     }
     for suffix in [".afreq.pop", ".vmiss.pop", ".singletons"] {
-        let a = read(&PathBuf::from(format!("{}{suffix}", d.join("t1").display())));
-        let b = read(&PathBuf::from(format!("{}{suffix}", d.join("t4").display())));
+        let a = read(&PathBuf::from(format!(
+            "{}{suffix}",
+            d.join("t1").display()
+        )));
+        let b = read(&PathBuf::from(format!(
+            "{}{suffix}",
+            d.join("t4").display()
+        )));
         assert_eq!(a, b, "{suffix} differs across thread counts");
     }
     let _ = std::fs::remove_dir_all(&d);
@@ -356,7 +403,10 @@ fn hist_fmt_ignores_trailing_empty_columns() {
     let prefix = d.join("qc");
     run_hist(&vcf, &prefix, vec![HistMetric::Gq], 1);
     let gq = read(&PathBuf::from(format!("{}.gq.hist", prefix.display())));
-    assert!(!gq.contains("#missing"), "trailing tab counted as missing:\n{gq}");
+    assert!(
+        !gq.contains("#missing"),
+        "trailing tab counted as missing:\n{gq}"
+    );
     for value in [10, 20, 30, 40] {
         assert!(gq.contains(&format!("{value}\t{value}\t1\t")), "{gq}");
     }
@@ -373,7 +423,10 @@ fn hist_fmt_ignores_trailing_empty_columns() {
         1,
     );
     let fmt = read(&PathBuf::from(format!("{}.FMT_GQ.hist", prefix.display())));
-    assert!(!fmt.contains("#missing"), "trailing tab counted as missing:\n{fmt}");
+    assert!(
+        !fmt.contains("#missing"),
+        "trailing tab counted as missing:\n{fmt}"
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 

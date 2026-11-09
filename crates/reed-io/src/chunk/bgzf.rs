@@ -131,7 +131,8 @@ impl<R: Read> BgzfChunkReader<R> {
                 let Some(total) = parse_block_size(&out[pos..pos + BGZF_HEADER_LEN]) else {
                     return Err(IoError::MalformedBgzf {
                         locus: None,
-                        reason: "not a BGZF block header (trailing garbage after the last block?)".to_string(),
+                        reason: "not a BGZF block header (trailing garbage after the last block?)"
+                            .to_string(),
                     });
                 };
                 if out.len() < pos + total {
@@ -226,7 +227,8 @@ impl<R: Read> BgzfChunkReader<R> {
             let Some(total) = parse_block_size(&header) else {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
-                    reason: "not a BGZF block header (trailing garbage after the last block?)".to_string(),
+                    reason: "not a BGZF block header (trailing garbage after the last block?)"
+                        .to_string(),
                 });
             };
             let mut block = Vec::with_capacity(total);
@@ -472,7 +474,8 @@ impl crate::chunk::ChunkSource for MmapChunkSource {
             let Some(size) = parse_block_size(&self.map[pos..pos + BGZF_HEADER_LEN]) else {
                 return Err(IoError::MalformedBgzf {
                     locus: None,
-                    reason: "not a BGZF block header (trailing garbage after the last block?)".to_string(),
+                    reason: "not a BGZF block header (trailing garbage after the last block?)"
+                        .to_string(),
                 });
             };
             if pos + size > self.map.len() {
@@ -977,9 +980,7 @@ mod tests {
             // SAFETY: the temp file is not modified while the source lives.
             #[allow(unsafe_code)]
             let (mut source, _) = unsafe {
-                MmapChunkSource::open(
-                    std::fs::File::open(&path).expect("invariant: file exists"),
-                )
+                MmapChunkSource::open(std::fs::File::open(&path).expect("invariant: file exists"))
             }?;
             loop {
                 match crate::chunk::ChunkSource::next_chunk(&mut source) {

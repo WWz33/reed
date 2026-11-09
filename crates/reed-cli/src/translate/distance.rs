@@ -4,12 +4,12 @@ use std::io::{BufWriter, Write as _};
 
 use reed::budget::ThreadBudget;
 use reed::distance::matrices::{
-    ajk, allele_ct_distance, discordance, grm, ibs, king, one_minus_ibs, phi, pi_hat,
-    AjkOptions, DistanceOptions, DiscordanceMode, DiscordanceOptions, MatrixKind, MatrixResult,
-    MissingPolicy, PiHatOptions,
+    AjkOptions, DiscordanceMode, DiscordanceOptions, DistanceOptions, MatrixKind, MatrixResult,
+    MissingPolicy, PiHatOptions, ajk, allele_ct_distance, discordance, grm, ibs, king,
+    one_minus_ibs, phi, pi_hat,
 };
 use reed::distance::output::is_matrix_kind;
-use reed::distance::{standardize, MatrixFormat, Stand};
+use reed::distance::{MatrixFormat, Stand, standardize};
 use reed::graph;
 
 use crate::cli::DistanceCli;
@@ -104,12 +104,8 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         .build()
         .map_err(|e| reed::Error::usage(format!("--threads {}: {e}", budget.threads)))?;
 
-    let (x, ids) = reed::read_genotype_matrix(
-        opened,
-        keep.as_deref(),
-        &budget,
-        reed::MatrixUse::Plain,
-    )?;
+    let (x, ids) =
+        reed::read_genotype_matrix(opened, keep.as_deref(), &budget, reed::MatrixUse::Plain)?;
     if x.rows == 0 || x.cols == 0 {
         return Err(reed::Error::usage("no biallelic sites with a diploid GT"));
     }
@@ -149,7 +145,10 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
             (m, None)
         }
         MatrixKind::PiHat => {
-            let opts = PiHatOptions { unbounded: args.unbounded, nudge: args.nudge };
+            let opts = PiHatOptions {
+                unbounded: args.unbounded,
+                nudge: args.nudge,
+            };
             let (m, _res) = pi_hat(&st, &opts);
             (m, None)
         }
@@ -218,8 +217,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
             if reps == 0 {
                 return Err(reed::Error::usage("--bootstrap must be at least 1"));
             }
-            let tree_method = graph::TreeMethod::parse(method)
-                .map_err(reed::Error::usage)?;
+            let tree_method = graph::TreeMethod::parse(method).map_err(reed::Error::usage)?;
             // The bootstrap rebuilds the matrix from resampled loci, so it
             // needs the same matrix kind the tree used. Capture the kind and
             // the options; the closure re-runs the estimator on each
@@ -282,7 +280,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
 
         let nwk = graph::to_newick(&tree, args.digits).map_err(graph_error)?;
         reed::write_atomic(std::path::Path::new(&format!("{prefix}.nwk")), nwk)
-        .map_err(reed::Error::from)?;
+            .map_err(reed::Error::from)?;
         if args.verbosity.shows_summary() {
             eprintln!(
                 "reed distance --tree: {} samples, {} sites, method={method}",
@@ -346,8 +344,11 @@ fn write_table_to<W: std::io::Write>(f: &mut W, m: &MatrixResult) -> Result<(), 
     let n = m.n;
     match m.kind {
         MatrixKind::Phi => {
-            writeln!(f, "INDV1\tINDV2\tN_AaAa\tN_AAaa\tN1_Aa\tN2_Aa\tRELATEDNESS_PHI")
-                .map_err(reed::Error::from)?;
+            writeln!(
+                f,
+                "INDV1\tINDV2\tN_AaAa\tN_AAaa\tN1_Aa\tN2_Aa\tRELATEDNESS_PHI"
+            )
+            .map_err(reed::Error::from)?;
             let aux = m.aux.as_ref();
             // vcftools emits the full ordered matrix, both directions.
             for i in 0..n {
@@ -395,7 +396,11 @@ fn write_table_to<W: std::io::Write>(f: &mut W, m: &MatrixResult) -> Result<(), 
                     writeln!(
                         f,
                         "DCv2\t{}\t{}\t{:.9e}\t0\t{}\t{}",
-                        m.ids[i], m.ids[j], m.values[i * n + j], cmp, mt
+                        m.ids[i],
+                        m.ids[j],
+                        m.values[i * n + j],
+                        cmp,
+                        mt
                     )
                     .map_err(reed::Error::from)?;
                 }
@@ -461,11 +466,7 @@ mod tests {
             GraphError::TreeTooDeep { depth: 10_001 },
         ];
         for err in runtime {
-            assert_eq!(
-                graph_error(err.clone()).kind(),
-                ErrorKind::Runtime,
-                "{err}"
-            );
+            assert_eq!(graph_error(err.clone()).kind(), ErrorKind::Runtime, "{err}");
         }
     }
 }

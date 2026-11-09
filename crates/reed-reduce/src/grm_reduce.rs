@@ -18,8 +18,8 @@
 //! GRM was built (mean impute vs pairwise) propagates to every method here.
 
 use crate::graph::{diffusion_map, laplacian_eigenmaps, pcoa, Embedding, Kernel};
-use reed_core::linalg::Mat;
 use crate::pca::Grm;
+use reed_core::linalg::Mat;
 
 /// Distance matrix induced by a GRM: `d_ij^2 = a_ii + a_jj - 2 a_ij`.
 pub fn grm_distances(grm: &Grm) -> Mat {
@@ -73,7 +73,10 @@ pub fn grm_kernel_pca(grm: &Grm, k: usize) -> Embedding {
             coords.set(i, c, vecs.get(i, c) * scale);
         }
     }
-    Embedding { coords, values: vals }
+    Embedding {
+        coords,
+        values: vals,
+    }
 }
 
 /// Laplacian eigenmaps on a kNN graph built from GRM distances.
@@ -290,7 +293,10 @@ pub fn grm_kernel(grm: &Grm, k: usize, kind: Kernel) -> Embedding {
                     coords.set(i, c, vecs.get(i, c) * scale);
                 }
             }
-            Embedding { coords, values: vals }
+            Embedding {
+                coords,
+                values: vals,
+            }
         }
     }
 }
@@ -388,7 +394,11 @@ mod tests {
         let st = standardize_binom2(&x);
         let g = Grm::mean_impute(&st.w);
         let e = grm_pcoa(&g, 2);
-        assert!(ratio(&e.coords, 15) > 2.0, "grm pcoa ratio {}", ratio(&e.coords, 15));
+        assert!(
+            ratio(&e.coords, 15) > 2.0,
+            "grm pcoa ratio {}",
+            ratio(&e.coords, 15)
+        );
     }
 
     #[test]
@@ -426,9 +436,7 @@ mod tests {
             ..Default::default()
         };
         // Deterministic methods: assert real separation.
-        let det: Vec<(&str, Mat)> = vec![
-            ("lle", grm_lle(&g, &st.w, 8, 2)),
-        ];
+        let det: Vec<(&str, Mat)> = vec![("lle", grm_lle(&g, &st.w, 8, 2))];
         for (name, m) in det {
             let r = ratio(&m, 15);
             assert!(r > 1.2, "{name} on GRM geometry: ratio {r}");
@@ -443,12 +451,11 @@ mod tests {
         for (name, m) in stoch {
             assert_eq!(m.rows, st.w.rows, "{name}: wrong sample count");
             assert!(m.cols >= 2, "{name}: need at least 2 components");
-            let spread = m
-                .data
-                .iter()
-                .cloned()
-                .fold(0.0f64, |a, v| a.max(v.abs()));
-            assert!(spread.is_finite() && spread > 1e-6, "{name}: degenerate output");
+            let spread = m.data.iter().cloned().fold(0.0f64, |a, v| a.max(v.abs()));
+            assert!(
+                spread.is_finite() && spread > 1e-6,
+                "{name}: degenerate output"
+            );
         }
     }
 
@@ -478,7 +485,10 @@ mod tests {
                 worst = worst.max((a.get(i, j) - b.get(i, j)).abs());
             }
         }
-        assert!(worst < 1e-12, "umap feature vs distance paths differ by {worst}");
+        assert!(
+            worst < 1e-12,
+            "umap feature vs distance paths differ by {worst}"
+        );
     }
 
     #[test]
@@ -537,7 +547,11 @@ mod tests {
             }
         }
         a.set(2, 2, f64::NAN);
-        let g = Grm { a, n_pairs: None, m: 1 };
+        let g = Grm {
+            a,
+            n_pairs: None,
+            m: 1,
+        };
         let d = grm_distances(&g);
         for v in d.data.iter() {
             assert!(v.is_finite(), "distance {v} not finite");

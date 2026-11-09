@@ -143,7 +143,10 @@ fn s79_pbs_accumulates_per_pair_not_intersection() {
     // only: 1/5.
     let fst_ab = r.fst_ab.expect("per-pair: C's coverage cannot gate A/B");
     assert!((fst_ab - 1.0 / 27.0).abs() < EPS, "fst_ab {fst_ab}");
-    assert!((fst_ab - 1.0 / 5.0).abs() >= EPS, "intersection value must not appear");
+    assert!(
+        (fst_ab - 1.0 / 5.0).abs() >= EPS,
+        "intersection value must not appear"
+    );
     let f_ab = fst(&w, &pops, 0, 1, FstEstimator::Hudson).unwrap();
     assert!(
         (f_ab.value().expect("standalone is defined") - 1.0 / 27.0).abs() < EPS,

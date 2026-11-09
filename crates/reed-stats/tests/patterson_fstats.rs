@@ -291,12 +291,30 @@ fn patterson_accumulators_merge_split_partials() {
     f4_a.merge(&f4_b);
 
     assert_eq!(f2_a.site_tally(), f2_whole.site_tally());
-    assert!((f2_a.value().expect("invariant: sites") - f2_whole.value().expect("invariant: sites")).abs() < 1e-12);
+    assert!(
+        (f2_a.value().expect("invariant: sites") - f2_whole.value().expect("invariant: sites"))
+            .abs()
+            < 1e-12
+    );
     assert_eq!(f3_a.site_tally(), f3_whole.site_tally());
-    assert!((f3_a.value().expect("invariant: sites") - f3_whole.value().expect("invariant: sites")).abs() < 1e-12);
-    assert!((f3_a.value_normalized().expect("invariant: sites") - f3_whole.value_normalized().expect("invariant: sites")).abs() < 1e-12);
+    assert!(
+        (f3_a.value().expect("invariant: sites") - f3_whole.value().expect("invariant: sites"))
+            .abs()
+            < 1e-12
+    );
+    assert!(
+        (f3_a.value_normalized().expect("invariant: sites")
+            - f3_whole.value_normalized().expect("invariant: sites"))
+        .abs()
+            < 1e-12
+    );
     assert_eq!(f4_a.site_tally(), f4_whole.site_tally());
-    assert!((f4_a.value_f4().expect("invariant: sites") - f4_whole.value_f4().expect("invariant: sites")).abs() < 1e-12);
+    assert!(
+        (f4_a.value_f4().expect("invariant: sites")
+            - f4_whole.value_f4().expect("invariant: sites"))
+        .abs()
+            < 1e-12
+    );
     let (an, ad) = f4_a.sums();
     let (wn, wd) = f4_whole.sums();
     assert_eq!(an.value(), wn.value());

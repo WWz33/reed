@@ -359,11 +359,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         use std::fmt::Write as _;
         let mut log = String::new();
         let _ = writeln!(log, "reed {}", env!("CARGO_PKG_VERSION"));
-        let _ = writeln!(
-            log,
-            "command: {}",
-            crate::params::command_line()
-        );
+        let _ = writeln!(log, "command: {}", crate::params::command_line());
         let _ = writeln!(
             log,
             "targets: {}",

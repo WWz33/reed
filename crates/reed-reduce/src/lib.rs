@@ -59,18 +59,27 @@ pub use backend::{
 };
 pub use eig::SymEig;
 pub use extra::{
-    LleError, LLE_MAX_SAMPLES, lle, lle_from_sq_distances, nmf, ppca, try_lle,
-    try_lle_from_sq_distances, tsne, tsne_from_sq_distances, TsneConfig, TsneError,
+    lle, lle_from_sq_distances, nmf, ppca, try_lle, try_lle_from_sq_distances, tsne,
+    tsne_from_sq_distances, LleError, TsneConfig, TsneError, LLE_MAX_SAMPLES,
 };
-pub use grm_reduce::{grm_diffusion, grm_distances, grm_isomap, grm_kernel, grm_kernel_pca, grm_knn_weights, grm_laplacian, grm_lle, grm_pcoa, grm_similarity, grm_tsne, grm_umap};
-pub use graph::{diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa, pairwise_distances, Embedding, Kernel};
-pub use reed_core::linalg::Mat;
+pub use graph::{
+    diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pairwise_distances, pcoa,
+    Embedding, Kernel,
+};
+pub use grm_reduce::{
+    grm_diffusion, grm_distances, grm_isomap, grm_kernel, grm_kernel_pca, grm_knn_weights,
+    grm_laplacian, grm_lle, grm_pcoa, grm_similarity, grm_tsne, grm_umap,
+};
 pub use lanczos::{lanczos_top_k, LanczosConfig, PartialEig, StreamConfig, StreamEig};
 pub use lda::{fit as fit_lda, Lda, LdaError, LdaProjection};
-pub use xval::{candidate_counts, XvalConfig, XvalError, XvalReport, XvalResult};
-pub use umap::{fuzzy_simplicial_set, fuzzy_simplicial_set_from_distances, umap, umap_from_distances, UmapConfig};
 pub use pca::{
     pca_dense, pca_dense_pairwise, pca_dense_pairwise_with, pca_dense_pairwise_with_par,
-    pca_dense_with, pca_dense_with_par, pca_top_k, pca_top_k_with, pca_top_k_with_par,
-    standardize, standardize_binom2, Grm, Pca, Stand, Standardized,
+    pca_dense_with, pca_dense_with_par, pca_top_k, pca_top_k_with, pca_top_k_with_par, standardize,
+    standardize_binom2, Grm, Pca, Stand, Standardized,
 };
+pub use reed_core::linalg::Mat;
+pub use umap::{
+    fuzzy_simplicial_set, fuzzy_simplicial_set_from_distances, umap, umap_from_distances,
+    UmapConfig,
+};
+pub use xval::{candidate_counts, XvalConfig, XvalError, XvalReport, XvalResult};

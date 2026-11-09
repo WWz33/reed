@@ -35,11 +35,11 @@ pub mod matrices;
 pub mod output;
 pub mod standard;
 
+pub use grm::{Grm, MissingPolicy};
 pub use matrices::{
-    ajk, allele_ct_distance, discordance, grm, ibs, king, one_minus_ibs, phi, pi_hat,
-    AjkOptions, DiscordanceMode, DiscordanceOptions, KingCounts, MatrixKind, MatrixResult,
-    PiHatOptions, PiHatResult,
+    ajk, allele_ct_distance, discordance, grm, ibs, king, one_minus_ibs, phi, pi_hat, AjkOptions,
+    DiscordanceMode, DiscordanceOptions, KingCounts, MatrixKind, MatrixResult, PiHatOptions,
+    PiHatResult,
 };
 pub use output::{write_ids_to, write_matrix, write_matrix_to, MatrixFormat};
-pub use grm::{Grm, MissingPolicy};
 pub use standard::{standardize, standardize_binom2, Stand, Standardized};

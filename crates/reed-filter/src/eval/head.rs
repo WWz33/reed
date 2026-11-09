@@ -107,9 +107,9 @@ pub fn eval_head(
             HeadRule::JustAcgt => {
                 let acgt = |allele: &[u8]| {
                     !allele.is_empty()
-                        && allele
-                            .iter()
-                            .all(|b| matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
+                        && allele.iter().all(|b| {
+                            matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')
+                        })
                 };
                 acgt(reference) && alts.split(|&b| b == b',').all(acgt)
             }
@@ -128,7 +128,9 @@ pub fn eval_head(
                     if s.as_slice() == b"." {
                         column == b"."
                     } else {
-                        column.split(|&b| b == b';').any(|value| value == s.as_slice())
+                        column
+                            .split(|&b| b == b';')
+                            .any(|value| value == s.as_slice())
                     }
                 })
             }
@@ -444,7 +446,10 @@ mod tests {
         number_a: bool,
         quantifier: crate::spec::Quantifier,
     ) -> bool {
-        let text = format!("chr1\t100\t.\tA\tG\t50.0\tPASS\t{}\tGT\t0/0\t0/1", String::from_utf8_lossy(info));
+        let text = format!(
+            "chr1\t100\t.\tA\tG\t50.0\tPASS\t{}\tGT\t0/0\t0/1",
+            String::from_utf8_lossy(info)
+        );
         let line = LineRef::parse(text.as_bytes()).expect("invariant: 10 columns");
         let rules = vec![HeadRule::Info(InfoRule {
             tag: tag.as_bytes().to_vec(),

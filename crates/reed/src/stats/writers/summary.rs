@@ -280,7 +280,10 @@ impl QcJob {
             // bcftools only counts a depth above zero (vcfstats.c:1119
             // `if (dp>0)`), and its average depth divides by those samples
             // only.
-            let dp = dp_column.get(i).copied().filter(|&v| v != INT_MISSING && v > 0);
+            let dp = dp_column
+                .get(i)
+                .copied()
+                .filter(|&v| v != INT_MISSING && v > 0);
             if let Some(dp) = dp {
                 acc.dp_genotypes.push(dp);
                 psc.dp_sum += u64::from(dp);

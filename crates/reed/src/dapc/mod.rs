@@ -19,9 +19,9 @@
 use std::io::{BufWriter, Write as _};
 
 use reed_engine::budget::ThreadBudget;
+use reed_reduce::Mat;
 use reed_reduce::lda::{self, LdaError};
 use reed_reduce::pca::Stand;
-use reed_reduce::Mat;
 
 use crate::pca::read_genotype_matrix;
 
@@ -388,9 +388,7 @@ fn map_lda_err(e: LdaError) -> crate::Error {
     // Data-shaped failures are runtime; a request/group-shape problem is
     // usage (doc_v25 V25-08).
     match e {
-        LdaError::Degenerate | LdaError::ConstantWithinGroups { .. } => {
-            crate::Error::foreign(e)
-        }
+        LdaError::Degenerate | LdaError::ConstantWithinGroups { .. } => crate::Error::foreign(e),
         _ => crate::Error::usage(e.to_string()),
     }
 }
@@ -494,8 +492,12 @@ fn write_xval(prefix: &str, xv: &XvalOutcome) -> Result<(), crate::Error> {
         writeln!(f, "{n}\t{s:.9}").map_err(io_err)?;
     }
     writeln!(f, "#best_n_pca\t{}", xv.best_n_pca).map_err(io_err)?;
-    writeln!(f, "#best_mean_success_n_pca\t{}", xv.best_mean_success_n_pca)
-        .map_err(io_err)?;
+    writeln!(
+        f,
+        "#best_mean_success_n_pca\t{}",
+        xv.best_mean_success_n_pca
+    )
+    .map_err(io_err)?;
     writeln!(f, "#random_chance\t{:.9}", xv.random_chance).map_err(io_err)?;
     f.flush().map_err(io_err)?;
     drop(f);
@@ -533,11 +535,7 @@ mod tests {
             LdaError::EmptyGroup { group: 0 },
         ] {
             let label = format!("{err:?}");
-            assert_eq!(
-                map_lda_err(err).kind(),
-                crate::ErrorKind::Usage,
-                "{label}"
-            );
+            assert_eq!(map_lda_err(err).kind(), crate::ErrorKind::Usage, "{label}");
         }
     }
 

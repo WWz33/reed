@@ -6,7 +6,7 @@
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    InvariantMode, Levels, Populations, StatKind, PopgenRequest, WindowLayoutOptions, run_popgen,
+    InvariantMode, Levels, PopgenRequest, Populations, StatKind, WindowLayoutOptions, run_popgen,
 };
 
 const VCF: &str = "\
@@ -65,6 +65,8 @@ fn request(window: u64, levels: Levels) -> PopgenRequest {
             step: window,
         },
         levels,
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         // Structured window rows are filled in pixy-layout mode.
@@ -72,8 +74,7 @@ fn request(window: u64, levels: Levels) -> PopgenRequest {
             invariant: InvariantMode::VariantOnly,
         }),
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         force_samples: false,

@@ -89,24 +89,25 @@ mod dapc;
 mod genotype;
 mod pca;
 
+pub use crate::dapc::{
+    DapcReport, DapcRequest, XvalOutcome, XvalRequest, run_dapc, run_dapc_opened,
+};
 pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
+pub use crate::index::{IndexOutcome, run_index};
+pub use crate::input::OpenedInput;
 pub use crate::pca::{
     MatrixUse, PcaReport, PcaRequest, read_genotype_matrix, run_pca, run_pca_opened,
 };
-pub use crate::dapc::{
-    run_dapc, run_dapc_opened, DapcReport, DapcRequest, XvalOutcome, XvalRequest,
+pub use crate::stats::{
+    DecayBin, FStatRow, FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode,
+    JointSfsReport, LdReport, LdRequest, Levels, PbsKind, PopgenReport, PopgenRequest, Populations,
+    SfsReport, SfsRequest, StatKind, WindowLayoutOptions, WindowOutputConfig, WindowRow,
+    assign_groups, assign_groups_in_memory, default_kinds, run_popgen, run_popgen_opened,
+    window_kinds,
 };
 /// Dense row-major matrix, shared with `reed-reduce` and `reed-graph`.
 pub use reed_core::linalg::Mat;
-pub use crate::index::{IndexOutcome, run_index};
-pub use crate::input::OpenedInput;
-pub use crate::stats::{
-    DecayBin, FStatRow, FStatTest, FStatsReport, FStatsRequest, FstKind, InvariantMode,
-    JointSfsReport, LdReport, LdRequest, Levels, PbsKind, Populations, SfsReport, SfsRequest,
-    StatKind, PopgenReport, PopgenRequest, WindowLayoutOptions, WindowRow, assign_groups,
-    assign_groups_in_memory, default_kinds, run_popgen, run_popgen_opened, window_kinds,
-};
 // The convert command's request surface (doc_v13 §8): the typed targets, the
 // driver entry points and their reports.
 pub use crate::convert::{
@@ -123,7 +124,7 @@ pub use crate::rename::{
 // `run_stats` and the types in its signature belong beside them rather
 // than only under the writers.
 pub use crate::stats::writers::reports::{
-    StatsReportRequest, StatsOutcome, run_stats, run_stats_opened, validate_report_tags,
+    StatsOutcome, StatsReportRequest, run_stats, run_stats_opened, validate_report_tags,
 };
 pub use reed_filter::funnel::FilterReport;
 // The accumulator and report types that appear in the facade's public
@@ -155,21 +156,21 @@ pub use reed_io::write::atomic as atomic_file;
 // Front-end re-exports (08 §6.2): the parallel budgets, the region type and
 // the BGZF chunk helpers the front end and its integration tests seek with
 // (`bgzf` writes the test fixtures; `chunk` is the seek/region API).
+pub use reed_core::coord::{Interval0, Pos0};
+pub use reed_core::grid::{ContigRegions, WindowGrid};
 /// The header's declared tag table (doc_v14 §3.3: `--hist` resolves its
 /// `INFO/`/`FMT/` requests against it before the first record).
 pub use reed_core::tag_table::{TagNumber, TagTable, TagType};
+pub use reed_engine::budget;
+pub use reed_engine::metrics;
 /// Builds the tag table from an opened input's header.
 pub use reed_io::header::tag_table;
 /// The VCF header as an opaque value (doc_v26 V26-10): the operations a
 /// downstream user needs, without a third-party type in the surface.
 pub use reed_io::header::{self as header, HeaderFacts, VcfHeader};
-pub use reed_core::coord::{Interval0, Pos0};
-pub use reed_core::grid::{ContigRegions, WindowGrid};
-pub use reed_engine::budget;
-pub use reed_engine::metrics;
 // The facade's boundary (doc_v25 V25-08): the CLI depends on `reed` only;
 // distance/reduce/graph are reachable through the facade's re-exports.
 pub use reed_distance as distance;
 pub use reed_graph as graph;
-pub use reed_reduce as reduce;
 pub use reed_io::{bgzf, chunk};
+pub use reed_reduce as reduce;

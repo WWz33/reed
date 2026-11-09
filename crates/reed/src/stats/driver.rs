@@ -2,8 +2,9 @@
 //! request into a plan, run the pipeline, and assemble the report.
 
 use crate::stats::request::{
-    FStatAcc, FStatsPlan, FStatsReport, JointSfsReport, LdPlan, LdReport, Levels, Populations,
-    SfsPlan, SfsReport, PopgenReport, PopgenRequest, assign_groups, assign_groups_in_memory,
+    FStatsPartial, FStatsPlan, FStatsReport, JointSfsReport, LdPlan, LdReport, Levels,
+    PopgenReport, PopgenRequest, Populations, SfsPartial, SfsPlan, SfsReport, assign_groups,
+    assign_groups_in_memory,
 };
 use crate::stats::run::{BcfNative, GridMode, StatsJob, stats_policies};
 use crate::stats::sink::StatsSink;
@@ -14,7 +15,7 @@ use reed_engine::pipeline::run;
 use reed_stats::request::build_accs;
 use reed_stats::sfs::{JointProjectedAcc, ProjectedSfsAcc};
 use reed_stats::window::BpBinning;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -141,6 +142,17 @@ pub fn run_popgen(
     run_popgen_opened(opened, request, budget)
 }
 
+/// Allocates the worker half of the budget to LD, leaving the other half
+/// for input decoding. Reader + reducer account for the two non-worker
+/// slots, so the whole run stays within `budget.threads` (V27-16).
+fn ld_worker_share(budget: &ThreadBudget, requested: bool) -> usize {
+    if requested && !budget.is_sequential() {
+        budget.workers() / 2
+    } else {
+        0
+    }
+}
+
 /// Runs windowed statistics over an already-opened input (the CLI opens
 /// once so stdin streams; doc_v3 03-performance.md O5).
 ///
@@ -161,46 +173,68 @@ pub fn run_popgen_opened(
         &sample_names,
         request.keep_samples.as_deref(),
     )?;
-    // No biallelic gate here: the stats reporters decide per statistic how
-    // to treat multiallelic sites (doc_v3 05-roadmap R7); gating records
-    // would silently change the summary counts.
+    // The biallelic gate is applied once in `StatsJob::site_prefix`, where
+    // its filtered-record count reaches `PopgenReport` and the window log.
+    // Do not also put it in this wrapper: a record dropped there would be
+    // invisible to the statistics counters (doc_v27 V27-39). `-M 2` is the
+    // same default gate; `-M > 2` is refused by the CLI.
     let filter: Option<Arc<reed_filter::plan::FilterPlan>> = match &request.site {
-        Some(spec) => Some(Arc::new(reed_filter::plan::compile(
-            spec,
-            &reed_io::header::tag_table(&opened.facts.header),
-            "",
-            false,
-        )?)),
+        Some(spec) => {
+            let mut spec = spec.clone();
+            spec.site.max_alt_alleles = None;
+            Some(Arc::new(reed_filter::plan::compile(
+                &spec,
+                &reed_io::header::tag_table(&opened.facts.header),
+                "",
+                false,
+            )?))
+        }
         None => None,
     };
     let n_groups = group_names.len();
 
     request.grid.validate()?;
-    let grid_mode = match &request.grid {
-        WindowGrid::Bp { size, step } => {
-            let width = BpBinning::from_grid(&request.grid)
-                .ok_or_else(|| crate::error::Error::usage("stats driver requires a Bp grid"))?
-                .width();
-            GridMode::Bp {
-                size: *size,
-                step: *step,
-                width,
-            }
+    // With no window-level statistic there is no window row at any level:
+    // SFS, f-statistics and LD are genome-wide computations carried by their
+    // own partials. Building a Bp grid here used to force a contig length at
+    // `close_contig` even when every level was disabled (doc_v27 V27-07).
+    // `GridMode::None` avoids both that false dependency and the unused bin
+    // accumulators. A Regions grid still requires the window level, as
+    // before; `--levels contig,genome` keeps the Bp span bookkeeping.
+    let grid_mode = if request.kinds.is_empty() {
+        if matches!(request.grid, WindowGrid::Regions(_)) {
+            return Err(crate::error::Error::usage(
+                "--bed-file needs a window-level statistic (for example --pi)",
+            ));
         }
-        WindowGrid::Regions(regions) => {
-            if !matches!(request.levels, Levels { window: true, .. }) {
+        GridMode::None
+    } else {
+        match &request.grid {
+            WindowGrid::Bp { size, step } => {
+                let width = BpBinning::from_grid(&request.grid)
+                    .ok_or_else(|| crate::error::Error::usage("stats driver requires a Bp grid"))?
+                    .width();
+                GridMode::Bp {
+                    size: *size,
+                    step: *step,
+                    width,
+                }
+            }
+            WindowGrid::Regions(regions) => {
+                if !matches!(request.levels, Levels { window: true, .. }) {
+                    return Err(crate::error::Error::usage(
+                        "--bed-file windows require the window level (--levels window)",
+                    ));
+                }
+                // Region ends carry the clipping the Bp path takes from the
+                // contig length; nothing else needs it.
+                GridMode::Regions(Arc::clone(regions))
+            }
+            WindowGrid::Sites { .. } => {
                 return Err(crate::error::Error::usage(
-                    "--bed-file windows require the window level (--levels window)",
+                    "site-count windows are not implemented (use --window/--step or --bed-file)",
                 ));
             }
-            // Region ends carry the clipping the Bp path takes from the
-            // contig length; nothing else needs it.
-            GridMode::Regions(Arc::clone(regions))
-        }
-        WindowGrid::Sites { .. } => {
-            return Err(crate::error::Error::usage(
-                "site-count windows are not implemented (use --window/--step or --bed-file)",
-            ));
         }
     };
 
@@ -262,7 +296,7 @@ pub fn run_popgen_opened(
     let abort = reed_engine::abort::abort_for(budget);
     let header = opened.facts.clone();
     let contig_len: Arc<HashMap<Vec<u8>, u64>> = Arc::new({
-        let mut map: HashMap<Vec<u8>, u64> = request.contig_lengths.clone();
+        let mut map: HashMap<Vec<u8>, u64> = HashMap::new();
         for (name, len) in header
             .contig_names
             .iter()
@@ -272,6 +306,9 @@ pub fn run_popgen_opened(
                 map.insert(name.as_bytes().to_vec(), len);
             }
         }
+        // `--contig-lengths` is the operator's explicit value and wins over
+        // the header (the CLI prelude already applies the same precedence).
+        map.extend(request.contig_lengths.clone());
         map
     });
 
@@ -285,49 +322,101 @@ pub fn run_popgen_opened(
     );
     let job = StatsJob {
         grid: grid_mode.clone(),
+        stream_windows: request.compact_window_accumulators,
         n_groups,
         gt_groups: gt_groups.into(),
         n_samples: sample_names.len(),
         seed: accs.clone().into(),
         contig_len: Arc::clone(&contig_len),
-        targets: request.targets.clone().into(),
-        targets_exclude: request.targets_exclude.clone().into(),
+        select: Arc::new(request.select.clone()),
         // The native BCF path exists only for BCF input (02-bcf.md §2.4);
         // the table is built once per run.
+        region_accs: Arc::new(std::sync::Mutex::new(HashMap::new())),
         bcf: opened.bcf.as_ref().map(|dict| BcfNative {
             dict: Arc::clone(dict),
             gt_key: reed_io::bcf::format_key(dict, b"GT"),
             table: reed_io::bcf::GtTable::new(stats_policies()),
         }),
         sfs: sfs_plan.clone(),
-        fstats: fstats_plan,
+        fstats: fstats_plan.clone(),
         ld_layout: ld_layout.clone(),
     };
     let out = Arc::new(std::sync::Mutex::new(None));
+    // This is an output-session promise: `--ld-pairs` always publishes a
+    // table, including its header-only zero-pair form. The temporary exists
+    // now; the final path changes only after the input checks below pass.
+    let pairs_file = match ld_plan.as_ref().and_then(|plan| plan.pairs_path.as_deref()) {
+        Some(path) => crate::stats::sink::open_pairs(path)?,
+        None => None,
+    };
+    // `--threads` is one budget, not one budget per stage. Two slots belong
+    // to the reader/reducer; the remaining workers are shared by the input
+    // pipeline and the LD pool. This removes both the old quadratic growth
+    // and the linear `2 * (threads - 2)` oversubscription (V27-16).
+    let ld_workers = ld_worker_share(budget, ld_plan.is_some());
+    let pipeline_workers = budget.workers() - ld_workers;
+    let pipeline_threads = if ld_workers == 0 {
+        budget.threads
+    } else {
+        pipeline_workers + 2
+    };
+    let pipeline_budget = ThreadBudget {
+        threads: pipeline_threads,
+        mem: budget.mem,
+    };
+    let ld_executor = match ld_plan.as_ref() {
+        Some(_) => Some(crate::stats::sink::LdExecutor::new(
+            ld_workers,
+            abort.handle.clone(),
+            abort.signal.clone(),
+        )?),
+        None => None,
+    };
+    let output_session = request
+        .window_output
+        .as_ref()
+        .filter(|_| request.compact_window_accumulators && !request.kinds.is_empty())
+        .map(|config| {
+            crate::stats::writers::session::WindowOutputSession::new(
+                config,
+                &request.kinds,
+                &group_names,
+                request.layout.as_ref(),
+            )
+        })
+        .transpose()?;
     let sink = StatsSink {
-        sfs: None,
-        fstats: None,
-        pairs_file: None,
+        // Request-scoped accumulators exist even when no record reaches
+        // them. An empty but successful run must still produce a valid zero
+        // SFS/f-statistics report, not `None` and a stale previous output
+        // (doc_v27 V27-05).
+        sfs: sfs_plan.as_ref().and_then(SfsPartial::new),
+        fstats: fstats_plan.as_ref().map(FStatsPartial::new),
+        pairs_file,
         ld_layout,
         ld_matrix: None,
-        ld_jobs: Vec::new(),
+        ld_executor,
         ld_merged: None,
         max_ld_jobs: budget.auxiliary(),
-        ld_budget: *budget,
         ld: ld_plan,
         grid: grid_mode,
+        kinds: request.kinds.clone().into(),
         seed: accs.clone(),
         levels: request.levels,
+        compact_window_accumulators: request.compact_window_accumulators,
         skip_empty: request.skip_empty,
         layout: request.layout,
         windows: Vec::new(),
+        window_scratch: Vec::new(),
+        output_session,
         n_invariant_sites: 0,
         n_no_alt_records: 0,
         contig_len: (*contig_len).clone(),
         current: None,
-        closed: Vec::new(),
+        closed: HashSet::new(),
         genome_totals: accs,
         genome_span: 0,
+        genome_denom_bp: 0,
         n_windows: 0,
         n_records: 0,
         n_multiallelic_skipped: 0,
@@ -349,10 +438,10 @@ pub fn run_popgen_opened(
                 ),
                 &opened,
                 &abort,
-                budget,
+                &pipeline_budget,
             );
             let mut source = opened.source;
-            let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+            let report = run(source.as_mut(), &job, sink, &pipeline_budget, &abort)?;
             job.finish(report.n_chunks, true)?;
             report
         }
@@ -361,11 +450,11 @@ pub fn run_popgen_opened(
                 job,
                 &opened,
                 &abort,
-                budget,
+                &pipeline_budget,
                 StatsJob::run_bcf_records,
             );
             let mut source = opened.source;
-            let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+            let report = run(source.as_mut(), &job, sink, &pipeline_budget, &abort)?;
             job.finish(report.n_chunks, true)?;
             report
         }
@@ -376,43 +465,102 @@ pub fn run_popgen_opened(
         .take()
         .expect("invariant: sink finish stored the output");
 
+    let sfs_report = output.sfs.as_ref().map(|partial| {
+        sfs_report(
+            partial,
+            sfs_plan
+                .as_ref()
+                .expect("invariant: an SFS partial implies a plan"),
+        )
+    });
+    let window_files = match output.window_session {
+        Some(session) => {
+            let config = request
+                .window_output
+                .as_ref()
+                .expect("invariant: a session implies a config");
+            session.finish(
+                output.n_windows,
+                output.n_records,
+                output.n_invariant_sites,
+                output.n_multiallelic_skipped,
+                request
+                    .layout
+                    .as_ref()
+                    .map_or(crate::stats::request::InvariantMode::Require, |layout| {
+                        layout.invariant
+                    }),
+                &config.prefix,
+                sfs_report.as_ref(),
+            )?
+        }
+        None => Vec::new(),
+    };
+
+    // Publish the streaming pair table only now: every input-integrity check
+    // (`job.finish` above detects a record truncated at the end of a BCF)
+    // has passed. Committing inside `sink.finish` published a truncated
+    // `.ld` over the previous run's good file and then failed the run
+    // (doc_v27 V27-02). Dropping the `AtomicFile` on any early return
+    // removes the temp and leaves the old `.ld` untouched.
+    if let Some(atomic) = output.pending_commit {
+        atomic.commit().map_err(EngineError::Io)?;
+    }
+
+    let ld_report = request.ld.as_ref().map(|ld_request| {
+        let bin = ld_request.decay_bin_bp.max(1);
+        let n_bins = ld_request.decay_max_bp.map_or(0, |max| {
+            usize::try_from(max.div_ceil(bin)).unwrap_or(usize::MAX)
+        });
+        // `n_bins` is derived from the request, not from how many contigs
+        // yielded pairs. A zero-pair run therefore has the same valid table
+        // shape (0 / NA in every requested bin) as a nonempty one, and the
+        // writer can replace the old decay file unconditionally (V27-05).
+        let bins = |acc: Option<&reed_stats::LdDecayAcc>| {
+            let means = acc.map(reed_stats::LdDecayAcc::mean_r2);
+            let counts = acc.map(reed_stats::LdDecayAcc::counts);
+            (0..n_bins)
+                .map(|i| {
+                    let start = (i as u64) * bin;
+                    (
+                        start,
+                        start + bin,
+                        counts.as_ref().and_then(|v| v.get(i)).copied().unwrap_or(0),
+                        means.as_ref().and_then(|v| v.get(i)).copied().flatten(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        LdReport {
+            decay: bins(output.ld.as_ref().map(|ld| &ld.cohort)),
+            group_decay: (0..n_groups)
+                .map(|g| bins(output.ld.as_ref().and_then(|ld| ld.groups.get(g))))
+                .collect(),
+            pairs: output
+                .ld
+                .as_ref()
+                .map(|ld| {
+                    ld.pairs
+                        .iter()
+                        .map(|(c, a, b, r2)| (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    });
+
     Ok(PopgenReport {
         windows: output.windows,
-        ld: output.ld.map(|ld| {
-            let bin = request.ld.as_ref().map_or(1000, |l| l.decay_bin_bp.max(1));
-            let bins = |acc: &reed_stats::LdDecayAcc| {
-                let means = acc.mean_r2();
-                let counts = acc.counts().to_vec();
-                counts
-                    .iter()
-                    .zip(&means)
-                    .enumerate()
-                    .map(|(i, (&n, m))| {
-                        let start = (i as u64) * bin;
-                        (start, start + bin, n, *m)
-                    })
-                    .collect::<Vec<_>>()
-            };
-            LdReport {
-                decay: bins(&ld.cohort),
-                group_decay: ld.groups.iter().map(bins).collect(),
-                pairs: ld
-                    .pairs
-                    .iter()
-                    .map(|(c, a, b, r2)| (String::from_utf8_lossy(c).into_owned(), *a, *b, *r2))
-                    .collect(),
-            }
-        }),
-        sfs: output.sfs.as_ref().map(|partial| {
-            sfs_report(
-                partial,
-                sfs_plan
-                    .as_ref()
-                    .expect("invariant: an SFS partial implies a plan"),
-            )
-        }),
+        window_files,
+        ld: ld_report,
+        sfs: sfs_report,
+        pairs_path: output.pairs_path,
         fstats: output.fstats.as_ref().map(|partial| FStatsReport {
-            rows: partial.per_test.iter().map(FStatAcc::row).collect(),
+            rows: partial
+                .per_test
+                .iter()
+                .map(|acc| acc.row(&partial.grid))
+                .collect(),
         }),
         n_invariant_sites: output.n_invariant_sites,
         n_no_alt_records: output.n_no_alt_records,
@@ -423,4 +571,33 @@ pub fn run_popgen_opened(
         metrics: report.metrics,
         elapsed: report.elapsed,
     })
+}
+
+#[cfg(test)]
+mod thread_allocation_tests {
+    use super::*;
+
+    #[test]
+    fn ld_and_pipeline_workers_share_one_budget() {
+        for threads in 1..=64 {
+            let budget = ThreadBudget {
+                threads,
+                mem: reed_engine::budget::MemBudget::from_bytes(u64::MAX),
+            };
+            let ld = ld_worker_share(&budget, true);
+            let pipeline_workers = budget.workers() - ld;
+            let pipeline_threads = if ld == 0 {
+                budget.threads
+            } else {
+                pipeline_workers + 2
+            };
+            assert!(pipeline_threads + ld <= threads, "threads={threads}");
+            if threads <= 2 {
+                assert_eq!(ld, 0);
+                assert_eq!(pipeline_threads, threads);
+            } else {
+                assert_eq!(ld, budget.workers() / 2, "threads={threads}");
+            }
+        }
+    }
 }

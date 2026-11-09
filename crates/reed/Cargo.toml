@@ -14,6 +14,7 @@ reed-core.workspace = true
 reed-io.workspace = true
 reed-engine.workspace = true
 rayon.workspace = true
+smallvec.workspace = true
 reed-stats.workspace = true
 reed-filter.workspace = true
 reed-distance.workspace = true

@@ -19,7 +19,11 @@ impl Mat {
     /// A matrix of zeros.
     #[must_use]
     pub fn zeros(rows: usize, cols: usize) -> Self {
-        Self { rows, cols, data: vec![0.0; rows * cols] }
+        Self {
+            rows,
+            cols,
+            data: vec![0.0; rows * cols],
+        }
     }
 
     /// Builds a matrix from a closure over `(row, col)`.

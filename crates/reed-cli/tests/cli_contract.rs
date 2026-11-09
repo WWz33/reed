@@ -716,7 +716,7 @@ fn popg_validates_before_running() {
     let pops = dir.join("p.tsv");
     std::fs::write(&pops, "s0\tA\n").expect("invariant: write");
     let result = run(&["popg", &sv(&vcf), "--pop", &sv(&pops)]);
-    assert_eq!(result.status.code(), Some(1), "{result:?}");
+    assert_eq!(result.status.code(), Some(2), "{result:?}");
     let err = String::from_utf8_lossy(&result.stderr);
     assert!(err.contains("no invariant sites"), "{err}");
     let ok = run(&["popg", &sv(&vcf), "--pop", &sv(&pops), "--variant-only"]);
@@ -866,7 +866,7 @@ fn f2_does_not_switch_the_pi_convention() {
         args.extend(extra);
         args.extend(["-o", out.as_str()]);
         let r = run(&args);
-        assert_eq!(r.status.code(), Some(1), "{r:?}");
+        assert_eq!(r.status.code(), Some(2), "{r:?}");
         let err = String::from_utf8_lossy(&r.stderr);
         assert!(err.contains("no invariant sites"), "{err}");
     }
@@ -1061,7 +1061,11 @@ fn v22_accepts_sites_only_haploid_and_trailing_tabs() {
         "-o",
         sites_out.to_str().expect("invariant: utf8"),
     ]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = read_bgzf(&sites_out);
     for line in text.lines().filter(|l| !l.starts_with('#')) {
         assert_eq!(line.split('\t').count(), 8, "{line}");
@@ -1169,7 +1173,11 @@ fn v22_accepts_sites_only_haploid_and_trailing_tabs() {
         "-o",
         trailing_out.to_str().expect("invariant: utf8"),
     ]);
-    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
     let trailing_text = read_bgzf(&trailing_out);
     let trailing_rows: Vec<&str> = trailing_text
         .lines()
@@ -1177,10 +1185,7 @@ fn v22_accepts_sites_only_haploid_and_trailing_tabs() {
         .collect();
     assert_eq!(trailing_rows.len(), 1);
     assert_eq!(
-        trailing_rows[0]
-            .trim_end_matches('\t')
-            .split('\t')
-            .count(),
+        trailing_rows[0].trim_end_matches('\t').split('\t').count(),
         11,
         "the trailing tab must not become a sample column: {}",
         trailing_rows[0]
@@ -1228,13 +1233,15 @@ fn v22_cli_min_dp_falls_back_to_ad() {
         String::from_utf8_lossy(&run_out.stderr)
     );
     let text = read_bgzf(&out);
-    let rows: Vec<&str> = text
-        .lines()
-        .filter(|line| !line.starts_with('#'))
-        .collect();
+    let rows: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].rsplit('\t').next(), Some("./.:2,3"), "{}", rows[0]);
-    assert_eq!(rows[1].rsplit('\t').next(), Some("0/1:10,20"), "{}", rows[1]);
+    assert_eq!(
+        rows[1].rsplit('\t').next(),
+        Some("0/1:10,20"),
+        "{}",
+        rows[1]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1274,7 +1281,10 @@ fn v22_r2_hist_dp_ad_only_and_stats_type_checks() {
         .expect("invariant: the dp histogram exists");
     assert!(hist.contains("10\t10\t1\t"), "{hist}");
     assert!(hist.contains("30\t30\t1\t"), "{hist}");
-    assert!(!hist.lines().any(|line| line.starts_with("0\t0\t")), "{hist}");
+    assert!(
+        !hist.lines().any(|line| line.starts_with("0\t0\t")),
+        "{hist}"
+    );
 
     // Float depth/GQ tags are rejected by type, not silently decoded as
     // missing. The three fixtures differ only in the offending tag.
@@ -1315,11 +1325,7 @@ fn v22_r2_hist_dp_ad_only_and_stats_type_checks() {
     ];
     for (tag, vcf, report, expected) in cases {
         let prefix = dir.join(tag);
-        let mut args = vec![
-            "stats",
-            vcf.to_str().expect("invariant: utf8"),
-            report[0],
-        ];
+        let mut args = vec!["stats", vcf.to_str().expect("invariant: utf8"), report[0]];
         args.extend(&report[1..]);
         args.extend(["-o", prefix.to_str().expect("invariant: utf8")]);
         let out = run(&args);
@@ -1413,11 +1419,12 @@ fn prefix_commands_refuse_dash_and_empty_output() {
     }
 
     // The control: a real prefix still works for one of them.
-    let out = run(&[
-        "stats", inp, "--freq", "-o", bare, "--verbosity", "0",
-    ]);
+    let out = run(&["stats", inp, "--freq", "-o", bare, "--verbosity", "0"]);
     assert!(out.status.success(), "{out:?}");
-    assert!(dir.join("bare.afreq").exists(), "control run must write its file");
+    assert!(
+        dir.join("bare.afreq").exists(),
+        "control run must write its file"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1475,7 +1482,10 @@ fn region_flag_combinations_match_bcftools() {
         (&["-t", "chr1", "-t", "^chr1:10"], &[]),
         (&["-t", "^chr1:10", "-t", "chr1"], &[]),
         // Two includes union: both contigs.
-        (&["-t", "chr1:10", "-t", "chr2:10"], &[("chr1", "10"), ("chr2", "10")]),
+        (
+            &["-t", "chr1:10", "-t", "chr2:10"],
+            &[("chr1", "10"), ("chr2", "10")],
+        ),
     ];
     for (args, want) in cases {
         let mut argv: Vec<&str> = vec!["filter", inp];
@@ -1498,7 +1508,14 @@ fn region_flag_combinations_match_bcftools() {
     // `-r` and `-R` together union (both are the indexed family).
     let r12 = dir.join("r12.tab");
     std::fs::write(&r12, "chr2\t1\t1000\n").expect("invariant: write");
-    let mut argv: Vec<&str> = vec!["filter", inp, "-r", "chr1", "-R", r12.to_str().expect("utf8")];
+    let mut argv: Vec<&str> = vec![
+        "filter",
+        inp,
+        "-r",
+        "chr1",
+        "-R",
+        r12.to_str().expect("utf8"),
+    ];
     argv.extend(["-Ov", "--verbosity", "0"]);
     let out = run(&argv);
     assert!(out.status.success(), "{out:?}");
@@ -1529,19 +1546,42 @@ fn format_is_rejected_for_table_distance_kinds() {
     let outp = out_dir.to_str().expect("invariant: utf8");
 
     let out = run(&[
-        "distance", inp, "--type", "pihat", "--format", "square", "-o", outp,
-        "--verbosity", "0",
+        "distance",
+        inp,
+        "--type",
+        "pihat",
+        "--format",
+        "square",
+        "-o",
+        outp,
+        "--verbosity",
+        "0",
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "must be a usage error: {stderr}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "must be a usage error: {stderr}"
+    );
     assert!(stderr.contains("--format"), "{stderr}");
 
     // The matrix control still accepts it.
     let out = run(&[
-        "distance", inp, "--type", "ibs", "--format", "square", "-o", outp,
-        "--verbosity", "0",
+        "distance",
+        inp,
+        "--type",
+        "ibs",
+        "--format",
+        "square",
+        "-o",
+        outp,
+        "--verbosity",
+        "0",
     ]);
-    assert!(out.status.success(), "matrix --format must still work: {out:?}");
+    assert!(
+        out.status.success(),
+        "matrix --format must still work: {out:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1564,8 +1604,17 @@ fn contig_lengths_error_names_the_file() {
     // `stats` redirects --contig-lengths to `popg`, which is where the
     // windowed modes live.
     let out = run(&[
-        "popg", inp, "--pop", pops, "--pi", "--contig-lengths", missing, "-o", outp,
-        "--verbosity", "0",
+        "popg",
+        inp,
+        "--pop",
+        pops,
+        "--pi",
+        "--contig-lengths",
+        missing,
+        "-o",
+        outp,
+        "--verbosity",
+        "0",
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "a missing file must fail: {out:?}");
@@ -1658,7 +1707,13 @@ fn hla_contig_regions_use_the_header_vocabulary() {
 
     // A typo is loud, not a silent empty result.
     let out = run(&[
-        "filter", inp, "-r", "HLA-A*01:99", "-Ov", "--verbosity", "0",
+        "filter",
+        inp,
+        "-r",
+        "HLA-A*01:99",
+        "-Ov",
+        "--verbosity",
+        "0",
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "undeclared colon name must fail");
@@ -1689,10 +1744,7 @@ fn parameter_domains_are_usage_errors() {
         (&["rename", "-O", "", "in.vcf"], "invalid -O ''"),
         (&["rename", "-O", "b", "in.vcf"], "accepts v or z"),
         (&["popg", "--ld-decay", "0", "in.vcf"], "must be >= 1"),
-        (
-            &["filter", "-W", "-o", "-", "in.vcf"],
-            "-W needs",
-        ),
+        (&["filter", "-W", "-o", "-", "in.vcf"], "-W needs"),
     ];
     for (args, want) in cases {
         let out = run(args);
@@ -1719,7 +1771,9 @@ fn threads_above_the_supported_maximum_are_usage_errors() {
     // constant to this value (`MAX_THREADS_documented_in_the_cli`).
     let over = "1025";
     let at_max = "1024";
-    for command in ["filter", "stats", "popg", "pca", "distance", "convert", "rename"] {
+    for command in [
+        "filter", "stats", "popg", "pca", "distance", "convert", "rename",
+    ] {
         let out = run(&[command, "--threads", over, "-"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
@@ -1783,11 +1837,7 @@ fn plain_vcf(samples: &[&str]) -> String {
 fn pihat_table_writes_the_sample_name_in_both_columns() {
     let dir = temp_dir("pihat");
     let input = dir.join("in.vcf");
-    std::fs::write(
-        &input,
-        plain_vcf(&["fam_a", "fam_b", "fam_c"]),
-    )
-    .expect("invariant: fixture");
+    std::fs::write(&input, plain_vcf(&["fam_a", "fam_b", "fam_c"])).expect("invariant: fixture");
     let prefix = dir.join("out");
     let out = run(&[
         "distance",
@@ -1974,14 +2024,7 @@ fn timing_engine_keys_are_the_same_on_every_command() {
     let cases: Vec<(&str, Vec<&str>)> = vec![
         (
             "filter",
-            vec![
-                "filter",
-                input,
-                "-o",
-                &filter_out,
-                "--verbosity",
-                "2",
-            ],
+            vec!["filter", input, "-o", &filter_out, "--verbosity", "2"],
         ),
         (
             "popg",
@@ -2002,15 +2045,7 @@ fn timing_engine_keys_are_the_same_on_every_command() {
         ),
         (
             "stats",
-            vec![
-                "stats",
-                input,
-                "--freq",
-                "-o",
-                prefix,
-                "--verbosity",
-                "2",
-            ],
+            vec!["stats", input, "--freq", "-o", prefix, "--verbosity", "2"],
         ),
         (
             "convert",
@@ -2064,6 +2099,1256 @@ fn timing_engine_keys_are_the_same_on_every_command() {
                 "{command}: missing timing key {key}; keys: {keys:?}"
             );
         }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-01: the bare `popg` route writes its wide TSV to `-o` as a
+/// *file path*, and used to do so without the `-o` == input guard every
+/// other file-writing command has. `-o` naming the input truncated it
+/// mid-read (md5 changed) and still exited 0 — unrecoverable data loss that
+/// reported success (doc_v20 R5).
+#[test]
+fn popg_bare_route_refuses_output_naming_the_input() {
+    let dir = temp_dir("v27-popg-overwrite");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n",
+    )
+    .expect("invariant: write");
+    let before = std::fs::read(&vcf).expect("invariant: read");
+    let pops = dir.join("p.tsv");
+    std::fs::write(&pops, "s0\tA\n").expect("invariant: write");
+    let v = sv(&vcf);
+
+    let result = run(&["popg", &v, "--pop", &sv(&pops), "--variant-only", "-o", &v]);
+    assert_eq!(result.status.code(), Some(2), "{result:?}");
+    let err = String::from_utf8_lossy(&result.stderr);
+    assert!(err.contains("would overwrite the input"), "{err}");
+    assert_eq!(
+        std::fs::read(&vcf).expect("invariant: read"),
+        before,
+        "the input must be byte-for-byte unchanged"
+    );
+
+    // The windowed route is a PREFIX: `-o <input>` only adds suffixes, so it
+    // stays legal (and must not touch the input either).
+    let ok = run(&[
+        "popg",
+        &v,
+        "--pop",
+        &sv(&pops),
+        "--pi",
+        "--variant-only",
+        "--window",
+        "1000",
+        "-o",
+        &v,
+    ]);
+    assert!(ok.status.success(), "{ok:?}");
+    assert_eq!(
+        std::fs::read(&vcf).expect("invariant: read"),
+        before,
+        "the windowed route writes PREFIX_pi.txt, never the input"
+    );
+    assert!(dir.join("in.vcf_pi.txt").exists(), "the pi file is written");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-14/V27-15: the three site families -- `-r/-R`, `-t/-T` and
+/// `--sites-file` -- **intersect**. They used to share one list, so every
+/// pair was a union: `-r chr1:201-400 -t chr1:1-60` counted two records
+/// where `reed filter` (and bcftools) count none, and `--sites-file` naming
+/// one position plus `-t` naming three more counted all four.
+#[test]
+fn popg_and_stats_intersect_the_site_families() {
+    let dir = temp_dir("v27-region-and");
+    let vcf = dir.join("in.vcf.gz");
+    // Records 100..500 on chr1, all biallelic so the counts are the record
+    // counts. Pop A holds s0/s1 and pop B s2.
+    let text = "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
+         chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
+         chr1\t300\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
+         chr1\t400\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
+         chr1\t500\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n";
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut compressed = Vec::new();
+    for block in text.as_bytes().chunks(4096) {
+        deflater
+            .deflate_block(block, &mut compressed)
+            .expect("invariant: block");
+    }
+    compressed.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    std::fs::write(&vcf, compressed).expect("invariant: write");
+    let indexed = run(&["index", vcf.to_str().expect("utf8"), "-c"]);
+    assert!(
+        indexed.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\n").expect("invariant: pops");
+    let sites = dir.join("sites.txt");
+    std::fs::write(&sites, "chr1\t200\n").expect("invariant: sites");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let (v, p, s) = (sv(&vcf), sv(&pops), sv(&sites));
+
+    // `pi.txt` data rows: the record count is the summary line's `N records`
+    // (a zero-record run writes only the header, which is what the
+    // differential gate below keys on).
+    let popg_records = |name: &str, extra: &[&str]| -> (u64, String) {
+        let out = dir.join(name);
+        let o = sv(&out);
+        let mut argv: Vec<&str> = vec!["popg", &v, "--pop", &p, "--pi", "--variant-only", "-o", &o];
+        argv.extend_from_slice(extra);
+        let result = run(&argv);
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
+        let n = stderr
+            .split_once(" records,")
+            .and_then(|(head, _)| head.rsplit(' ').next())
+            .and_then(|n| n.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("{name}: no record count in {stderr}"));
+        let body = std::fs::read_to_string(format!("{o}_pi.txt")).expect("invariant: pi file");
+        (n, body)
+    };
+    // The same record counts from `reed filter`, the command that already
+    // had the intersection (V23-61) and the reference for these cases.
+    let filter_records = |extra: &[&str]| -> u64 {
+        let mut argv: Vec<&str> = vec!["filter", &v];
+        argv.extend_from_slice(extra);
+        argv.extend(["-Ov", "--verbosity", "0"]);
+        let result = run(&argv);
+        assert!(
+            result.status.success(),
+            "{extra:?}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .take_while(|l| !l.starts_with('#'))
+            .filter(|l| !l.is_empty())
+            .count() as u64
+    };
+
+    // V27-15: cross-family intersection. The two ranges are disjoint, so
+    // both sides must select nothing — the union used to count 300 and 400.
+    let (n, body) = popg_records("cross", &["-r", "chr1:201-400", "-t", "chr1:1-60"]);
+    assert_eq!(
+        n,
+        filter_records(&["-r", "chr1:201-400", "-t", "chr1:1-60"])
+    );
+    assert_eq!(n, 0, "disjoint -r and -t must select nothing");
+    assert_eq!(body.lines().count(), 1, "only the header row: {body:?}");
+
+    // Each family on its own keeps its own meaning.
+    let (n, _) = popg_records("r_only", &["-r", "chr1:201-400"]);
+    assert_eq!(n, 2, "-r alone keeps 300/400");
+    let (n, _) = popg_records("t_only", &["-t", "chr1:1-60"]);
+    assert_eq!(n, 0, "-t alone keeps nothing in 1-60");
+    // Overlapping families keep the overlap.
+    let (n, _) = popg_records("overlap", &["-r", "chr1:201-400", "-t", "chr1:350-500"]);
+    assert_eq!(
+        n,
+        filter_records(&["-r", "chr1:201-400", "-t", "chr1:350-500"])
+    );
+    assert_eq!(n, 1, "only 400 is in both ranges");
+
+    // V27-14: `--sites-file` is its own family. Alone it keeps 200; with a
+    // target list that excludes 200 the intersection is empty, not the
+    // union {200,300,400,500}.
+    let (n, _) = popg_records("sites_only", &["--sites-file", &s]);
+    assert_eq!(n, 1, "--sites-file alone keeps its one position");
+    let (n, body) = popg_records("sites_and_t", &["--sites-file", &s, "-t", "chr1:300-500"]);
+    assert_eq!(n, 0, "--sites-file and -t must intersect");
+    assert_eq!(body.lines().count(), 1, "only the header row: {body:?}");
+    let (n, _) = popg_records(
+        "sites_and_t_hit",
+        &["--sites-file", &s, "-t", "chr1:100-300"],
+    );
+    assert_eq!(n, 1, "200 is inside both: the intersection keeps it");
+
+    // The bare route (no windowed kind) counts records the same way and
+    // must honour the same intersection: its wide TSV keeps one row per
+    // default-kind window, so a non-empty `pi.pair.0` cell is the marker.
+    let bare_nonempty_rows = |extra: &[&str]| -> u64 {
+        let mut argv: Vec<&str> = vec!["popg", &v, "--pop", &p, "--variant-only"];
+        argv.extend_from_slice(extra);
+        let result = run(&argv);
+        assert!(
+            result.status.success(),
+            "{extra:?}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .skip(1)
+            .filter(|l| l.split('\t').nth(3).is_some_and(|cell| cell != "."))
+            .count() as u64
+    };
+    assert_eq!(
+        bare_nonempty_rows(&["-r", "chr1:201-400", "-t", "chr1:1-60"]),
+        0,
+        "bare route must intersect -r and -t"
+    );
+    assert_eq!(
+        bare_nonempty_rows(&["--sites-file", &s, "-t", "chr1:300-500"]),
+        0,
+        "bare route must intersect --sites-file and -t"
+    );
+    // Both surviving records (300 and 400) share the default 100k window,
+    // so `-r` alone leaves exactly one non-empty row.
+    assert_eq!(
+        bare_nonempty_rows(&["-r", "chr1:201-400"]),
+        1,
+        "bare route keeps -r alone"
+    );
+
+    // `stats --freq` shares the prelude, so it shares the fix: `-r` and `-t`
+    // intersect there too, and `--sites-file` no longer widens `-t`.
+    let stats_rows = |name: &str, extra: &[&str]| -> u64 {
+        let out = dir.join(name);
+        let o = sv(&out);
+        let mut argv: Vec<&str> = vec!["stats", &v, "--freq", "-o", &o];
+        argv.extend_from_slice(extra);
+        let result = run(&argv);
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        // The afreq header is one line; every data row is a reported site.
+        std::fs::read_to_string(format!("{o}.afreq"))
+            .expect("invariant: afreq")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .count() as u64
+    };
+    assert_eq!(
+        stats_rows("s_cross", &["-r", "chr1:201-400", "-t", "chr1:1-60"]),
+        0,
+        "stats --freq must intersect -r and -t"
+    );
+    assert_eq!(
+        stats_rows("s_r", &["-r", "chr1:201-400"]),
+        2,
+        "stats --freq keeps -r alone"
+    );
+    assert_eq!(
+        stats_rows("s_sites", &["--sites-file", &s, "-t", "chr1:300-500"]),
+        0,
+        "stats --freq must intersect --sites-file and -t"
+    );
+    assert_eq!(
+        stats_rows("s_sites_hit", &["--sites-file", &s, "-t", "chr1:100-300"]),
+        1,
+        "200 is inside both"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-07: SFS, f-statistics and LD are genome-wide computations;
+/// with no window-level statistic they must not require contig lengths.
+#[test]
+fn genome_wide_popg_statistics_do_not_require_contig_lengths() {
+    let dir = temp_dir("v27-nolen");
+    let vcf = dir.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+        chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/0\n\
+        chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/0\n";
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let (v, p) = (sv(&vcf), sv(&pops));
+    for (name, extra) in [
+        ("sfs", vec!["--sfs", "--proj", "4"]),
+        ("f2", vec!["--f2", "A,B"]),
+        ("ld", vec!["--ld-decay", "1000"]),
+        // The SFS-only route forces genome level even if the operator writes
+        // `--levels window`; it still has no trailing Bp window to clip.
+        (
+            "sfs_window",
+            vec!["--sfs", "--proj", "4", "--levels", "window"],
+        ),
+    ] {
+        let out = dir.join(name);
+        let o = sv(&out);
+        let mut argv = vec!["popg", &v, "--pop", &p, "-o", &o];
+        argv.extend(extra);
+        let result = run(&argv);
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    assert!(dir.join("sfs_sfs/dadi/A-4.sfs").exists());
+    assert!(dir.join("sfs_window_sfs/dadi/A-4.sfs").exists());
+    assert!(dir.join("f2.fstats").exists());
+    assert!(dir.join("ld.ld.decay").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-05/V27-20: output membership follows the request, not whether
+/// a nonempty result happened to arrive. A zero-pair run replaces the old
+/// `.ld` with a header, writes 0/NA decay bins, and lists `.ld` in the
+/// success summary. The same holds for an empty SFS and f-statistic report.
+#[test]
+fn empty_popg_outputs_replace_the_previous_run_and_are_listed() {
+    let dir = temp_dir("v27-empty-session");
+    let vcf = dir.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=1000>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+        chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/0\n\
+        chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/1\t0/0\n";
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let (v, p, o) = (sv(&vcf), sv(&pops), sv(&out));
+    let run_all = |extra: &[&str]| {
+        let mut argv = vec![
+            "popg",
+            &v,
+            "--pop",
+            &p,
+            "--sfs",
+            "--proj",
+            "4",
+            "--ld-decay",
+            "1000",
+            "--ld-pairs",
+            "--f2",
+            "A,B",
+            "-o",
+            &o,
+        ];
+        argv.extend_from_slice(extra);
+        let result = run(&argv);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        String::from_utf8_lossy(&result.stderr).into_owned()
+    };
+    run_all(&[]);
+    assert_ne!(
+        std::fs::read_to_string(dir.join("out.ld"))
+            .expect("nonempty pairs")
+            .lines()
+            .count(),
+        0
+    );
+    let stderr = run_all(&["-t", "chr1:999-1000"]);
+    assert!(
+        stderr.contains("out.ld"),
+        "the streamed pair path is listed: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out.ld")).expect("invariant: empty pairs"),
+        "#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n"
+    );
+    let decay = std::fs::read_to_string(dir.join("out.ld.decay")).expect("invariant: decay");
+    assert!(decay.contains("all\t0\t1000\t0\tNA"), "{decay}");
+    let fstats = std::fs::read_to_string(dir.join("out.fstats")).expect("invariant: fstats");
+    assert!(fstats.contains("f2\tA,B\t0\tNA\tNA\t0\t0"), "{fstats}");
+    let dadi = std::fs::read_to_string(dir.join("out_sfs/dadi/A-4.sfs")).expect("invariant: dadi");
+    assert_eq!(dadi, "5 unfolded\n0 0 0 0 0\n1 0 0 0 1\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-06: the real reader must accept sorted sites between sparse
+/// windows even when a chunk seam falls there. The long, deterministic IDs
+/// make the compressed input exceed one chunk (about 1.3 MiB), so this is an
+/// end-to-end repro rather than a test of the sink in isolation.
+#[test]
+fn sparse_windows_accept_sorted_sites_across_a_real_chunk_seam() {
+    let dir = temp_dir("v27-sparse-seam");
+    let vcf = dir.join("in.vcf.gz");
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=40000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n",
+    );
+    let mut state = 27_u64;
+    for pos in 1..=40_000_u64 {
+        let mut id = String::with_capacity(36);
+        for _ in 0..36 {
+            // A fixed LCG: no entropy source, identical bytes on every run.
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            id.push(alphabet[usize::try_from(state % 62).expect("invariant: small")] as char);
+        }
+        writeln!(text, "chr1\t{pos}\t{id}\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0")
+            .expect("invariant: write to String");
+    }
+    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut compressed = Vec::new();
+    for block in text.as_bytes().chunks(65_000) {
+        deflater
+            .deflate_block(block, &mut compressed)
+            .expect("invariant: block");
+    }
+    compressed.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    assert!(compressed.len() > 1 << 20, "fixture must span input chunks");
+    std::fs::write(&vcf, compressed).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--variant-only",
+        "--window",
+        "100",
+        "--step",
+        "1M",
+        "--skip-empty",
+        "--threads",
+        "1",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let body = std::fs::read_to_string(format!("{}_pi.txt", out.display())).expect("pi file");
+    let row = body
+        .lines()
+        .find(|line| line.starts_with("A\t"))
+        .expect("pop A row");
+    let fields: Vec<&str> = row.split('\t').collect();
+    assert_eq!(&fields[1..4], ["chr1", "1", "100"]);
+    assert_eq!(
+        fields[5], "100",
+        "all first-window sites are counted: {body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-04: the real CLI must keep all 4096 cross-block pairs when
+/// the LD partition has a one-site tail. The `.ld` rows and the decay bins
+/// must agree, so this also catches a writer that silently loses a tail.
+#[test]
+fn ld_pairs_keep_the_single_site_tail_block() {
+    let dir = temp_dir("v27-ld-tail");
+    let vcf = dir.join("in.vcf");
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=5000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n",
+    );
+    for pos in 1..=4097 {
+        writeln!(
+            text,
+            "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\t1/1\t0/1"
+        )
+        .expect("invariant: write to String");
+    }
+    std::fs::write(&vcf, text).expect("invariant: fixture");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--ld-decay",
+        "100000",
+        "--ld-pairs",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let pairs = std::fs::read_to_string(dir.join("out.ld")).expect("invariant: pair table");
+    let pair_count = pairs.lines().count() - 1;
+    assert_eq!(pair_count, 4097 * 4096 / 2);
+    let decay = std::fs::read_to_string(dir.join("out.ld.decay")).expect("invariant: decay");
+    let decay_count: u64 = decay
+        .lines()
+        .skip(1)
+        .map(|line| {
+            line.split('\t')
+                .nth(3)
+                .expect("invariant: n_pairs")
+                .parse::<u64>()
+                .expect("invariant: integer")
+        })
+        .sum();
+    assert_eq!(
+        usize::try_from(decay_count).expect("invariant: count fits"),
+        pair_count
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-39: popg is biallelic-only. `-M 3` is a usage error rather
+/// than an accepted option whose records are silently discarded later;
+/// multiallelic records are filtered before they can affect denominators.
+#[test]
+fn popg_rejects_multiallelic_mode_and_filters_multiallelic_records() {
+    let dir = temp_dir("v27-biallelic");
+    let vcf = dir.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=200>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+        chr1\t100\t.\tA\tT,G\t50\tPASS\t.\tGT\t0/1\t0/0\n\
+        chr1\t200\t.\tA\tT\t50\tPASS\t.\tGT\t0/1\t0/0\n";
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let (v, p) = (sv(&vcf), sv(&pops));
+    let bad = run(&[
+        "popg",
+        &v,
+        "--pop",
+        &p,
+        "--pi",
+        "-M",
+        "3",
+        "-o",
+        &sv(&dir.join("bad")),
+    ]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("does not support multiallelic"));
+
+    let out = dir.join("out");
+    let ok = run(&[
+        "popg",
+        &v,
+        "--pop",
+        &p,
+        "--pi",
+        "--variant-only",
+        "-M",
+        "2",
+        "-o",
+        &sv(&out),
+    ]);
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let body = std::fs::read_to_string(format!("{}_pi.txt", out.display())).expect("invariant: pi");
+    assert!(
+        body.contains("A\tchr1\t1\t200\t0.005\t1\t1\t1\t0"),
+        "{body}"
+    );
+
+    let stderr = String::from_utf8_lossy(&ok.stderr);
+    assert!(stderr.contains("1 multiallelic skipped"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-03/V27-12/V27-13/V27-27: this small fixture is also a pixy
+/// acceptance case. A's site 1 has only one called allele in B, so it is
+/// excluded from Hudson's numerator AND denominator; π uses per-population
+/// occupied sites and dxy their intersection. `no_snps` counts variants.
+#[test]
+fn popg_matches_pixy_on_low_coverage_and_occupied_site_counts() {
+    let dir = temp_dir("v27-pixy-counts");
+    let vcf = dir.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=100>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+        chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/.\t./.\n\
+        chr1\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t0/1\n";
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--dxy",
+        "--fst",
+        "hudson",
+        "--bypass-invariant-check",
+        "--window",
+        "100",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let pi = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    assert!(pi.contains("A\tchr1\t1\t100\t0.25\t2\t3\t12\t0"), "{pi}");
+    assert!(
+        pi.contains("B\tchr1\t1\t100\t0.6666666666666666\t2\t4\t6\t6"),
+        "{pi}"
+    );
+    let dxy = std::fs::read_to_string(dir.join("out_dxy.txt")).expect("invariant: dxy");
+    assert!(
+        dxy.contains("A\tB\tchr1\t1\t100\t0.45\t2\t9\t20\t12"),
+        "{dxy}"
+    );
+    let fst = std::fs::read_to_string(dir.join("out_fst.txt")).expect("invariant: fst");
+    assert!(
+        fst.contains("A\tB\tchr1\t1\t100\t0.33333333333333337\t2"),
+        "{fst}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-12/V27-13: a record with no calls in A is absent from A's
+/// |S|, and dxy counts it only when both populations have a call. Missing
+/// audit counts are still preserved exactly (pixy's 6 and 16 here).
+#[test]
+fn popg_matches_pixy_on_pairwise_occupancy_and_missing_audits() {
+    let dir = temp_dir("v27-pixy-missing");
+    let vcf = dir.join("in.vcf");
+    let text = "##fileformat=VCFv4.2\n\
+        ##contig=<ID=chr1,length=100>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+        chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t./.\t./.\t0/1\t0/1\n\
+        chr1\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/1\t0/1\n";
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--dxy",
+        "--bypass-invariant-check",
+        "--window",
+        "100",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let pi = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    assert!(
+        pi.contains("A\tchr1\t1\t100\t0.6666666666666666\t1\t4\t6\t6"),
+        "{pi}"
+    );
+    assert!(
+        pi.contains("B\tchr1\t1\t100\t0.6666666666666666\t2\t8\t12\t0"),
+        "{pi}"
+    );
+    let dxy = std::fs::read_to_string(dir.join("out_dxy.txt")).expect("invariant: dxy");
+    assert!(
+        dxy.contains("A\tB\tchr1\t1\t100\t0.5\t1\t8\t16\t16"),
+        "{dxy}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-18: the CLI's window-output session is streaming and atomic.
+/// A complete 100-site window must not be confused by the per-row watermark;
+/// a later malformed input must not publish its temporary session files.
+#[test]
+fn streaming_window_output_counts_rows_and_cleans_failed_sessions() {
+    let dir = temp_dir("v27-stream-session");
+    let vcf = dir.join("in.vcf");
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n",
+    );
+    for pos in 1..=100 {
+        writeln!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0")
+            .expect("invariant: write to String");
+    }
+    std::fs::write(&vcf, text).expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let args = [
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--variant-only",
+        "--window",
+        "100",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ];
+    let ok = run(&args);
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let pi = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    assert!(pi.contains("A\tchr1\t1\t100\t1\t100\t100\t100\t0"), "{pi}");
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .expect("invariant: read dir")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().contains("reed-tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temporary session files remain: {leftovers:?}"
+    );
+
+    // Reuse the prefix with an input whose malformed last record fails after
+    // the session has already written rows. The old good file must survive.
+    let before = std::fs::read(dir.join("out_pi.txt")).expect("invariant: old pi");
+    std::fs::write(&vcf, "chr1\t1\t.\tA\tG\n").expect("invariant: bad write");
+    let failed = run(&args);
+    assert!(!failed.status.success());
+    assert_eq!(
+        std::fs::read(dir.join("out_pi.txt")).expect("invariant: old pi"),
+        before
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .expect("invariant: read dir")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().contains("reed-tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "failed session left temporaries: {leftovers:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-21: invalid level names are usage errors on every route, and
+/// BED without a window-level statistic is refused with the actual reason.
+#[test]
+fn popg_validates_levels_and_bed_window_requirements() {
+    let dir = temp_dir("v27-levels");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n",
+    )
+    .expect("invariant: write");
+    let bed = dir.join("windows.bed");
+    std::fs::write(&bed, "chr1\t0\t1000\n").expect("invariant: bed");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let (v, b, p) = (sv(&vcf), sv(&bed), sv(&pops));
+    for args in [
+        vec!["--sfs", "--proj", "2", "--levels", "bogus"],
+        vec!["--ld-decay", "1000", "--levels", "bogus"],
+    ] {
+        let out = sv(&dir.join("out"));
+        let mut argv = vec!["popg", &v, "--pop", &p, "-o", &out];
+        argv.extend(args);
+        let result = run(&argv);
+        assert_eq!(result.status.code(), Some(2), "{argv:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("unknown level"));
+    }
+    let result = run(&[
+        "popg",
+        &v,
+        "--pop",
+        &p,
+        "--sfs",
+        "--proj",
+        "2",
+        "--bed-file",
+        &b,
+        "--levels",
+        "window",
+        "-o",
+        &sv(&dir.join("bed")),
+    ]);
+    assert_eq!(result.status.code(), Some(2));
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("--bed-file needs a window-level statistic"),
+        "{error}"
+    );
+    assert!(!error.contains("require the window level"), "{error}");
+    let result = run(&[
+        "popg",
+        &v,
+        "--pop",
+        &p,
+        "--f2",
+        "A,B",
+        "--bed-file",
+        &b,
+        "-o",
+        &sv(&dir.join("f2")),
+    ]);
+    assert_eq!(result.status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-22: pair statistics need two populations, and an empty group
+/// assignment is an error rather than a successful run with no output.
+#[test]
+fn popg_rejects_pair_statistics_with_fewer_than_two_groups() {
+    let dir = temp_dir("v27-groups");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n",
+    )
+    .expect("invariant: write");
+    let one = dir.join("one.txt");
+    std::fs::write(&one, "s0\tA\ns1\tA\n").expect("invariant: pops");
+    let empty = dir.join("empty.txt");
+    std::fs::write(&empty, "").expect("invariant: pops");
+    for (pops, args) in [
+        (&one, vec!["--fst", "hudson"]),
+        (&one, vec!["--dxy"]),
+        (&empty, vec!["--pi"]),
+    ] {
+        let out = dir.join("out");
+        let mut argv = vec![
+            "popg",
+            vcf.to_str().expect("invariant: utf8"),
+            "--pop",
+            pops.to_str().expect("invariant: utf8"),
+            "-o",
+            out.to_str().expect("invariant: utf8"),
+        ];
+        argv.extend(args);
+        let result = run(&argv);
+        assert_eq!(result.status.code(), Some(2), "{argv:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-23: a contig absent from the BED has zero BED windows, not an
+/// invalid `window_pos_1 = 1, window_pos_2 = 0` output row.
+#[test]
+fn popg_bed_uncovered_contigs_do_not_emit_reversed_coordinates() {
+    let dir = temp_dir("v27-bed-uncovered");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##contig=<ID=chr2,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n\
+         chr2\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n",
+    )
+    .expect("invariant: write");
+    let bed = dir.join("one.bed");
+    std::fs::write(&bed, "chr1\t0\t400\n").expect("invariant: bed");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--variant-only",
+        "--bed-file",
+        bed.to_str().expect("invariant: utf8"),
+        "--levels",
+        "window,contig,genome",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let body = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    assert!(!body.contains("chr2\t1\t0"), "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-24: explicit --contig-lengths values take precedence over the
+/// header, rather than being overwritten by it in the driver.
+#[test]
+fn popg_contig_lengths_file_overrides_header_lengths() {
+    let dir = temp_dir("v27-contig-lengths");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t350\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n",
+    )
+    .expect("invariant: write");
+    let lengths = dir.join("short.fai");
+    std::fs::write(&lengths, "chr1\t400\n").expect("invariant: lengths");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--variant-only",
+        "--contig-lengths",
+        lengths.to_str().expect("invariant: utf8"),
+        "--window",
+        "100",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let body = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    assert!(body.contains("chr1\t301\t400"), "{body}");
+    assert!(
+        !body.contains("401-500") && !body.contains("401\t500"),
+        "{body}"
+    );
+    assert!(!body.contains("501\t600"), "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-26: the run log follows the requested methods and includes
+/// SFS discard counts even for a bare SFS run (which has no window rows).
+#[test]
+fn popg_logs_methods_and_sfs_counts_for_windowed_and_bare_routes() {
+    let dir = temp_dir("v27-log-methods");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/0\n\
+         chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\t0/0\n",
+    )
+    .expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let sv = |p: &std::path::Path| p.to_str().expect("invariant: utf8").to_string();
+    let (v, p) = (sv(&vcf), sv(&pops));
+    let theta_out = sv(&dir.join("theta"));
+    let result = run(&[
+        "popg",
+        &v,
+        "--pop",
+        &p,
+        "--theta",
+        "--tajima-d",
+        "--fst",
+        "hudson",
+        "--variant-only",
+        "-o",
+        &theta_out,
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let log = std::fs::read_to_string(format!("{theta_out}.log")).expect("invariant: log");
+    assert!(log.contains("theta"), "{log}");
+    assert!(log.contains("tajima_d"), "{log}");
+    assert!(log.contains("fst"), "{log}");
+    assert!(!log.contains("  pi "), "{log}");
+    assert!(!log.contains("  dxy "), "{log}");
+
+    let sfs_out = sv(&dir.join("sfs"));
+    let result = run(&[
+        "popg", &v, "--pop", &p, "--sfs", "--proj", "4", "-o", &sfs_out,
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let log = std::fs::read_to_string(format!("{sfs_out}.log")).expect("invariant: sfs log");
+    assert!(log.contains("sfs"), "{log}");
+    assert!(log.contains("sfs sites absorbed: 4"), "{log}");
+    assert!(log.contains("sfs skipped (m < n): 0"), "{log}");
+
+    let ld_out = sv(&dir.join("ld"));
+    let result = run(&["popg", &v, "--pop", &p, "--ld-decay", "1000", "-o", &ld_out]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let log = std::fs::read_to_string(format!("{ld_out}.log")).expect("invariant: ld log");
+    assert!(log.contains("ld"), "{log}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-28: filtering a multiallelic record must not hide a backwards
+/// position move. The input contract is checked before the record is skipped.
+#[test]
+fn multiallelic_records_do_not_bypass_position_order_validation() {
+    let dir = temp_dir("v27-multi-order");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n\
+         chr1\t100\t.\tA\tT,G\t50\tPASS\t.\tGT\t0/1\t0/0\n",
+    )
+    .expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--variant-only",
+        "-o",
+        dir.join("out").to_str().expect("invariant: utf8"),
+    ]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("strictly ascending"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-29: an interrupted process's old temporary is not deleted
+/// blindly (PID reuse is possible), but it is surfaced on the next run.
+#[test]
+fn stale_ld_temporary_is_reported_on_the_next_run() {
+    let dir = temp_dir("v27-stale-temp");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=1000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n\
+         chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\n",
+    )
+    .expect("invariant: write");
+    let out = dir.join("out");
+    let stale = dir.join("out.ld.reed-tmp-999999999-0");
+    std::fs::write(&stale, "interrupted output").expect("invariant: stale");
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .expect("invariant: open stale")
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(120))
+        .expect("invariant: set old mtime");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--ld-decay",
+        "1000",
+        "--ld-pairs",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("stale temporary file"));
+    assert!(stale.exists(), "another process's temporary is not deleted");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-38: the bare wide table must honor variant-only and keep
+/// pair-comparable, physical-bp and raw-theta quantities distinct.
+#[test]
+fn popg_bare_variant_only_matches_windows_and_preserves_column_units() {
+    let dir = temp_dir("v27-bare-variant-only");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=100>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3\n\
+         chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t./.\t0/0\t0/0\n",
+    )
+    .expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\tB\ns3\tB\n").expect("invariant: pops");
+    let input = vcf.to_str().expect("invariant: utf8");
+    let pops = pops.to_str().expect("invariant: utf8");
+    let bare = run(&["popg", input, "--pop", pops, "--variant-only"]);
+    assert!(
+        bare.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bare.stderr)
+    );
+    let text = String::from_utf8(bare.stdout).expect("invariant: utf8");
+    let header = text
+        .lines()
+        .next()
+        .expect("invariant: header")
+        .split('\t')
+        .collect::<Vec<_>>();
+    let cells = text
+        .lines()
+        .nth(1)
+        .expect("invariant: data")
+        .split('\t')
+        .collect::<Vec<_>>();
+    let cell = |key: &str| -> f64 {
+        let index = header
+            .iter()
+            .position(|column| *column == key)
+            .unwrap_or_else(|| panic!("missing {key}: {text}"));
+        cells[index]
+            .parse()
+            .unwrap_or_else(|_| panic!("non-numeric {key}: {text}"))
+    };
+    // A has four cohort chromosomes but two called alleles: diffs=1, comps=1.
+    // Pair completion adds 99*C(4,2)=594 pairs, while physical-bp π is 1/100.
+    assert!((cell("pi.pair.0") - 1.0 / 595.0).abs() < 1e-12, "{text}");
+    assert!((cell("pi.bp.0") - 0.01).abs() < 1e-12, "{text}");
+    assert!((cell("dxy.pair.0.1") - 1.0 / 398.0).abs() < 1e-12, "{text}");
+    assert!((cell("dxy.bp.0.1") - 0.005).abs() < 1e-12, "{text}");
+    assert!((cell("theta_w.total.0") - 1.0).abs() < 1e-12, "{text}");
+    assert!((cell("theta_w.bp.0") - 0.01).abs() < 1e-12, "{text}");
+    let out = dir.join("out");
+    let window = run(&[
+        "popg",
+        input,
+        "--pop",
+        pops,
+        "--pi",
+        "--theta",
+        "--variant-only",
+        "--window",
+        "100",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        window.status.success(),
+        "{}",
+        String::from_utf8_lossy(&window.stderr)
+    );
+    let pi = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    let theta =
+        std::fs::read_to_string(dir.join("out_watterson_theta.txt")).expect("invariant: theta");
+    assert!(pi.contains("0.001680672268907563"), "{pi}");
+    assert!(theta.contains("0.01"), "{theta}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-10: an empty window is zero under variant-only (the absent
+/// positions are monomorphic), while the all-sites/Require route keeps NA.
+#[test]
+fn variant_only_empty_windows_are_zero_not_na() {
+    let dir = temp_dir("v27-empty-window");
+    let vcf = dir.join("in.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n\
+         ##contig=<ID=chr1,length=300>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n\
+         chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n",
+    )
+    .expect("invariant: write");
+    let pops = dir.join("pops.txt");
+    std::fs::write(&pops, "s0\tA\ns1\tB\n").expect("invariant: pops");
+    let out = dir.join("out");
+    let result = run(&[
+        "popg",
+        vcf.to_str().expect("invariant: utf8"),
+        "--pop",
+        pops.to_str().expect("invariant: utf8"),
+        "--pi",
+        "--theta",
+        "--variant-only",
+        "--window",
+        "100",
+        "-o",
+        out.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let pi = std::fs::read_to_string(dir.join("out_pi.txt")).expect("invariant: pi");
+    let theta =
+        std::fs::read_to_string(dir.join("out_watterson_theta.txt")).expect("invariant: theta");
+    for body in [&pi, &theta] {
+        assert!(
+            body.contains("101\t200") && body.contains("201\t300"),
+            "{body}"
+        );
+        assert!(
+            !body.contains("101\t200\tNA") && !body.contains("201\t300\tNA"),
+            "{body}"
+        );
+        assert!(
+            body.contains("101\t200\t0") && body.contains("201\t300\t0"),
+            "{body}"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

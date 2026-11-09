@@ -885,8 +885,14 @@ mod tests {
     fn both_sides_missing_pass_for_eq_and_ne_only() {
         let tags = ["DP"];
         let dot = site(b"DP=.", Some(1.0), None);
-        assert!(ev("DP!=.", &dot, &tags), "`!=` with a missing literal passes");
-        assert!(ev("DP=.", &dot, &tags), "`==` with a missing literal passes");
+        assert!(
+            ev("DP!=.", &dot, &tags),
+            "`!=` with a missing literal passes"
+        );
+        assert!(
+            ev("DP=.", &dot, &tags),
+            "`==` with a missing literal passes"
+        );
         assert!(!ev("DP>.", &dot, &tags), "`>` with a missing literal fails");
         assert!(!ev("DP<.", &dot, &tags), "`<` with a missing literal fails");
     }
@@ -1078,9 +1084,7 @@ mod tests {
         );
         assert!(!parser::parse("INFO/DP>10").expect("inv").reads_gt_fields());
         assert!(
-            !parser::parse("FMT/DP>10")
-                .expect("inv")
-                .reads_gt_fields(),
+            !parser::parse("FMT/DP>10").expect("inv").reads_gt_fields(),
             "FORMAT reads are the mask stage's business, not a site field"
         );
     }

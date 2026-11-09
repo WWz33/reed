@@ -241,7 +241,11 @@ pub fn fuzzy_simplicial_set_from_distances(d: &Mat, cfg: &UmapConfig) -> FuzzyGr
         }
     }
 
-    FuzzyGraph { weights, knn_indices, knn_dists }
+    FuzzyGraph {
+        weights,
+        knn_indices,
+        knn_dists,
+    }
 }
 
 /// `find_ab_params` (umap_.py:1478): fit `1/(1 + a x^{2b})` to the target
@@ -252,7 +256,13 @@ pub fn find_ab_params(spread: f64, min_dist: f64) -> (f64, f64) {
     let xs: Vec<f64> = (0..300).map(|i| spread * 3.0 * i as f64 / 299.0).collect();
     let ys: Vec<f64> = xs
         .iter()
-        .map(|&x| if x < min_dist { 1.0 } else { (-(x - min_dist) / spread).exp() })
+        .map(|&x| {
+            if x < min_dist {
+                1.0
+            } else {
+                (-(x - min_dist) / spread).exp()
+            }
+        })
         .collect();
 
     let model = |a: f64, b: f64, x: f64| 1.0 / (1.0 + a * x.powf(2.0 * b));
@@ -327,7 +337,11 @@ fn spectral_init(g: &Mat, dim: usize, rng: &mut Rng) -> Mat {
         for j in 0..n {
             let diag = if i == j { 1.0 } else { 0.0 };
             let denom = (deg[i] * deg[j]).sqrt();
-            let off = if denom > 0.0 { g.get(i, j) / denom } else { 0.0 };
+            let off = if denom > 0.0 {
+                g.get(i, j) / denom
+            } else {
+                0.0
+            };
             l.set(i, j, diag - off);
         }
     }
@@ -406,14 +420,14 @@ pub fn umap_from_distances(d: &Mat, cfg: &UmapConfig) -> Mat {
 
     // Epoch scheduling (umap's epochs_per_sample / epochs_per_negative_sample).
     let mut epochs_per_sample = vec![0.0f64; n_edges];
-    let max_weight = g
-        .weights
-        .data
-        .iter()
-        .fold(0.0f64, |acc, &v| acc.max(v));
+    let max_weight = g.weights.data.iter().fold(0.0f64, |acc, &v| acc.max(v));
     for e in 0..n_edges {
         let w = g.weights.get(head[e], tail[e]);
-        epochs_per_sample[e] = if max_weight > 0.0 { max_weight / w } else { 1.0 };
+        epochs_per_sample[e] = if max_weight > 0.0 {
+            max_weight / w
+        } else {
+            1.0
+        };
     }
     let epochs_per_negative_sample: Vec<f64> = epochs_per_sample
         .iter()
@@ -528,7 +542,10 @@ mod tests {
     #[test]
     fn fuzzy_graph_is_symmetric_and_bounded() {
         let x = blobs(10);
-        let cfg = UmapConfig { n_neighbors: 5, ..Default::default() };
+        let cfg = UmapConfig {
+            n_neighbors: 5,
+            ..Default::default()
+        };
         let g = fuzzy_simplicial_set(&x, &cfg);
         for i in 0..g.weights.rows {
             for j in 0..g.weights.cols {
@@ -581,7 +598,10 @@ mod tests {
                 min_sep = min_sep.min(s.sqrt());
             }
         }
-        assert!(min_sep > 2.0 * within, "min separation {min_sep} vs spread {within}");
+        assert!(
+            min_sep > 2.0 * within,
+            "min separation {min_sep} vs spread {within}"
+        );
     }
 
     #[test]
@@ -598,7 +618,10 @@ mod tests {
         let mut d = Mat::from_fn(4, 4, |i, j| base[i][j]);
         d.set(0, 3, f64::NAN);
         d.set(3, 0, f64::NAN);
-        let cfg = UmapConfig { n_neighbors: 2, ..Default::default() };
+        let cfg = UmapConfig {
+            n_neighbors: 2,
+            ..Default::default()
+        };
         let g = fuzzy_simplicial_set_from_distances(&d, &cfg);
         // Finite neighbours come first, in distance order; the NaN partner
         // sorts last and never enters the k = 2 window of row 0.
@@ -612,7 +635,10 @@ mod tests {
     #[test]
     fn smooth_knn_dist_cardinality_is_log2_k() {
         let x = blobs(10);
-        let cfg = UmapConfig { n_neighbors: 8, ..Default::default() };
+        let cfg = UmapConfig {
+            n_neighbors: 8,
+            ..Default::default()
+        };
         let g = fuzzy_simplicial_set(&x, &cfg);
         // For each point, sum of exp(-(d-rho)/sigma) over neighbours should be
         // close to log2(k).
@@ -623,7 +649,11 @@ mod tests {
             let mut psum = 0.0;
             for j in 1..=k {
                 let d = g.knn_dists.get(i, j) - rhos[i];
-                psum += if d > 0.0 { (-(d / sigmas[i])).exp() } else { 1.0 };
+                psum += if d > 0.0 {
+                    (-(d / sigmas[i])).exp()
+                } else {
+                    1.0
+                };
             }
             let target = (k as f64).log2();
             assert!(

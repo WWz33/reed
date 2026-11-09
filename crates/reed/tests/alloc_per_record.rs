@@ -15,8 +15,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use reed::{FilterOptions, run_filter};
 use reed::spec::FilterSpec;
+use reed::{FilterOptions, run_filter};
 
 struct CountingAlloc;
 

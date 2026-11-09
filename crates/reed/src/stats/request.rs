@@ -251,10 +251,17 @@ pub struct WindowRow {
     pub start1: u64,
     /// 1-based inclusive end (equivalently, the 0-based exclusive end).
     pub end: u64,
-    /// Window span in bp (the per-bp denominator).
+    /// Window span in bp (the output coordinate span and per-bp divisor).
     pub bp: u64,
-    /// Accumulators in `kinds` order.
+    /// Denominator used by variant-only π/dxy. It is usually `bp`; contig
+    /// and genome rows instead use the declared contig length, so changing
+    /// `--step` cannot change their estimate (doc_v27 V27-11).
+    pub denom_bp: u64,
+    /// Accumulators in `kinds` order. Full for library callers; empty when
+    /// the CLI requested scalar output rows.
     pub accs: Vec<StatAcc>,
+    /// Scalar outputs in `kinds` order, when compacting is enabled.
+    pub outputs: Vec<reed_stats::request::StatOutput>,
 }
 
 /// The population assignment for a stats run (`--pop` vs the bare
@@ -324,6 +331,14 @@ pub struct PopgenRequest {
     pub grid: WindowGrid,
     /// Output levels (default: window rows only).
     pub levels: Levels,
+    /// Optional CLI streaming output. `None` keeps the library's full
+    /// `WindowRow` accumulators; `Some` writes rows to temporary files as
+    /// they complete and publishes them after validation (V27-18).
+    pub window_output: Option<crate::stats::writers::session::WindowOutputConfig>,
+    /// Compact completed window accumulators for the CLI: θ/Tajima rows
+    /// retain scalar outputs, not O(sample-count) vectors. Default false
+    /// preserves the library's mergeable `WindowRow` API (doc_v27 V27-18).
+    pub compact_window_accumulators: bool,
     /// Skip windows no site fell into (§8.5 `--skip-empty`).
     pub skip_empty: bool,
     /// Extra contig lengths (`--contig-lengths`, .fai-style), merged over
@@ -334,14 +349,21 @@ pub struct PopgenRequest {
     /// `Some` = window-layout output mode (structured rows, invariant-site
     /// policy); `None` = the wide debug TSV.
     pub layout: Option<WindowLayoutOptions>,
-    /// Indexed regions (`-r/-R`): the reader seeks to the mapped range and
-    /// records outside the regions are dropped.
+    /// Indexed regions (`-r/-R`) as a **seek** request: the reader jumps to
+    /// the compressed range the index maps them to. The blocks it lands on
+    /// overshoot the range, so the record predicate that actually keeps
+    /// records inside the regions lives in
+    /// [`Self::select`]'s `indexed` family — a caller that sets one without
+    /// the other reads extra records, never fewer (doc_v27 V27-15). The CLI
+    /// fills both from the same parse.
     pub regions: Vec<reed_io::chunk::region::Region>,
-    /// Streamed target regions (`-t/-T`, parsed): kept when inside any
-    /// include and no exclude region.
-    pub targets: Vec<reed_filter::spec::region::RegionTriple>,
-    /// Excluded target regions (`^` entries of `-t/-T`).
-    pub targets_exclude: Vec<reed_filter::spec::region::RegionTriple>,
+    /// The record-level site selection: `-r/-R`, `-t/-T` and
+    /// `--sites-file`, three families that **AND** (doc_v27 V27-14/V27-15).
+    /// Every path that decides "does this record count" must ask
+    /// [`reed_filter::spec::region::SiteSelector::allows`]; keeping the
+    /// families in separate vectors is what makes a stray `extend` visible
+    /// instead of silently widening the selection.
+    pub select: reed_filter::spec::region::SiteSelector,
     /// Per-sample keep mask (`-s/-S/--keep/--remove`); `None` = all kept.
     pub keep_samples: Option<Vec<bool>>,
     /// Projected SFS, genome-wide (docs/rounds/v5/05-algorithms.md §3.1);
@@ -624,12 +646,14 @@ pub(super) struct FStatAcc {
 
 impl FStatAcc {
     pub(super) fn new(test: FStatTest, block_bp: u64) -> Self {
+        let mut jk = BpBlockJackknife::new(block_bp);
+        jk.share_grid();
         Self {
             test,
             num: reed_core::math::sum::NeumaierSum::new(),
             den: reed_core::math::sum::NeumaierSum::new(),
             n_sites: 0,
-            jk: BpBlockJackknife::new(block_bp),
+            jk,
         }
     }
 
@@ -640,9 +664,7 @@ impl FStatAcc {
         match self.test {
             FStatTest::F2 { a, b } => Some((f2_site(row, a, b)?, 1.0)),
             // The raw Patterson f3 = ΣT (docs/rounds/v5/05 §3.3).
-            FStatTest::F3 { c, a, b } => {
-                Some((f3_site(row, c, a, b)?.0, 1.0))
-            }
+            FStatTest::F3 { c, a, b } => Some((f3_site(row, c, a, b)?.0, 1.0)),
             FStatTest::F4 { a, b, c, d } => Some((f4_site(row, a, b, c, d)?.0, 1.0)),
             FStatTest::Dstat { a, b, c, d } => Some(f4_site(row, a, b, c, d)?),
             // f4-ratio = Σf4(A,O;X,C) / Σf4(A,O;B,C): the denominator f4's
@@ -656,25 +678,26 @@ impl FStatAcc {
     }
 
     pub(super) fn push(&mut self, contig: &[u8], pos0: u64, row: &[SiteGroupCounts]) {
-        let Some((num, den)) = self.site(row) else {
-            return;
-        };
-        self.num.add(num);
-        self.den.add(den);
-        self.n_sites += 1;
-        self.jk.push(contig, pos0, num, den);
+        if let Some((num, den)) = self.site(row) {
+            self.num.add(num);
+            self.den.add(den);
+            self.n_sites += 1;
+            self.jk.push(contig, pos0, num, den);
+        } else {
+            self.jk.push_usable(contig, pos0, 0.0, 0.0, false);
+        }
     }
 
-    pub(super) fn merge(&mut self, other: &Self) {
+    pub(super) fn merge(&mut self, other: &Self, grid: &BpBlockJackknife) {
         self.num.merge(&other.num);
         self.den.merge(&other.den);
         self.n_sites += other.n_sites;
-        self.jk.merge(&other.jk);
+        self.jk.merge_shared(&other.jk, grid);
     }
 
     /// The test's row. Always present (doc_v21 S22: a zero denominator
     /// prints NA rather than dropping the requested test).
-    pub(super) fn row(&self) -> FStatRow {
+    pub(super) fn row(&self, grid: &BpBlockJackknife) -> FStatRow {
         // Additive statistics (f2/f3/f4) report Σnum with a sum-scale
         // delete-one-block SE — admixtools reports f2 as a (weighted) sum
         // over sites, so estimate and se share the sum scale (doc_v7 D7-9).
@@ -697,14 +720,14 @@ impl FStatAcc {
                 }
                 let (_, se, nb) =
                     self.jk
-                        .jackknife()
+                        .jackknife_shared(grid)
                         .unwrap_or((self.num.value() / den, f64::NAN, 0));
                 (self.num.value() / den, se, nb)
             }
             _ => {
                 let (_, se, nb) =
                     self.jk
-                        .jackknife_sum()
+                        .jackknife_sum_shared(grid)
                         .unwrap_or((self.num.value(), f64::NAN, 0));
                 (self.num.value(), se, nb)
             }
@@ -736,6 +759,9 @@ pub(super) struct FStatsPlan {
 #[derive(Clone, Debug)]
 pub(super) struct FStatsPartial {
     pub(super) per_test: Vec<FStatAcc>,
+    /// One copy of the input positions shared by every test. It decides the
+    /// ADMIXTOOLS block grid; test-specific site counts only set the weights.
+    pub(super) grid: BpBlockJackknife,
 }
 
 impl FStatsPartial {
@@ -746,12 +772,18 @@ impl FStatsPartial {
                 .iter()
                 .map(|test| FStatAcc::new(test.clone(), plan.block_bp))
                 .collect(),
+            grid: BpBlockJackknife::new(plan.block_bp),
         }
     }
 
+    pub(super) fn push_grid(&mut self, contig: &[u8], pos0: u64) {
+        self.grid.push(contig, pos0, 0.0, 0.0);
+    }
+
     pub(super) fn merge(&mut self, other: &Self) {
+        self.grid.merge_grid(&other.grid);
         for (dst, src) in self.per_test.iter_mut().zip(&other.per_test) {
-            dst.merge(src);
+            dst.merge(src, &self.grid);
         }
     }
 }
@@ -830,6 +862,12 @@ pub struct PopgenReport {
     pub fstats: Option<FStatsReport>,
     /// The LD tables when [`PopgenRequest::ld`] was set.
     pub ld: Option<LdReport>,
+    /// The streamed `--ld-pairs` file published by this run. The writers
+    /// return their own paths; this one comes from the sink, so a zero-pair
+    /// header-only table is reported exactly like a nonempty one (V27-20).
+    pub pairs_path: Option<std::path::PathBuf>,
+    /// Files published by the streaming window-output session, if enabled.
+    pub window_files: Vec<std::path::PathBuf>,
     /// Chunks processed.
     pub n_chunks: u64,
     /// The engine's stage metrics (doc_v4 03 A4-5): reader/reducer/chain

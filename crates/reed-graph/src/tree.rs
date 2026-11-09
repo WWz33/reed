@@ -45,7 +45,11 @@ impl Tree {
     /// The largest node id used anywhere in the tree.
     #[must_use]
     pub fn max_node_id(&self) -> u32 {
-        self.edges.iter().flat_map(|&(p, c)| [p, c]).max().unwrap_or(0)
+        self.edges
+            .iter()
+            .flat_map(|&(p, c)| [p, c])
+            .max()
+            .unwrap_or(0)
     }
 
     /// The root node id (the only id that never appears as a child).
@@ -426,7 +430,10 @@ mod tests {
             for j in (i + 1)..=4u32 {
                 let want = d.get(i as usize - 1, j as usize - 1);
                 let got = patristic(&t, i, j);
-                assert!((want - got).abs() < 1e-12, "d({i},{j}): want {want}, got {got}");
+                assert!(
+                    (want - got).abs() < 1e-12,
+                    "d({i},{j}): want {want}, got {got}"
+                );
             }
         }
     }

@@ -1479,8 +1479,7 @@ mod tests {
     /// cannot read back.
     #[test]
     fn encode_text_rejects_gt_alleles_beyond_the_alt_count() {
-        let line =
-            b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9\tGT\t0/9\t0/1\t0/0\t0/0\n";
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\tAC=9\tGT\t0/9\t0/1\t0/0\t0/0\n";
         let lr = LineRef::parse(line).expect("invariant: line");
         let site = SiteView::parse(&lr).expect("invariant: site");
         let mut enc = NativeEncoder::new(&header()).expect("invariant: encoder");
@@ -1488,10 +1487,7 @@ mod tests {
         let err = enc
             .encode_text(&lr, &site, 4, &EditPlan::default(), &mut out)
             .expect_err("allele 9 on a single-ALT record must be refused");
-        assert!(
-            matches!(err, IoError::MalformedRecord { .. }),
-            "{err:?}"
-        );
+        assert!(matches!(err, IoError::MalformedRecord { .. }), "{err:?}");
         assert!(
             err.to_string().contains("exceeds ALT count 1"),
             "unexpected error: {err}"
@@ -1522,10 +1518,7 @@ mod tests {
         let err = enc
             .encode_bcf(&rec, &dict, &EditPlan::default(), &mut out)
             .expect_err("allele 9 on a single-ALT record must be refused");
-        assert!(
-            matches!(err, IoError::MalformedRecord { .. }),
-            "{err:?}"
-        );
+        assert!(matches!(err, IoError::MalformedRecord { .. }), "{err:?}");
         assert!(
             err.to_string().contains("exceeds ALT count 1"),
             "unexpected error: {err}"
@@ -1644,10 +1637,7 @@ mod tests {
         let err = enc
             .encode_bcf(&rec, &dict, &EditPlan::default(), &mut Vec::new())
             .expect_err("a BCF pos0 below -1 must be an error");
-        assert!(
-            err.to_string().contains("telomere sentinel"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("telomere sentinel"), "{err}");
     }
 
     /// doc_v20 S43 corrected in review: pos0 = -1 is htslib's telomere
@@ -1674,7 +1664,11 @@ mod tests {
             .expect("the telomere sentinel must encode");
         let out_rec = record_ref(&out).expect("invariant: framed output");
         assert_eq!(
-            i32::from_le_bytes(out_rec.shared[4..8].try_into().expect("invariant: pos bytes")),
+            i32::from_le_bytes(
+                out_rec.shared[4..8]
+                    .try_into()
+                    .expect("invariant: pos bytes")
+            ),
             -1
         );
     }

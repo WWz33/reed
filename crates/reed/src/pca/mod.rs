@@ -17,11 +17,9 @@ use std::io::{BufWriter, Write as _};
 
 use reed_engine::budget::ThreadBudget;
 
-use crate::genotype::{collect_via_engine, CollectSink, GenotypeBlock, PcaJob};
-use reed_reduce::pca::{pca_dense_pairwise_with_par, pca_dense_with_par, Stand};
-use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
-
-
+use crate::genotype::{CollectSink, GenotypeBlock, PcaJob, collect_via_engine};
+use reed_reduce::pca::{Stand, pca_dense_pairwise_with_par, pca_dense_with_par};
+use reed_reduce::{Mat, StreamConfig, lanczos_top_k};
 
 /// How the caller will consume the dosage matrix, for the `--memory` gate
 /// (doc_v21 M11).
@@ -83,13 +81,9 @@ impl MatrixUse {
             // Matrix plus its standardized copy (the Lanczos basis is n*k).
             Self::Stream => nm.saturating_mul(3),
             // x (2) + st.w + faer's wm; GRM + am + u + stack + returned copy.
-            Self::DenseMeanImpute => nm
-                .saturating_mul(4)
-                .saturating_add(n2.saturating_mul(6)),
+            Self::DenseMeanImpute => nm.saturating_mul(4).saturating_add(n2.saturating_mul(6)),
             // The same, plus the pair-count matrix.
-            Self::DensePairwise => nm
-                .saturating_mul(4)
-                .saturating_add(n2.saturating_mul(7)),
+            Self::DensePairwise => nm.saturating_mul(4).saturating_add(n2.saturating_mul(7)),
         }
     }
 }
@@ -606,8 +600,11 @@ mod tests {
 
     /// A plain-VCF fixture: `n_samples` diploid samples over `n_sites`
     /// biallelic sites, dosages cycling 0/1/2 so every site varies.
-    fn write_fixture(dir: &std::path::Path, n_samples: usize, n_sites: usize) -> std::path::PathBuf
-    {
+    fn write_fixture(
+        dir: &std::path::Path,
+        n_samples: usize,
+        n_sites: usize,
+    ) -> std::path::PathBuf {
         let path = dir.join("in.vcf");
         std::fs::write(&path, fixture_text(n_samples, n_sites)).expect("invariant: fixture");
         path
@@ -653,8 +650,8 @@ mod tests {
         n_sites: usize,
     ) -> std::path::PathBuf {
         let text = fixture_text(n_samples, n_sites);
-        let mut deflater = reed_io::bgzf::deflate::Deflater::new(6)
-            .expect("invariant: level 6 is valid");
+        let mut deflater =
+            reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
         let mut out = Vec::new();
         for block in text.as_bytes().chunks(4_096) {
             deflater
@@ -959,7 +956,10 @@ mod tests {
         let n_kept = usize::try_from(n).expect("invariant: fits");
         assert_eq!(chosen_solver("dense", n_kept, None, &budget), "dense");
         assert_eq!(chosen_solver("stream", n_kept, None, &budget), "stream");
-        assert_eq!(matrix_use("dense", "meanimpute"), MatrixUse::DenseMeanImpute);
+        assert_eq!(
+            matrix_use("dense", "meanimpute"),
+            MatrixUse::DenseMeanImpute
+        );
         assert_eq!(matrix_use("dense", "pairwise"), MatrixUse::DensePairwise);
         assert_eq!(matrix_use("stream", "meanimpute"), MatrixUse::Stream);
     }
@@ -979,7 +979,9 @@ mod tests {
             MatrixUse::DenseMeanImpute.peak_bytes(n, m) >= 2 * nm + 4 * n2,
             "the estimate must cover st.w, faer's wm and am/u/stack/copy"
         );
-        assert!(MatrixUse::DensePairwise.peak_bytes(n, m) > MatrixUse::DenseMeanImpute.peak_bytes(n, m));
+        assert!(
+            MatrixUse::DensePairwise.peak_bytes(n, m) > MatrixUse::DenseMeanImpute.peak_bytes(n, m)
+        );
 
         // The old `auto` rule: dense when `n^2 * 8 <= budget`. Choose a
         // budget that passes the GRM test but fails the real peak; `auto`
@@ -993,7 +995,12 @@ mod tests {
         let n_kept = usize::try_from(n).expect("invariant: fits");
         assert!(grm <= budget.mem.bytes && real > budget.mem.bytes);
         assert_eq!(
-            chosen_solver("auto", n_kept, Some(usize::try_from(m).expect("invariant")), &budget),
+            chosen_solver(
+                "auto",
+                n_kept,
+                Some(usize::try_from(m).expect("invariant")),
+                &budget
+            ),
             "stream",
             "auto must not pick a dense solve whose peak exceeds the budget"
         );

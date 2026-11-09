@@ -152,10 +152,7 @@ impl ThreadBudget {
     pub fn from_cli(threads: Option<Threads>, mem_mib: Option<MemMiB>) -> Self {
         Self {
             threads: threads.map_or_else(
-                || {
-                    std::thread::available_parallelism()
-                        .map_or(1, std::num::NonZeroUsize::get)
-                },
+                || std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
                 Threads::get,
             ),
             mem: mem_mib.map_or_else(MemBudget::default_half_memory, |m| {
@@ -546,10 +543,19 @@ mod tests {
         assert_eq!(MAX_THREADS, 1024, "the CLI contract test pins this value");
         assert_eq!("1".parse::<Threads>().expect("invariant: 1").get(), 1);
         assert_eq!(
-            MAX_THREADS.to_string().parse::<Threads>().expect("invariant: cap").get(),
+            MAX_THREADS
+                .to_string()
+                .parse::<Threads>()
+                .expect("invariant: cap")
+                .get(),
             MAX_THREADS
         );
-        for bad in ["0", "0 ", &(MAX_THREADS + 1).to_string(), "18446744073709551615"] {
+        for bad in [
+            "0",
+            "0 ",
+            &(MAX_THREADS + 1).to_string(),
+            "18446744073709551615",
+        ] {
             let err = bad.parse::<Threads>().expect_err("must be refused");
             assert!(
                 err.contains(">= 1") || err.contains("exceeds the supported maximum"),
@@ -619,8 +625,7 @@ mod tests {
         std::fs::write(root.join("memory.max"), "max\n").expect("invariant: root max");
         let child = root.join("system.slice").join("sshd.service");
         std::fs::create_dir_all(&child).expect("invariant: child");
-        std::fs::write(child.join("memory.max"), "2147483648\n")
-            .expect("invariant: child limit");
+        std::fs::write(child.join("memory.max"), "2147483648\n").expect("invariant: child limit");
 
         // Root unlimited, child limited: the child's 2 GiB must win over the
         // host's 32 GiB.
@@ -675,8 +680,7 @@ mod tests {
 
         // An unreadable `/proc/self/cgroup` collapses to the root path (the
         // old behaviour, not an error).
-        std::fs::write(root.join("memory.max"), "8589934592\n")
-            .expect("invariant: root limit");
+        std::fs::write(root.join("memory.max"), "8589934592\n").expect("invariant: root limit");
         assert_eq!(
             physical_memory_bytes_at(&meminfo, &dir.join("missing.cgroup"), &mounts),
             Some(8 * 1024 * 1024 * 1024)
@@ -697,8 +701,7 @@ mod tests {
         std::fs::write(&file, "0::/a/b\n").expect("invariant: v2");
         assert_eq!(self_cgroup_path(&file), PathBuf::from("a/b"));
 
-        std::fs::write(&file, "12:cpu,cpuacct:/x\n9:memory:/y/z\n")
-            .expect("invariant: v1");
+        std::fs::write(&file, "12:cpu,cpuacct:/x\n9:memory:/y/z\n").expect("invariant: v1");
         assert_eq!(self_cgroup_path(&file), PathBuf::from("y/z"));
 
         // A v2 unified line wins when both are present.

@@ -48,7 +48,11 @@ impl Grm {
                 a.set(j, i, val);
             }
         }
-        Self { a, n_pairs: None, m }
+        Self {
+            a,
+            n_pairs: None,
+            m,
+        }
     }
 
     /// Pairwise-complete GRM with the default (binom2) standardization.
@@ -81,7 +85,11 @@ impl Grm {
                 counts.set(j, i, cnt);
             }
         }
-        Self { a, n_pairs: Some(counts), m }
+        Self {
+            a,
+            n_pairs: Some(counts),
+            m,
+        }
     }
 
     /// Builds from an already-standardized matrix.

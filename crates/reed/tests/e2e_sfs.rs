@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use reed::budget::{MemBudget, ThreadBudget};
-use reed::{Levels, Populations, SfsRequest, PopgenRequest, run_popgen};
+use reed::{Levels, PopgenRequest, Populations, SfsRequest, run_popgen};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -59,12 +59,13 @@ fn request(folded: bool) -> PopgenRequest {
             contig: false,
             genome: true,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         layout: None,
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         sfs: Some(SfsRequest {
@@ -283,5 +284,201 @@ fn joint_spectrum_matches_easysfs() {
         fsc,
         "1 observation\n\td0_0\td0_1\td0_2\td0_3\td0_4\nd1_0\t0 1 0 1 0.5\nd1_1\t2 1 1 0.5 0\nd1_2\t2 0 0 0 0\nd1_3\t1 0.5 0 0 0\nd1_4\t0.5 0 0 0 0\n"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-08: SFS file names carry the population name, which comes
+/// from the operator's populations file and used to be appended verbatim.
+/// A group named `../../../../ESCAPED-<pid>` therefore wrote outside the
+/// `-o` directory tree — in this layout all the way to the temp dir's
+/// parent. The name is pid-unique so the assertion cannot be satisfied (or
+/// broken) by a leftover from another run.
+#[test]
+fn sfs_group_names_cannot_escape_the_output_directory() {
+    let dir = std::env::temp_dir().join(format!("reed-sfs-v2708-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+
+    let tag = format!("ESCAPED-{}", std::process::id());
+    let name = format!("../../../../{tag}");
+    // The escaped names a sanitizing writer must never produce. The 1-D
+    // spectrum projects to 6 (the fixture's projection).
+    let outside: Vec<std::path::PathBuf> = [
+        std::env::temp_dir()
+            .parent()
+            .expect("invariant: temp dir has a parent")
+            .join(format!("{tag}-6.sfs")),
+        std::env::temp_dir()
+            .parent()
+            .expect("invariant: temp dir has a parent")
+            .join(format!("{tag}_DAFpop0.obs")),
+    ]
+    .into_iter()
+    .collect();
+    for path in &outside {
+        let _ = std::fs::remove_file(path);
+    }
+
+    let vcf = fixture(&dir);
+    let budget = ThreadBudget {
+        threads: 1,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let pops = dir.join("esc.tsv");
+    std::fs::write(
+        &pops,
+        format!("s0\t{name}\ns1\t{name}\ns2\t{name}\ns3\t{name}\n"),
+    )
+    .expect("invariant: write pops");
+    let mut req = request(false);
+    req.populations = Populations::File(pops);
+    let report = run_popgen(Some(&vcf), &req, &budget).expect("invariant: run");
+    let sfs = report.sfs.expect("invariant: SFS requested");
+
+    let prefix = dir.join("nested/out");
+    std::fs::create_dir_all(dir.join("nested")).expect("invariant: nested");
+    let files = reed::sfs::write_projected_sfs(&prefix, std::slice::from_ref(&name), &sfs, false)
+        .expect("invariant: write");
+    assert_eq!(files.len(), 2);
+
+    let root = dir.join("nested");
+    for path in &files {
+        assert!(
+            path.starts_with(&root),
+            "{} escaped the -o tree ({})",
+            path.display(),
+            root.display()
+        );
+        assert!(
+            !path.components().any(|c| c.as_os_str() == ".."),
+            "{} still carries a parent component",
+            path.display()
+        );
+    }
+    for path in &outside {
+        assert!(
+            !path.exists(),
+            "{} was written outside the tree",
+            path.display()
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-09: the 1-D `<name>-<n>.sfs` and the pairwise `<A>-<B>.sfs`
+/// share `_sfs/dadi`. Group `A` projected to 4 and a second group named `4`
+/// used to address the same path, so one spectrum silently overwrote the
+/// other. The writer now refuses instead of picking a winner.
+#[test]
+fn sfs_one_dimensional_and_joint_names_cannot_collide() {
+    let dir = std::env::temp_dir().join(format!("reed-sfs-v2709-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = fixture(&dir);
+    let budget = ThreadBudget {
+        threads: 1,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let pops = dir.join("c.tsv");
+    std::fs::write(&pops, "s0\tA\ns1\tA\ns2\t4\ns3\t4\n").expect("invariant: write pops");
+    let mut req = request(false);
+    req.populations = Populations::File(pops);
+    req.sfs = Some(SfsRequest {
+        folded: false,
+        projections: vec![4, 4],
+    });
+    let report = run_popgen(Some(&vcf), &req, &budget).expect("invariant: run");
+    let sfs = report.sfs.expect("invariant: SFS requested");
+
+    let prefix = dir.join("out");
+    let err =
+        reed::sfs::write_projected_sfs(&prefix, &["A".to_string(), "4".to_string()], &sfs, false)
+            .expect_err("invariant: A-4 collides with the joint A/4 spectrum");
+    let text = err.to_string();
+    assert!(
+        text.contains("A-4.sfs") && text.contains("would write"),
+        "unexpected error: {text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-07: a genome-wide SFS does not have trailing windows to
+/// clip, so a valid header without contig lengths is sufficient. The
+/// projection must still be validated against the population size.
+#[test]
+fn genome_wide_sfs_does_not_require_contig_lengths() {
+    let dir = std::env::temp_dir().join(format!("reed-sfs-nolen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("sfs.vcf");
+    std::fs::write(
+        &vcf,
+        VCF.replace("##contig=<ID=chr1,length=100000>", "##contig=<ID=chr1>"),
+    )
+    .expect("invariant: fixture write");
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let report = run_popgen(Some(&vcf), &request(false), &budget).expect("invariant: run");
+    let sfs = report.sfs.expect("invariant: SFS requested");
+    assert_eq!(sfs.n_sites, vec![11]);
+    for (got, want) in sfs.spectra[0].iter().zip(&EXPECTED) {
+        assert!((got - want).abs() <= 1e-12 * want.max(1.0));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-05: an empty successful run still has a request-shaped zero
+/// spectrum, not `None`. Its writer therefore replaces the previous files.
+#[test]
+fn an_empty_sfs_run_returns_and_writes_a_zero_spectrum() {
+    let dir = std::env::temp_dir().join(format!("reed-sfs-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = fixture(&dir);
+    let prefix = dir.join("out");
+    let first = run_popgen(
+        Some(&vcf),
+        &request(false),
+        &ThreadBudget {
+            threads: 1,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
+    )
+    .expect("invariant: first run")
+    .sfs
+    .expect("invariant: first SFS");
+    reed::sfs::write_projected_sfs(&prefix, &["all".to_string()], &first, false)
+        .expect("invariant: first write");
+    let dadi = dir.join("out_sfs/dadi/all-6.sfs");
+    assert!(
+        std::fs::read_to_string(&dadi)
+            .expect("first dadi")
+            .contains("0.571428")
+    );
+
+    let mut empty = request(false);
+    empty.select.sites = vec![("chr2".to_string(), Some(1), Some(1))];
+    let report = run_popgen(
+        Some(&vcf),
+        &empty,
+        &ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        },
+    )
+    .expect("invariant: empty run");
+    let sfs = report
+        .sfs
+        .expect("invariant: an empty run still has an SFS");
+    assert_eq!(sfs.n_sites, vec![0]);
+    assert_eq!(sfs.spectra, vec![vec![0.0; 7]]);
+    reed::sfs::write_projected_sfs(&prefix, &["all".to_string()], &sfs, false)
+        .expect("invariant: zero write");
+    let text = std::fs::read_to_string(&dadi).expect("invariant: replacement");
+    assert_eq!(text, "7 unfolded\n0 0 0 0 0 0 0\n1 0 0 0 0 0 1\n");
     let _ = std::fs::remove_dir_all(&dir);
 }

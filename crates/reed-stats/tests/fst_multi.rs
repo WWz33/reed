@@ -320,12 +320,11 @@ fn s46_wc84_pair_equals_multi_at_r2() {
 }
 
 #[test]
-fn hudson_zero_numerator_is_zero_not_na() {
+fn hudson_low_coverage_sites_are_excluded_from_numerator_and_denominator() {
     use reed_stats::pbs::{PbsAcc, PbsKind};
-    // Group B contributes a single called allele per site (a half call):
-    // the Hudson denominator accumulates while the numerator never does,
-    // so the estimate is 0.0 — scikit-allel's `nansum` — not NA
-    // (doc_v15 D15-11).
+    // pixy: either group having fewer than two called alleles excludes the
+    // site from BOTH Hudson sums. D15-11's old denominator-only inclusion
+    // was the scikit-allel convention, retired by doc_v27 V27-03.
     let a1 = SiteGroupCounts {
         n_ref_alleles: 1,
         n_alt_alleles: 1,
@@ -339,14 +338,83 @@ fn hudson_zero_numerator_is_zero_not_na() {
     };
     let mut fst = FstAcc::new(0, 1);
     fst.push(&[a1, b1]);
-    assert_eq!(fst.value_hudson(), Some(0.0), "an absent numerator sums to 0.0");
+    assert_eq!(
+        fst.value_hudson(),
+        None,
+        "a one-allele group excludes the site"
+    );
 
     let mut pbs = PbsAcc::new(0, 1, 2);
     pbs.push(&[a1, b1, SiteGroupCounts::default()]);
     let (f_ab, f_ac, f_bc) = pbs.pair_fsts();
-    assert_eq!(f_ab, Some(0.0), "the A/B pair defines 0.0");
-    assert!(f_ac.is_none() && f_bc.is_none(), "C's pairs stay undefined");
+    assert_eq!(f_ab, None);
+    assert!(f_ac.is_none() && f_bc.is_none());
     assert!(pbs.value(PbsKind::Yi2010).is_none());
+}
+
+#[test]
+fn hudson_two_sites_match_pixy_one_third() {
+    // The V27-03 fixture. Site 1: B has only one called allele and is
+    // excluded from both sums. Site 2: A has 4 REF, B has 2 REF + 2 ALT.
+    // Between diversity = 1/2, mean within diversity = 1/6; num = 1/3 and
+    // den = 1/2, hence Fst = 1/3 — exactly pixy's value.
+    let a_low = SiteGroupCounts {
+        n_ref_alleles: 2,
+        n_alt_alleles: 2,
+        ..Default::default()
+    };
+    let b_half = SiteGroupCounts {
+        n_ref_alleles: 1,
+        n_alt_alleles: 0,
+        n_half_called: 1,
+        ..Default::default()
+    };
+    let a_ref = SiteGroupCounts {
+        n_ref_alleles: 4,
+        ..Default::default()
+    };
+    let b_het = SiteGroupCounts {
+        n_ref_alleles: 2,
+        n_alt_alleles: 2,
+        ..Default::default()
+    };
+    let mut fst = FstAcc::new(0, 1);
+    fst.push(&[a_low, b_half]);
+    fst.push(&[a_ref, b_het]);
+    let value = fst.value_hudson().expect("one valid site");
+    assert!((value - 1.0 / 3.0).abs() < 1e-12, "{value}");
+}
+
+#[test]
+fn fst_and_pbs_no_snps_count_only_variant_sites() {
+    use reed_stats::pbs::PbsAcc;
+    let row = [
+        SiteGroupCounts {
+            n_ref_alleles: 2,
+            n_alt_alleles: 2,
+            ..Default::default()
+        },
+        SiteGroupCounts {
+            n_ref_alleles: 2,
+            n_alt_alleles: 2,
+            ..Default::default()
+        },
+        SiteGroupCounts {
+            n_ref_alleles: 2,
+            n_alt_alleles: 2,
+            ..Default::default()
+        },
+    ];
+    let mut fst = FstAcc::new(0, 1);
+    fst.push_with_variant(&row, true);
+    fst.push_with_variant(&row, false);
+    fst.push_with_variant(&row, false);
+    assert_eq!(fst.n_sites(), 1);
+    let mut pbs = PbsAcc::new(0, 1, 2);
+    pbs.push_with_variant(&row, true);
+    pbs.push_with_variant(&row, false);
+    pbs.push_with_variant(&row, false);
+    assert_eq!(pbs.n_sites(), 1);
 }
 
 /// allel's WC84 with `n = an // 2` but frequencies `p = ac / an` (the
@@ -400,9 +468,7 @@ fn wc84_three_populations_accept_a_half_called_group() {
             .iter()
             .zip(alts)
             .zip(hets)
-            .map(|((&an, &alt), &het)| {
-                (f64::from(an), f64::from(an - alt), f64::from(het))
-            })
+            .map(|((&an, &alt), &het)| (f64::from(an), f64::from(an - alt), f64::from(het)))
             .collect();
         let (a, b, c) = ref_wc84_floored_n(&inputs);
         ra += a;
@@ -411,7 +477,11 @@ fn wc84_three_populations_accept_a_half_called_group() {
     }
     assert_eq!(acc.site_tally(), (3, 0));
     let (a_sum, b_sum, c_sum) = acc.components();
-    assert!((a_sum.value() - ra).abs() < 1e-12, "a: {} vs {ra}", a_sum.value());
+    assert!(
+        (a_sum.value() - ra).abs() < 1e-12,
+        "a: {} vs {ra}",
+        a_sum.value()
+    );
     assert!((b_sum.value() - rb).abs() < 1e-12);
     assert!((c_sum.value() - rc).abs() < 1e-12);
     assert!(

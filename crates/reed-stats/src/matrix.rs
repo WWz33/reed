@@ -293,7 +293,11 @@ pub fn decay_range(
     let n = m.n_sites();
     let end = range.end.min(n);
     let start = range.start.min(end);
-    if end.saturating_sub(start) < 2 {
+    // A one-site block is not empty: it owns every pair whose later site is
+    // that site and whose earlier site lies in the lookback span. Returning
+    // for `len < 2` discarded the single-site tail of the 4096-site LD
+    // partition (doc_v27 V27-04). Only an empty range has no work.
+    if start == end {
         return set;
     }
     let pos = m.pos0();

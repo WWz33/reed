@@ -328,7 +328,8 @@ enum NameRewrite {
 impl NameRewrite {
     /// Regex metacharacters the literal rule cannot honour; refusing them
     /// keeps `s[0-9]` or `^s` from looking like a successful rewrite.
-    const METACHARS: &'static [char] = &['^', '$', '[', ']', '(', ')', '|', '+', '?', '{', '}', '\\'];
+    const METACHARS: &'static [char] =
+        &['^', '$', '[', ']', '(', ')', '|', '+', '?', '{', '}', '\\'];
 
     /// Parses the CLI pattern.
     ///
@@ -336,7 +337,10 @@ impl NameRewrite {
     ///
     /// A usage message when the pattern uses regex syntax.
     fn parse(pattern: &str) -> Result<Self, crate::Error> {
-        let body = pattern.strip_suffix('*').or_else(|| pattern.strip_prefix('*')).unwrap_or(pattern);
+        let body = pattern
+            .strip_suffix('*')
+            .or_else(|| pattern.strip_prefix('*'))
+            .unwrap_or(pattern);
         if let Some(bad) = body.chars().find(|c| Self::METACHARS.contains(c)) {
             return Err(crate::Error::usage(format!(
                 "--replace-sample-name: {bad:?} is regex syntax; the pattern is literal \
@@ -630,9 +634,7 @@ pub fn run_rename_opened(
             "--clear-ids cannot be combined with the other ID flags",
         ));
     }
-    if (plan.set_id.is_some() || plan.set_missing_var_ids.is_some())
-        && plan.idspace_to.is_some()
-    {
+    if (plan.set_id.is_some() || plan.set_missing_var_ids.is_some()) && plan.idspace_to.is_some() {
         return Err(crate::Error::usage(
             "--idspace-to cannot be combined with --set-id/--set-missing-var-ids (write the separator in the template)",
         ));
@@ -660,16 +662,12 @@ pub fn run_rename_opened(
     } else {
         None
     };
-    let index_path = output
-        .path
-        .as_ref()
-        .filter(|_| indexable)
-        .map(|p| {
-            output
-                .write_index
-                .expect("invariant: checked above")
-                .path_for(p)
-        });
+    let index_path = output.path.as_ref().filter(|_| indexable).map(|p| {
+        output
+            .write_index
+            .expect("invariant: checked above")
+            .path_for(p)
+    });
     // A pre-existing index next to the output would describe the old file;
     // the CLI reports it (the backend never prints, 08 §6.4.2).
     let stale_index = match (&output.path, &index_path) {
@@ -686,7 +684,10 @@ pub fn run_rename_opened(
     // writer.
     let mut out = match &output.path {
         None => reed_io::write::ordered_output::OrderedOutput::new(
-            Box::new(std::io::BufWriter::with_capacity(1 << 20, std::io::stdout())),
+            Box::new(std::io::BufWriter::with_capacity(
+                1 << 20,
+                std::io::stdout(),
+            )),
             output.compressed,
             output.level,
             indexer,
@@ -897,7 +898,10 @@ fn rewrite_contig_lines(header: &str, map: &HashMap<Vec<u8>, Vec<u8>>) -> String
     let mut out = String::with_capacity(header.len());
     for line in header.split_inclusive('\n') {
         if let Some(rest) = line.strip_prefix("##contig=<ID=") {
-            let id_end = rest.find(',').or_else(|| rest.find('>')).unwrap_or(rest.len());
+            let id_end = rest
+                .find(',')
+                .or_else(|| rest.find('>'))
+                .unwrap_or(rest.len());
             let id = &rest[..id_end];
             if let Some(new) = map.get(id.as_bytes()) {
                 out.push_str("##contig=<ID=");
@@ -919,7 +923,10 @@ fn apply_fai(header: &str, lengths: &[(String, String)]) -> String {
     for line in header.split_inclusive('\n') {
         let mut replaced = false;
         if let Some(rest) = line.strip_prefix("##contig=<ID=") {
-            let id_end = rest.find(',').or_else(|| rest.find('>')).unwrap_or(rest.len());
+            let id_end = rest
+                .find(',')
+                .or_else(|| rest.find('>'))
+                .unwrap_or(rest.len());
             let id = &rest[..id_end];
             if let Some((_, len)) = lengths.iter().find(|(name, _)| name == id) {
                 seen.push(id);
@@ -1193,7 +1200,10 @@ impl RenameJob {
     }
 
     /// The block index key of a rewritten record (header contig order).
-    fn index_key(&self, line: &[u8]) -> Result<reed_io::write::block_writer::IndexKey, EngineError> {
+    fn index_key(
+        &self,
+        line: &[u8],
+    ) -> Result<reed_io::write::block_writer::IndexKey, EngineError> {
         index_key(&self.plan, line)
     }
 

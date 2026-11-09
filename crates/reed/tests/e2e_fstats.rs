@@ -5,7 +5,7 @@
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    FStatTest, FStatsRequest, InvariantMode, Levels, Populations, PopgenRequest,
+    FStatTest, FStatsRequest, InvariantMode, Levels, PopgenRequest, Populations,
     WindowLayoutOptions, run_popgen,
 };
 
@@ -54,14 +54,15 @@ fn request(tests: Vec<FStatTest>, block_bp: u64) -> PopgenRequest {
             contig: false,
             genome: true,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         layout: Some(WindowLayoutOptions {
             invariant: InvariantMode::VariantOnly,
         }),
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         force_samples: false,
@@ -235,5 +236,51 @@ fn f4_ratio_divides_the_two_f4_estimates() {
         rows[0].estimate
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v27 V27-07/V27-05: f-statistics are genome-wide too. They need no
+/// contig length, and an empty input selection still returns one NA row per
+/// requested test instead of dropping the whole report.
+#[test]
+fn genome_wide_fstats_need_no_lengths_and_keep_empty_rows() {
+    let dir = std::env::temp_dir().join(format!("reed-fstats-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("fstats.vcf");
+    std::fs::write(
+        &vcf,
+        VCF.replace("##contig=<ID=chr1,length=100000>", "##contig=<ID=chr1>"),
+    )
+    .expect("invariant: fixture write");
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::from_bytes(u64::MAX),
+    };
+    let tests = vec![FStatTest::F2 { a: 0, b: 1 }];
+    let report = run_popgen(Some(&vcf), &request(tests.clone(), 1), &budget)
+        .expect("invariant: no-length run");
+    assert_eq!(report.fstats.expect("invariant: fstats").rows.len(), 1);
+
+    let mut empty = request(tests, 1);
+    empty.select.sites = vec![("chr2".to_string(), Some(1), Some(1))];
+    let report = run_popgen(Some(&vcf), &empty, &budget).expect("invariant: empty run");
+    let fstats = report.fstats.expect("invariant: empty report is present");
+    assert_eq!(fstats.rows.len(), 1);
+    assert_eq!(fstats.rows[0].estimate, 0.0, "an empty f2 is a zero sum");
+    assert!(
+        !fstats.rows[0].se.is_finite(),
+        "no jackknife blocks means no SE"
+    );
+    assert_eq!(fstats.rows[0].n_sites, 0);
+    let text = reed::fstats::write_fstats(
+        &dir.join("out"),
+        &["A".into(), "B".into(), "C".into()],
+        &fstats,
+    )
+    .expect("invariant: write");
+    assert_eq!(text.len(), 1);
+    let body = std::fs::read_to_string(dir.join("out.fstats")).expect("invariant: read");
+    assert!(body.contains("f2\tA,B\t0\tNA\tNA"), "{body}");
     let _ = std::fs::remove_dir_all(&dir);
 }

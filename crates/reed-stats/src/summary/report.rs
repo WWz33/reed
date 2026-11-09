@@ -234,15 +234,30 @@ impl QcReportAcc {
         self.sis.tv += other.sis.tv;
         self.sis.n_indels += other.sis.n_indels;
 
-        crate::merge_zip_eq("SummaryReport af.snps", &mut self.af.snps, &other.af.snps, |dst, src| {
-            *dst += src;
-        });
-        crate::merge_zip_eq("SummaryReport af.ts", &mut self.af.ts, &other.af.ts, |dst, src| {
-            *dst += src;
-        });
-        crate::merge_zip_eq("SummaryReport af.tv", &mut self.af.tv, &other.af.tv, |dst, src| {
-            *dst += src;
-        });
+        crate::merge_zip_eq(
+            "SummaryReport af.snps",
+            &mut self.af.snps,
+            &other.af.snps,
+            |dst, src| {
+                *dst += src;
+            },
+        );
+        crate::merge_zip_eq(
+            "SummaryReport af.ts",
+            &mut self.af.ts,
+            &other.af.ts,
+            |dst, src| {
+                *dst += src;
+            },
+        );
+        crate::merge_zip_eq(
+            "SummaryReport af.tv",
+            &mut self.af.tv,
+            &other.af.tv,
+            |dst, src| {
+                *dst += src;
+            },
+        );
         crate::merge_zip_eq(
             "SummaryReport af.indels",
             &mut self.af.indels,
@@ -256,41 +271,51 @@ impl QcReportAcc {
         self.qual.snv_ts.merge(&other.qual.snv_ts);
         self.qual.snv_tv.merge(&other.qual.snv_tv);
         self.qual.indel.merge(&other.qual.indel);
-        crate::merge_zip_eq("SummaryReport subst", &mut self.subst, &other.subst, |dst, src| {
-            *dst += src;
-        });
+        crate::merge_zip_eq(
+            "SummaryReport subst",
+            &mut self.subst,
+            &other.subst,
+            |dst, src| {
+                *dst += src;
+            },
+        );
         self.dp_genotypes.merge(&other.dp_genotypes);
         self.dp_sites.merge(&other.dp_sites);
         self.idd.merge(&other.idd);
         self.idd_ins.merge(&other.idd_ins);
-        crate::merge_zip_eq("SummaryReport psc", &mut self.psc, &other.psc, |dst, src| {
-            let PscAcc {
-                hom_rr,
-                hom_aa,
-                hets,
-                ts,
-                tv,
-                n_indels,
-                dp_sum,
-                dp_n,
-                singletons,
-                hap_ref,
-                hap_alt,
-                missing,
-            } = src;
-            dst.hom_rr += hom_rr;
-            dst.hom_aa += hom_aa;
-            dst.hets += hets;
-            dst.ts += ts;
-            dst.tv += tv;
-            dst.n_indels += n_indels;
-            dst.dp_sum += dp_sum;
-            dst.dp_n += dp_n;
-            dst.singletons += singletons;
-            dst.hap_ref += hap_ref;
-            dst.hap_alt += hap_alt;
-            dst.missing += missing;
-        });
+        crate::merge_zip_eq(
+            "SummaryReport psc",
+            &mut self.psc,
+            &other.psc,
+            |dst, src| {
+                let PscAcc {
+                    hom_rr,
+                    hom_aa,
+                    hets,
+                    ts,
+                    tv,
+                    n_indels,
+                    dp_sum,
+                    dp_n,
+                    singletons,
+                    hap_ref,
+                    hap_alt,
+                    missing,
+                } = src;
+                dst.hom_rr += hom_rr;
+                dst.hom_aa += hom_aa;
+                dst.hets += hets;
+                dst.ts += ts;
+                dst.tv += tv;
+                dst.n_indels += n_indels;
+                dst.dp_sum += dp_sum;
+                dst.dp_n += dp_n;
+                dst.singletons += singletons;
+                dst.hap_ref += hap_ref;
+                dst.hap_alt += hap_alt;
+                dst.missing += missing;
+            },
+        );
     }
 }
 

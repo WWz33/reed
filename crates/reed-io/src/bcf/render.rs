@@ -13,8 +13,8 @@
 
 use super::dict::BcfDict;
 use super::record::{
-    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, format_fields,
-    int_element, int_sentinels, malformed, type_width, value_type,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, format_fields, int_element,
+    int_sentinels, malformed, type_width, value_type,
 };
 use crate::error::IoError;
 use crate::vcf::genotype_scan::LocusSource;
@@ -87,9 +87,12 @@ pub fn render_site_part(
     let pos1 = if pos0 == -1 {
         0
     } else {
-        u64::try_from(pos0)
-            .map_err(|_| bad((contig_name, 0), "BCF position is below the telomere sentinel (-1)"))?
-            + 1
+        u64::try_from(pos0).map_err(|_| {
+            bad(
+                (contig_name, 0),
+                "BCF position is below the telomere sentinel (-1)",
+            )
+        })? + 1
     };
     // The error locus stays borrowed (A6-11): the tuple's `LocusSource` impl
     // builds a `Locus` only when an error actually carries it.
@@ -525,12 +528,9 @@ mod tests {
             indiv: &[],
         };
         let mut out = Vec::new();
-        let err = render_site_part(&rec, &dict, &mut out)
-            .expect_err("a pos0 below -1 must be an error");
-        assert!(
-            err.to_string().contains("telomere sentinel"),
-            "{err}"
-        );
+        let err =
+            render_site_part(&rec, &dict, &mut out).expect_err("a pos0 below -1 must be an error");
+        assert!(err.to_string().contains("telomere sentinel"), "{err}");
     }
 
     /// doc_v26 V26-05: a record with `n_allele == 0` has no REF at all.
@@ -562,7 +562,10 @@ mod tests {
             .expect_err("n_allele = 0 must be MalformedRecord");
         assert!(matches!(err, IoError::MalformedRecord { .. }), "{err:?}");
         assert!(err.to_string().contains("zero alleles"), "{err}");
-        assert!(out.is_empty(), "nothing may be rendered for a rejected record");
+        assert!(
+            out.is_empty(),
+            "nothing may be rendered for a rejected record"
+        );
     }
 
     /// A BCF record with no FORMAT keys (`n_fmt == 0`, what htslib writes
@@ -597,8 +600,7 @@ mod tests {
         let mut out = Vec::new();
         render_record(&rec, &dict, &mut out).expect("invariant: render");
         assert_eq!(
-            out,
-            b"Chr01\t20\t.\tA\t.\t.\t.\t.\t.\t.\t.\n",
+            out, b"Chr01\t20\t.\tA\t.\t.\t.\t.\t.\t.\t.\n",
             "n_fmt == 0 renders FORMAT `.` plus one `.` per sample (11 columns)"
         );
     }
@@ -630,8 +632,7 @@ mod tests {
         let mut out = Vec::new();
         render_record(&rec, &dict, &mut out).expect("invariant: render");
         assert_eq!(
-            out,
-            b"Chr01\t20\t.\tA\t.\t.\t.\t.\n",
+            out, b"Chr01\t20\t.\tA\t.\t.\t.\t.\n",
             "sites-only BCF renders exactly 8 columns"
         );
         // The native filter path's decision line is 8 columns too.
@@ -708,7 +709,9 @@ mod tests {
         shared.extend_from_slice(&[0x17, b'A']); // REF "A"
         shared.extend_from_slice(&[0x01]); // FILTER: count 0 (".")
         // FORMAT: GT key, then a descriptor with count 2 and type CHAR.
-        let gt = dict.key_of(b"GT").expect("invariant: GT is in the dictionary");
+        let gt = dict
+            .key_of(b"GT")
+            .expect("invariant: GT is in the dictionary");
         let mut indiv = Vec::new();
         indiv.push(0x11); // typed int: count 1, INT8
         indiv.push(u8::try_from(gt).expect("invariant: small dictionary"));

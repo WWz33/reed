@@ -8,8 +8,8 @@ use std::path::Path;
 
 use reed::budget::{MemBudget, ThreadBudget};
 use reed::{
-    ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions, Populations, SfsRequest,
-    PopgenRequest, run_convert, run_popgen,
+    ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions, PopgenRequest,
+    Populations, SfsRequest, run_convert, run_popgen,
 };
 
 /// The phylogenetic fixture: 20 records over 8 samples, covering biallelic
@@ -560,16 +560,8 @@ fn v25_02_gt_position_follows_the_format_order() {
         run_convert(Some(&vcf), &request, &budget()).expect("convert");
         read(&dir.join(format!("{name}.012")))
     };
-    let gt_first = run(
-        "gt-first",
-        "GT:DP",
-        &["0/0:9", "0/1:8", "1/1:7", "./.:."],
-    );
-    let dp_first = run(
-        "dp-first",
-        "DP:GT",
-        &["9:0/0", "8:0/1", "7:1/1", ".:./."],
-    );
+    let gt_first = run("gt-first", "GT:DP", &["0/0:9", "0/1:8", "1/1:7", "./.:."]);
+    let dp_first = run("dp-first", "DP:GT", &["9:0/0", "8:0/1", "7:1/1", ".:./."]);
     assert_eq!(gt_first, dp_first, "DP:GT must encode like GT:DP");
     assert_eq!(
         read(&dir.join("dp-first.012.pos")),
@@ -848,12 +840,13 @@ fn convert_sfs_equals_stats_sfs() {
             contig: false,
             genome: true,
         },
+        window_output: None,
+        compact_window_accumulators: false,
         skip_empty: true,
         contig_lengths: std::collections::HashMap::new(),
         layout: None,
         regions: Vec::new(),
-        targets: Vec::new(),
-        targets_exclude: Vec::new(),
+        select: reed::spec::region::SiteSelector::default(),
         keep_samples: None,
         site: None,
         sfs: Some(SfsRequest {
@@ -1233,7 +1226,11 @@ fn msa_long_deletion_is_not_truncated() {
     assert_eq!(s0.len(), 1299, "alignment width follows the REF block");
     assert_eq!(s1.len(), 1299);
     // s0 carries the 1-base ALT plus 299 gaps; s1 the full 300 bp REF.
-    assert!(s0.starts_with(&format!("A{}", "-".repeat(299))), "{}", &s0[..320]);
+    assert!(
+        s0.starts_with(&format!("A{}", "-".repeat(299))),
+        "{}",
+        &s0[..320]
+    );
     assert_eq!(&s1[..300], &reference_seq[..300]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1508,8 +1505,7 @@ chr1\t5\t.\tG\tT\t50\tPASS\t.\tGT\t0/0\t0/1
     // (AACCGGT + TAA, with the blank CRLF line dropped) and the two SNPs
     // rewrite positions 2 and 5. s0 is 0/1 at both; s1 is 0/0 then 0/1.
     assert_eq!(
-        fasta,
-        ">chr1:1-10_s0\nARCCGGTTAA\n>chr1:1-10_s1\nAACCKGTTAA\n",
+        fasta, ">chr1:1-10_s0\nARCCGGTTAA\n>chr1:1-10_s1\nAACCKGTTAA\n",
         "CRLF and blank lines must parse like the LF fixture"
     );
     let _ = std::fs::remove_dir_all(&dir);

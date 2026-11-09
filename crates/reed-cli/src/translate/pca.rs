@@ -90,18 +90,20 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
         let report = reed::run_dapc_opened(opened, &request, &budget)?;
         if args.verbosity.shows_summary() {
             eprintln!(
-            "reed pca --dapc: {} samples, {} sites, {} groups, \
+                "reed pca --dapc: {} samples, {} sites, {} groups, \
              n_pca={}, n_da={}, var={:.4} ({:.2}s)",
-            report.n_samples,
-            report.n_sites,
-            report.n_groups,
-            report.n_pca,
-            report.n_da,
-            report.var,
-            report.elapsed.as_secs_f64()
+                report.n_samples,
+                report.n_sites,
+                report.n_groups,
+                report.n_pca,
+                report.n_da,
+                report.var,
+                report.elapsed.as_secs_f64()
             );
         }
-        if let Some(xv) = &report.xval && args.verbosity.shows_summary() {
+        if let Some(xv) = &report.xval
+            && args.verbosity.shows_summary()
+        {
             eprintln!(
                 "reed pca --dapc --xval: best n_pca={} (mean success {:.4}), \
                  highest mean success at n_pca={}, random chance {:.4}",

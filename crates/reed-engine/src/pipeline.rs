@@ -934,7 +934,9 @@ mod tests {
         assert_eq!(record_ceiling(&budget(64 << 20)), 64 << 20);
 
         let mut stitcher = NewlineStitcher::with_ceiling(record_ceiling(&budget(8)));
-        stitcher.push_tail(Some(b"1234")).expect("invariant: under budget");
+        stitcher
+            .push_tail(Some(b"1234"))
+            .expect("invariant: under budget");
         let err = stitcher
             .push_tail(Some(b"56789"))
             .expect_err("a fragment past the budget must fail");

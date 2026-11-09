@@ -158,7 +158,7 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         // cut at 64 KB, not at record boundaries). Keep only the prefix up to
         // the end virtual offset's in-block position — a record boundary — so
         // the engine never sees an unterminated trailing record.
-                let truncate_to = (last_block_offset == self.end_coffset).then(|| {
+        let truncate_to = (last_block_offset == self.end_coffset).then(|| {
             let prior: u64 = blocks[..blocks.len() - 1]
                 .iter()
                 .map(|&(_, ilen)| u64::from(ilen))
@@ -244,9 +244,8 @@ pub trait IndexQuery {
         regions: &[Region],
         contig_names: &[String],
     ) -> Result<Option<(u64, u64)>, IoError> {
-        let unknown = |name: &str| {
-            IoError::Header(format!("region contig {name:?} is not in the header"))
-        };
+        let unknown =
+            |name: &str| IoError::Header(format!("region contig {name:?} is not in the header"));
         let mut start = u64::MAX;
         let mut end = 0_u64;
         for region in regions {
@@ -331,7 +330,8 @@ impl FileIndex {
 
 impl IndexQuery for FileIndex {
     fn has_reference_names(&self) -> bool {
-        self.reference_names().is_some_and(|names| !names.is_empty())
+        self.reference_names()
+            .is_some_and(|names| !names.is_empty())
     }
 
     fn tid_of(&self, name: &str) -> Option<usize> {
@@ -470,17 +470,17 @@ mod tests {
         let b2: &[u8] = b"chr1\t4\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
         let bytes = bgzf(&[b1, b2]);
         let block1_len = {
-            let mut deflater =
-                crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+            let mut deflater = crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
             let mut one = Vec::new();
-            deflater.deflate_block(b1, &mut one).expect("invariant: fits");
+            deflater
+                .deflate_block(b1, &mut one)
+                .expect("invariant: fits");
             one.len() as u64
         };
         let end_uoffset = b1
             .iter()
             .position(|&c| c == b'\n')
-            .expect("invariant: first record ends")
-            as u64
+            .expect("invariant: first record ends") as u64
             + 1;
         // The chunk starts at block 0 and ends inside block 0, after record 1.
         let index = StubIndex {
@@ -529,10 +529,11 @@ mod tests {
         let b2: &[u8] = b"chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
         let bytes = bgzf(&[b1, b2]);
         let block1_len = {
-            let mut deflater =
-                crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+            let mut deflater = crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
             let mut one = Vec::new();
-            deflater.deflate_block(b1, &mut one).expect("invariant: fits");
+            deflater
+                .deflate_block(b1, &mut one)
+                .expect("invariant: fits");
             one.len() as u64
         };
         let index = StubIndex {

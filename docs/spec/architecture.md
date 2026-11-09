@@ -817,6 +817,28 @@ pub fn edit_vcf_line(line: &LineRef, plan: &EditPlan, header: &HeaderFacts, out:
 - 写：§6.6 的边写边建。
 - 区域分片（§7.10）用索引把基因组切成压缩字节数大致相等的分片。
 
+**统计命令的记录级区域判定（`SiteSelector`，doc_v27 V27-14/V27-15）【规】**
+
+索引只省 I/O，不决定语义：索引给出的是**块**粒度的压缩字节范围，落点必然越过请求的区间。
+所以每个「这条记录算不算」的判定都必须由同一个谓词给出，`popg` 的窗口路由、裸路由与
+`stats` 的报告路由共用 `reed_filter::spec::region::SiteSelector`：
+
+| 族 | 来自 | 语义 |
+|---|---|---|
+| `indexed` | `-r/-R` | 落在任一区间内；同时是 `open_regions` 的 seek 请求 |
+| `include` | `-t/-T`（含 `^` 之外的行） | 落在任一区间内；空列表不加约束 |
+| `exclude` | `-t/-T` 的 `^` 行 | 落在任一区间内即剔除 |
+| `sites` | `--sites-file` | 精确位置（`CHROM<TAB>POS`，1-based） |
+
+`SiteSelector::allows` = 四个族各自的 `region_allows` 结果 **逐族 AND**；族内仍按 V23-60 并集。
+只有一族时退化为该族自身语义，因此单族行为与 doc_v23 的既有契约逐字节相同。
+
+这个结构是**规范要求**而不是实现细节：三族曾共用同一个 `Vec<RegionTriple>`，于是
+`(include.is_empty() || inside(include))` 对并集后的列表成立，任何两族同时给出都变成并集
+（`-r chr1:201-400 -t chr1:1-60` 统计 2 条，而 `reed filter`/`bcftools view` 是 0 条）。
+把四族分成结构体字段、只暴露一个 `allows`，是为了让「再加一族」时不可能退化成 OR。
+CLI 的参数到族的映射见 `cli.md` §7.3。
+
 ---
 
 ## 7. 执行引擎（reed-engine）
@@ -868,6 +890,19 @@ worker 对一个 chunk 一口气完成：**inflate → 认领行 → 解析（�
   串行预算下闭包收到 `parallel == false`，必须走普通迭代器（`par_iter` 在串行分支仍会惰性
   拉起全局池，D8-6 的教训）；per-contig 线程上限（filter pass0 的 `max_prune`、stats LD sink
   的 in-flight cap）同取此值。
+- **窗口与 BED 的内存所有权（doc_v27 V27-18/V27-19）**：CLI 的窗口输出行在完成时即写入
+  `WindowOutputSession` 的同目录临时文件，输入完整性检查通过后才逐文件发布；库 API 默认仍保留完整
+  `WindowRow.accs` 供后续合并。CLI 行只保留 `StatOutput` 标量与审计列，不把完整累加器留到 run 结束。
+  Bp 的流式路径传原始 `SiteRow`（常用群体数内联），sink 按位置分组（同 POS 必须同组）逐行推进水位线，
+  不允许用整段末尾位置提前发窗。空窗在 variant-only 下输出 0（absent 位置单态），Require/Bypass 才写 NA。
+  `--skip-empty` 用下一个触及 bin 跳转，genome-only 不逐窗推进；`RegionSet` 的合并表达与 stabbing 索引分离，
+  contig revisit 用 `HashSet`，窗口 scratch 复用，jackknife 同块 key 用 `Arc<[u8]>` 缓存（V27-30…34）。BED 则由 `StatsJob` 按 contig 共享 `RegionAccs`，sink 采用同一 `Arc`，
+  跨 worker/seam 只合并一次。`--memory` 继续只约束输入在途块，不是全进程 RSS 硬上限。
+- **popg LD 的执行所有权（doc_v27 V27-16/V27-17/V27-37）**：每次 `run_popgen` 至多一个 `LdExecutor`，
+  contig 分析共享一个 Rayon 池，不再为每个 contig 新建系统线程和临时池。`--threads` 的 worker 部分在
+  输入 pipeline 与 LD 之间显式拆分，二者相加不得超过 N；contig 结果按序号归并，输出顺序不随完成顺序改变。
+  失败 drop 触发 abort，块间检查后退出，pool drop 等待 worker；成功 finish 不触发 abort。无辅助池时
+  contig 在 sink 内串行执行，`--threads 1` 不另起线程。池创建失败转为 `EngineError::Job`，不是 panic。
 - N ≤ 2 时退化为 reader 和 worker 合一的顺序模式。结果必须与并行模式逐字节相同（测试锁定）。
   辅助 rayon 阶段与 per-contig 线程同样走串行/受限路径（`auxiliary() == 1`，doc_v8 D8-1）。
 - **例外（doc_v15 D15-28）**：`reed rename --rm-dup-ids` 的有序 sink 可**自持一个预算内的
@@ -995,7 +1030,12 @@ let request = StatsRequest::builder(&groups, WindowGrid::Bp { size: 100_000, ste
 ```
 
 - 请求是值类型（`Clone + Debug + serde`），可以从 TOML 读入（CLI 用）。
+- 无窗口级统计量时（纯 SFS/f 统计/LD）执行计划使用 `GridMode::None`，不需要 contig 长度；
+  这些结果由各自的 genome-wide partial 携带，不能为了制造尾窗而虚构长度（doc_v27 V27-07）。
 - `build()` 时就按清单完成全部可用性判定：被拒绝的组合在构建期报错，而不是跑到一半才失败。
+- 区域不在这里表达成逐条规则：`PopgenRequest.select` 持有 §6.8 的 `SiteSelector`（`-r/-R`、
+  `-t/-T`、`--sites-file` 四族，逐族 AND），`regions` 只承载 seek 请求。报告面
+  `StatsReportRequest.select` 是同一个类型，因此两条命令不可能对同一组参数给出不同记录集。
 
 ### 8.3 计算流（L4 driver 内）
 
@@ -1004,7 +1044,8 @@ let request = StatsRequest::builder(&groups, WindowGrid::Bp { size: 100_000, ste
 2. worker 输出 `ChunkPartial { bins: Vec<(BinKey, Vec<StatAcc>)>, n_sites, policy_counters, invariants }`，
    只包含被触及的分箱（稀疏）。
 3. reducer：按 ChunkId 序合并分箱部分；用水位线判定哪些窗口已经完整（窗口最后一个分箱 < 当前 chunk 的
-   第一个分箱，或 contig 已切换）；完整的窗口 `finish` 后按序写出。
+   第一个分箱，或 contig 已切换）；完整的窗口 `finish` 后按序写出。**输入顺序游标与窗口水位线必须分开**：
+   跨块只比较上一位点；`step > size` 时窗口之间的合法空位不能被 `next_start` 当成乱序（doc_v27 V27-06）。
 4. 不变量检查（位置升序、ContigRevisit、超出 contig 长度）跨 chunk 进行：worker 检查 chunk 内部，
    reducer 检查 chunk 之间的衔接（前一 chunk 末位点 vs 后一 chunk 首位点）。
 
@@ -1013,6 +1054,10 @@ let request = StatsRequest::builder(&groups, WindowGrid::Bp { size: 100_000, ste
 - 单位元：`Acc::default()`（或 `new_acc`）与任何 `a` 合并都等于 `a`。
 - 结合律：`(a⊕b)⊕c == a⊕(b⊕c)`。整数分量要求精确相等，浮点分量要求 ≤ 4 ulp。
 - 切分不变：把位点序列任意切成若干段分别累加再合并，结果等于整体顺序累加（同样的精度要求）。
+- `merge_zip_eq` 是固定形状向量的默认防线，不能静默截断尾部。θ 的 `sites/mutations` 是按观察等位数索引的
+  稀疏直方图：未存储的高 n 类别等于 0，Vec 长度不是请求身份。`ThetaAcc::merge` 先校验相同 group/n_chrom、
+  两条直方图等长且都未 compact，再补齐零尾逐类相加；不同群体、不同染色体数、内部非法形状和终态输出仍拒绝
+  （doc_v27 V27-36）。这是 θ 的显式例外，不放宽其他固定形状累加器。
 - `tests/accumulator_laws.rs` 用 proptest 对每个 `Statistic` 自动验证以上三条。
 
 ### 8.5 分箱窗口与滑窗【规】
@@ -1027,6 +1072,14 @@ let request = StatsRequest::builder(&groups, WindowGrid::Bp { size: 100_000, ste
 
 - 对任意 `Statistic`，`BlockJackknife<S>` 以分箱（或独立的块网格，如 5 Mb / 500 位点）为块。
   用前缀合并数组和后缀合并数组得到 leave-one-out 累加器，总成本 O(B)，并且全部是确定性的合并操作。
+- f-statistics 的 `BpBlockJackknife` 按 **ADMIXTOOLS 的观察位点网格**分块：换 contig，或当前位置距
+  **当前块首位点**至少 `block_bp` 时开新块；不是 `pos / block_bp` 固定坐标桶，也不是 `pos - prev_pos`。
+  物理坐标对应 ADMIXTOOLS `setgfromp` 的 1 Morgan = 100 Mb，因此 `--block-size 5M` 对应其 0.05 M。
+  同一次请求的全部 f 统计量共享这一位置网格；各自以实际可用位点数加权（Busing et al. 1999）。
+  worker 只持有逐位点 `(num, den)` 和一份共享位置序列，有序 sink 合并后再确定全局块边界；
+  不允许 worker/chunk 各自切块。少于两个有效块、零权重块或无定义删块估计不制造有限 SE。
+  reed 的 point estimate 保持既定 f2/f3/f4 = Σnum、D/f4-ratio = Σnum/Σden，SE 使用加权删块公式；
+  不冒充 ADMIXTOOLS 的 bias-corrected estimate（doc_v27 V27-35）。
 - 块大小不等时用加权 jackknife（Busing et al. 1999，ADMIXTOOLS 语义；snputils BSD 可移植）。
 - 输出 `est / se / z / p`。f 统计、Fst、D 统计都可以直接使用。
 
@@ -1208,6 +1261,9 @@ max_missing = 0.20                 # 或 keep_list = "samples.keep.txt" / remove
 [targets]                          # 流式谓词（bcftools -t 语义）；按索引跳读用 CLI -r
 include = ["Chr01:1-2000000"]
 exclude = []
+# 注意：这是 FilterSpec 的声明。统计命令的区域不走这里——PopgenRequest/
+# StatsReportRequest 用 SiteSelector（§6.8），因为 `-r/-R` 同时是 seek 请求，
+# 而 `--sites-file` 是精确位置表，两者都无法在 FilterSpec 的 targets 里表达。
 
 [site]
 variant_class = ["snv"]            # snv | mnv | indel | symbolic | ref

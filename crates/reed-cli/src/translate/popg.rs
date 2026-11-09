@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use reed::{Levels, Populations, PopgenRequest, default_kinds, run_popgen_opened};
+use reed::{Levels, PopgenRequest, Populations, default_kinds, run_popgen_opened};
 
 use crate::cli::PopgCli;
 
@@ -19,6 +19,15 @@ use super::common::{Prelude, prelude, print_engine_metrics};
 /// Translation (unknown levels/sizes) and driver failures.
 pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
     args.verbosity.init_tracing();
+    // Population statistics are biallelic-only in this project. `-M 2` is
+    // the explicit spelling of the default gate; higher values used to be
+    // accepted and then silently skipped in the statistics stage, which
+    // changed denominators without telling the operator (doc_v27 V27-39).
+    if args.site_args.max_alleles.is_some_and(|max| max > 2) {
+        return Err(reed::Error::usage(
+            "reed popg does not support multiallelic records: -M must be 2 (or omitted)",
+        ));
+    }
     // Usage checks before anything is read (cli.md §0.7): the window-layout
     // route always writes PREFIX files, so a missing `-o` is refused here,
     // not after the whole run (doc_v15 D15-13).
@@ -72,11 +81,20 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             .as_deref()
             .expect("invariant: -o presence checked above");
         super::common::require_output_prefix(prefix, "reed popg")?;
+    } else {
+        // The bare route writes one TSV to `-o` as a *file path* (not a
+        // prefix), so `-o` naming the input would truncate the input before
+        // it finishes being read — unrecoverable data loss that reported
+        // success (doc_v20 R5). The route check belongs here, before the
+        // input is opened (doc_v27 V27-01).
+        super::common::refuse_output_eq_input(
+            crate::units::input_path(&args.input).as_deref(),
+            args.out.as_deref().filter(|p| *p != "-").map(Path::new),
+        )?;
     }
     let Prelude {
         regions,
-        targets,
-        targets_exclude,
+        select,
         mut opened,
         sample_names,
         keep_samples,
@@ -137,8 +155,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
     if writes_files {
         let ctx = WindowedContext {
             regions: regions.clone(),
-            targets,
-            targets_exclude,
+            select,
             keep_samples,
             site,
             populations: populations.clone(),
@@ -160,11 +177,18 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             .expect("invariant: -o checked before the run");
         let command_line = crate::params::command_line();
         let mut files = Vec::new();
+        // The streamed pair table is already committed by the driver. Report
+        // its real path here, including the header-only zero-pair table,
+        // rather than leaving it out of the success summary (doc_v27 V27-20).
+        if let Some(path) = &report.pairs_path {
+            files.push(path.clone());
+        }
         if let Some(ld_report) = &report.ld {
             files.extend(reed::ld::write_ld(
                 Path::new(&prefix),
                 ld_report,
                 &group_names,
+                args.ld_pairs && report.pairs_path.is_none(),
             )?);
         }
         if let Some(fstats_report) = &report.fstats {
@@ -183,7 +207,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             )?);
         }
         // A bare `--sfs` has no window rows to write.
-        if !kinds.is_empty() {
+        if !kinds.is_empty() && report.window_files.is_empty() {
             files.extend(reed::windows::write(
                 Path::new(&prefix),
                 &report,
@@ -194,11 +218,28 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
                 env!("CARGO_PKG_VERSION"),
             )?);
         }
+        if !report.window_files.is_empty() {
+            files.extend(report.window_files.clone());
+        }
+        if report.window_files.is_empty() {
+            // SFS/f-statistics/LD-only routes have no window-output session,
+            // but they still own a run log (doc_v27 V27-26).
+            let path = reed::windows::write_popg_log(
+                Path::new(&prefix),
+                &report,
+                &kinds,
+                layout,
+                &command_line,
+                env!("CARGO_PKG_VERSION"),
+            )?;
+            files.push(path);
+        }
         if args.verbosity.shows_summary() {
             eprintln!(
-                "{} windows, {} records in {:.1}s -> {}",
+                "{} windows, {} records, {} multiallelic skipped in {:.1}s -> {}",
                 report.n_windows,
                 report.n_records,
+                report.n_multiallelic_skipped,
                 report.elapsed.as_secs_f64(),
                 files
                     .iter()
@@ -231,6 +272,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
     } else {
         reed::InvariantMode::Require
     };
+    let layout = reed::WindowLayoutOptions { invariant };
     let kinds = default_kinds(group_names.len());
     let request = PopgenRequest {
         kinds: kinds.clone(),
@@ -238,17 +280,27 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         populations,
         force_samples: args.force_samples,
         regions,
-        targets,
-        targets_exclude,
+        select,
         keep_samples,
         sfs: None,
         fstats: None,
         ld: None,
         grid,
         levels: Levels::parse(&args.levels)?,
+        window_output: (writes_files && !kinds.is_empty()).then(|| reed::WindowOutputConfig {
+            prefix: PathBuf::from(args.out.as_deref().unwrap_or("reed")),
+            command: crate::params::command_line(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            sfs: args.sfs.is_some(),
+            fstats: false,
+            ld: false,
+        }),
+        compact_window_accumulators: true,
         skip_empty: args.skip_empty,
         contig_lengths,
-        layout: Some(reed::WindowLayoutOptions { invariant }),
+        layout: Some(reed::WindowLayoutOptions {
+            invariant: layout.invariant,
+        }),
     };
     let source = opened
         .take()
@@ -274,7 +326,11 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         eprintln!("n_windows\t{}", report.n_windows);
         print_engine_metrics(&report.metrics);
     }
-    let text = reed::windows::render_tsv(&report.windows, &kinds, false);
+    let text = reed::windows::render_tsv(
+        &report.windows,
+        &kinds,
+        layout.invariant == reed::InvariantMode::VariantOnly,
+    );
     match args.out.as_deref() {
         Some(path) if path != "-" => reed::write_atomic(std::path::Path::new(path), text)?,
         // `-o -` and no `-o` both stream to stdout; write_all turns a closed
@@ -334,8 +390,7 @@ fn parse_pbs_triples(
 /// resolved them from the region/sample/site flags before this point).
 pub(crate) struct WindowedContext {
     pub regions: Vec<reed::chunk::region::Region>,
-    pub targets: Vec<reed::spec::region::RegionTriple>,
-    pub targets_exclude: Vec<reed::spec::region::RegionTriple>,
+    pub select: reed::spec::region::SiteSelector,
     pub keep_samples: Option<Vec<bool>>,
     pub site: Option<reed::spec::FilterSpec>,
     pub populations: reed::Populations,
@@ -386,9 +441,35 @@ pub(crate) fn build_windowed_request(
             "a windowed statistic needs --pop FILE (sample<TAB>population, no header)",
         ));
     }
+    // Parse `--levels` on every route, including SFS/LD-only requests;
+    // otherwise an invalid value was silently accepted (doc_v27 V27-21).
+    let requested_levels = Levels::parse(&args.levels)?;
     let group_names = ctx
         .populations
         .group_names(&ctx.sample_names, ctx.force_samples)?;
+    if group_names.is_empty() {
+        return Err(reed::Error::usage(
+            "the populations file assigns no groups; at least one group is required",
+        ));
+    }
+    if group_names.len() < 2 && (args.dxy || args.fst.is_some() || args.fst_global) {
+        return Err(reed::Error::usage(
+            "--dxy/--fst/--fst-global need at least two populations",
+        ));
+    }
+    if matches!(ctx.grid, reed::WindowGrid::Regions(_))
+        && !args.pi
+        && !args.dxy
+        && !args.theta
+        && !args.tajima_d
+        && args.fst.is_none()
+        && args.pbs.is_empty()
+        && !fstats_requested
+    {
+        return Err(reed::Error::usage(
+            "--bed-file needs a window-level statistic (for example --pi); SFS, f-statistics and LD are genome-wide",
+        ));
+    }
     let pbs_triples = parse_pbs_triples(&args.pbs, &group_names).map_err(reed::Error::usage)?;
     // A bare `--sfs` has no window denominators, so the all-sites check
     // does not apply (05 §3.1 accepts variant-only input).
@@ -482,11 +563,7 @@ pub(crate) fn build_windowed_request(
     // The pair table streams straight to `PREFIX.ld` (doc_v23 V23-14), so the
     // sink needs the final path; the writer below then sees no in-memory rows
     // and does not recreate the file.
-    let ld_request = build_ld_request(
-        args.ld_decay,
-        args.ld_pairs,
-        args.out.as_deref(),
-    )?;
+    let ld_request = build_ld_request(args.ld_decay, args.ld_pairs, args.out.as_deref())?;
     // The SFS is genome-wide: with no windowed kind, skip the window
     // grid entirely (genome level only) and give it a nominal size.
     let sfs_only = kinds.is_empty() && fstats_request.is_none();
@@ -500,7 +577,7 @@ pub(crate) fn build_windowed_request(
     } else {
         // Honor the user's --levels (the default stays window-only, so
         // the window-layout files keep their historical shape).
-        Levels::parse(&args.levels)?
+        requested_levels
     };
     let request = PopgenRequest {
         kinds: kinds.clone(),
@@ -508,14 +585,28 @@ pub(crate) fn build_windowed_request(
         populations: ctx.populations,
         force_samples: ctx.force_samples,
         regions: ctx.regions,
-        targets: ctx.targets,
-        targets_exclude: ctx.targets_exclude,
+        select: ctx.select,
         keep_samples: ctx.keep_samples,
-        sfs: sfs_request,
-        fstats: fstats_request,
-        ld: ld_request,
+        sfs: sfs_request.clone(),
+        fstats: fstats_request.clone(),
+        ld: ld_request.clone(),
         grid: ctx.grid.clone(),
         levels,
+        window_output: (!kinds.is_empty() && args.out.is_some()).then(|| {
+            reed::WindowOutputConfig {
+                prefix: PathBuf::from(
+                    args.out
+                        .as_ref()
+                        .expect("invariant: -o checked before the windowed run"),
+                ),
+                command: crate::params::command_line(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                sfs: sfs_request.is_some(),
+                fstats: fstats_request.is_some(),
+                ld: ld_request.is_some(),
+            }
+        }),
+        compact_window_accumulators: true,
         skip_empty: args.skip_empty,
         contig_lengths: ctx.contig_lengths,
         layout: Some(layout),
@@ -777,6 +868,8 @@ mod tests {
                 contig: true,
                 genome: false,
             },
+            window_output: None,
+            compact_window_accumulators: false,
             skip_empty: false,
             contig_lengths: std::collections::HashMap::new(),
             layout: Some(reed::WindowLayoutOptions {
@@ -785,8 +878,7 @@ mod tests {
                 invariant: reed::InvariantMode::VariantOnly,
             }),
             regions: Vec::new(),
-            targets: Vec::new(),
-            targets_exclude: Vec::new(),
+            select: reed::spec::region::SiteSelector::default(),
             keep_samples: None,
             sfs: Some(reed::SfsRequest {
                 projections: vec![8, 8, 8],
@@ -811,8 +903,7 @@ mod tests {
         };
         let ctx = WindowedContext {
             regions: Vec::new(),
-            targets: Vec::new(),
-            targets_exclude: Vec::new(),
+            select: reed::spec::region::SiteSelector::default(),
             keep_samples: None,
             site: None,
             populations: reed::Populations::File(pops),

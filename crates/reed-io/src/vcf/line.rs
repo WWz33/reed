@@ -260,10 +260,7 @@ impl<'a> LineRef<'a> {
             return if expected == 0 {
                 Ok(())
             } else {
-                Err(SampleColumnsError::TooFew {
-                    found: 0,
-                    expected,
-                })
+                Err(SampleColumnsError::TooFew { found: 0, expected })
             };
         }
         let mut seen = 0_usize;
@@ -367,9 +364,7 @@ impl MalformedLine {
             Self::SampleColumns(_) => "a sample-column count differing from the header",
             Self::Position => "an unparsable POS",
             Self::Empty(_) => "an empty required column",
-            Self::InfoColumn(super::info::InfoColumnError::Duplicate(_)) => {
-                "a duplicate INFO tag"
-            }
+            Self::InfoColumn(super::info::InfoColumnError::Duplicate(_)) => "a duplicate INFO tag",
             Self::InfoColumn(super::info::InfoColumnError::TooManyTags { .. }) => {
                 "too many INFO tags"
             }
@@ -510,10 +505,7 @@ mod tests {
             return if expected == 0 {
                 Ok(())
             } else {
-                Err(SampleColumnsError::TooFew {
-                    found: 0,
-                    expected,
-                })
+                Err(SampleColumnsError::TooFew { found: 0, expected })
             };
         }
         let samples = &fields[9..];
@@ -622,14 +614,7 @@ mod tests {
     /// consumer should count a terminator as a record (doc_v25 V25-03).
     #[test]
     fn terminator_only_lines_are_blank() {
-        for line in [
-            b"".as_slice(),
-            b"\n",
-            b"\r",
-            b"\r\n",
-            b"\n\r",
-            b"\r\r\n\n",
-        ] {
+        for line in [b"".as_slice(), b"\n", b"\r", b"\r\n", b"\n\r", b"\r\r\n\n"] {
             assert!(
                 matches!(classify_line(line, 1), RecordClass::Blank),
                 "{:?}",
@@ -658,12 +643,10 @@ mod tests {
         ));
         assert!(matches!(
             classify_line(record, 2),
-            RecordClass::Malformed(MalformedLine::SampleColumns(
-                SampleColumnsError::TooFew {
-                    found: 1,
-                    expected: 2,
-                }
-            ))
+            RecordClass::Malformed(MalformedLine::SampleColumns(SampleColumnsError::TooFew {
+                found: 1,
+                expected: 2,
+            }))
         ));
         assert!(matches!(
             classify_line(b"chr1\tx\t.\tA\tG\t50\tPASS\t.\n", 0),
@@ -693,7 +676,10 @@ mod tests {
             (b"chr1\t1\t.\tA\tG\t\tPASS\t.\n", EmptyField::Qual),
             (b"chr1\t1\t.\tA\tG\t50\t\t.\n", EmptyField::Filter),
             (b"chr1\t1\t.\tA\tG\t50\tPASS\t\n", EmptyField::Info),
-            (b"chr1\t1\t.\tA\tG\t50\tPASS\t.\t\t0/1\n", EmptyField::Format),
+            (
+                b"chr1\t1\t.\tA\tG\t50\tPASS\t.\t\t0/1\n",
+                EmptyField::Format,
+            ),
         ];
         for (line, field) in cases {
             assert!(

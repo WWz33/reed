@@ -54,9 +54,10 @@ impl AtomicWriter {
 
     /// Flushes, closes the handle and publishes the file.
     fn commit(mut self) -> std::io::Result<()> {
-        let mut writer = self.writer.take().ok_or_else(|| {
-            std::io::Error::other("the convert writer was already committed")
-        })?;
+        let mut writer = self
+            .writer
+            .take()
+            .ok_or_else(|| std::io::Error::other("the convert writer was already committed"))?;
         writer.flush()?;
         drop(writer);
         // `atomic` is still in place; `commit` consumes it.

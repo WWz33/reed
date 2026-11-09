@@ -119,7 +119,6 @@ impl BcfEncoder {
         buffer.get_mut().clear();
         Ok(())
     }
-
 }
 
 /// Whether the encoder refused a record because a String FORMAT field had
