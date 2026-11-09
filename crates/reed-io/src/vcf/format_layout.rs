@@ -336,8 +336,7 @@ mod tests {
 
     #[test]
     fn fallback_key_extends_last_needed_and_resolves_per_record() {
-        let mut cache =
-            FormatLayoutCache::new_with_specs(&[IntSpec::depth()], &[]);
+        let mut cache = FormatLayoutCache::new_with_specs(&[IntSpec::depth()], &[]);
         // The primary key is absent: the AD subfield (index 2) is still
         // split because the fallback is read.
         let ix = cache.intern(b"GT:PL:AD");
@@ -376,7 +375,11 @@ mod tests {
         // GQ at position 256 (0-based), GT at 257.
         let format = format!("{filler}GQ:GT");
         let mut cache = FormatLayoutCache::new_with_specs(
-            &[IntSpec::scalar(b"DP"), IntSpec::depth(), IntSpec::scalar(b"GQ")],
+            &[
+                IntSpec::scalar(b"DP"),
+                IntSpec::depth(),
+                IntSpec::scalar(b"GQ"),
+            ],
             &[b"AB"],
         );
         let ix = cache.intern(format.as_bytes());

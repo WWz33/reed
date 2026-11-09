@@ -222,8 +222,7 @@ impl Indexer {
                 out
             }
         };
-        crate::write::atomic::write_atomic(path, bytes)
-            .map_err(|e| IoError::Io(e.to_string()))
+        crate::write::atomic::write_atomic(path, bytes).map_err(|e| IoError::Io(e.to_string()))
     }
 }
 

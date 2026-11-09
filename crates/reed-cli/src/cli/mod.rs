@@ -199,20 +199,36 @@ pub(crate) struct PcaCli {
     #[arg(long, requires = "dapc")]
     pub xval: bool,
     /// Repetitions per candidate with --xval (default 30)
-    #[arg(long = "xval-rep", value_name = "INT", default_value_t = 30,
-          requires = "xval")]
+    #[arg(
+        long = "xval-rep",
+        value_name = "INT",
+        default_value_t = 30,
+        requires = "xval"
+    )]
     pub xval_rep: usize,
     /// Training fraction with --xval (default 0.9; reduced for small groups)
-    #[arg(long = "xval-training", value_name = "FLOAT", default_value_t = 0.9,
-          requires = "xval")]
+    #[arg(
+        long = "xval-training",
+        value_name = "FLOAT",
+        default_value_t = 0.9,
+        requires = "xval"
+    )]
     pub xval_training: f64,
     /// Accuracy reported by --xval: overall (default) or group-mean
-    #[arg(long = "xval-result", value_name = "overall|group-mean",
-          default_value = "overall", requires = "xval")]
+    #[arg(
+        long = "xval-result",
+        value_name = "overall|group-mean",
+        default_value = "overall",
+        requires = "xval"
+    )]
     pub xval_result: String,
     /// Seed for --xval's per-repetition sub-streams (default 42)
-    #[arg(long = "xval-seed", value_name = "INT", default_value_t = 42,
-          requires = "xval")]
+    #[arg(
+        long = "xval-seed",
+        value_name = "INT",
+        default_value_t = 42,
+        requires = "xval"
+    )]
     pub xval_seed: u64,
     /// Comma-separated candidate component counts for --xval (default: the
     /// adegenet rule)
@@ -288,7 +304,12 @@ pub(crate) struct DistanceCli {
     #[arg(long, value_name = "INT", default_value_t = 42, requires = "bootstrap")]
     pub bootstrap_seed: u64,
     /// Drop support labels below this percentage (default 0 = keep all)
-    #[arg(long, value_name = "FLOAT", default_value_t = 0.0, requires = "bootstrap")]
+    #[arg(
+        long,
+        value_name = "FLOAT",
+        default_value_t = 0.0,
+        requires = "bootstrap"
+    )]
     pub bootstrap_cutoff: f64,
     /// Output prefix: writes PREFIX.<suffix>
     #[arg(short = 'o', long = "out", value_name = "PREFIX")]
@@ -748,7 +769,9 @@ pub(crate) struct PopgCli {
     /// Skip windows that no site fell into
     #[arg(long)]
     pub skip_empty: bool,
-    /// Output prefix: PREFIX_pi.txt, PREFIX.afreq, ... (or the TSV on stdout)
+    /// Output: a PREFIX when a windowed/global statistic is selected
+    /// (PREFIX_pi.txt, ...); otherwise the path of the single wide TSV
+    /// (stdout when omitted or `-`)
     #[arg(
         short = 'o',
         long = "output",
@@ -947,7 +970,12 @@ pub(crate) struct RenameCli {
     pub replace_sample_name: Option<String>,
     /// Output file (default: stdout); the format comes from -O or the
     /// extension
-    #[arg(short = 'o', long = "output", visible_alias = "out", value_name = "FILE")]
+    #[arg(
+        short = 'o',
+        long = "output",
+        visible_alias = "out",
+        value_name = "FILE"
+    )]
     pub out: Option<String>,
     /// Output type: v (plain VCF) or z (BGZF VCF); optional compression
     /// level (`-Oz6`)
@@ -1007,10 +1035,7 @@ mod tests {
         listed.dedup();
         assert_eq!(total, listed.len(), "a command is listed in two groups");
         for name in &names {
-            assert!(
-                listed.contains(&name.as_str()),
-                "{name} is in no group"
-            );
+            assert!(listed.contains(&name.as_str()), "{name} is in no group");
         }
         for name in &listed {
             assert!(
@@ -1025,14 +1050,22 @@ mod tests {
     #[test]
     fn grouped_help_lists_the_five_groups() {
         let text = render_grouped_commands();
-        for title in ["Filtering", "Statistics", "Transform", "File Operations", "Miscellaneous"] {
-            assert!(text.contains(&format!("Commands for {title}:")), "{title} missing:\n{text}");
+        for title in [
+            "Filtering",
+            "Statistics",
+            "Transform",
+            "File Operations",
+            "Miscellaneous",
+        ] {
+            assert!(
+                text.contains(&format!("Commands for {title}:")),
+                "{title} missing:\n{text}"
+            );
         }
         for name in ["filter", "stats", "popg", "convert", "index"] {
             assert!(text.contains(name), "{name} missing:\n{text}");
         }
     }
-
 
     /// A representative convert request renders to flags clap accepts, and
     /// the parsed flags rebuild the same request field by field (doc_v13

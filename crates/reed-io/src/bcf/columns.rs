@@ -136,11 +136,7 @@ fn int_sum_column(ty: u8, count: usize, data: &[u8]) -> u32 {
         sum = sum.saturating_add(u64::try_from(v).unwrap_or(u64::MAX));
         any = true;
     }
-    if any {
-        clamp_int_sum(sum)
-    } else {
-        INT_MISSING
-    }
+    if any { clamp_int_sum(sum) } else { INT_MISSING }
 }
 
 /// One integer FORMAT element as the text scanner would parse it.
@@ -211,6 +207,9 @@ mod tests {
         // A CHAR path never reaches `int_element_column` from
         // `decode_format_columns` (its `is_int` gate), but the helper stays
         // total for direct callers.
-        assert_eq!(int_element_column(value_type::INT32, &(-3_i32).to_le_bytes()), INT_MISSING);
+        assert_eq!(
+            int_element_column(value_type::INT32, &(-3_i32).to_le_bytes()),
+            INT_MISSING
+        );
     }
 }

@@ -31,7 +31,11 @@ fn read_matrix(path: &str) -> Mat {
     for i in 0..n {
         for j in 0..m {
             let tok = it.next().unwrap();
-            let v = if tok == "NA" { f64::NAN } else { tok.parse().unwrap() };
+            let v = if tok == "NA" {
+                f64::NAN
+            } else {
+                tok.parse().unwrap()
+            };
             mat.set(i, j, v);
         }
     }
@@ -50,7 +54,12 @@ fn main() {
 
     let t = Instant::now();
     let x = read_matrix(path);
-    println!("read: {:.3} s  ({} x {})", t.elapsed().as_secs_f64(), x.rows, x.cols);
+    println!(
+        "read: {:.3} s  ({} x {})",
+        t.elapsed().as_secs_f64(),
+        x.rows,
+        x.cols
+    );
 
     let t = Instant::now();
     let st = standardize_binom2(&x);
@@ -83,11 +92,18 @@ fn main() {
     }
 
     if mode == "lanczos" || mode == "both" {
-        let cfg = LanczosConfig { k, block: 8, ..Default::default() };
+        let cfg = LanczosConfig {
+            k,
+            block: 8,
+            ..Default::default()
+        };
         let t = Instant::now();
         let part = lanczos_top_k(&st.w, &cfg);
         let secs = t.elapsed().as_secs_f64();
-        println!("stream PCA: {:.3} s  ({} restart cycles)", secs, part.cycles);
+        println!(
+            "stream PCA: {:.3} s  ({} restart cycles)",
+            secs, part.cycles
+        );
         println!("  lam: {:?}", part.values);
         println!("  max rel residual: {:.3e}", part.max_residual);
     }

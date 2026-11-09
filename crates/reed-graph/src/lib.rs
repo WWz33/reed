@@ -35,7 +35,7 @@ pub mod error;
 pub mod newick;
 pub mod tree;
 
-pub use bootstrap::{support, BootstrapConfig, BootstrapReport, TreeMethod};
+pub use bootstrap::{BootstrapConfig, BootstrapReport, TreeMethod, support};
 pub use error::GraphError;
 pub use newick::to_newick;
 pub use tree::{Tree, nj, upgma};

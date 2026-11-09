@@ -339,4 +339,3 @@ fn warn_serial_gzip() {
          (repack with `bgzip` for parallel reads)"
     );
 }
-

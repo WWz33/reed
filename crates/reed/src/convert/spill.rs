@@ -66,9 +66,8 @@ impl RowsBlob {
                 return Ok(());
             }
             buf.append(rows);
-            let (mut file, spill) =
-                crate::spill::TempSpill::create(None, "convert", "spill")
-                    .map_err(EngineError::Io)?;
+            let (mut file, spill) = crate::spill::TempSpill::create(None, "convert", "spill")
+                .map_err(EngineError::Io)?;
             file.write_all(buf).map_err(EngineError::Io)?;
             file.flush().map_err(EngineError::Io)?;
             let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
@@ -119,9 +118,8 @@ impl RowsBlob {
         if let Self::Memory(buf) = self
             && !buf.is_empty()
         {
-            let (mut file, spill) =
-                crate::spill::TempSpill::create(None, "convert", "spill")
-                    .map_err(EngineError::Io)?;
+            let (mut file, spill) = crate::spill::TempSpill::create(None, "convert", "spill")
+                .map_err(EngineError::Io)?;
             file.write_all(buf).map_err(EngineError::Io)?;
             file.flush().map_err(EngineError::Io)?;
             let len = u64::try_from(buf.len()).unwrap_or(u64::MAX);
@@ -147,7 +145,6 @@ impl RowsBlob {
         }
     }
 }
-
 
 /// The MSA sites, one frame stream per contig run (the `runs` merge rule is
 /// preserved: a run continues while the contig does not change). Each frame
@@ -176,9 +173,7 @@ impl<'a> MsaFrameReader<'a> {
         let source = match blob {
             RowsBlob::Memory(bytes) => MsaFrameSource::Memory { bytes, cursor: 0 },
             RowsBlob::Spilled { spill, .. } => MsaFrameSource::Spilled {
-                file: std::io::BufReader::new(
-                    File::open(spill.path()).map_err(EngineError::Io)?,
-                ),
+                file: std::io::BufReader::new(File::open(spill.path()).map_err(EngineError::Io)?),
             },
         };
         Ok(Self { source, n_samples })
@@ -216,7 +211,8 @@ impl<'a> MsaFrameReader<'a> {
             },
         }
         let pos0 = u64::from_le_bytes(header[..8].try_into().expect("invariant: 8 bytes"));
-        let width = u32::from_le_bytes(header[8..].try_into().expect("invariant: 4 bytes")) as usize;
+        let width =
+            u32::from_le_bytes(header[8..].try_into().expect("invariant: 4 bytes")) as usize;
         let len = self.n_samples * width;
         let lo = sample * width;
         buf.clear();
@@ -239,4 +235,3 @@ impl<'a> MsaFrameReader<'a> {
         Ok(Some(pos0))
     }
 }
-

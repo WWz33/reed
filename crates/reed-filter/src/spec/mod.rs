@@ -22,7 +22,7 @@ pub use mask::GenotypeMaskRule;
 pub use missing_rate::MissingRate;
 pub use predicate::{Cmp, OnMissing, Quantifier, Typed};
 pub use recompute::RecomputeSpec;
-pub use region::{Region, RegionRule};
+pub use region::{Region, RegionRule, SiteSelector};
 
 /// The filter specification (§11.1). One typed value; the flag vector is
 /// its other spelling (`to_args`, `spec/render.rs`).

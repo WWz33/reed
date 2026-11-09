@@ -25,12 +25,12 @@ pub(crate) fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
         && spec.site_after_mask == reed::spec::TailRules::default()
 }
 
-/// The parsed region flags: indexed regions, target includes, target
-/// excludes.
+/// The parsed region flags: indexed regions as a seek request, plus the
+/// [`SiteSelector`] holding the three record-level families that AND
+/// (doc_v27 V27-14/V27-15).
 type ParsedRegions = (
     Vec<reed::chunk::region::Region>,
-    Vec<reed::spec::region::RegionTriple>,
-    Vec<reed::spec::region::RegionTriple>,
+    reed::spec::region::SiteSelector,
 );
 
 /// Canonicalizes one line of a region/target file (`-r/-R/-t/-T`, bcftools
@@ -108,8 +108,13 @@ pub(crate) fn region_tokens(text: &str, from_file: bool) -> Result<Vec<String>, 
     }
 }
 
-/// Parses the shared region flags: indexed regions (`-r/-R`, needing a
-/// seekable input) and streamed targets (`-t/-T`, `^` = exclude).
+/// Parses the shared region flags into a seek request (`-r/-R`, needing a
+/// seekable input) plus a [`SiteSelector`] whose `indexed`/`include`/
+/// `exclude` families are filled from `-r/-R` and `-t/-T` (`^` = exclude).
+///
+/// The `indexed` family is duplicated into the seek list rather than pushed
+/// into `include`: the two families intersect, and folding `-r` into `-t`'s
+/// list made them union (doc_v27 V27-15).
 ///
 /// # Errors
 ///
@@ -119,6 +124,7 @@ fn parse_regions(
     contigs: &[String],
 ) -> Result<ParsedRegions, String> {
     let mut regions = Vec::new();
+    let mut indexed = Vec::new();
     for (list, from_file) in [(&args.regions, false), (&args.regions_file, true)] {
         for value in list {
             let text = if from_file {
@@ -127,17 +133,16 @@ fn parse_regions(
                 value.clone()
             };
             for token in region_tokens(&text, from_file)? {
-                let (contig, start1, end1) = reed::spec::region::parse_regions_strict(
-                    std::slice::from_ref(&token),
-                    contigs,
-                )
-                .map_err(|e| format!("invalid region {token:?}: {e}"))?
-                .remove(0);
+                let (contig, start1, end1) =
+                    reed::spec::region::parse_regions_strict(std::slice::from_ref(&token), contigs)
+                        .map_err(|e| format!("invalid region {token:?}: {e}"))?
+                        .remove(0);
                 regions.push(reed::chunk::region::Region {
-                    contig,
+                    contig: contig.clone(),
                     start1,
                     end1,
                 });
+                indexed.push((contig, start1, end1));
             }
         }
     }
@@ -166,7 +171,15 @@ fn parse_regions(
             }
         }
     }
-    Ok((regions, include, exclude))
+    Ok((
+        regions,
+        reed::spec::region::SiteSelector {
+            indexed,
+            include,
+            exclude,
+            sites: Vec::new(),
+        },
+    ))
 }
 
 /// The sample sources after validation, before any file is read.
@@ -316,14 +329,16 @@ pub(crate) fn parse_sample_keep(
     Ok(touched.then_some(keep))
 }
 
-
 /// The parsed-and-opened state both statistics commands need before they
 /// diverge (regions resolved, the input opened once, the shared site/sample
 /// flags compiled, the thread budget built).
 pub(crate) struct Prelude {
+    /// `-r/-R` as a seek request (`select.indexed` carries the same ranges
+    /// as the record predicate).
     pub regions: Vec<reed::chunk::region::Region>,
-    pub targets: Vec<reed::spec::region::RegionTriple>,
-    pub targets_exclude: Vec<reed::spec::region::RegionTriple>,
+    /// The record-level site selection: `-r/-R` ∧ `-t/-T` ∧
+    /// `--sites-file` (doc_v27 V27-14/V27-15).
+    pub select: reed::spec::region::SiteSelector,
     pub opened: Option<reed::OpenedInput>,
     pub sample_names: Vec<String>,
     pub keep_samples: Option<Vec<bool>>,
@@ -367,14 +382,18 @@ pub(crate) fn prelude(
     // V24-04): `HLA-A*01:01` is a name, not `contig:pos`. Indexed regions
     // also drive the seek, so read the header once before opening for the
     // seek range; a `-t`-only run reuses its single open.
-    let (opened, regions, mut targets, targets_exclude) = if has_indexed {
+    let (opened, regions, select) = if has_indexed {
         let probe = reed::open_regions(open_path.as_deref(), &[])?;
         let contigs = probe.facts().contig_names.clone();
         drop(probe);
-        let (regions, targets, exclude) =
+        let (regions, select) =
             parse_regions(regions_args, &contigs).map_err(reed::Error::usage)?;
+        debug_assert!(
+            !select.indexed.is_empty(),
+            "indexed flags -> both the seek list and the record predicate"
+        );
         let opened = Some(reed::open_regions(open_path.as_deref(), &regions)?);
-        (opened, regions, targets, exclude)
+        (opened, regions, select)
     } else {
         let opened = Some(reed::open_regions(open_path.as_deref(), &[])?);
         let contigs = opened
@@ -383,22 +402,16 @@ pub(crate) fn prelude(
             .facts()
             .contig_names
             .clone();
-        let (regions, targets, exclude) =
+        let (regions, select) =
             parse_regions(regions_args, &contigs).map_err(reed::Error::usage)?;
         debug_assert!(regions.is_empty(), "no indexed flags -> no seek regions");
-        (opened, regions, targets, exclude)
+        (opened, regions, select)
     };
-    // Indexed ranges are coarse (whole blocks), so the same regions also act
-    // as the record predicate — exactly how the filter's `-r` works.
-    for region in &regions {
-        targets.push((region.contig.clone(), region.start1, region.end1));
-    }
     let open_secs = started.elapsed().as_secs_f64();
     tracing::debug!(open_ms = open_secs * 1e3, input, "{verb} opened the input");
     let facts = opened.as_ref().expect("invariant: just opened").facts();
     let sample_names: Vec<String> = facts.sample_names.clone();
-    let keep_samples =
-        parse_sample_keep(sample_args, &sample_names).map_err(reed::Error::usage)?;
+    let keep_samples = parse_sample_keep(sample_args, &sample_names).map_err(reed::Error::usage)?;
     if !site_args.indep_pairwise.is_empty() {
         return Err(reed::Error::usage(format!(
             "{verb} does not support --indep-pairwise yet (the pruning needs a second pass);              run `reed filter --indep-pairwise W[kb] [S] R2` first and feed its output to {verb}"
@@ -435,7 +448,9 @@ pub(crate) fn prelude(
                 continue;
             };
             let len: u64 = len.parse().map_err(|_| {
-                reed::Error::usage(format!("{path}: contig length for {name:?} is not a number"))
+                reed::Error::usage(format!(
+                    "{path}: contig length for {name:?} is not a number"
+                ))
             })?;
             contig_lengths.insert(name.as_bytes().to_vec(), len);
         }
@@ -443,17 +458,23 @@ pub(crate) fn prelude(
 
     let budget = ThreadBudget::from_cli(threads_arg, memory_arg);
 
-    // `--sites-file` narrows the counted sites for every route (doc_v7 D7-6).
+    let mut select = select;
+    // `--sites-file` narrows the counted sites for every route (doc_v7 D7-6)
+    // — as its **own** family, intersected with the region families. It used
+    // to append to the `-t/-T` include list, so `--sites-file` naming one
+    // position plus `-t` naming three more counted all four instead of none
+    // (doc_v27 V27-14).
     if let Some(path) = sites_file {
-        for (contig, pos1) in parse_sites(path).map_err(reed::Error::usage)? {
-            targets.push((contig, Some(pos1), Some(pos1)));
-        }
+        select.sites = parse_sites(path)
+            .map_err(reed::Error::usage)?
+            .into_iter()
+            .map(|(contig, pos1)| (contig, Some(pos1), Some(pos1)))
+            .collect();
     }
 
     Ok(Prelude {
         regions,
-        targets,
-        targets_exclude,
+        select,
         opened,
         sample_names,
         keep_samples,
@@ -566,7 +587,6 @@ fn parse_sites(path: &str) -> Result<Vec<(String, u64)>, String> {
     }
     Ok(sites)
 }
-
 
 #[cfg(test)]
 mod tests {

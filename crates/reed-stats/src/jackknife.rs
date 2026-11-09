@@ -4,8 +4,8 @@
 //! accumulator numbers sites as chunk partials arrive in order, so the
 //! block partition (and therefore the SE) is independent of the chunk
 //! partition and thread count (§7.6). Blocks are fixed site counts
-//! (equal-sized), so the plain delete-1 jackknife applies; unequal blocks
-//! (Busing-weighted) are future work (TODO).
+//! (equal-sized), so the plain delete-1 jackknife applies. The physical-bp
+//! implementation below instead uses Busing/ADMIXTOOLS weighting (V27-35).
 
 use reed_core::math::sum::NeumaierSum;
 
@@ -165,134 +165,362 @@ impl BlockJackknife {
     }
 }
 
-/// A bp-blocked jackknife (docs/rounds/v5/05-algorithms.md §3.3): blocks are
-/// fixed genomic spans (`--block-size`, default 5M bp) rather than fixed
-/// site counts, which is what admixtools/Patterson block on for real data.
-/// Sites arrive in coordinate order; the accumulator keys blocks by
-/// `(contig, pos0 / block_bp)` so the partition is independent of the chunk
-/// partition and thread count.
 #[derive(Clone, Debug)]
-pub struct BpBlockJackknife {
-    block_bp: u64,
-    /// Sealed blocks in key order: `((contig, block), Σnum, Σden, n_sites)`.
-    blocks: std::collections::BTreeMap<(Vec<u8>, u64), (NeumaierSum, NeumaierSum, u64)>,
-    total: (NeumaierSum, NeumaierSum),
+struct BpObservation {
+    contig: std::sync::Arc<[u8]>,
+    pos0: u64,
+    num: f64,
+    den: f64,
+    usable: bool,
+}
+
+#[derive(Clone, Copy)]
+struct BpSite<'a> {
+    contig: &'a [u8],
+    pos0: u64,
+    num: f64,
+    den: f64,
+    usable: bool,
+}
+
+#[derive(Clone, Debug)]
+struct BpBlock {
+    num: NeumaierSum,
+    den: NeumaierSum,
     n_sites: u64,
 }
 
+/// ADMIXTOOLS-style observed-site block jackknife. A new block starts at a
+/// contig change or when the position is at least `block_bp` from the current
+/// block's first position, not its previous position. Physical positions use
+/// 1 Morgan = 100 Mb, so the CLI's 5 Mb matches ADMIXTOOLS' 0.05-Morgan
+/// physical-position mode (doc_v27 V27-35).
+///
+/// The input positions form one grid shared by every f-statistic. Each test
+/// stores its small per-site `(num, den)` contributions and counts its own
+/// informative sites as weights. The ordered sink joins the grid once and
+/// evaluates blocks from the joined positions, so a local chunk can neither
+/// move a block boundary nor misattribute a statistic's contributions.
+#[derive(Clone, Debug)]
+pub struct BpBlockJackknife {
+    block_bp: u64,
+    observations: Vec<BpObservation>,
+    /// Shared-grid statistics store only their per-site values. The caller
+    /// supplies the joined position grid to `jackknife_shared` at finish.
+    shared: Option<Vec<(f64, f64, bool)>>,
+}
+
 impl BpBlockJackknife {
-    /// A jackknife over blocks of `block_bp` base pairs (`0` is read as 1).
+    /// A jackknife with a maximum observed span of `block_bp` bp per block.
     #[must_use]
     pub fn new(block_bp: u64) -> Self {
         Self {
             block_bp: block_bp.max(1),
-            blocks: std::collections::BTreeMap::new(),
-            total: (NeumaierSum::new(), NeumaierSum::new()),
-            n_sites: 0,
+            observations: Vec::new(),
+            shared: None,
         }
     }
 
-    /// Absorbs one site at `(contig, pos0)`.
-    pub fn push(&mut self, contig: &[u8], pos0: u64, num: f64, den: f64) {
-        let key = (contig.to_vec(), pos0 / self.block_bp);
-        self.total.0.add(num);
-        self.total.1.add(den);
-        self.n_sites += 1;
-        let entry = self
-            .blocks
-            .entry(key)
-            .or_insert_with(|| (NeumaierSum::new(), NeumaierSum::new(), 0));
-        entry.0.add(num);
-        entry.1.add(den);
-        entry.2 += 1;
+    /// Uses the caller's one input position grid instead of retaining another
+    /// copy for this statistic. Call before the first `push`.
+    pub fn share_grid(&mut self) {
+        assert!(
+            self.observations.is_empty(),
+            "invariant: grid shared before input"
+        );
+        self.shared = Some(Vec::new());
     }
 
-    /// The point estimate Σnum / Σden.
+    /// Absorbs one usable grid record. `(0, 0)` is a valid zero contribution,
+    /// not a skip: it still increments the block's informative-site weight.
+    pub fn push(&mut self, contig: &[u8], pos0: u64, num: f64, den: f64) {
+        self.push_usable(contig, pos0, num, den, true);
+    }
+
+    /// Marks whether this statistic can use the record. A skipped record
+    /// still delimits the common grid but never contributes a weight.
+    pub fn push_usable(&mut self, contig: &[u8], pos0: u64, num: f64, den: f64, usable: bool) {
+        if let Some(values) = &mut self.shared {
+            values.push((num, den, usable));
+            return;
+        }
+        if let Some(previous) = self.observations.last() {
+            assert!(
+                previous.contig.as_ref() != contig || previous.pos0 <= pos0,
+                "invariant: jackknife grid arrives in contig/position order"
+            );
+        }
+        self.observations.push(BpObservation {
+            contig: std::sync::Arc::from(contig),
+            pos0,
+            num,
+            den,
+            usable,
+        });
+    }
+
+    /// The natural point estimate Σnum / Σden.
     #[must_use]
     pub fn estimate(&self) -> Option<f64> {
-        let den = self.total.1.value();
-        (self.n_sites > 0 && den != 0.0).then(|| self.total.0.value() / den)
+        let (num, den) = self.totals();
+        (self.n_sites() > 0 && den != 0.0).then(|| num / den)
     }
 
-    /// The delete-one-block jackknife: `(estimate, se, n_blocks)`.
+    /// Number of records in the grid, including records a test cannot use.
     #[must_use]
-    pub fn jackknife(&self) -> Option<(f64, f64, usize)> {
-        if self.blocks.len() < 2 {
+    pub fn n_sites(&self) -> u64 {
+        self.shared
+            .as_ref()
+            .map_or(self.observations.len(), Vec::len) as u64
+    }
+
+    /// Number of blocks in the caller's joined grid for a shared statistic.
+    /// This is independent of whether a particular test can use every site.
+    #[must_use]
+    pub fn n_blocks_shared(&self, grid: &Self) -> usize {
+        assert!(grid.shared.is_none(), "invariant: owned grid");
+        assert_eq!(self.block_bp, grid.block_bp, "invariant: same block size");
+        assert_eq!(self.n_sites(), grid.n_sites(), "invariant: complete grid");
+        grid.n_blocks()
+    }
+
+    /// Number of blocks for an owned grid. A shared-grid statistic has no
+    /// block grid of its own, so this returns 0 until the caller evaluates it
+    /// with `jackknife_shared` or `jackknife_sum_shared`.
+    #[must_use]
+    pub fn n_blocks(&self) -> usize {
+        if self.shared.is_none() {
+            self.blocks(None).len()
+        } else {
+            0
+        }
+    }
+
+    fn totals(&self) -> (f64, f64) {
+        let mut num = NeumaierSum::new();
+        let mut den = NeumaierSum::new();
+        if let Some(values) = &self.shared {
+            for &(n, d, _) in values {
+                num.add(n);
+                den.add(d);
+            }
+        } else {
+            for observation in &self.observations {
+                num.add(observation.num);
+                den.add(observation.den);
+            }
+        }
+        (num.value(), den.value())
+    }
+
+    /// Materializes the one global block grid and this statistic's totals.
+    fn blocks(&self, grid: Option<&Self>) -> Vec<BpBlock> {
+        let sites: Vec<BpSite<'_>> = match &self.shared {
+            Some(values) => {
+                let grid = grid.expect("invariant: shared statistic receives its joined grid");
+                assert!(grid.shared.is_none(), "invariant: owned position grid");
+                assert_eq!(
+                    values.len(),
+                    grid.observations.len(),
+                    "invariant: complete shared grid"
+                );
+                grid.observations
+                    .iter()
+                    .zip(values)
+                    .map(|(site, &(num, den, usable))| BpSite {
+                        contig: &site.contig,
+                        pos0: site.pos0,
+                        num,
+                        den,
+                        usable,
+                    })
+                    .collect()
+            }
+            None => self
+                .observations
+                .iter()
+                .map(|site| BpSite {
+                    contig: &site.contig,
+                    pos0: site.pos0,
+                    num: site.num,
+                    den: site.den,
+                    usable: site.usable,
+                })
+                .collect(),
+        };
+        let mut out: Vec<BpBlock> = Vec::new();
+        let mut origin: Option<(&[u8], u64)> = None;
+        for site in sites {
+            let new_block = origin.is_none_or(|(start_contig, start_pos)| {
+                start_contig != site.contig || site.pos0 - start_pos >= self.block_bp
+            });
+            if new_block {
+                out.push(BpBlock {
+                    num: NeumaierSum::new(),
+                    den: NeumaierSum::new(),
+                    n_sites: 0,
+                });
+                origin = Some((site.contig, site.pos0));
+            }
+            let block = out.last_mut().expect("invariant: opened above");
+            block.num.add(site.num);
+            block.den.add(site.den);
+            block.n_sites += u64::from(site.usable);
+        }
+        out
+    }
+
+    /// Busing/ADMIXTOOLS weighted jackknife (Busing et al. 1999). The
+    /// natural estimate is retained; only the SE uses weighted pseudovalues.
+    /// Ratio-form delete-one denominators have ADMIXTOOLS' `1e-10` floor;
+    /// a zero full-data denominator still has no valid point estimate.
+    fn weighted(mean: f64, deleted: Vec<(f64, u64)>) -> Option<(f64, f64, usize)> {
+        let usable: Vec<(f64, f64)> = deleted
+            .into_iter()
+            .filter(|(value, weight)| *weight > 0 && value.is_finite())
+            .map(|(value, weight)| (value, weight as f64))
+            .collect();
+        if usable.len() < 2 || !mean.is_finite() {
             return None;
         }
-        let total_num = self.total.0.value();
-        let total_den = self.total.1.value();
+        let total_weight: f64 = usable.iter().map(|(_, weight)| weight).sum();
+        let pseudo_mean = usable
+            .iter()
+            .map(|(deleted, weight)| mean - deleted + weight * deleted / total_weight)
+            .sum::<f64>();
+        let variance = usable
+            .iter()
+            .map(|(deleted, weight)| {
+                let h = total_weight / weight;
+                let pseudo = h * mean - (h - 1.0) * deleted - pseudo_mean;
+                pseudo * pseudo / (h - 1.0)
+            })
+            .sum::<f64>()
+            / usable.len() as f64;
+        Some((mean, variance.sqrt(), usable.len()))
+    }
+
+    /// Ratio-of-sums weighted delete-one-block jackknife for an owned grid.
+    ///
+    /// # Panics
+    /// Panics for a shared-grid statistic until `jackknife_shared` supplies
+    /// the caller's joined positions.
+    #[must_use]
+    pub fn jackknife(&self) -> Option<(f64, f64, usize)> {
+        self.jackknife_impl(None)
+    }
+
+    /// Ratio-of-sums jackknife over the caller's joined shared grid.
+    #[must_use]
+    pub fn jackknife_shared(&self, grid: &Self) -> Option<(f64, f64, usize)> {
+        self.jackknife_impl(Some(grid))
+    }
+
+    fn jackknife_impl(&self, grid: Option<&Self>) -> Option<(f64, f64, usize)> {
+        assert!(
+            self.shared.is_none() || grid.is_some(),
+            "shared statistic requires its joined grid"
+        );
+        let (total_num, total_den) = self.totals();
         if total_den == 0.0 {
             return None;
         }
-        let mut vj = Vec::with_capacity(self.blocks.len());
-        for (num_b, den_b, _) in self.blocks.values() {
-            let num = total_num - num_b.value();
-            let den = total_den - den_b.value();
-            if den != 0.0 {
-                vj.push(num / den);
-            }
-        }
-        if vj.len() < 2 {
-            return None;
-        }
-        let n = vj.len() as f64;
-        let mean = vj.iter().sum::<f64>() / n;
-        let sv = ((n - 1.0) / n) * vj.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>();
-        Some((total_num / total_den, sv.sqrt(), vj.len()))
+        let deleted = self
+            .blocks(grid)
+            .iter()
+            .map(|block| {
+                (
+                    (total_num - block.num.value()) / (total_den - block.den.value()).max(1e-10),
+                    block.n_sites,
+                )
+            })
+            .collect();
+        Self::weighted(total_num / total_den, deleted).or_else(|| {
+            let n_blocks = self
+                .blocks(grid)
+                .into_iter()
+                .filter(|block| block.n_sites > 0)
+                .count();
+            Some((total_num / total_den, f64::NAN, n_blocks))
+        })
     }
 
-    /// Number of blocks seen.
-    #[must_use]
-    pub fn n_blocks(&self) -> usize {
-        self.blocks.len()
-    }
-
-    /// The delete-one-block jackknife for an **additive** statistic
-    /// (`den ≡ 1`, i.e. f2/f3/f4): the pseudo-values are the sums over the
-    /// remaining blocks, so `se` is on the same scale as the reported
-    /// Σnum. admixtools reports f2 as a (weighted) sum over sites, so the
-    /// SE must be a sum-scale SE too (doc_v7 D7-9). Returns
-    /// `(Σnum, se, n_blocks)`.
+    /// Sum-scale weighted jackknife for reed's established f2/f3/f4 = Σnum
+    /// contract. Estimate and SE remain on the same scale.
+    ///
+    /// # Panics
+    /// Panics for a shared-grid statistic until `jackknife_sum_shared`
+    /// receives the caller's joined grid.
     #[must_use]
     pub fn jackknife_sum(&self) -> Option<(f64, f64, usize)> {
-        if self.blocks.len() < 2 {
-            return None;
-        }
-        let total = self.total.0.value();
-        let mut vj = Vec::with_capacity(self.blocks.len());
-        for (num_b, _, _) in self.blocks.values() {
-            vj.push(total - num_b.value());
-        }
-        let n = vj.len() as f64;
-        let mean = vj.iter().sum::<f64>() / n;
-        let sv = ((n - 1.0) / n) * vj.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>();
-        Some((total, sv.sqrt(), vj.len()))
+        self.jackknife_sum_impl(None)
     }
 
-    /// Contributing site count.
+    /// Sum-scale jackknife over the caller's joined shared grid.
     #[must_use]
-    pub const fn n_sites(&self) -> u64 {
-        self.n_sites
+    pub fn jackknife_sum_shared(&self, grid: &Self) -> Option<(f64, f64, usize)> {
+        self.jackknife_sum_impl(Some(grid))
     }
 
-    /// Merges another partial (blocks keyed by `(contig, block)` add).
-    pub fn merge(&mut self, other: &Self) {
-        // Unconditional: in release the old `debug_assert!` was a no-op and
-        // mismatched blocks were silently merged (doc_v23 V23-28).
+    fn jackknife_sum_impl(&self, grid: Option<&Self>) -> Option<(f64, f64, usize)> {
+        assert!(
+            self.shared.is_none() || grid.is_some(),
+            "shared statistic requires its joined grid"
+        );
+        let (total, _) = self.totals();
+        let deleted = self
+            .blocks(grid)
+            .iter()
+            .map(|block| (total - block.num.value(), block.n_sites))
+            .collect();
+        Self::weighted(total, deleted).or_else(|| {
+            let n_blocks = self
+                .blocks(grid)
+                .into_iter()
+                .filter(|block| block.n_sites > 0)
+                .count();
+            Some((total, f64::NAN, n_blocks))
+        })
+    }
+
+    /// Joins a later owned grid. The actual block partition is computed at
+    /// finish, after all positions are known; no worker-local boundaries leak.
+    pub fn merge_grid(&mut self, other: &Self) {
+        assert!(
+            self.shared.is_none() && other.shared.is_none(),
+            "invariant: owned grid"
+        );
         assert_eq!(self.block_bp, other.block_bp, "invariant: same block size");
-        for (key, (num, den, n)) in &other.blocks {
-            let entry = self
-                .blocks
-                .entry(key.clone())
-                .or_insert_with(|| (NeumaierSum::new(), NeumaierSum::new(), 0));
-            entry.0.merge(num);
-            entry.1.merge(den);
-            entry.2 += n;
+        if let (Some(left), Some(right)) = (self.observations.last(), other.observations.first()) {
+            assert!(
+                left.contig != right.contig || left.pos0 <= right.pos0,
+                "invariant: ordered jackknife partials do not overlap"
+            );
         }
-        self.total.0.merge(&other.total.0);
-        self.total.1.merge(&other.total.1);
-        self.n_sites += other.n_sites;
+        self.observations.extend_from_slice(&other.observations);
+    }
+
+    /// Joins per-site values once the caller has merged their shared grid.
+    pub fn merge_shared(&mut self, other: &Self, grid: &Self) {
+        assert!(
+            self.shared.is_some() && other.shared.is_some(),
+            "invariant: shared statistic"
+        );
+        assert!(grid.shared.is_none(), "invariant: owned grid");
+        assert_eq!(self.block_bp, other.block_bp, "invariant: same block size");
+        assert_eq!(
+            self.block_bp, grid.block_bp,
+            "invariant: same grid block size"
+        );
+        assert_eq!(
+            self.n_sites() + other.n_sites(),
+            grid.n_sites(),
+            "invariant: one complete grid"
+        );
+        self.shared
+            .as_mut()
+            .expect("invariant: shared values")
+            .extend_from_slice(other.shared.as_deref().expect("invariant: shared values"));
     }
 }
 
@@ -398,6 +626,177 @@ mod tests {
         assert!(jk.jackknife().is_some());
     }
 
+    #[test]
+    fn bp_grid_uses_the_first_site_of_the_current_block() {
+        let mut jk = BpBlockJackknife::new(6);
+        for pos in [0, 5, 10, 15] {
+            jk.push(b"chr1", pos, 0.0, 1.0);
+        }
+        let boundaries: Vec<_> = jk
+            .observations
+            .iter()
+            .map(|observation| (observation.contig.as_ref(), observation.pos0))
+            .collect();
+        assert_eq!(
+            boundaries,
+            [
+                (b"chr1".as_slice(), 0),
+                (b"chr1", 5),
+                (b"chr1", 10),
+                (b"chr1", 15)
+            ]
+        );
+        assert_eq!(jk.n_blocks(), 2);
+    }
+
+    #[test]
+    fn bp_grid_is_independent_of_the_ordered_chunk_partition() {
+        let sites = [
+            (b"chr1".as_slice(), 0),
+            (b"chr1", 5),
+            (b"chr1", 10),
+            (b"chr1", 15),
+            (b"chr2", 0),
+            (b"chr2", 5),
+        ];
+        let mut whole = BpBlockJackknife::new(6);
+        for &(contig, pos) in &sites {
+            whole.push(contig, pos, pos as f64 + 1.0, 2.0);
+        }
+        for split in 1..sites.len() {
+            let mut a = BpBlockJackknife::new(6);
+            let mut b = BpBlockJackknife::new(6);
+            for &(contig, pos) in &sites[..split] {
+                a.push(contig, pos, pos as f64 + 1.0, 2.0);
+            }
+            for &(contig, pos) in &sites[split..] {
+                b.push(contig, pos, pos as f64 + 1.0, 2.0);
+            }
+            a.merge_grid(&b);
+            assert_eq!(a.n_blocks(), whole.n_blocks(), "split {split}");
+            assert_eq!(a.jackknife(), whole.jackknife(), "split {split}");
+            fn observations(jk: &BpBlockJackknife) -> Vec<(&[u8], u64, f64, f64)> {
+                jk.observations
+                    .iter()
+                    .map(|site| (site.contig.as_ref(), site.pos0, site.num, site.den))
+                    .collect()
+            }
+            assert_eq!(observations(&a), observations(&whole), "split {split}");
+        }
+    }
+
+    #[test]
+    fn unequal_blocks_use_informative_site_weights() {
+        let mut jk = BpBlockJackknife::new(10);
+        // Eight sites in block 0, two in block 1, with per-site f2 values
+        // 0 and 1 respectively. Deleted sums are 2 and 0, h=1.25 and 5;
+        // pseudo values are 2 and 2, their ADMIXTOOLS center is 3.6, and
+        // the variance is ((2-3.6)^2/0.25 + (2-3.6)^2/4) / 2 = 3.2^2.
+        for pos in 0..8 {
+            jk.push(b"chr1", pos, 0.0, 1.0);
+        }
+        for pos in 10..12 {
+            jk.push(b"chr1", pos, 1.0, 1.0);
+        }
+        let (estimate, se, n_blocks) = jk.jackknife_sum().expect("invariant: two blocks");
+        assert_eq!(estimate, 2.0);
+        assert_eq!(n_blocks, 2);
+        assert!((se - 3.2).abs() < 1e-12, "{se}");
+    }
+
+    #[test]
+    fn one_informative_block_has_an_undefined_se() {
+        let mut jk = BpBlockJackknife::new(6);
+        jk.push_usable(b"chr1", 0, 0.0, 0.0, false);
+        jk.push_usable(b"chr1", 1, 0.0, 0.0, false);
+        jk.push(b"chr1", 10, 2.0, 1.0);
+        let (_, se, n_blocks) = jk.jackknife().expect("invariant: valid natural estimate");
+        assert!(!se.is_finite());
+        assert_eq!(n_blocks, 1);
+        assert_eq!(jk.n_blocks(), 2, "skips still delimit the shared grid");
+    }
+
+    #[test]
+    fn shared_grid_matches_the_whole_at_every_split() {
+        let sites = [
+            (b"chr1".as_slice(), 0, 0.0, 0.0),
+            (b"chr1", 5, 1.0, 2.0),
+            (b"chr1", 10, 0.0, 0.0),
+            (b"chr1", 15, 3.0, 4.0),
+            (b"chr2", 0, 2.0, 1.0),
+            (b"chr2", 5, 4.0, 2.0),
+        ];
+        let mut whole = BpBlockJackknife::new(6);
+        for &(contig, pos, num, den) in &sites {
+            whole.push(contig, pos, num, den);
+        }
+        let mut whole_grid = BpBlockJackknife::new(6);
+        whole_grid.share_grid();
+        for &(contig, pos, num, den) in &sites {
+            whole_grid.push(contig, pos, num, den);
+        }
+        let expected = whole_grid.jackknife_shared(&whole);
+        let blocks = whole.blocks(None);
+        assert_eq!(
+            blocks[0].n_sites, 2,
+            "a zero contribution is still informative"
+        );
+        assert_eq!(blocks[1].n_sites, 2, "each block retains its valid count");
+        assert_eq!(whole_grid.n_sites(), 6, "every record is retained");
+        assert_eq!(
+            whole_grid.n_blocks_shared(&whole),
+            3,
+            "the shared grid owns block boundaries"
+        );
+        for split in 1..sites.len() {
+            let mut grid_a = BpBlockJackknife::new(6);
+            let mut grid_b = BpBlockJackknife::new(6);
+            let mut stat_a = BpBlockJackknife::new(6);
+            let mut stat_b = BpBlockJackknife::new(6);
+            stat_a.share_grid();
+            stat_b.share_grid();
+            for &(contig, pos, num, den) in &sites[..split] {
+                grid_a.push(contig, pos, 0.0, 0.0);
+                stat_a.push(contig, pos, num, den);
+            }
+            for &(contig, pos, num, den) in &sites[split..] {
+                grid_b.push(contig, pos, 0.0, 0.0);
+                stat_b.push(contig, pos, num, den);
+            }
+            grid_a.merge_grid(&grid_b);
+            stat_a.merge_shared(&stat_b, &grid_a);
+            assert_eq!(stat_a.jackknife_shared(&grid_a), expected, "split {split}");
+        }
+    }
+
+    #[test]
+    fn a_sparse_block_span_is_not_a_fixed_coordinate_bin() {
+        let mut jk = BpBlockJackknife::new(5_000_000);
+        // 1-based 100, 4.9M and 5,000,001: the final span is 4,999,901 bp,
+        // so ADMIXTOOLS' current-block-first rule keeps one block.
+        for pos in [99, 4_899_999, 5_000_000] {
+            jk.push(b"chr1", pos, 1.0, 1.0);
+        }
+        assert_eq!(jk.n_blocks(), 1, "{:?}", jk.observations);
+        let (_, se, n_blocks) = jk.jackknife().expect("invariant: natural ratio");
+        assert!(!se.is_finite());
+        assert_eq!(n_blocks, 1);
+        // Exactly block_bp from the current block's first site opens a new
+        // block (the reference uses `>=`, not `>`).
+        jk.push(b"chr1", 5_000_099, 1.0, 1.0);
+        assert_eq!(jk.n_blocks(), 2);
+        assert!(jk.jackknife().is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "shared statistic requires its joined grid")]
+    fn a_shared_statistic_cannot_evaluate_without_its_grid() {
+        let mut stat = BpBlockJackknife::new(6);
+        stat.share_grid();
+        stat.push(b"chr1", 0, 0.0, 0.0);
+        let _ = stat.jackknife();
+    }
+
     /// doc_v23 V23-28: merging jackknives with different block sizes panics
     /// in release, not just debug.
     #[test]
@@ -405,6 +804,6 @@ mod tests {
     fn bp_merge_rejects_a_different_block_size() {
         let mut a = BpBlockJackknife::new(100);
         let b = BpBlockJackknife::new(200);
-        a.merge(&b);
+        a.merge_grid(&b);
     }
 }

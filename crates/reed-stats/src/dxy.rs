@@ -16,8 +16,6 @@ pub struct DxyAcc {
     sum_site_means: NeumaierSum,
     n_variant_sites: u64,
     n_invariant_sites: u64,
-    /// Sites present but uncountable (skipped multiallelic; doc_v7 D7-11).
-    n_skipped_present: u64,
 }
 
 impl DxyAcc {
@@ -32,23 +30,24 @@ impl DxyAcc {
             sum_site_means: NeumaierSum::new(),
             n_variant_sites: 0,
             n_invariant_sites: 0,
-            n_skipped_present: 0,
         }
-    }
-
-    /// Registers a site present but uncountable (doc_v7 D7-11).
-    pub fn note_skipped_site(&mut self) {
-        self.n_skipped_present += 1;
     }
 
     /// Absorbs one site.
     pub fn push(&mut self, row: &[SiteGroupCounts], all_variant: bool) {
         let (a, b) = (&row[self.group_a], &row[self.group_b]);
-        let cross_diffs = u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
-            + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles);
         let comparable = u64::from(a.n_ref_alleles + a.n_alt_alleles)
             * u64::from(b.n_ref_alleles + b.n_alt_alleles);
+        let cross_diffs = u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
+            + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles);
+        // Keep missing-pair accounting for an unoccupied record; it simply
+        // does not enter |S| or the per-site mean (doc_v27 V27-13).
         self.counts.add(cross_diffs, comparable, self.total_pairs);
+        // dxy's |S| is the pairwise intersection: both populations must
+        // have at least one called allele (the reference convention; V27-13).
+        if comparable == 0 {
+            return;
+        }
         if comparable > 0 {
             self.sum_site_means
                 .add(cross_diffs as f64 / comparable as f64);
@@ -66,7 +65,6 @@ impl DxyAcc {
         self.sum_site_means.merge(&other.sum_site_means);
         self.n_variant_sites += other.n_variant_sites;
         self.n_invariant_sites += other.n_invariant_sites;
-        self.n_skipped_present += other.n_skipped_present;
     }
 
     /// Integer audit trail.
@@ -89,17 +87,17 @@ impl DxyAcc {
             .then(|| self.sum_site_means.value() / window_bp as f64)
     }
 
-    /// Sites the window's file actually contained (`|S|`).
+    /// Sites where both populations have at least one called allele (`|S|`).
     #[must_use]
     pub const fn n_present(&self) -> u64 {
         self.n_variant_sites + self.n_invariant_sites
     }
 
-    /// File sites including the skipped (multiallelic) ones — the
-    /// variant-only `absent` completion (doc_v7 D7-11).
+    /// Sites with at least one called allele in BOTH populations (the reference's
+    /// pairwise `no_sites`; doc_v27 V27-13).
     #[must_use]
     pub const fn n_present_file(&self) -> u64 {
-        self.n_present() + self.n_skipped_present
+        self.n_present()
     }
 
     /// dxy with the `--variant-only` denominator completion: absent window
@@ -113,5 +111,28 @@ impl DxyAcc {
         let comparable =
             u128::from(self.counts.comparable) + u128::from(absent) * u128::from(self.total_pairs);
         (comparable > 0).then(|| self.counts.diffs as f64 / comparable as f64)
+    }
+}
+
+#[cfg(test)]
+mod reference_occupancy_tests {
+    use super::*;
+
+    #[test]
+    fn no_sites_is_the_pairwise_intersection() {
+        let called = SiteGroupCounts {
+            n_ref_alleles: 1,
+            n_alt_alleles: 1,
+            ..Default::default()
+        };
+        let mut acc = DxyAcc::new(0, 1, 2, 2);
+        acc.push(&[called, SiteGroupCounts::default()], true);
+        assert_eq!(acc.n_present_file(), 0, "B has no call at site 1");
+        acc.push(&[called, called], true);
+        assert_eq!(
+            acc.n_present_file(),
+            1,
+            "both populations have calls at site 2"
+        );
     }
 }

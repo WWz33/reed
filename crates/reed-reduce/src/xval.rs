@@ -47,9 +47,14 @@ pub enum XvalError {
 impl std::fmt::Display for XvalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TooFewSamples => write!(f, "cross-validation needs at least 2 samples and 2 groups"),
+            Self::TooFewSamples => {
+                write!(f, "cross-validation needs at least 2 samples and 2 groups")
+            }
             Self::NoSplittableGroup => {
-                write!(f, "every group has a single member; no training set is possible")
+                write!(
+                    f,
+                    "every group has a single member; no training set is possible"
+                )
             }
             Self::BadTrainingFraction => {
                 write!(f, "the training fraction must be strictly between 0 and 1")
@@ -82,9 +87,7 @@ impl XvalResult {
         match s {
             "overall" => Ok(Self::Overall),
             "group-mean" | "groupmean" => Ok(Self::GroupMean),
-            other => Err(format!(
-                "unknown result {other:?} (overall|group-mean)"
-            )),
+            other => Err(format!("unknown result {other:?} (overall|group-mean)")),
         }
     }
 }
@@ -118,11 +121,7 @@ impl Candidate {
         if self.success.is_empty() {
             return 1.0;
         }
-        let sum: f64 = self
-            .success
-            .iter()
-            .map(|s| (s - 1.0) * (s - 1.0))
-            .sum();
+        let sum: f64 = self.success.iter().map(|s| (s - 1.0) * (s - 1.0)).sum();
         (sum / self.success.len() as f64).sqrt()
     }
 }
@@ -208,7 +207,10 @@ pub fn run(
         // index-out-of-bounds here, while `lda::fit` reports the same
         // condition with a typed error. Map to that error (doc_v20 S32).
         if g as usize >= ng {
-            return Err(XvalError::Lda(LdaError::GroupIndexOutOfRange { index: g, ng }));
+            return Err(XvalError::Lda(LdaError::GroupIndexOutOfRange {
+                index: g,
+                ng,
+            }));
         }
         counts[g as usize] += 1;
     }
@@ -257,7 +259,14 @@ pub fn run(
             // which thread runs it.
             let mut rng = base_rng.derive(rep as u64);
             let (train, valid) = split(groups, ng, &counts, training_set, &mut rng);
-            success.push(evaluate(&sub, groups, levels, &train, &valid, config.result)?);
+            success.push(evaluate(
+                &sub,
+                groups,
+                levels,
+                &train,
+                &valid,
+                config.result,
+            )?);
         }
 
         let cand = Candidate { n_pca, success };
@@ -379,8 +388,7 @@ fn evaluate(
         g_train.push(groups[i]);
     }
 
-    let model: Lda =
-        lda::fit(&x_train, &g_train, levels, 1e-30).map_err(XvalError::Lda)?;
+    let model: Lda = lda::fit(&x_train, &g_train, levels, 1e-30).map_err(XvalError::Lda)?;
 
     let mut x_valid = Mat::zeros(valid.len(), p);
     for (row, &i) in valid.iter().enumerate() {
@@ -392,12 +400,7 @@ fn evaluate(
     // numerical null directions from collinear class means, and including
     // them adds noise to the distances that decide the assignment. This is
     // the same `svd^2 > 1e-10` cut `adegenet` applies (`lda.dim`).
-    let dimen = model
-        .svd
-        .iter()
-        .filter(|&&v| v * v > 1e-10)
-        .count()
-        .max(1);
+    let dimen = model.svd.iter().filter(|&&v| v * v > 1e-10).count().max(1);
     let projection = model.project(&x_valid, dimen).map_err(XvalError::Lda)?;
 
     Ok(match result {
@@ -473,10 +476,7 @@ mod tests {
     #[test]
     fn candidates_follow_the_r_rule() {
         // n_pca.max = 20 -> multiples of 2 below 20.
-        assert_eq!(
-            candidate_counts(20),
-            vec![2, 4, 6, 8, 10, 12, 14, 16, 18]
-        );
+        assert_eq!(candidate_counts(20), vec![2, 4, 6, 8, 10, 12, 14, 16, 18]);
         // Small ranges enumerate every integer below the max.
         assert_eq!(candidate_counts(5), vec![1, 2, 3, 4]);
         assert_eq!(candidate_counts(2), vec![1]);
@@ -508,7 +508,13 @@ mod tests {
         let mut x = Mat::zeros(21, 2);
         let mut g = Vec::with_capacity(21);
         for i in 0..21 {
-            let group = if i < 10 { 0 } else if i < 20 { 1 } else { 2 };
+            let group = if i < 10 {
+                0
+            } else if i < 20 {
+                1
+            } else {
+                2
+            };
             g.push(group);
             x.set(i, 0, group as f64 * 5.0 + (i % 4) as f64 * 0.3);
             x.set(i, 1, group as f64 * 3.0 + (i % 3) as f64 * 0.2);
@@ -708,7 +714,10 @@ mod tests {
         // surfacing the typed error `lda::fit` already defines for exactly
         // this condition.
         let x = Mat::from_fn(3, 2, |i, c| i as f64 + c as f64 * 0.5);
-        let cfg = XvalConfig { n_rep: 2, ..Default::default() };
+        let cfg = XvalConfig {
+            n_rep: 2,
+            ..Default::default()
+        };
         let err = run(&x, &[0, 0, 2], &levels(2), &[1], &cfg).unwrap_err();
         assert_eq!(
             err,

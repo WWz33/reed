@@ -18,7 +18,7 @@ use reed_core::linalg::Mat;
 use reed_core::rng::Rng;
 
 use crate::error::GraphError;
-use crate::tree::{nj, upgma, Tree};
+use crate::tree::{Tree, nj, upgma};
 
 /// Bootstrap configuration.
 #[derive(Clone, Debug)]
@@ -174,7 +174,10 @@ pub fn support(
         support.push(if pct >= config.cutoff { pct } else { f64::NAN });
     }
 
-    Ok(BootstrapReport { support, replicates: built })
+    Ok(BootstrapReport {
+        support,
+        replicates: built,
+    })
 }
 
 /// Maps each internal node of `tree` to its branch key.
@@ -319,7 +322,11 @@ mod tests {
             .iter()
             .copied()
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(best > 90.0, "no branch reached high support: {:?}", report.support);
+        assert!(
+            best > 90.0,
+            "no branch reached high support: {:?}",
+            report.support
+        );
     }
 
     #[test]
@@ -452,11 +459,7 @@ mod tests {
         tree.tip_labels = levels(6);
 
         // The three resamples, as 0-based column indices (R used 1-based).
-        let resamples: [&[usize]; 3] = [
-            &[0, 0, 1, 2, 3],
-            &[1, 1, 2, 3, 4],
-            &[0, 2, 2, 4, 4],
-        ];
+        let resamples: [&[usize]; 3] = [&[0, 0, 1, 2, 3], &[1, 1, 2, 3, 4], &[0, 2, 2, 4, 4]];
 
         let target = branch_keys(&tree, true);
         let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
@@ -484,8 +487,16 @@ mod tests {
         // reed's node ids for this fixture are 7={1,2}, 8={4,5}, 9={4,5,6},
         // 10={1,2,3}, 11=all. The root (11) is a key again (doc_v20 review of
         // S36: ape keeps it); ids [9, 10, 7, 8] carry the interior branches.
-        assert!(target.contains_key(&vec![0b0011_1111u64]), "root clade must be keyed");
-        assert_eq!(target.len(), 5, "ape reports five clades, got {}", target.len());
+        assert!(
+            target.contains_key(&vec![0b0011_1111u64]),
+            "root clade must be keyed"
+        );
+        assert_eq!(
+            target.len(),
+            5,
+            "ape reports five clades, got {}",
+            target.len()
+        );
         let by_id: HashMap<u32, &Vec<u64>> = target.iter().map(|(k, &v)| (v, k)).collect();
         let got: Vec<usize> = [9u32, 10, 7, 8]
             .iter()
@@ -533,7 +544,13 @@ mod tests {
                 report
                     .support
                     .iter()
-                    .map(|v| if v.is_nan() { String::new() } else { format!("{v:.0}") })
+                    .map(|v| {
+                        if v.is_nan() {
+                            String::new()
+                        } else {
+                            format!("{v:.0}")
+                        }
+                    })
                     .collect(),
             );
             let nwk = crate::to_newick(&tree, 6).unwrap();
@@ -608,7 +625,10 @@ mod tests {
         };
         let upgma_tree = tree_of(&x, TreeMethod::Upgma);
         let report = support(&upgma_tree, &x, TreeMethod::Upgma, euclid, &cfg).unwrap();
-        assert_eq!(report.support, vec![100.0, 100.0, 40.0, 96.0, 44.0, 96.0, 100.0]);
+        assert_eq!(
+            report.support,
+            vec![100.0, 100.0, 40.0, 96.0, 44.0, 96.0, 100.0]
+        );
 
         let nj_tree = tree_of(&x, TreeMethod::Nj);
         let report = support(&nj_tree, &x, TreeMethod::Nj, euclid, &cfg).unwrap();

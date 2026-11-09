@@ -19,10 +19,10 @@ use reed_io::vcf::line_edit::{EditPlan, InfoValueOut, edit_vcf_line};
 use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
 use super::job_err;
-use reed_io::vcf::format_layout::gt_index;
 use super::record_pipeline::{
     NativeScan, NativeScratch, PipelineOptions, RecordPipeline, RecordView,
 };
+use reed_io::vcf::format_layout::gt_index;
 
 /// The BCF encoders a worker may use: the native B4 encoder by default,
 /// noodles' B2 encoder behind `REED_BCF_ENCODER=noodles` (the two must
@@ -320,7 +320,11 @@ impl FilterJob {
     /// The automatic-stale tags, built once per chunk (V24-07; it used to
     /// be one `Vec` per surviving record).
     fn auto_refs(&self) -> Vec<&[u8]> {
-        self.plan.auto_stale_tags.iter().map(Vec::as_slice).collect()
+        self.plan
+            .auto_stale_tags
+            .iter()
+            .map(Vec::as_slice)
+            .collect()
     }
 
     /// The one emit step shared by the text and native paths (A6-20): the

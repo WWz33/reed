@@ -29,7 +29,15 @@ fn read_matrix(path: &str) -> Mat {
     for i in 0..n {
         for j in 0..m {
             let tok = it.next().unwrap();
-            mat.set(i, j, if tok == "NA" { f64::NAN } else { tok.parse().unwrap() });
+            mat.set(
+                i,
+                j,
+                if tok == "NA" {
+                    f64::NAN
+                } else {
+                    tok.parse().unwrap()
+                },
+            );
         }
     }
     mat
@@ -42,7 +50,12 @@ fn main() {
 
     let t = Instant::now();
     let x = read_matrix(path);
-    println!("read:              {:8.3} s  ({} x {})", t.elapsed().as_secs_f64(), x.rows, x.cols);
+    println!(
+        "read:              {:8.3} s  ({} x {})",
+        t.elapsed().as_secs_f64(),
+        x.rows,
+        x.cols
+    );
 
     let t = Instant::now();
     let st = standardize_binom2(&x);
@@ -56,15 +69,25 @@ fn main() {
     let t = Instant::now();
     let (vals, _vecs, _be) = sym_eig_top_k(&grm.a, k, reed_reduce::Parallel::Serial);
     let partial_secs = t.elapsed().as_secs_f64();
-    println!("partial eig:       {:8.3} s   lam1 = {:.9}", partial_secs, vals[0]);
+    println!(
+        "partial eig:       {:8.3} s   lam1 = {:.9}",
+        partial_secs, vals[0]
+    );
 
     // Dense full spectrum on the same matrix, for the comparison.
     let t = Instant::now();
     let full = sym_eig(&grm.a, reed_reduce::Parallel::Serial);
     let dense_secs = t.elapsed().as_secs_f64();
-    println!("dense full eig:    {:8.3} s   lam1 = {:.9}", dense_secs, full.values[full.values.len() - 1]);
+    println!(
+        "dense full eig:    {:8.3} s   lam1 = {:.9}",
+        dense_secs,
+        full.values[full.values.len() - 1]
+    );
 
     println!();
-    println!("GRM share of pipeline: {:.1}%", 100.0 * grm_secs / (grm_secs + partial_secs));
+    println!(
+        "GRM share of pipeline: {:.1}%",
+        100.0 * grm_secs / (grm_secs + partial_secs)
+    );
     println!("partial vs dense solver: {:.2}x", dense_secs / partial_secs);
 }

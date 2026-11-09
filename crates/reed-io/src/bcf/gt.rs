@@ -123,7 +123,9 @@ impl GtTable {
             let mut token = [None; 2];
             // The table spans every allele an int8 pair can name (0..=127);
             // each record's own bound is applied at lookup (doc_v25 V25-01).
-            if let Ok(code) = decode_gt_text(&text, &locus, 127, &policies, &mut counters, &mut token) {
+            if let Ok(code) =
+                decode_gt_text(&text, &locus, 127, &policies, &mut counters, &mut token)
+            {
                 entries[pair as usize] = GtEntry {
                     code,
                     triggers: pack_triggers(&counters),
@@ -188,7 +190,14 @@ impl GtTable {
             // The pair's bytes were domain-checked above, so the slow path
             // can run unbounded (its errors here are syntax or policy).
             let mut text = Vec::new();
-            return self.decode_slow(value_type::INT8, &[b0, b1], locus, u32::MAX, counters, &mut text);
+            return self.decode_slow(
+                value_type::INT8,
+                &[b0, b1],
+                locus,
+                u32::MAX,
+                counters,
+                &mut text,
+            );
         }
         apply_triggers(entry.triggers, counters);
         Ok(entry.code)
@@ -215,11 +224,10 @@ impl GtTable {
         let count = data.len() / type_width(ty);
         text.clear();
         // `ty` was just checked above, so the renderer cannot reject it.
-        fmt_gt(text, ty, count, data, false)
-            .map_err(|reason| IoError::MalformedRecord {
-                locus: locus.error_locus(),
-                reason: reason.to_string(),
-            })?;
+        fmt_gt(text, ty, count, data, false).map_err(|reason| IoError::MalformedRecord {
+            locus: locus.error_locus(),
+            reason: reason.to_string(),
+        })?;
         let mut token = [None; 2];
         decode_gt_text(text, locus, n_alt, &self.policies, counters, &mut token)
     }
@@ -510,10 +518,7 @@ mod tests {
             &mut counters,
         )
         .expect_err("allele 9 on a single-ALT record must be refused at decode");
-        assert!(
-            matches!(err, IoError::MalformedRecord { .. }),
-            "{err:?}"
-        );
+        assert!(matches!(err, IoError::MalformedRecord { .. }), "{err:?}");
         assert!(
             err.to_string().contains("exceeds ALT count 1"),
             "unexpected error: {err}"

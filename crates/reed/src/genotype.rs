@@ -4,14 +4,13 @@
 //! site's dosage per sample, in input order. Sharing one implementation
 //! avoids the "two parsers drift apart" failure mode.
 
-
-use reed_io::vcf::line::{RecordClass, classify_line};
-use reed_io::{IoError, Locus};
-use reed_engine::pipeline::{ChunkJob, OrderedSink};
 use reed_core::ChunkId;
-use reed_engine::error::EngineError;
 use reed_engine::abort::Abort;
 use reed_engine::budget::ThreadBudget;
+use reed_engine::error::EngineError;
+use reed_engine::pipeline::{ChunkJob, OrderedSink};
+use reed_io::vcf::line::{RecordClass, classify_line};
+use reed_io::{IoError, Locus};
 /// The sites and dosages collected from the input.
 ///
 /// Dosages are stored site-major (`n_sites x n_samples`), which is the layout
@@ -118,8 +117,9 @@ impl PcaJob {
                 if !c.is_ascii_digit() {
                     return Ok(None);
                 }
-                let Some(next) =
-                    value.checked_mul(10).and_then(|v| v.checked_add(u32::from(c - b'0')))
+                let Some(next) = value
+                    .checked_mul(10)
+                    .and_then(|v| v.checked_add(u32::from(c - b'0')))
                 else {
                     // An index that no longer fits u32 names no allele any
                     // record declares; report it at the u32 ceiling.
@@ -318,7 +318,8 @@ impl CollectSink {
     }
 
     fn over_budget(&self, n_sites: usize) -> bool {
-        self.max_bytes.is_some_and(|max| self.bytes_for(n_sites) > max)
+        self.max_bytes
+            .is_some_and(|max| self.bytes_for(n_sites) > max)
     }
 }
 
@@ -357,11 +358,7 @@ pub(crate) fn collect_via_engine(
         slot: Arc<Mutex<Option<GenotypeBlock>>>,
     }
     impl OrderedSink<GenotypeBlock> for StashSink {
-        fn accept(
-            &mut self,
-            id: ChunkId,
-            partial: &mut GenotypeBlock,
-        ) -> Result<(), EngineError> {
+        fn accept(&mut self, id: ChunkId, partial: &mut GenotypeBlock) -> Result<(), EngineError> {
             self.inner.accept(id, partial)
         }
         fn finish(self) -> Result<u64, EngineError> {
@@ -371,7 +368,10 @@ pub(crate) fn collect_via_engine(
         }
     }
 
-    let stash = StashSink { inner: sink, slot: Arc::clone(&slot) };
+    let stash = StashSink {
+        inner: sink,
+        slot: Arc::clone(&slot),
+    };
     // doc_v21 M1: every other entry point wraps its job in `InputJob`, which
     // renders BCF records to text; a bare `PcaJob` has `RecordFraming::Newline`
     // and splits raw BCF bytes on '\n' (documented-input command failure). Wrap
@@ -450,7 +450,10 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("chr1:102"), "error must name the locus: {msg}");
-        assert!(msg.contains("8 columns"), "error must name the reason: {msg}");
+        assert!(
+            msg.contains("8 columns"),
+            "error must name the reason: {msg}"
+        );
     }
 
     /// doc_v25 V25-03: a genuine blank line in the body (`"\r"` left by a CRLF
@@ -477,9 +480,7 @@ chr1\t108\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n";
         for blank in [b"\n".as_slice(), b"\r\n", b"\r", b""] {
             let block = job
                 .run_seam(ChunkId(1), blank, &mut PcaScratch::default())
-                .unwrap_or_else(|err| {
-                    panic!("blank seam {blank:?} must be skipped, got: {err}")
-                });
+                .unwrap_or_else(|err| panic!("blank seam {blank:?} must be skipped, got: {err}"));
             assert_eq!(block.n_sites, 0);
         }
     }

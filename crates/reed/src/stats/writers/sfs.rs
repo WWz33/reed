@@ -16,6 +16,90 @@ use reed_engine::error::EngineError;
 
 use crate::stats::{JointSfsReport, SfsReport};
 
+/// Turns a group name into a filesystem-safe stem: every byte outside
+/// `[A-Za-z0-9_.-]` becomes `_` (the PBS convention, doc_v15 D15-8), and the
+/// `.`/`..` names become `_`/`__` so a group cannot escape its directory or
+/// address a parent.
+///
+/// Group names come from the operator's populations file and were appended
+/// verbatim, so `../../ESCAPED` wrote outside `-o` and `A/B` created nested
+/// directories (doc_v27 V27-08); `convert --sfs` shares this writer.
+fn stem(name: &str) -> String {
+    if name.is_empty() {
+        return "_".to_string();
+    }
+    // A leading dot would make the file hidden (and `.`/`..` would name a
+    // directory), so dots at either end — and any `..` run anywhere — map to
+    // `_`. Interior single dots (`.`, as in `pop.a`) stay, matching the PBS
+    // stem's whitelist.
+    let mapped: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut out = String::with_capacity(mapped.len());
+    for ch in mapped.chars() {
+        if ch == '.' && (out.is_empty() || out.ends_with('.')) {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    while out.len() > 1 && out.ends_with('.') {
+        out.pop();
+        out.push('_');
+    }
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
+}
+
+/// Allocates the stems for a whole run: sanitized, de-duplicated in input
+/// order with `-2`, `-3`, … suffixes. Two groups that sanitize to the same
+/// stem (or just share a name) would otherwise share a file and one
+/// spectrum would silently overwrite the other (doc_v27 V27-09).
+fn unique_stems(names: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        let base = stem(name);
+        let mut candidate = base.clone();
+        let mut n = 2_u32;
+        while out.contains(&candidate) {
+            candidate = format!("{base}-{n}");
+            n += 1;
+        }
+        out.push(candidate);
+    }
+    out
+}
+
+/// Claims `path` for this run, refusing a second writer the same file:
+/// one-dimensional `<name>-<n>.sfs` and pairwise `<A>-<B>.sfs` live in the
+/// same `_sfs/dadi` namespace, so group `A` projected to 4 and the pair
+/// `A`+`4` used to address the same path and one spectrum silently
+/// overwrote the other (doc_v27 V27-09). Refusing beats picking a winner.
+///
+/// # Errors
+///
+/// [`EngineError::Job`] on a duplicate path.
+fn claim(path: PathBuf, seen: &mut Vec<PathBuf>) -> Result<PathBuf, EngineError> {
+    if seen.contains(&path) {
+        return Err(EngineError::job(format!(
+            "two SFS outputs would write {}; rename the populations (or change --proj) so the \
+             file names differ",
+            path.display()
+        )));
+    }
+    seen.push(path.clone());
+    Ok(path)
+}
+
 /// Writes the dadi and fastsimcoal2 files for every projected spectrum;
 /// returns the paths written.
 ///
@@ -36,8 +120,10 @@ pub fn write_projected_sfs(
             report.spectra.len()
         )));
     }
+    let stems = unique_stems(group_names);
     let mut files = Vec::new();
-    for (name, (spectrum, &n)) in group_names
+    let mut seen: Vec<PathBuf> = Vec::new();
+    for (stem, (spectrum, &n)) in stems
         .iter()
         .zip(report.spectra.iter().zip(&report.projections))
     {
@@ -48,23 +134,31 @@ pub fn write_projected_sfs(
         }
         files.push(write_dadi(
             prefix,
-            name,
+            stem,
             n,
             report.folded,
             &values,
             int_dtype,
+            &mut seen,
         )?);
         files.push(write_fsc2(
             prefix,
-            name,
+            stem,
             n,
             report.folded,
             &values,
             int_dtype,
+            &mut seen,
         )?);
     }
     if let Some(joint) = &report.joint {
-        files.extend(write_joint_sfs(prefix, group_names, joint, int_dtype)?);
+        files.extend(write_joint_sfs(
+            prefix,
+            group_names,
+            joint,
+            int_dtype,
+            &mut seen,
+        )?);
     }
     Ok(files)
 }
@@ -84,7 +178,9 @@ pub fn write_joint_sfs(
     group_names: &[String],
     joint: &JointSfsReport,
     int_dtype: bool,
+    seen: &mut Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>, EngineError> {
+    let stems = unique_stems(group_names);
     let mut files = Vec::with_capacity(joint.pairs.len() * 2);
     for (idx, (&(g1, g2), (values, &(n1, n2)))) in joint
         .pairs
@@ -92,7 +188,7 @@ pub fn write_joint_sfs(
         .zip(joint.spectra.iter().zip(&joint.projections))
         .enumerate()
     {
-        let (Some(name1), Some(name2)) = (group_names.get(g1), group_names.get(g2)) else {
+        let (Some(name1), Some(name2)) = (stems.get(g1), stems.get(g2)) else {
             return Err(EngineError::job(format!(
                 "joint spectrum {idx} names groups ({g1}, {g2}) but only {} groups have names",
                 group_names.len()
@@ -107,6 +203,7 @@ pub fn write_joint_sfs(
             joint.folded,
             values,
             int_dtype,
+            seen,
         )?);
         files.push(write_joint_fsc2(
             prefix,
@@ -117,6 +214,7 @@ pub fn write_joint_sfs(
             joint.folded,
             values,
             int_dtype,
+            seen,
         )?);
     }
     Ok(files)
@@ -132,8 +230,12 @@ fn write_joint_dadi(
     folded: bool,
     values: &[f64],
     int_dtype: bool,
+    seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
-    let path = prefixed(prefix, &format!("_sfs/dadi/{name1}-{name2}.sfs"));
+    let path = claim(
+        prefixed(prefix, &format!("_sfs/dadi/{name1}-{name2}.sfs")),
+        seen,
+    )?;
     let mut out = String::new();
     writeln!(
         out,
@@ -179,6 +281,7 @@ fn write_joint_fsc2(
     folded: bool,
     values: &[f64],
     int_dtype: bool,
+    seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
     let kind = if folded { "MAF" } else { "DAF" };
     // easySFS names the joint fsc2 file `<prefix>_joint{M,D}AFpop{idx2}_{idx1}.obs`
@@ -187,10 +290,13 @@ fn write_joint_fsc2(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("reed");
-    let path = prefixed(
-        prefix,
-        &format!("_sfs/fastsimcoal2/{base}_joint{kind}pop{g2}_{g1}.obs"),
-    );
+    let path = claim(
+        prefixed(
+            prefix,
+            &format!("_sfs/fastsimcoal2/{base}_joint{kind}pop{g2}_{g1}.obs"),
+        ),
+        seen,
+    )?;
     let mut out = String::new();
     out.push_str("1 observation\n");
     let header: Vec<String> = (0..=n1).map(|k| format!("d{g1}_{k}")).collect();
@@ -228,8 +334,9 @@ fn write_dadi(
     folded: bool,
     values: &[f64],
     int_dtype: bool,
+    seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
-    let path = prefixed(prefix, &format!("_sfs/dadi/{name}-{n}.sfs"));
+    let path = claim(prefixed(prefix, &format!("_sfs/dadi/{name}-{n}.sfs")), seen)?;
     let mut out = String::new();
     writeln!(
         out,
@@ -264,9 +371,13 @@ fn write_fsc2(
     folded: bool,
     values: &[f64],
     int_dtype: bool,
+    seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
     let kind = if folded { "MAF" } else { "DAF" };
-    let path = prefixed(prefix, &format!("_sfs/fastsimcoal2/{name}_{kind}pop0.obs"));
+    let path = claim(
+        prefixed(prefix, &format!("_sfs/fastsimcoal2/{name}_{kind}pop0.obs")),
+        seen,
+    )?;
     let mut out = String::new();
     out.push_str("1 observation\n");
     let header: Vec<String> = (0..=n).map(|k| format!("d0_{k}")).collect();
@@ -311,9 +422,8 @@ fn prefixed(prefix: &Path, suffix: &str) -> PathBuf {
 /// (doc_v26 V26-08).
 fn write_file(path: &Path, text: String) -> Result<(), EngineError> {
     use std::io::Write as _;
-    let (atomic, mut file) =
-        reed_io::write::atomic::AtomicFile::create_with_parents(path, true)
-            .map_err(EngineError::Io)?;
+    let (atomic, mut file) = reed_io::write::atomic::AtomicFile::create_with_parents(path, true)
+        .map_err(EngineError::Io)?;
     file.write_all(text.as_bytes()).map_err(EngineError::Io)?;
     file.flush().map_err(EngineError::Io)?;
     drop(file);

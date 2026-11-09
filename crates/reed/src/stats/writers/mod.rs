@@ -5,6 +5,7 @@ pub mod fstats;
 pub mod histogram;
 pub mod ld;
 pub mod reports;
+pub mod session;
 pub mod sfs;
 pub mod summary;
 pub mod windows;

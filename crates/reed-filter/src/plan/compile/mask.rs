@@ -1,7 +1,7 @@
 //! Mask-rule compilation: `[[genotype.mask_if]]` field rules and the
 //! FORMAT columns they scan.
 
-use reed_core::tag_table::{TagType, TagTable};
+use reed_core::tag_table::{TagTable, TagType};
 
 use super::RuleSet;
 use crate::FilterError;
@@ -9,10 +9,7 @@ use crate::plan::{FmtExprField, IntField, MaskRule, validate_numeric};
 use crate::spec::{FilterSpec, OnMissing};
 
 /// Compiles the mask section (doc_v25 08 §3 ④: moved from `compile()`).
-pub(super) fn compile(
-    spec: &FilterSpec,
-    tags: &TagTable,
-) -> Result<RuleSet, FilterError> {
+pub(super) fn compile(spec: &FilterSpec, tags: &TagTable) -> Result<RuleSet, FilterError> {
     // ---- mask rules ----
     let fmt_expr_fields: Vec<FmtExprField> = Vec::new();
     let mut mask = Vec::new();

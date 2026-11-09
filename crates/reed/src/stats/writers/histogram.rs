@@ -13,7 +13,6 @@ use std::fmt::Write as _;
 use reed_stats::summary::histogram::{IntHistogram, QualDist};
 use reed_stats::summary::report::QcReportAcc;
 
-
 /// The declared type of a generic `--hist` tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistKind {
@@ -126,7 +125,10 @@ impl HistMetric {
     /// job runs the QC accumulator in the same pass; doc_v4 O-1).
     #[must_use]
     pub const fn needs_qc(&self) -> bool {
-        matches!(self, Self::Qual | Self::Dp | Self::DpSite | Self::Idl | Self::Af)
+        matches!(
+            self,
+            Self::Qual | Self::Dp | Self::DpSite | Self::Idl | Self::Af
+        )
     }
 
     /// Whether any metric in `metrics` needs the QC accumulators.
@@ -276,9 +278,7 @@ pub(crate) fn merge_hist(
                             continue;
                         }
                         let (lo, hi) = QualDist::bin_range(index);
-                        entry
-                            .float_bins
-                            .push((qual_of(lo), qual_of(hi), n));
+                        entry.float_bins.push((qual_of(lo), qual_of(hi), n));
                     }
                 }
             }
@@ -326,11 +326,9 @@ pub(crate) fn merge_hist(
                         if n == 0 {
                             continue;
                         }
-                        entry.float_bins.push((
-                            (i as f64 - 1.0) / denom,
-                            i as f64 / denom,
-                            n,
-                        ));
+                        entry
+                            .float_bins
+                            .push(((i as f64 - 1.0) / denom, i as f64 / denom, n));
                     }
                 }
             }
@@ -507,8 +505,14 @@ mod tests {
 
     #[test]
     fn metrics_parse_and_name() {
-        assert_eq!(HistMetric::parse("qual").expect("builtin"), HistMetric::Qual);
-        assert_eq!(HistMetric::parse("dp-site").expect("builtin"), HistMetric::DpSite);
+        assert_eq!(
+            HistMetric::parse("qual").expect("builtin"),
+            HistMetric::Qual
+        );
+        assert_eq!(
+            HistMetric::parse("dp-site").expect("builtin"),
+            HistMetric::DpSite
+        );
         assert_eq!(
             HistMetric::parse("INFO/DP").expect("info tag"),
             HistMetric::Tag {
@@ -566,7 +570,10 @@ mod tests {
         };
         let text = render_hist(&out);
         assert!(text.contains(">500\t>500\t2\t100.000000"), "{text}");
-        assert!(!text.contains("#mean"), "no exact stats without exact bins: {text}");
+        assert!(
+            !text.contains("#mean"),
+            "no exact stats without exact bins: {text}"
+        );
     }
 
     /// A capped accumulator with in-range data still reports exact stats.

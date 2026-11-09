@@ -109,7 +109,10 @@ pub fn parse_block_size(header: &[u8]) -> Option<usize> {
 /// [`IoError::MalformedBgzf`] when `block` is not one whole member, declares
 /// an inflated size above [`BGZF_INFLATE_MAX`], or claims to be empty while
 /// its payload inflates to bytes.
-pub fn block_entry(block: &[u8], inflater: &mut crate::bgzf::inflate::Inflater) -> Result<(u32, u32), IoError> {
+pub fn block_entry(
+    block: &[u8],
+    inflater: &mut crate::bgzf::inflate::Inflater,
+) -> Result<(u32, u32), IoError> {
     let Some(total) = parse_block_size(block) else {
         return Err(IoError::MalformedBgzf {
             locus: None,
@@ -137,10 +140,7 @@ pub fn block_entry(block: &[u8], inflater: &mut crate::bgzf::inflate::Inflater) 
         // window makes libdeflate prove it (CRC and ISIZE checked).
         inflater.verify_empty_member(block)?;
     }
-    Ok((
-        u32::try_from(total).unwrap_or(u32::MAX),
-        inflated,
-    ))
+    Ok((u32::try_from(total).unwrap_or(u32::MAX), inflated))
 }
 
 #[cfg(test)]

@@ -324,9 +324,7 @@ impl OrderedSink<ConvertPartial> for ConvertSink {
     ) -> Result<(), EngineError> {
         if let Some(mut phylo) = partial.phylo.take() {
             let cols = self.phylo_cols.get_or_insert_with(|| {
-                (0..phylo.cols.len())
-                    .map(|_| RowsBlob::default())
-                    .collect()
+                (0..phylo.cols.len()).map(|_| RowsBlob::default()).collect()
             });
             debug_assert_eq!(cols.len(), phylo.cols.len(), "invariant: kept-sample count");
             for (dst, src) in cols.iter_mut().zip(phylo.cols.iter_mut()) {
@@ -355,7 +353,11 @@ impl OrderedSink<ConvertPartial> for ConvertSink {
                     .map(|_| RowsBlob::default())
                     .collect()
             });
-            debug_assert_eq!(cells.len(), count.cells.len(), "invariant: kept-sample count");
+            debug_assert_eq!(
+                cells.len(),
+                count.cells.len(),
+                "invariant: kept-sample count"
+            );
             for (dst, src) in cells.iter_mut().zip(count.cells.iter_mut()) {
                 self.cell_scratch.clear();
                 self.cell_scratch.extend(src.iter().map(|&cell| cell as u8));
@@ -375,8 +377,7 @@ impl OrderedSink<ConvertPartial> for ConvertSink {
                 let (_, blob) = runs.last_mut().expect("invariant: just ensured");
                 self.msa_scratch.clear();
                 for site in &run.sites {
-                    self.msa_scratch
-                        .extend_from_slice(&site.pos0.to_le_bytes());
+                    self.msa_scratch.extend_from_slice(&site.pos0.to_le_bytes());
                     self.msa_scratch
                         .extend_from_slice(&site.width.to_le_bytes());
                     self.msa_scratch.extend_from_slice(&site.vals);
@@ -457,14 +458,17 @@ impl ConvertSink {
     /// The sink's current in-memory blob bytes.
     fn buffered_bytes(&self) -> usize {
         let cols = |blobs: &Option<Vec<RowsBlob>>| -> usize {
-            blobs.as_ref().map_or(0, |v| v.iter().map(RowsBlob::mem_len).sum())
+            blobs
+                .as_ref()
+                .map_or(0, |v| v.iter().map(RowsBlob::mem_len).sum())
         };
         cols(&self.phylo_cols)
             + cols(&self.phylo_bin_cols)
             + cols(&self.count_cells)
-            + self.msa_runs.as_ref().map_or(0, |runs| {
-                runs.iter().map(|(_, blob)| blob.mem_len()).sum()
-            })
+            + self
+                .msa_runs
+                .as_ref()
+                .map_or(0, |runs| runs.iter().map(|(_, blob)| blob.mem_len()).sum())
             + self.phylo_used.mem_len()
             + self.count_pos.mem_len()
             + self.hmp_rows.mem_len()
@@ -780,8 +784,8 @@ impl ConvertJob {
             start = end + 1;
             // A column shorter than the GT position has no GT text; treat it
             // as missing, never as the first subfield.
-            let raw = reed_io::vcf::format_layout::gt_subfield(column, gt_index)
-                .unwrap_or(&b"."[..]);
+            let raw =
+                reed_io::vcf::format_layout::gt_subfield(column, gt_index).unwrap_or(&b"."[..]);
             gt.raw_start = begin as u32;
             gt.raw_len = raw.len() as u32;
             gt.present = !raw.starts_with(b".");
@@ -1856,9 +1860,8 @@ mod spill_tests {
         std::fs::create_dir_all(&dir).expect("invariant: temp dir");
         let row: &[u8] = b"chr1:1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tA\n";
         // A real TempSpill, so the drop path is the production one.
-        let (mut file, spill) =
-            crate::spill::TempSpill::create(Some(&dir), "convert", "spill")
-                .expect("invariant: spill file");
+        let (mut file, spill) = crate::spill::TempSpill::create(Some(&dir), "convert", "spill")
+            .expect("invariant: spill file");
         file.write_all(row).expect("invariant: spill write");
         let spill_path = spill.path().to_path_buf();
         let rows = RowsBlob::Spilled {

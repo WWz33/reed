@@ -198,12 +198,7 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
 /// `Bitset::get`'s assert and abort the batch (doc_v23 V23-03). They are
 /// dropped rather than written, which is what the scan stage accepted them
 /// as: nothing. `samples_edited` guarantees at least one bitset is present.
-fn edit_samples(
-    samples: &[u8],
-    plan: &EditPlan<'_>,
-    gt_index: Option<usize>,
-    out: &mut Vec<u8>,
-) {
+fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_index: Option<usize>, out: &mut Vec<u8>) {
     let keep = plan.keep_samples;
     let mask = plan.mask_gt;
     let n_samples = keep.map_or_else(
@@ -759,5 +754,4 @@ mod tests {
             "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:15\t1/1:9\t\n"
         );
     }
-
 }

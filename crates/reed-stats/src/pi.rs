@@ -54,10 +54,6 @@ pub struct PiAcc {
     sum_site_means: NeumaierSum,
     n_variant_sites: u64,
     n_invariant_sites: u64,
-    /// Sites the file contains but the statistic cannot count (a skipped
-    /// multiallelic record): present for the variant-only denominator,
-    /// contributing no comparable pairs (doc_v7 D7-11).
-    n_skipped_present: u64,
 }
 
 impl PiAcc {
@@ -73,15 +69,7 @@ impl PiAcc {
             sum_site_means: NeumaierSum::new(),
             n_variant_sites: 0,
             n_invariant_sites: 0,
-            n_skipped_present: 0,
         }
-    }
-
-    /// Registers a site the file contains but the statistic cannot count
-    /// (skipped multiallelic): it is present for the variant-only
-    /// denominator but adds no pairs (doc_v7 D7-11).
-    pub fn note_skipped_site(&mut self) {
-        self.n_skipped_present += 1;
     }
 
     /// Absorbs one site.
@@ -90,7 +78,14 @@ impl PiAcc {
         let n = u64::from(c.n_ref_alleles + c.n_alt_alleles);
         let comps = n.saturating_mul(n.saturating_sub(1)) / 2;
         let diffs = u64::from(c.n_ref_alleles) * u64::from(c.n_alt_alleles);
+        // Missing alleles remain part of the audit trail even when the
+        // record is not an occupied site for this population.
         self.counts.add(diffs, comps, self.total_pairs);
+        // The reference counts a site only when this population has a call. A record
+        // with every sample missing is not part of |S| (doc_v27 V27-12).
+        if n == 0 {
+            return;
+        }
         if comps > 0 {
             self.sum_site_means.add(diffs as f64 / comps as f64);
         }
@@ -107,7 +102,6 @@ impl PiAcc {
         self.sum_site_means.merge(&other.sum_site_means);
         self.n_variant_sites += other.n_variant_sites;
         self.n_invariant_sites += other.n_invariant_sites;
-        self.n_skipped_present += other.n_skipped_present;
     }
 
     /// Called-allele count bookkeeping (for tests): the group's chromosome
@@ -143,18 +137,18 @@ impl PiAcc {
         (self.n_variant_sites, self.n_invariant_sites)
     }
 
-    /// Sites the window's file actually contained (`|S|` in 04-algorithms §3).
+    /// Sites with at least one called allele in this population (`|S|`).
     #[must_use]
     pub const fn n_present(&self) -> u64 {
         self.n_variant_sites + self.n_invariant_sites
     }
 
-    /// Sites the file contained, including the ones this statistic skipped
-    /// (multiallelic): the variant-only `absent` completion is over the
-    /// file's own positions, not only the counted ones (doc_v7 D7-11).
+    /// Sites with at least one called allele in this population (the reference's
+    /// `no_sites`). Variant-only absent positions are completed against
+    /// this count, not against every input record (doc_v27 V27-12).
     #[must_use]
     pub const fn n_present_file(&self) -> u64 {
-        self.n_present() + self.n_skipped_present
+        self.n_present()
     }
 
     /// π with the `--variant-only` denominator completion: every position of
@@ -188,31 +182,27 @@ mod tests {
             .expect("invariant: comparable > 0");
         assert_eq!(value, 0.0); // no sites pushed → no diffs
     }
+}
 
-    /// doc_v7 D7-11: a skipped multiallelic site is present in the file, so
-    /// the variant-only denominator must not treat its position as absent.
+#[cfg(test)]
+mod reference_occupancy_tests {
+    use super::*;
+
     #[test]
-    fn skipped_multiallelic_is_present_for_variant_only() {
-        let row = [SiteGroupCounts {
-            n_ref_alleles: 2,
-            n_alt_alleles: 2,
-            ..SiteGroupCounts::default()
+    fn fully_missing_records_are_not_occupied_sites() {
+        let mut acc = PiAcc::new(0, 2);
+        let called = [SiteGroupCounts {
+            n_ref_alleles: 1,
+            n_alt_alleles: 1,
+            ..Default::default()
         }];
-        let mut counted = PiAcc::new(0, 2);
-        counted.push(&row, true);
-        let baseline = counted.value_variant_only(100).expect("invariant: defined");
-        assert_eq!(counted.n_present(), 1);
-        assert_eq!(counted.n_present_file(), 1);
-
-        counted.note_skipped_site();
-        assert_eq!(counted.n_present(), 1, "the used-site tally is unchanged");
-        assert_eq!(counted.n_present_file(), 2, "the file carries both sites");
-        let with_skip = counted.value_variant_only(100).expect("invariant: defined");
-        // One fewer absent position → a smaller comparable denominator →
-        // a larger π (same diffs).
-        assert!(
-            with_skip > baseline,
-            "the skipped site must shrink the absent count: {with_skip} vs {baseline}"
-        );
+        acc.push(&called, true);
+        acc.push(&[SiteGroupCounts::default()], false);
+        assert_eq!(acc.n_present_file(), 1);
+        assert_eq!(acc.site_tally(), (1, 0));
+        // One comparable pair and no extra absent completion inside a 1-bp
+        // window: 1 difference / 1 pair. The old record-count denominator
+        // treated the second record as present too.
+        assert_eq!(acc.value_variant_only(1), Some(1.0));
     }
 }

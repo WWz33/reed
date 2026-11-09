@@ -322,7 +322,10 @@ mod tests {
             }
             write!(at, "T{i}=1").expect("invariant: writing to a String");
         }
-        assert!(validate_info(at.as_bytes()).is_ok(), "the ceiling itself is legal");
+        assert!(
+            validate_info(at.as_bytes()).is_ok(),
+            "the ceiling itself is legal"
+        );
 
         // One past it: rejected with the histogram-free error.
         let mut over = at.clone();
@@ -344,7 +347,11 @@ mod tests {
             }),
             "the index must not accept a record the classifier rejects"
         );
-        assert_eq!(idx.get(over.as_bytes(), b"T0"), None, "a failed build leaves no table");
+        assert_eq!(
+            idx.get(over.as_bytes(), b"T0"),
+            None,
+            "a failed build leaves no table"
+        );
         // And the legal case still builds.
         let mut idx = InfoIndex::default();
         idx.build(at.as_bytes()).expect("invariant: at the ceiling");

@@ -27,9 +27,7 @@ impl Stand {
         match s {
             "binom2" => Ok(Stand::Binom2),
             "binom" => Ok(Stand::Binom),
-            other => Err(format!(
-                "unknown standardization {other:?} (binom2|binom)"
-            )),
+            other => Err(format!("unknown standardization {other:?} (binom2|binom)")),
         }
     }
 
@@ -155,7 +153,14 @@ pub fn standardize(x: &Mat, stand: Stand) -> Standardized {
             w.set(i, j, z);
         }
     }
-    Standardized { w, mean, sd, freq, called, n_sites: m }
+    Standardized {
+        w,
+        mean,
+        sd,
+        freq,
+        called,
+        n_sites: m,
+    }
 }
 
 /// binom2 standardization, the common case.
@@ -215,9 +220,7 @@ mod tests {
     /// every standardized cell turned into NaN.
     #[test]
     fn infinite_dosages_are_missing_not_observations() {
-        let x = Mat::from_fn(4, 1, |i, _| {
-            [0.0, 1.0, f64::INFINITY, f64::NEG_INFINITY][i]
-        });
+        let x = Mat::from_fn(4, 1, |i, _| [0.0, 1.0, f64::INFINITY, f64::NEG_INFINITY][i]);
         let st = standardize_binom2(&x);
         assert_eq!(st.mean[0], 0.5, "mean over the finite observations only");
         assert!(

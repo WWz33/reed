@@ -224,8 +224,10 @@ impl VcfHeader {
                 InfoType::Flag => noodles::vcf::header::record::value::map::info::Type::Flag,
                 InfoType::String => noodles::vcf::header::record::value::map::info::Type::String,
             };
-            out.infos_mut()
-                .insert(def.id.to_string(), Map::<Info>::new(number, ty, def.description));
+            out.infos_mut().insert(
+                def.id.to_string(),
+                Map::<Info>::new(number, ty, def.description),
+            );
         }
         Self { inner: out }
     }
@@ -382,11 +384,15 @@ mod tests {
 
     #[test]
     fn pruning_and_definition_additions_are_immutable() {
-        let header = VcfHeader::parse(&header_text(&["s1", "s2", "s3"]))
-            .expect("invariant: header");
+        let header =
+            VcfHeader::parse(&header_text(&["s1", "s2", "s3"])).expect("invariant: header");
         let pruned = header.with_samples_pruned(&[true, false, true]);
         assert_eq!(pruned.sample_names(), ["s1", "s3"]);
-        assert_eq!(header.sample_names(), ["s1", "s2", "s3"], "the original is untouched");
+        assert_eq!(
+            header.sample_names(),
+            ["s1", "s2", "s3"],
+            "the original is untouched"
+        );
 
         let added = header.with_info_definitions(&[
             InfoDefinition {
@@ -404,7 +410,10 @@ mod tests {
         ]);
         assert!(added.declares_info("AC"));
         let text = String::from_utf8(added.to_text()).expect("invariant: utf8");
-        assert!(text.contains("##INFO=<ID=AC,Number=A,Type=Integer"), "{text}");
+        assert!(
+            text.contains("##INFO=<ID=AC,Number=A,Type=Integer"),
+            "{text}"
+        );
         assert_eq!(
             text.matches("##INFO=<ID=DP").count(),
             1,

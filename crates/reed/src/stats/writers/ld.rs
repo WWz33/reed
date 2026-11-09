@@ -16,8 +16,7 @@ use crate::stats::LdReport;
 /// in-memory render below and the streaming sink
 /// (`stats::sink::write_pairs`) — so a `--ld-pairs` run is byte-identical
 /// whether its rows were accumulated or streamed (doc_v23 V23-14).
-pub const PAIRS_HEADER: &[u8] =
-    b"#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n";
+pub const PAIRS_HEADER: &[u8] = b"#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n";
 
 /// Appends one per-pair row in the table's format. The streaming writer and
 /// the in-memory renderer both call this, so the bytes cannot drift.
@@ -35,6 +34,7 @@ pub fn write_ld(
     prefix: &Path,
     report: &LdReport,
     group_names: &[String],
+    pairs: bool,
 ) -> Result<Vec<PathBuf>, EngineError> {
     let mut files = Vec::new();
     if !report.decay.is_empty() {
@@ -60,7 +60,20 @@ pub fn write_ld(
         }
         files.push(write(prefix, ".ld.decay", out)?);
     }
-    if !report.pairs.is_empty() {
+    // `pairs` is a request, not a nonempty-content check. An accumulated
+    // zero-pair run writes a header-only table; a decay-only request writes
+    // no `.ld` at all. The CLI's streaming form owns this path itself
+    // (doc_v27 V27-05).
+    if !pairs {
+        return Ok(files);
+    }
+    if report.pairs.is_empty() {
+        files.push(write(
+            prefix,
+            ".ld",
+            String::from_utf8_lossy(PAIRS_HEADER).into_owned(),
+        )?);
+    } else {
         let mut out = String::from_utf8_lossy(PAIRS_HEADER).into_owned();
         for (contig, a, b, r2) in &report.pairs {
             render_pair_row(&mut out, contig, *a, *b, *r2);

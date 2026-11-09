@@ -403,7 +403,6 @@ impl<'a> Cursor<'a> {
         }
         self.take(count)
     }
-
 }
 
 #[cfg(test)]
@@ -468,7 +467,10 @@ mod tests {
         for desc in [0x17_u8, 0x27, 0x25, 0x65] {
             let data = [0xF7, desc, 0, 0, 0, 0];
             let mut c = Cursor::new(&data);
-            assert!(c.typed().is_err(), "descriptor {desc:#04x} must be rejected");
+            assert!(
+                c.typed().is_err(),
+                "descriptor {desc:#04x} must be rejected"
+            );
         }
     }
 

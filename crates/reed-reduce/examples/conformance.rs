@@ -26,9 +26,7 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::pca::{
-    pca_dense_pairwise_with, pca_dense_with, standardize, Grm, Stand,
-};
+use reed_reduce::pca::{pca_dense_pairwise_with, pca_dense_with, standardize, Grm, Stand};
 use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
 use std::time::Instant;
 
@@ -41,7 +39,15 @@ fn read_matrix(path: &str) -> Mat {
     for i in 0..n {
         for j in 0..m {
             let tok = it.next().unwrap();
-            mat.set(i, j, if tok == "NA" { f64::NAN } else { tok.parse().unwrap() });
+            mat.set(
+                i,
+                j,
+                if tok == "NA" {
+                    f64::NAN
+                } else {
+                    tok.parse().unwrap()
+                },
+            );
         }
     }
     mat
@@ -84,7 +90,12 @@ fn main() {
 
     // Stream path on the default convention.
     let st = standardize(&x, Stand::Binom2);
-    let cfg = StreamConfig { k, tol: 1e-10, max_cycles: 200, ..Default::default() };
+    let cfg = StreamConfig {
+        k,
+        tol: 1e-10,
+        max_cycles: 200,
+        ..Default::default()
+    };
     let t = Instant::now();
     let s = lanczos_top_k(&st.w, &cfg);
     println!(

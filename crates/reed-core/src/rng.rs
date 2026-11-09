@@ -451,7 +451,10 @@ mod tests {
         assert_eq!(picked.len(), 40);
         assert!(picked.iter().all(|&i| i < 5));
         let unique: std::collections::HashSet<_> = picked.iter().collect();
-        assert!(unique.len() < 40, "40 draws from 5 with replacement should repeat");
+        assert!(
+            unique.len() < 40,
+            "40 draws from 5 with replacement should repeat"
+        );
     }
 
     #[test]
@@ -471,7 +474,11 @@ mod tests {
         for (i, &w) in weights.iter().enumerate() {
             let expected = draws as f64 * w;
             let dev = (counts[i] as f64 - expected).abs() / expected;
-            assert!(dev < 0.05, "category {i}: {} vs expected {expected}", counts[i]);
+            assert!(
+                dev < 0.05,
+                "category {i}: {} vs expected {expected}",
+                counts[i]
+            );
         }
     }
 
@@ -510,7 +517,13 @@ mod tests {
         let got: Vec<u32> = (0..5).map(|_| r.next_u32()).collect();
         assert_eq!(
             got,
-            vec![492_690_617, 1_919_685_028, 3_561_993_920, 683_038_915, 1_183_706_632]
+            vec![
+                492_690_617,
+                1_919_685_028,
+                3_561_993_920,
+                683_038_915,
+                1_183_706_632
+            ]
         );
     }
 
@@ -604,7 +617,12 @@ mod tests {
         let n = a.len() as f64;
         let ma = a.iter().sum::<f64>() / n;
         let mb = b.iter().sum::<f64>() / n;
-        let cov: f64 = a.iter().zip(b).map(|(x, y)| (x - ma) * (y - mb)).sum::<f64>() / n;
+        let cov: f64 = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| (x - ma) * (y - mb))
+            .sum::<f64>()
+            / n;
         let sa = (a.iter().map(|x| (x - ma).powi(2)).sum::<f64>() / n).sqrt();
         let sb = (b.iter().map(|x| (x - mb).powi(2)).sum::<f64>() / n).sqrt();
         cov / (sa * sb)
@@ -617,7 +635,8 @@ mod tests {
         let mut r = Rng::from_seed(43);
         let vals: Vec<u64> = (0..64).map(|_| r.next_u64()).collect();
         let hi_unique: std::collections::HashSet<_> = vals.iter().map(|v| v >> 32).collect();
-        let lo_unique: std::collections::HashSet<_> = vals.iter().map(|v| v & 0xFFFF_FFFF).collect();
+        let lo_unique: std::collections::HashSet<_> =
+            vals.iter().map(|v| v & 0xFFFF_FFFF).collect();
         assert!(hi_unique.len() > 32, "high word barely varies");
         assert!(lo_unique.len() > 32, "low word barely varies");
     }

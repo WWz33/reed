@@ -112,7 +112,6 @@ impl WindowGrid {
         }
     }
 
-
     /// Enumerates the Bp windows touched by sites in
     /// `[first_pos0, last_pos0]`, in order, with their bin ranges.
     ///
@@ -195,13 +194,17 @@ pub struct SitesWindow {
 }
 
 /// A set of 0-based half-open intervals, kept in input order for window
-/// identity plus a sorted merged copy — each merged span carrying the
-/// input indices of its members — for probes.
+/// identity plus a sorted merged copy for accessible-bp. The stabbing index
+/// is separate: adjacent intervals do not turn every probe into a scan.
 #[derive(Clone, Debug, Default)]
 pub struct RegionSet {
     intervals: Vec<Interval0>,
     merged: Vec<Interval0>,
-    members: Vec<Vec<usize>>,
+    /// Indices sorted by `(start, end)` for stabbing queries.
+    ordered: Vec<usize>,
+    /// Maximum interval end in `ordered[..=i]`; lets a query stop as soon
+    /// as no earlier interval can cover the position.
+    max_end: Vec<u64>,
 }
 
 impl RegionSet {
@@ -215,32 +218,27 @@ impl RegionSet {
                 });
             }
         }
-        let mut sorted: Vec<(usize, Interval0)> =
-            intervals.iter().copied().enumerate().collect();
+        let mut sorted: Vec<(usize, Interval0)> = intervals.iter().copied().enumerate().collect();
         sorted.sort_by_key(|(_, interval)| (interval.start, interval.end));
         let mut merged: Vec<Interval0> = Vec::with_capacity(sorted.len());
-        let mut members: Vec<Vec<usize>> = Vec::with_capacity(sorted.len());
+        let mut ordered: Vec<usize> = Vec::with_capacity(sorted.len());
+        let mut max_end: Vec<u64> = Vec::with_capacity(sorted.len());
         for (idx, interval) in sorted {
-            match (merged.last_mut(), members.last_mut()) {
-                (Some(last), Some(member)) if interval.start <= last.end => {
-                    last.end = Pos0(last.end.0.max(interval.end.0));
-                    member.push(idx);
-                }
-                _ => {
-                    merged.push(interval);
-                    members.push(vec![idx]);
-                }
+            ordered.push(idx);
+            max_end.push(max_end.last().copied().unwrap_or(0).max(interval.end.0));
+            if let Some(last) = merged.last_mut()
+                && interval.start <= last.end
+            {
+                last.end = Pos0(last.end.0.max(interval.end.0));
+            } else {
+                merged.push(interval);
             }
-        }
-        // Members arrive in (start, end) order; stab promises input order,
-        // so sort each span's list once here instead of on every probe.
-        for member in &mut members {
-            member.sort_unstable();
         }
         Ok(Self {
             intervals,
             merged,
-            members,
+            ordered,
+            max_end,
         })
     }
 
@@ -258,36 +256,33 @@ impl RegionSet {
         &self.intervals
     }
 
-    /// Indices of the regions covering `pos0`, in input order. The merged
-    /// spans are disjoint and sorted, so a binary search finds the single
-    /// span that can contain `pos0`; only its members are then checked
-    /// with the exact coverage predicate (a member of a span need not
-    /// cover the whole span — nested regions only cover their own
-    /// subrange). O(log spans + members of the span) per probe instead of
-    /// a per-site linear scan over every region (doc_v20 R14). Overlapping
-    /// regions each match (the BED-window convention).
+    /// Indices of the regions covering `pos0`, in input order. The sorted
+    /// index and prefix maximum ends stop the backward walk as soon as no
+    /// earlier interval can cover the position; adjacent intervals cost
+    /// O(log n + hits) instead of O(n) per probe (doc_v27 V27-31).
     #[must_use]
     pub fn stab(&self, pos0: u64) -> Vec<usize> {
-        // Number of spans starting at or before pos0; the last of them is
-        // the only candidate, earlier spans end before it starts.
-        let candidate = self.merged.partition_point(|span| span.start.0 <= pos0);
-        let Some(span) = candidate
-            .checked_sub(1)
-            .filter(|&span| pos0 < self.merged[span].end.0)
-        else {
-            return Vec::new();
-        };
-        // Regions live in exactly one span and each is contained in it, so
-        // regions of every other span are already excluded; members arrive
-        // input-sorted, hence the filtered answer is too.
-        self.members[span]
-            .iter()
-            .filter(|&&idx| {
-                let interval = &self.intervals[idx];
-                interval.start.0 <= pos0 && pos0 < interval.end.0
-            })
-            .copied()
-            .collect()
+        // Search the rightmost interval whose start is at or before pos0.
+        // Walking backwards stops at the first prefix maximum end that
+        // cannot cover pos0. Adjacent windows therefore cost O(log n + k),
+        // not O(n) per probe (doc_v27 V27-31).
+        let mut i = self
+            .ordered
+            .partition_point(|&idx| self.intervals[idx].start.0 <= pos0);
+        let mut out = Vec::new();
+        while i > 0 {
+            i -= 1;
+            if self.max_end[i] <= pos0 {
+                break;
+            }
+            let idx = self.ordered[i];
+            let interval = &self.intervals[idx];
+            if interval.start.0 <= pos0 && pos0 < interval.end.0 {
+                out.push(idx);
+            }
+        }
+        out.sort_unstable();
+        out
     }
 
     /// Total covered base pairs inside `span`.
@@ -520,5 +515,41 @@ mod tests {
             .is_err()
         );
         assert!(WindowGrid::Bp { size: 10, step: 10 }.validate().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod stabbing_index_tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_and_nested_regions_stab_in_input_order() {
+        let set = RegionSet::new(vec![
+            Interval0::new(Pos0(0), Pos0(100)),
+            Interval0::new(Pos0(100), Pos0(200)),
+            Interval0::new(Pos0(50), Pos0(150)),
+            Interval0::new(Pos0(200), Pos0(300)),
+        ])
+        .expect("invariant: valid intervals");
+        assert_eq!(set.stab(50), vec![0, 2]);
+        assert_eq!(set.stab(100), vec![1, 2]);
+        assert_eq!(set.stab(150), vec![1]);
+        assert_eq!(set.stab(250), vec![3]);
+        assert_eq!(set.stab(300), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn adjacent_stabbing_does_not_scan_all_regions() {
+        let intervals = (0..10_000_u64)
+            .map(|i| Interval0::new(Pos0(i * 100), Pos0((i + 1) * 100)))
+            .collect();
+        let set = RegionSet::new(intervals).expect("invariant: valid intervals");
+        let start = std::time::Instant::now();
+        let hits: usize = (0..10_000_u64).map(|i| set.stab(i * 100 + 50).len()).sum();
+        assert_eq!(hits, 10_000);
+        // This is a correctness test with a generous upper bound, not a
+        // timing-dependent assertion. The old implementation was ~200×
+        // slower on this shape; the index keeps it well below that.
+        assert!(start.elapsed() < std::time::Duration::from_millis(500));
     }
 }

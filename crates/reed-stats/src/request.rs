@@ -70,7 +70,9 @@ pub enum StatKind {
         /// Fold to the minor allele count.
         folded: bool,
     },
-    /// Watterson's θ for one group; `per_bp` divides by window bp.
+    /// Watterson's θ for one group; `per_bp:false` is the window mean
+    /// `θ_raw/no_sites`, `per_bp:true` is physical `θ_raw/window_bp`.
+    /// The bare wide-table `theta_w.total` instead displays raw θ (V27-38).
     ThetaW {
         /// Group index.
         group: usize,
@@ -247,6 +249,226 @@ pub enum StatAcc {
     Tajima(TajimaAcc),
 }
 
+/// A scalar, terminal window output. Unlike `StatAcc`, this carries only
+/// the values and audit columns a writer needs; no distribution vectors or
+/// merge state survive (doc_v27 V27-18).
+#[derive(Clone, Debug)]
+pub enum StatOutput {
+    /// π or dxy.
+    Pair {
+        /// The window estimate, or `None` where undefined.
+        value: Option<f64>,
+        /// Occupied-site count.
+        no_sites: u64,
+        /// `(diffs, comparable, missing)` integer audit columns.
+        counts: (u64, u64, u64),
+    },
+    /// Watterson θ.
+    Theta {
+        /// The window estimate, or `None` where undefined.
+        value: Option<f64>,
+        /// Raw Watterson numerator.
+        raw: f64,
+        /// Occupied-site count.
+        no_sites: u64,
+        /// Variant-site count.
+        no_var: u64,
+        /// Coverage-weighted site count.
+        weighted: f64,
+    },
+    /// Tajima's D.
+    Tajima {
+        /// The window estimate, or `None` where undefined.
+        value: Option<f64>,
+        /// Raw π sum.
+        raw_pi: Option<f64>,
+        /// Raw θ numerator.
+        raw_theta: Option<f64>,
+        /// Tajima D standard deviation.
+        stdev: Option<f64>,
+        /// Occupied-site count.
+        no_sites: u64,
+    },
+    /// Pairwise or global Fst.
+    Fst {
+        /// The Fst estimate.
+        value: Option<f64>,
+        /// Variant-site count.
+        /// Variant-site count.
+        no_snps: u64,
+    },
+    /// PBS and its three pair Fst values.
+    Pbs {
+        /// The window estimate, or `None` where undefined.
+        value: Option<f64>,
+        /// Variant-site count.
+        no_snps: u64,
+        /// The three pairwise Hudson Fst values.
+        pair_fsts: (Option<f64>, Option<f64>, Option<f64>),
+    },
+    /// The SFS bins (the only non-scalar window output).
+    Sfs(Vec<u64>),
+}
+
+impl StatOutput {
+    /// Materializes an accumulator for one window, using the denominator
+    /// appropriate to its variant-only policy.
+    #[must_use]
+    pub fn from_acc(
+        acc: &StatAcc,
+        kind: &StatKind,
+        bp: u64,
+        denom_bp: u64,
+        variant_only: bool,
+    ) -> Self {
+        let value = if variant_only {
+            acc.value_variant_only(kind, denom_bp)
+        } else {
+            acc.value(kind, bp)
+        };
+        match acc {
+            StatAcc::Pi(_) | StatAcc::Dxy(_) => Self::Pair {
+                value,
+                no_sites: acc.n_present().unwrap_or(0),
+                counts: acc.pair_counts().unwrap_or((0, 0, 0)),
+            },
+            StatAcc::Theta(_) => {
+                let (raw, no_sites, no_var, weighted) =
+                    acc.theta_columns().unwrap_or((0.0, 0, 0, 0.0));
+                Self::Theta {
+                    value,
+                    raw,
+                    no_sites,
+                    no_var,
+                    weighted,
+                }
+            }
+            StatAcc::Tajima(_) => {
+                let (raw_pi, raw_theta, stdev, no_sites) =
+                    acc.tajima_columns().unwrap_or((None, None, None, 0));
+                Self::Tajima {
+                    value,
+                    raw_pi,
+                    raw_theta,
+                    stdev,
+                    no_sites,
+                }
+            }
+            StatAcc::Fst(_) => {
+                let (value, no_snps) = acc.fst_columns(kind).unwrap_or((None, 0));
+                Self::Fst { value, no_snps }
+            }
+            StatAcc::FstGlobal(_) => {
+                let (value, no_snps) = acc.fst_global_columns(kind).unwrap_or((None, 0));
+                Self::Fst { value, no_snps }
+            }
+            StatAcc::Pbs(_) => {
+                let (value, no_snps, pair_fsts) =
+                    acc.pbs_columns(kind)
+                        .unwrap_or((None, 0, (None, None, None)));
+                Self::Pbs {
+                    value,
+                    no_snps,
+                    pair_fsts,
+                }
+            }
+            StatAcc::Sfs(acc) => Self::Sfs(acc.bins().to_vec()),
+        }
+    }
+
+    /// The scalar estimate, if this output has one.
+    #[must_use]
+    pub const fn value(&self) -> Option<f64> {
+        match self {
+            Self::Pair { value, .. }
+            | Self::Theta { value, .. }
+            | Self::Tajima { value, .. }
+            | Self::Fst { value, .. }
+            | Self::Pbs { value, .. } => *value,
+            Self::Sfs(_) => None,
+        }
+    }
+
+    /// `(diffs, comparable, missing)` for π/dxy.
+    #[must_use]
+    pub const fn pair_counts(&self) -> Option<(u64, u64, u64)> {
+        match self {
+            Self::Pair { counts, .. } => Some(*counts),
+            _ => None,
+        }
+    }
+
+    /// Occupied sites for π/dxy.
+    #[must_use]
+    pub const fn n_present(&self) -> Option<u64> {
+        match self {
+            Self::Pair { no_sites, .. } => Some(*no_sites),
+            _ => None,
+        }
+    }
+
+    /// θ output columns.
+    #[must_use]
+    pub const fn theta_columns(&self) -> Option<(f64, u64, u64, f64)> {
+        match self {
+            Self::Theta {
+                raw,
+                no_sites,
+                no_var,
+                weighted,
+                ..
+            } => Some((*raw, *no_sites, *no_var, *weighted)),
+            _ => None,
+        }
+    }
+
+    /// Tajima output columns.
+    #[must_use]
+    pub const fn tajima_columns(&self) -> Option<TajimaColumns> {
+        match self {
+            Self::Tajima {
+                raw_pi,
+                raw_theta,
+                stdev,
+                no_sites,
+                ..
+            } => Some((*raw_pi, *raw_theta, *stdev, *no_sites)),
+            _ => None,
+        }
+    }
+
+    /// Fst output columns.
+    #[must_use]
+    pub const fn fst_columns(&self) -> Option<(Option<f64>, u64)> {
+        match self {
+            Self::Fst { value, no_snps } => Some((*value, *no_snps)),
+            _ => None,
+        }
+    }
+
+    /// PBS output columns.
+    #[must_use]
+    pub const fn pbs_columns(&self) -> Option<PbsColumns> {
+        match self {
+            Self::Pbs {
+                value,
+                no_snps,
+                pair_fsts,
+            } => Some((*value, *no_snps, *pair_fsts)),
+            _ => None,
+        }
+    }
+
+    /// SFS bins, when this is the SFS output.
+    #[must_use]
+    pub fn sfs_bins(&self) -> Option<&[u64]> {
+        match self {
+            Self::Sfs(bins) => Some(bins),
+            _ => None,
+        }
+    }
+}
+
 /// Reference `_pbs.txt` columns: `(value, no_snps, f_ab, f_ac, f_bc)`.
 pub type PbsColumns = (Option<f64>, u64, (Option<f64>, Option<f64>, Option<f64>));
 
@@ -260,24 +482,28 @@ impl StatAcc {
         match self {
             Self::Pi(acc) => acc.push(row, all_variant),
             Self::Dxy(acc) => acc.push(row, all_variant),
-            Self::Fst(acc) => acc.push(row),
+            Self::Fst(acc) => acc.push_with_variant(row, all_variant),
             Self::FstGlobal(acc) => acc.push(row),
-            Self::Pbs(acc) => acc.push(row),
+            Self::Pbs(acc) => acc.push_with_variant(row, all_variant),
             Self::Sfs(acc) => acc.push(row),
             Self::Theta(acc) => acc.push(row),
             Self::Tajima(acc) => acc.push(row),
         }
     }
 
-    /// Registers a present-but-uncountable site (a skipped multiallelic
-    /// record): only the variant-only pi/dxy denominator reads it, every
-    /// other statistic ignores it (doc_v7 D7-11).
-    pub fn note_skipped(&mut self) {
-        match self {
-            Self::Pi(acc) => acc.note_skipped_site(),
-            Self::Dxy(acc) => acc.note_skipped_site(),
+    /// Produces a terminal, memory-bounded output row. θ/Tajima drop their
+    /// O(sample-count) distribution vectors after caching all values the
+    /// writers need; other accumulators are already scalar and only clone.
+    /// This is for completed window rows, never for a later merge (V27-18).
+    #[must_use]
+    pub fn compacted(&self) -> Self {
+        let mut out = self.clone();
+        match &mut out {
+            Self::Theta(acc) => acc.compact(),
+            Self::Tajima(acc) => acc.compact(),
             _ => {}
         }
+        out
     }
 
     /// Component-wise merge (associative; exact integer components).
@@ -335,20 +561,22 @@ impl StatAcc {
 
     /// π/dxy/θ with the `--variant-only` denominator completion
     /// (04-algorithms.md §3); ratio statistics (Fst, PBS, Tajima's D) are
-    /// unaffected.
-    ///
-    /// `per_bp` is intentionally ignored here: the design fixes one
-    /// variant-only estimator per statistic (the `absent`-completion
-    /// denominator changes, the point estimate does not), and the CLI only
-    /// builds `per_bp: false` kinds for this route, so the `pi.bp` /
-    /// `theta_w.bp` columns never carry a per-pair quantity in practice
-    /// (doc_v7 D7-23).
+    /// unaffected. `pair` uses the full comparable-pair denominator. `bp`
+    /// remains a distinct physical-bp quantity: absent sites contribute zero
+    /// to its numerator and its denominator is L, so it needs no extra
+    /// pair-count completion (doc_v27 V27-38).
     #[must_use]
     pub fn value_variant_only(&self, kind: &StatKind, window_bp: u64) -> Option<f64> {
         match (self, kind) {
-            (Self::Pi(acc), StatKind::Pi { .. }) => acc.value_variant_only(window_bp),
-            (Self::Dxy(acc), StatKind::Dxy { .. }) => acc.value_variant_only(window_bp),
-            (Self::Theta(acc), StatKind::ThetaW { .. }) => acc.value_variant_only(window_bp),
+            (Self::Pi(acc), StatKind::Pi { per_bp: false, .. }) => {
+                acc.value_variant_only(window_bp)
+            }
+            (Self::Dxy(acc), StatKind::Dxy { per_bp: false, .. }) => {
+                acc.value_variant_only(window_bp)
+            }
+            (Self::Theta(acc), StatKind::ThetaW { per_bp: false, .. }) => {
+                acc.value_variant_only(window_bp)
+            }
             _ => self.value(kind, window_bp),
         }
     }
@@ -529,6 +757,34 @@ mod tests {
             }
         }
         assert_eq!(keys[3].as_str(), "fst.hudson.0.1");
+    }
+
+    #[test]
+    fn variant_only_pair_and_bp_are_separate_dispatches() {
+        let counts = [SiteGroupCounts {
+            n_ref_alleles: 1,
+            n_alt_alleles: 1,
+            ..Default::default()
+        }];
+        let mut acc = StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        }
+        .build(&[1])
+        .expect("invariant: pi");
+        acc.push(&counts, true);
+        let pair = StatKind::Pi {
+            group: 0,
+            per_bp: false,
+        };
+        let bp = StatKind::Pi {
+            group: 0,
+            per_bp: true,
+        };
+        assert_eq!(acc.value_variant_only(&pair, 100), Some(0.01));
+        assert_eq!(acc.value_variant_only(&bp, 100), Some(0.01));
+        assert_eq!(acc.value(&pair, 100), Some(1.0));
+        assert_eq!(acc.value(&bp, 100), Some(0.01));
     }
 
     #[test]

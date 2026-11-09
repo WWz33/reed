@@ -25,6 +25,13 @@ pub struct TajimaAcc {
     theta: ThetaAcc,
     /// Σ per-site unbiased π over sites with ≥ 2 observed alleles.
     raw_pi: NeumaierSum,
+    /// Cached only for terminal compacted rows; `None` means un-compacted.
+    compact: Option<TajimaCompact>,
+}
+
+#[derive(Clone, Debug)]
+struct TajimaCompact {
+    d_stdev: Option<f64>,
 }
 
 impl TajimaAcc {
@@ -38,6 +45,7 @@ impl TajimaAcc {
             n_chrom,
             theta,
             raw_pi: NeumaierSum::new(),
+            compact: None,
         })
     }
 
@@ -55,6 +63,10 @@ impl TajimaAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
+        assert!(
+            self.compact.is_none() && other.compact.is_none(),
+            "a compacted TajimaAcc is a terminal output, not a merge input"
+        );
         self.theta.merge(&other.theta);
         self.raw_pi.merge(&other.raw_pi);
     }
@@ -76,6 +88,9 @@ impl TajimaAcc {
     /// undefined (no sites, no mutations, mean n < 2).
     #[must_use]
     pub fn d_stdev(&self) -> Option<f64> {
+        if let Some(compact) = &self.compact {
+            return compact.d_stdev;
+        }
         let sites = self.theta.n_sites();
         let mutations = self.theta.n_mutations();
         if sites == 0 || mutations == 0 {
@@ -92,6 +107,18 @@ impl TajimaAcc {
         let s = mutations as f64;
         let variance = e1 * s + e2 * s * (s - 1.0);
         (variance > 0.0).then(|| variance.sqrt())
+    }
+
+    /// Releases the θ distribution vectors after caching this window's
+    /// scalar output, including the one-time D standard deviation.
+    pub fn compact(&mut self) {
+        if self.compact.is_some() {
+            return;
+        }
+        self.compact = Some(TajimaCompact {
+            d_stdev: self.d_stdev(),
+        });
+        self.theta.compact();
     }
 
     /// Window-level D; `None` when `S < min_mutations` or the denominator is
@@ -148,4 +175,52 @@ fn tajima_constants(n: usize) -> Option<(f64, f64)> {
     let e1 = c1 / a1n;
     let e2 = c2 / (a1n * a1n + a2n);
     Some((e1, e2))
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    #[test]
+    fn compact_preserves_theta_and_tajima_outputs() {
+        let rows = [
+            SiteGroupCounts {
+                n_ref_alleles: 1,
+                n_alt_alleles: 1,
+                ..Default::default()
+            },
+            SiteGroupCounts {
+                n_ref_alleles: 2,
+                n_alt_alleles: 0,
+                ..Default::default()
+            },
+            SiteGroupCounts::default(),
+        ];
+        let mut original = TajimaAcc::new(0, 2).expect("invariant: two chromosomes");
+        for row in &rows {
+            original.push(std::slice::from_ref(row));
+        }
+        let mut compact = original.clone();
+        compact.compact();
+        assert_eq!(original.raw_pi(), compact.raw_pi());
+        assert_eq!(original.raw_theta(), compact.raw_theta());
+        assert_eq!(original.d_stdev(), compact.d_stdev());
+        assert_eq!(original.value(0), compact.value(0));
+        assert_eq!(
+            original.theta.weighted_no_sites(),
+            compact.theta.weighted_no_sites()
+        );
+        assert_eq!(original.theta.n_mutations(), compact.theta.n_mutations());
+        assert_eq!(original.theta.value_avg(), compact.theta.value_avg());
+        assert_eq!(
+            original.theta.value_variant_only(100),
+            compact.theta.value_variant_only(100)
+        );
+        assert!(compact.theta.value_avg().is_some());
+        assert_eq!(compact.theta.n_mutations(), original.theta.n_mutations());
+        // A second compaction is idempotent and cannot lose the cached D
+        // standard deviation.
+        compact.compact();
+        assert_eq!(original.d_stdev(), compact.d_stdev());
+    }
 }

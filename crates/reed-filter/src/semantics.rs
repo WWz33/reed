@@ -290,7 +290,11 @@ mod tests {
         }
         for on_missing in [OnMissing::Fail, OnMissing::Mask] {
             assert!(
-                !compare_missing(CmpOp::Ne, MissingSides::Lhs, MissingCtx::InfoRule(on_missing)),
+                !compare_missing(
+                    CmpOp::Ne,
+                    MissingSides::Lhs,
+                    MissingCtx::InfoRule(on_missing)
+                ),
                 "{on_missing:?} must veto the != row"
             );
         }
@@ -373,10 +377,7 @@ mod tests {
     /// record is rejected earlier by `classify_line`).
     #[test]
     fn info_af_escalates_duplicate_tags_to_absent() {
-        assert_eq!(
-            info_af_outcome(b"AC=1;AC=3;AN=4", 1),
-            InfoAfOutcome::Absent
-        );
+        assert_eq!(info_af_outcome(b"AC=1;AC=3;AN=4", 1), InfoAfOutcome::Absent);
     }
 
     /// doc_v26 V26-02: a value list that cannot match the ALT count is

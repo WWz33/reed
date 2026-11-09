@@ -124,6 +124,57 @@ pub fn region_allows(
     (include.is_empty() || inside(include)) && !inside(exclude)
 }
 
+/// The record-level site selection the statistics commands apply: three
+/// independent families ANDed together.
+///
+/// - [`Self::indexed`] — `-r/-R`. The reader also seeks to these (block
+///   granular, so it overshoots), which is why the same list must gate
+///   records; a library caller that only opens the path gets the predicate
+///   without the seek, which is slower but correct.
+/// - [`Self::include`]/[`Self::exclude`] — `-t/-T`, the streaming target
+///   rule.
+/// - [`Self::sites`] — `--sites-file`, an exact position list.
+///
+/// Cross-family they **intersect** (bcftools: `-r chr2 -t chr1:10` selects
+/// nothing, doc_v23 V23-61) and within a family they union. They used to
+/// share one `targets` vector, which silently made every pair a union:
+/// `-r chr1:201-400 -t chr1:1-60` counted two records where `reed filter`
+/// and bcftools count none (doc_v27 V27-15), and `--sites-file` naming one
+/// position plus `-t` naming three more counted all four (doc_v27 V27-14).
+/// Routing every caller through [`Self::allows`] is what keeps them from
+/// being folded back into an OR.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SiteSelector {
+    /// `-r/-R`: the indexed family (also the seek range).
+    pub indexed: Vec<RegionTriple>,
+    /// `-t/-T` include regions.
+    pub include: Vec<RegionTriple>,
+    /// `-t/-T` `^`-prefixed exclude regions.
+    pub exclude: Vec<RegionTriple>,
+    /// `--sites-file`: `(contig, Some(pos1), Some(pos1))` per row.
+    pub sites: Vec<RegionTriple>,
+}
+
+impl SiteSelector {
+    /// Whether `pos1` on `chrom` survives every family that was given; a
+    /// family with no entries keeps everything.
+    #[must_use]
+    pub fn allows(&self, chrom: &[u8], pos1: u64) -> bool {
+        region_allows(&self.indexed, &[], chrom, pos1)
+            && region_allows(&self.include, &self.exclude, chrom, pos1)
+            && region_allows(&self.sites, &[], chrom, pos1)
+    }
+
+    /// Whether no family was given (the selector keeps every record).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.indexed.is_empty()
+            && self.include.is_empty()
+            && self.exclude.is_empty()
+            && self.sites.is_empty()
+    }
+}
+
 impl Region {
     /// Header-less heuristic parse: `Chr01` / `Chr01:100` /
     /// `Chr01:100-200` / `Chr01:100-` / `Chr01:-200`.
@@ -220,9 +271,9 @@ fn parse_interval(interval: &str, whole: &str) -> Result<(Option<u64>, Option<u6
                 if x.is_empty() {
                     return Ok(None);
                 }
-                x.parse::<u64>()
-                    .map(Some)
-                    .map_err(|_| FilterError::Spec(format!("region {what} is not a number: {whole:?}")))
+                x.parse::<u64>().map(Some).map_err(|_| {
+                    FilterError::Spec(format!("region {what} is not a number: {whole:?}"))
+                })
             };
             Ok((p(a, "start")?, p(b, "end")?))
         }
@@ -244,7 +295,10 @@ mod tests {
         // doc_v21 M5: bcftools accepts `-t CHROM:POS`; reed rejected it, so
         // every two-column target file and every single-position script failed.
         let r = Region::parse("chr1:200").expect("bare position");
-        assert_eq!((r.contig.as_str(), r.start, r.end), ("chr1", Some(200), Some(200)));
+        assert_eq!(
+            (r.contig.as_str(), r.start, r.end),
+            ("chr1", Some(200), Some(200))
+        );
         assert!(r.contains("chr1", 200));
         assert!(!r.contains("chr1", 199));
         assert!(!r.contains("chr1", 201));
@@ -272,7 +326,10 @@ mod tests {
     fn declared_contigs_disambiguate_colons() {
         let contigs = vec!["HLA-A*01:01".to_string(), "chr1:100".to_string()];
         let whole = Region::parse_in("HLA-A*01:01", &contigs).expect("whole contig");
-        assert_eq!((whole.contig.as_str(), whole.start, whole.end), ("HLA-A*01:01", None, None));
+        assert_eq!(
+            (whole.contig.as_str(), whole.start, whole.end),
+            ("HLA-A*01:01", None, None)
+        );
         let ranged = Region::parse_in("HLA-A*01:01:100-200", &contigs).expect("interval");
         assert_eq!(
             (ranged.contig.as_str(), ranged.start, ranged.end),
@@ -280,10 +337,16 @@ mod tests {
         );
         // A colon-containing contig also wins as a whole name.
         let whole = Region::parse_in("chr1:100", &contigs).expect("whole contig");
-        assert_eq!((whole.contig.as_str(), whole.start, whole.end), ("chr1:100", None, None));
+        assert_eq!(
+            (whole.contig.as_str(), whole.start, whole.end),
+            ("chr1:100", None, None)
+        );
         // Without the vocabulary the same text is an interval.
         let heur = Region::parse("chr1:100").expect("heuristic");
-        assert_eq!((heur.contig.as_str(), heur.start, heur.end), ("chr1", Some(100), Some(100)));
+        assert_eq!(
+            (heur.contig.as_str(), heur.start, heur.end),
+            ("chr1", Some(100), Some(100))
+        );
     }
 
     /// A colon with no valid interval is loud, not a silent whole-contig
@@ -292,6 +355,86 @@ mod tests {
     fn an_undeclared_colon_name_is_an_error() {
         let contigs = vec!["HLA-A*01:01".to_string()];
         let err = Region::parse_in("HLA-A*01:bc", &contigs).expect_err("malformed");
-        assert!(err.to_string().contains("neither a declared contig"), "{err}");
+        assert!(
+            err.to_string().contains("neither a declared contig"),
+            "{err}"
+        );
+    }
+
+    /// doc_v27 V27-15/V27-14: the three families intersect. Each case is a
+    /// pair that used to be a union when both sides landed in one `targets`
+    /// vector — the shape the CLI produced before this type existed.
+    #[test]
+    fn site_selector_intersects_the_families() {
+        let sel = |indexed: &[(&str, u64, u64)],
+                   include: &[(&str, u64, u64)],
+                   exclude: &[(&str, u64, u64)],
+                   sites: &[(&str, u64, u64)]|
+         -> SiteSelector {
+            let triples = |list: &[(&str, u64, u64)]| {
+                list.iter()
+                    .map(|(c, s, e)| ((*c).to_string(), Some(*s), Some(*e)))
+                    .collect::<Vec<RegionTriple>>()
+            };
+            SiteSelector {
+                indexed: triples(indexed),
+                include: triples(include),
+                exclude: triples(exclude),
+                sites: triples(sites),
+            }
+        };
+
+        // The empty selector keeps everything.
+        let empty = SiteSelector::default();
+        assert!(empty.is_empty());
+        assert!(empty.allows(b"chr1", 1));
+
+        // V27-15: `-r chr1:201-400 -t chr1:1-60` is empty, not {300,400}.
+        let cross = sel(&[("chr1", 201, 400)], &[("chr1", 1, 60)], &[], &[]);
+        for pos in [1_u64, 60, 201, 300, 400, 1000] {
+            assert!(
+                !cross.allows(b"chr1", pos),
+                "cross-family {pos} must be excluded"
+            );
+        }
+        // Within one family the lists still union.
+        let two_ranges = sel(&[("chr1", 1, 60)], &[("chr1", 201, 400)], &[], &[]);
+        assert!(!two_ranges.allows(b"chr1", 100));
+        // A single family on its own degrades to that family's own rule.
+        let indexed_only = sel(&[("chr1", 201, 400)], &[], &[], &[]);
+        assert!(!indexed_only.allows(b"chr1", 200));
+        assert!(indexed_only.allows(b"chr1", 201));
+        assert!(indexed_only.allows(b"chr1", 400));
+        assert!(!indexed_only.allows(b"chr1", 401));
+        assert!(!indexed_only.allows(b"chr2", 300));
+
+        // V27-14: `--sites-file`(200) + `-t chr1:300-500` is empty, not
+        // {200,300,400,500}.
+        let sites_and_targets = sel(&[], &[("chr1", 300, 500)], &[], &[("chr1", 200, 200)]);
+        for pos in [200_u64, 300, 400, 500] {
+            assert!(
+                !sites_and_targets.allows(b"chr1", pos),
+                "site {pos} must be excluded"
+            );
+        }
+        // The sites list on its own keeps exactly its positions.
+        let sites_only = sel(&[], &[], &[], &[("chr1", 200, 200)]);
+        assert!(sites_only.allows(b"chr1", 200));
+        assert!(!sites_only.allows(b"chr1", 201));
+
+        // An exclude region still wins inside the target family, and it
+        // cannot rescue a site the indexed or sites family drops.
+        let excluded = sel(&[], &[("chr1", 1, 1000)], &[("chr1", 500, 500)], &[]);
+        assert!(excluded.allows(b"chr1", 499));
+        assert!(!excluded.allows(b"chr1", 500));
+        let three_way = sel(
+            &[("chr1", 100, 600)],
+            &[("chr1", 100, 1000)],
+            &[],
+            &[("chr1", 100, 300)],
+        );
+        assert!(three_way.allows(b"chr1", 150));
+        assert!(!three_way.allows(b"chr1", 400), "sites family wins");
+        assert!(!three_way.allows(b"chr1", 50), "indexed family wins");
     }
 }

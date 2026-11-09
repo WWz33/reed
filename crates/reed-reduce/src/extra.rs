@@ -93,10 +93,15 @@ pub fn tsne_from_sq_distances(d2: &Mat, cfg: &TsneConfig) -> Result<Mat, TsneErr
     // unconverged row used to be left all-zero, which with the default 30
     // on n <= 31 samples silently turned the whole embedding into noise.
     if cfg.perplexity < 1.0 {
-        return Err(TsneError::PerplexityBelowOne { perplexity: cfg.perplexity });
+        return Err(TsneError::PerplexityBelowOne {
+            perplexity: cfg.perplexity,
+        });
     }
     if cfg.perplexity >= n.saturating_sub(1) as f64 {
-        return Err(TsneError::PerplexityTooLarge { perplexity: cfg.perplexity, n });
+        return Err(TsneError::PerplexityTooLarge {
+            perplexity: cfg.perplexity,
+            n,
+        });
     }
 
     // Per-point sigma from the perplexity target.
@@ -116,7 +121,11 @@ pub fn tsne_from_sq_distances(d2: &Mat, cfg: &TsneConfig) -> Result<Mat, TsneErr
             .map(|j| d2.get(i, j))
             .sum::<f64>()
             / (n.saturating_sub(1)).max(1) as f64;
-        let mut beta = if mean_d2 > 0.0 && mean_d2.is_finite() { 1.0 / mean_d2 } else { 1.0 };
+        let mut beta = if mean_d2 > 0.0 && mean_d2.is_finite() {
+            1.0 / mean_d2
+        } else {
+            1.0
+        };
         let mut probs = vec![0.0f64; n];
         let mut sum = 0.0f64;
         for _ in 0..64 {
@@ -150,7 +159,11 @@ pub fn tsne_from_sq_distances(d2: &Mat, cfg: &TsneConfig) -> Result<Mat, TsneErr
             }
             if h > target {
                 lo = beta;
-                beta = if hi >= 1e20 { beta * 2.0 } else { (beta + hi) / 2.0 };
+                beta = if hi >= 1e20 {
+                    beta * 2.0
+                } else {
+                    (beta + hi) / 2.0
+                };
             } else {
                 hi = beta;
                 beta = (beta + lo) / 2.0;
@@ -326,7 +339,13 @@ pub struct TsneConfig {
 
 impl Default for TsneConfig {
     fn default() -> Self {
-        Self { perplexity: 30.0, n_components: 2, n_iter: 1000, learning_rate: 200.0, seed: 42 }
+        Self {
+            perplexity: 30.0,
+            n_components: 2,
+            n_iter: 1000,
+            learning_rate: 200.0,
+            seed: 42,
+        }
     }
 }
 
@@ -407,8 +426,7 @@ fn check_lle_size(n: usize) -> Result<(), LleError> {
 /// LLE on feature vectors; panics for `n > LLE_MAX_SAMPLES` (precondition
 /// documented at [`LLE_MAX_SAMPLES`]). Use [`try_lle`] to handle it.
 pub fn lle(x: &Mat, k: usize, n_components: usize) -> Mat {
-    try_lle(x, k, n_components)
-        .expect("invariant: LLE is documented for n <= LLE_MAX_SAMPLES")
+    try_lle(x, k, n_components).expect("invariant: LLE is documented for n <= LLE_MAX_SAMPLES")
 }
 
 /// Fallible [`lle`].
@@ -476,8 +494,8 @@ pub fn try_lle_from_sq_distances(
             for b in 0..k {
                 let mut s = 0.0;
                 for d in 0..x.cols {
-                    s += (x.get(i, d) - x.get(nbrs[i][a], d))
-                        * (x.get(i, d) - x.get(nbrs[i][b], d));
+                    s +=
+                        (x.get(i, d) - x.get(nbrs[i][a], d)) * (x.get(i, d) - x.get(nbrs[i][b], d));
                 }
                 g.set(a, b, s);
             }
@@ -490,7 +508,11 @@ pub fn try_lle_from_sq_distances(
         let weights = solve_sym(&g, &vec![1.0; k]);
         let sum: f64 = weights.iter().sum();
         for a in 0..k {
-            wmat.set(i, nbrs[i][a], if sum != 0.0 { weights[a] / sum } else { 0.0 });
+            wmat.set(
+                i,
+                nbrs[i][a],
+                if sum != 0.0 { weights[a] / sum } else { 0.0 },
+            );
         }
     }
 
@@ -780,21 +802,36 @@ mod tests {
         // returned a pure-noise embedding (pre-fix: Ok, not Err).
         let x = Mat::from_fn(4, 2, |i, j| (i * 3 + j) as f64 * 0.7);
         for bad in [3.0, 30.0] {
-            let cfg = TsneConfig { perplexity: bad, n_iter: 20, ..Default::default() };
+            let cfg = TsneConfig {
+                perplexity: bad,
+                n_iter: 20,
+                ..Default::default()
+            };
             assert_eq!(
                 tsne(&x, &cfg),
-                Err(TsneError::PerplexityTooLarge { perplexity: bad, n: 4 }),
+                Err(TsneError::PerplexityTooLarge {
+                    perplexity: bad,
+                    n: 4
+                }),
                 "perplexity {bad} with n = 4 must be rejected"
             );
         }
         // Below 1 is equally impossible: exp(H) >= 1 for any distribution.
-        let cfg = TsneConfig { perplexity: 0.5, n_iter: 20, ..Default::default() };
+        let cfg = TsneConfig {
+            perplexity: 0.5,
+            n_iter: 20,
+            ..Default::default()
+        };
         assert_eq!(
             tsne(&x, &cfg),
             Err(TsneError::PerplexityBelowOne { perplexity: 0.5 })
         );
         // Just below the ceiling stays accepted (max entropy ln 3).
-        let cfg = TsneConfig { perplexity: 2.9, n_iter: 20, ..Default::default() };
+        let cfg = TsneConfig {
+            perplexity: 2.9,
+            n_iter: 20,
+            ..Default::default()
+        };
         assert!(tsne(&x, &cfg).is_ok());
     }
 
@@ -852,7 +889,12 @@ mod tests {
         // fixed beta = 1 search start. This test's job is regression
         // detection, not agreement with a buggy baseline.
         let x = blobs(5);
-        let cfg = TsneConfig { perplexity: 5.0, n_iter: 300, seed: 3, ..Default::default() };
+        let cfg = TsneConfig {
+            perplexity: 5.0,
+            n_iter: 300,
+            seed: 3,
+            ..Default::default()
+        };
         let y = tsne(&x, &cfg).expect("converging perplexity");
         let sum_abs: f64 = y.data.iter().map(|v| v.abs()).sum();
         assert!(
@@ -894,8 +936,16 @@ mod tests {
             // Three groups of four, spread over a realistic dosage range.
             (i / 4) as f64 * 40.0 + (j as f64) * 7.0
         });
-        let y = tsne(&x, &TsneConfig { perplexity: 4.0, n_iter: 120, seed: 7, ..Default::default() })
-            .expect("genotype-scale fixture");
+        let y = tsne(
+            &x,
+            &TsneConfig {
+                perplexity: 4.0,
+                n_iter: 120,
+                seed: 7,
+                ..Default::default()
+            },
+        )
+        .expect("genotype-scale fixture");
         for v in y.data.iter() {
             assert!(v.is_finite(), "coordinate {v} not finite");
         }
@@ -910,7 +960,12 @@ mod tests {
     #[test]
     fn tsne_separates_blobs() {
         let x = blobs(20);
-        let cfg = TsneConfig { perplexity: 10.0, n_iter: 300, seed: 3, ..Default::default() };
+        let cfg = TsneConfig {
+            perplexity: 10.0,
+            n_iter: 300,
+            seed: 3,
+            ..Default::default()
+        };
         let y = tsne(&x, &cfg).expect("converging t-SNE fixture");
         let sep = separation(&y, 20);
         assert!(sep > 2.0, "t-SNE separation ratio {sep}");
@@ -924,20 +979,25 @@ mod tests {
         // central finite difference of the cost it claims to minimize —
         // an independent oracle. With the wrong (fully normalized) factor
         // the error is O(1e-1); with the right one it is O(1e-10).
-        let y = Mat::from_fn(3, 2, |i, d| {
-            match (i, d) {
-                (0, 0) => 0.0,
-                (0, 1) => 1.0,
-                (1, 0) => 2.0,
-                (1, 1) => -1.0,
-                (2, 0) => 0.5,
-                _ => 0.25,
-            }
+        let y = Mat::from_fn(3, 2, |i, d| match (i, d) {
+            (0, 0) => 0.0,
+            (0, 1) => 1.0,
+            (1, 0) => 2.0,
+            (1, 1) => -1.0,
+            (2, 0) => 0.5,
+            _ => 0.25,
         });
         // A joint distribution over ordered pairs, symmetrized and
         // normalized exactly as `tsne_from_sq_distances` builds `pj`.
         let mut raw = Mat::zeros(3, 3);
-        let pairs = [(0, 1, 0.20), (0, 2, 0.15), (1, 0, 0.18), (1, 2, 0.10), (2, 0, 0.05), (2, 1, 0.22)];
+        let pairs = [
+            (0, 1, 0.20),
+            (0, 2, 0.15),
+            (1, 0, 0.18),
+            (1, 2, 0.10),
+            (2, 0, 0.05),
+            (2, 1, 0.22),
+        ];
         for (i, j, p) in pairs {
             raw.set(i, j, p);
         }
@@ -1005,7 +1065,11 @@ mod tests {
                 base += x.get(i, j).powi(2);
             }
         }
-        assert!(err < 0.25 * base, "relative reconstruction error {}", err / base);
+        assert!(
+            err < 0.25 * base,
+            "relative reconstruction error {}",
+            err / base
+        );
         for v in w.data.iter().chain(h.data.iter()) {
             assert!(*v >= 0.0);
         }

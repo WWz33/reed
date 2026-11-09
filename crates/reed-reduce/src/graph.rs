@@ -72,7 +72,10 @@ pub fn pcoa(d: &Mat, k: usize) -> Embedding {
             coords.set(i, c, vecs.get(i, c) * scale);
         }
     }
-    Embedding { coords, values: vals }
+    Embedding {
+        coords,
+        values: vals,
+    }
 }
 
 /// Kernel PCA. `kind` selects the kernel; `gamma` is the RBF width parameter.
@@ -101,7 +104,11 @@ pub fn kernel_pca(x: &Mat, k: usize, kind: Kernel, gamma: f64) -> Embedding {
                             cnt += 1.0;
                         }
                     }
-                    if cnt > 0.0 { 1.0 - s / (2.0 * cnt) } else { 0.0 }
+                    if cnt > 0.0 {
+                        1.0 - s / (2.0 * cnt)
+                    } else {
+                        0.0
+                    }
                 }
             };
             kk.set(i, j, v);
@@ -122,7 +129,10 @@ pub fn kernel_pca(x: &Mat, k: usize, kind: Kernel, gamma: f64) -> Embedding {
             coords.set(i, c, vecs.get(i, c) * scale);
         }
     }
-    Embedding { coords, values: vals }
+    Embedding {
+        coords,
+        values: vals,
+    }
 }
 
 /// Whether `value` is the diffusion map's stationary eigenvalue (1) within
@@ -236,7 +246,11 @@ pub fn laplacian_eigenmaps(w: &Mat, k: usize) -> Embedding {
         for j in 0..n {
             let v = if i == j { 1.0 } else { 0.0 };
             let denom = (deg[i] * deg[j]).sqrt();
-            let off = if denom > 0.0 { w.get(i, j) / denom } else { 0.0 };
+            let off = if denom > 0.0 {
+                w.get(i, j) / denom
+            } else {
+                0.0
+            };
             l.set(i, j, v - off);
         }
     }
@@ -279,8 +293,16 @@ pub fn diffusion_map(w: &Mat, k: usize, alpha: f64) -> Embedding {
     let mut wn = Mat::zeros(n, n);
     for i in 0..n {
         for j in 0..n {
-            let di = if deg[i] > 0.0 { deg[i].powf(-alpha) } else { 0.0 };
-            let dj = if deg[j] > 0.0 { deg[j].powf(-alpha) } else { 0.0 };
+            let di = if deg[i] > 0.0 {
+                deg[i].powf(-alpha)
+            } else {
+                0.0
+            };
+            let dj = if deg[j] > 0.0 {
+                deg[j].powf(-alpha)
+            } else {
+                0.0
+            };
             wn.set(i, j, w.get(i, j) * di * dj);
         }
     }
@@ -293,7 +315,15 @@ pub fn diffusion_map(w: &Mat, k: usize, alpha: f64) -> Embedding {
     for i in 0..n {
         for j in 0..n {
             let denom = (deg2[i] * deg2[j]).sqrt();
-            s.set(i, j, if denom > 0.0 { wn.get(i, j) / denom } else { 0.0 });
+            s.set(
+                i,
+                j,
+                if denom > 0.0 {
+                    wn.get(i, j) / denom
+                } else {
+                    0.0
+                },
+            );
         }
     }
     let e = sym_eig(&s, crate::backend::Parallel::Serial);
@@ -317,7 +347,11 @@ pub fn diffusion_map(w: &Mat, k: usize, alpha: f64) -> Embedding {
         let lam = e.values[idx];
         values.push(lam);
         for i in 0..n {
-            let scale = if deg2[i] > 0.0 { 1.0 / deg2[i].sqrt() } else { 0.0 };
+            let scale = if deg2[i] > 0.0 {
+                1.0 / deg2[i].sqrt()
+            } else {
+                0.0
+            };
             coords.set(i, c, e.vectors.get(i, idx) * scale * lam);
         }
         c += 1;
@@ -567,7 +601,10 @@ mod tests {
         let x = blobs(20);
         let d = pairwise_distances(&x);
         let e = pcoa(&d, 2);
-        assert!(cluster_separation(&e.coords, 20), "PCoA did not separate clusters");
+        assert!(
+            cluster_separation(&e.coords, 20),
+            "PCoA did not separate clusters"
+        );
     }
 
     #[test]
@@ -601,7 +638,6 @@ mod tests {
         // meaningful.
         assert!(separation_3d(&le.coords, 15), "laplacian failed");
         assert!(separation_2d(&dm.coords, 15), "diffusion failed");
-
     }
 
     #[test]

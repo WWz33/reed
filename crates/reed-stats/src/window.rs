@@ -81,16 +81,6 @@ impl ContigBins {
         self.n_sites += 1;
     }
 
-    /// Registers a present-but-uncountable site in its bin (doc_v7 D7-11).
-    pub fn push_skipped(&mut self, pos0: u64) {
-        let bin = pos0 / self.width;
-        let seed = &self.seed;
-        let accs = self.bins.entry(bin).or_insert_with(|| seed.clone());
-        for acc in accs {
-            acc.note_skipped();
-        }
-    }
-
     /// Merges another partial's bins into this one, consuming `other`.
     pub fn merge_bins(&mut self, other: &mut Self) {
         // Unconditional: a release build used to skip the assert and then
@@ -100,14 +90,9 @@ impl ContigBins {
         for (bin, accs) in std::mem::take(&mut other.bins) {
             match self.bins.get_mut(&bin) {
                 Some(dst) => {
-                    crate::merge_zip_eq(
-                        "BpWindow bin accumulators",
-                        dst,
-                        &accs,
-                        |dst, src| {
-                            dst.merge(src);
-                        },
-                    );
+                    crate::merge_zip_eq("BpWindow bin accumulators", dst, &accs, |dst, src| {
+                        dst.merge(src);
+                    });
                 }
                 None => {
                     self.bins.insert(bin, accs);
@@ -123,6 +108,14 @@ impl ContigBins {
         self.n_sites
     }
 
+    /// The first touched bin at or after `bin`, or `None` when no more
+    /// touched bins exist. Used by `--skip-empty` to jump over large empty
+    /// spans instead of iterating every possible window (doc_v27 V27-30).
+    #[must_use]
+    pub fn next_bin_at_or_after(&self, bin: u64) -> Option<u64> {
+        self.bins.range(bin..).next().map(|(&index, _)| index)
+    }
+
     /// Whether any touched bin falls in `range` (a window with no touched
     /// bin is an empty window).
     #[must_use]
@@ -135,6 +128,18 @@ impl ContigBins {
     pub fn fold(&self, totals: &mut [StatAcc]) {
         for accs in self.bins.values() {
             crate::merge_zip_eq("BpWindow fold totals", totals, accs, |dst, src| {
+                dst.merge(src);
+            });
+        }
+    }
+
+    /// Reuses a caller-owned accumulator vector instead of allocating a
+    /// fresh `seed.clone()` per window. `clone_from` retains the vector and
+    /// nested distribution capacities across same-shaped windows (V27-18).
+    pub fn finish_bins_into(&self, bins: std::ops::Range<u64>, out: &mut Vec<StatAcc>) {
+        out.clone_from(&self.seed);
+        for (_, accs) in self.bins.range(bins) {
+            crate::merge_zip_eq("BpWindow finish_bins_into", out, accs, |dst, src| {
                 dst.merge(src);
             });
         }
@@ -329,7 +334,6 @@ mod tests {
         .remove(0);
         pi.merge(&dxy);
     }
-
 }
 
 /// Per-region accumulators for a `Regions` grid (`--bed-file`): one
@@ -382,36 +386,22 @@ impl RegionAccs {
         self.n_sites += 1;
     }
 
-    /// Registers a present-but-uncountable site in every covering region
-    /// (doc_v7 D7-11).
-    pub fn push_skipped(&mut self, pos0: u64) {
-        let mut any = false;
-        for idx in self.regions.stab(pos0) {
-            for acc in &mut self.accs[idx] {
-                acc.note_skipped();
-            }
-            self.touched[idx] = true;
-            any = true;
-        }
-        if any {
-            for acc in &mut self.totals {
-                acc.note_skipped();
-            }
-        }
-        self.n_sites += 1;
-    }
-
     /// Merges another partial's regions (same `RegionSet` by construction).
     pub fn merge_regions(&mut self, other: &Self) {
         debug_assert!(
             std::sync::Arc::ptr_eq(&self.regions, &other.regions),
             "invariant: one RegionSet per contig"
         );
-        crate::merge_zip_eq("RegionAccs accs", &mut self.accs, &other.accs, |dst, src| {
-            crate::merge_zip_eq("RegionAccs per-region accs", dst, src, |d, s| {
-                d.merge(s);
-            });
-        });
+        crate::merge_zip_eq(
+            "RegionAccs accs",
+            &mut self.accs,
+            &other.accs,
+            |dst, src| {
+                crate::merge_zip_eq("RegionAccs per-region accs", dst, src, |d, s| {
+                    d.merge(s);
+                });
+            },
+        );
         crate::merge_zip_eq(
             "RegionAccs touched",
             &mut self.touched,
@@ -420,9 +410,14 @@ impl RegionAccs {
                 *d |= *s;
             },
         );
-        crate::merge_zip_eq("RegionAccs totals", &mut self.totals, &other.totals, |d, s| {
-            d.merge(s);
-        });
+        crate::merge_zip_eq(
+            "RegionAccs totals",
+            &mut self.totals,
+            &other.totals,
+            |d, s| {
+                d.merge(s);
+            },
+        );
         self.n_sites += other.n_sites;
     }
 

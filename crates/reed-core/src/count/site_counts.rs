@@ -334,7 +334,10 @@ mod tests {
     /// NaN — including the empty site, where the raw test would give NaN.
     #[test]
     fn hwe_p_degenerate_is_one() {
-        assert_eq!(site(&[(STATE_REF, STATE_REF), (STATE_REF, STATE_REF)]).hwe_p(), 1.0);
+        assert_eq!(
+            site(&[(STATE_REF, STATE_REF), (STATE_REF, STATE_REF)]).hwe_p(),
+            1.0
+        );
         assert_eq!(site(&[(STATE_ALT, STATE_ALT)]).hwe_p(), 1.0);
         assert_eq!(site(&[]).hwe_p(), 1.0);
         assert_eq!(

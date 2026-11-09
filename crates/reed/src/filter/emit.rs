@@ -17,8 +17,8 @@ use reed_io::write::block_writer::{BlockWriter, IndexKey};
 
 use super::job_err;
 use super::mid_stage::{ChunkDecision, SiteEmit};
-use reed_io::vcf::format_layout::gt_index;
 use super::single_pass::FilterPartial;
+use reed_io::vcf::format_layout::gt_index;
 
 pub(super) struct EmitJob {
     pub(super) plan: Arc<FilterPlan>,
@@ -119,7 +119,11 @@ impl EmitJob {
 
     /// The automatic-stale tags, built once per chunk (V24-07).
     fn auto_refs(&self) -> Vec<&[u8]> {
-        self.plan.auto_stale_tags.iter().map(Vec::as_slice).collect()
+        self.plan
+            .auto_stale_tags
+            .iter()
+            .map(Vec::as_slice)
+            .collect()
     }
     fn build_scratch(&self) -> EmitScratch {
         EmitScratch {
@@ -166,8 +170,7 @@ impl EmitJob {
         // A GT-less record keeps the input's AC/AN: the automatic update has
         // no value to put back, so only user-requested removals apply
         // (doc_v12 D12-2).
-        let stale_record =
-            reed_filter::eval::edit_plan::stale_for_record(stale, auto, emit.has_gt);
+        let stale_record = reed_filter::eval::edit_plan::stale_for_record(stale, auto, emit.has_gt);
         let edit_plan = EditPlan {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(&scratch.mask_bitset),

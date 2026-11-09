@@ -82,9 +82,14 @@ impl IndividualFAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        crate::merge_zip_eq("IndividualFAcc o_hom", &mut self.o_hom, &other.o_hom, |dst, src| {
-            *dst += src;
-        });
+        crate::merge_zip_eq(
+            "IndividualFAcc o_hom",
+            &mut self.o_hom,
+            &other.o_hom,
+            |dst, src| {
+                *dst += src;
+            },
+        );
         crate::merge_zip_eq(
             "IndividualFAcc n_called",
             &mut self.n_called,

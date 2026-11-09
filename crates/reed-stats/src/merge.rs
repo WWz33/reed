@@ -6,7 +6,9 @@
 //! longer right-hand side, so a caller bug (two partials built for different
 //! shapes) used to produce a short result with wrong numbers in release
 //! builds — V23-28 proved the failure mode is real. `merge_zip_eq` makes
-//! shape equality a checked precondition on every build.
+//! shape equality a checked precondition on every build. Theta's sparse
+//! histogram is the explicit exception: its owner validates group/chromosome
+//! semantics and pads only omitted zero allele classes (doc_v27 V27-36).
 
 /// Merges `src` into `dst` component-wise, panicking when the shapes differ.
 ///

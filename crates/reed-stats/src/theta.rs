@@ -25,6 +25,16 @@ pub struct ThetaAcc {
     n_sites: u64,
     /// Variant sites (any ALT observed).
     n_var_sites: u64,
+    /// Terminal scalar form used for CLI window rows. The distribution
+    /// vectors are released once no later merge is possible (doc_v27 V27-18).
+    compact: Option<ThetaCompact>,
+}
+
+#[derive(Clone, Debug)]
+struct ThetaCompact {
+    raw_theta: f64,
+    weighted_no_sites: f64,
+    n_mutations: u64,
 }
 
 impl ThetaAcc {
@@ -46,6 +56,7 @@ impl ThetaAcc {
             total_allele_count: 0,
             n_sites: 0,
             n_var_sites: 0,
+            compact: None,
         })
     }
 
@@ -79,21 +90,41 @@ impl ThetaAcc {
         }
     }
 
-    /// Component-wise merge.
+    /// Component-wise merge. Histogram lengths are storage shapes, not the
+    /// request identity: omitted high-allele classes are zero. A caller must
+    /// never merge a different group/chromosome request or a compacted row.
     pub fn merge(&mut self, other: &Self) {
-        // Shape equality is the merge precondition (doc_v25 V25-05): the
-        // old resize-then-zip hid a caller that merged different shapes.
-        crate::merge_zip_eq("ThetaAcc sites", &mut self.sites, &other.sites, |dst, src| {
-            *dst += src;
-        });
-        crate::merge_zip_eq(
-            "ThetaAcc mutations",
-            &mut self.mutations,
-            &other.mutations,
-            |dst, src| {
-                *dst += src;
-            },
+        assert!(
+            self.group == other.group && self.n_chrom == other.n_chrom,
+            "ThetaAcc: merge operands have different group/chromosome semantics ({}:{} vs {}:{})",
+            self.group,
+            self.n_chrom,
+            other.group,
+            other.n_chrom
         );
+        assert!(
+            self.compact.is_none() && other.compact.is_none(),
+            "a compacted ThetaAcc is a terminal output, not a merge input"
+        );
+        assert_eq!(
+            self.sites.len(),
+            self.mutations.len(),
+            "ThetaAcc: sites/mutations storage shapes differ"
+        );
+        assert_eq!(
+            other.sites.len(),
+            other.mutations.len(),
+            "ThetaAcc: sites/mutations storage shapes differ"
+        );
+        let len = self.sites.len().max(other.sites.len());
+        self.sites.resize(len, 0);
+        self.mutations.resize(len, 0);
+        for (dst, src) in self.sites.iter_mut().zip(&other.sites) {
+            *dst += src;
+        }
+        for (dst, src) in self.mutations.iter_mut().zip(&other.mutations) {
+            *dst += src;
+        }
         self.total_allele_count += other.total_allele_count;
         self.n_sites += other.n_sites;
         self.n_var_sites += other.n_var_sites;
@@ -102,6 +133,9 @@ impl ThetaAcc {
     /// `Σ_n mutations(n) / a(n)` — the window's raw Watterson θ.
     #[must_use]
     pub fn raw_theta(&self) -> f64 {
+        if let Some(compact) = &self.compact {
+            return compact.raw_theta;
+        }
         let mut raw = 0.0;
         for (n, &mutations) in self.mutations.iter().enumerate() {
             if mutations == 0 || n < 2 {
@@ -131,16 +165,19 @@ impl ThetaAcc {
         (window_bp > 0).then(|| self.raw_theta() / window_bp as f64)
     }
 
-    /// θ per bp (legacy wide-TSV convention).
+    /// Watterson θ per physical bp: `θ_raw / L`. This is the wide-TSV `bp`
+    /// quantity, not the window-average θ divided by L a second time (V27-38).
     #[must_use]
     pub fn value_per_bp(&self, window_bp: u64) -> Option<f64> {
-        (self.n_sites > 0 && window_bp > 0)
-            .then(|| (self.raw_theta() / self.n_sites as f64) / window_bp as f64)
+        (self.n_sites > 0 && window_bp > 0).then(|| self.raw_theta() / window_bp as f64)
     }
 
     /// The reference `weighted_no_sites`: `Σ_n sites(n) · n / max(n)`.
     #[must_use]
     pub fn weighted_no_sites(&self) -> f64 {
+        if let Some(compact) = &self.compact {
+            return compact.weighted_no_sites;
+        }
         let Some(max_n) = self.sites.iter().rposition(|&count| count > 0) else {
             return 0.0;
         };
@@ -177,7 +214,28 @@ impl ThetaAcc {
     /// `Σ (k_i − 1)` over variant sites — Tajima's `S`.
     #[must_use]
     pub fn n_mutations(&self) -> u64 {
-        self.mutations.iter().sum()
+        self.compact
+            .as_ref()
+            .map_or_else(|| self.mutations.iter().sum(), |c| c.n_mutations)
+    }
+
+    /// Converts a finished window's accumulator to its scalar output form.
+    /// The caller must not merge it afterwards; contig/genome aggregation
+    /// still uses the original full accumulators. This is what lets the CLI
+    /// discard O(sample-count) θ vectors per emitted window (V27-18).
+    pub fn compact(&mut self) {
+        if self.compact.is_some() {
+            return;
+        }
+        self.compact = Some(ThetaCompact {
+            raw_theta: self.raw_theta(),
+            weighted_no_sites: self.weighted_no_sites(),
+            n_mutations: self.n_mutations(),
+        });
+        // `clear()` keeps the allocation; replacing the vectors actually
+        // releases the per-window distribution storage (V27-18).
+        self.mutations = Vec::new();
+        self.sites = Vec::new();
     }
 
     /// Contributing / skipped site tally (skipped is always 0 under the reference
@@ -197,5 +255,109 @@ impl ThetaAcc {
     #[must_use]
     pub const fn n_chrom(&self) -> u64 {
         self.n_chrom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn site(n_ref_alleles: u32, n_alt_alleles: u32) -> SiteGroupCounts {
+        SiteGroupCounts {
+            n_ref_alleles,
+            n_alt_alleles,
+            ..Default::default()
+        }
+    }
+
+    fn trim_zero_tail(acc: &mut ThetaAcc) {
+        assert_eq!(acc.sites.len(), acc.mutations.len());
+        let len = (0..acc.sites.len())
+            .rev()
+            .find(|&i| acc.sites[i] != 0 || acc.mutations[i] != 0)
+            .map_or(0, |i| i + 1);
+        acc.sites.truncate(len);
+        acc.mutations.truncate(len);
+    }
+
+    fn assert_same_distribution(actual: &ThetaAcc, expected: &ThetaAcc) {
+        let len = actual.sites.len().max(expected.sites.len());
+        for i in 0..len {
+            assert_eq!(
+                actual.sites.get(i).copied().unwrap_or(0),
+                expected.sites.get(i).copied().unwrap_or(0),
+                "sites class {i}"
+            );
+            assert_eq!(
+                actual.mutations.get(i).copied().unwrap_or(0),
+                expected.mutations.get(i).copied().unwrap_or(0),
+                "mutations class {i}"
+            );
+        }
+        assert_eq!(actual.raw_theta(), expected.raw_theta());
+        assert_eq!(actual.weighted_no_sites(), expected.weighted_no_sites());
+        assert_eq!(actual.n_sites(), expected.n_sites());
+        assert_eq!(actual.n_var_sites(), expected.n_var_sites());
+        assert_eq!(actual.total_allele_count(), expected.total_allele_count());
+        assert_eq!(actual.n_mutations(), expected.n_mutations());
+        assert_eq!(actual.value_avg(), expected.value_avg());
+    }
+
+    #[test]
+    fn merge_accepts_equivalent_zero_trimmed_histogram_tails() {
+        let low = site(1, 1);
+        let high = site(2, 4);
+        let mut whole = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        whole.push(std::slice::from_ref(&low));
+        whole.push(std::slice::from_ref(&high));
+
+        let mut a = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        a.push(std::slice::from_ref(&low));
+        let mut b = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        b.push(std::slice::from_ref(&high));
+        trim_zero_tail(&mut a);
+        trim_zero_tail(&mut b);
+        assert_ne!(a.sites.len(), b.sites.len(), "failing-first fixture");
+
+        let mut forward = a.clone();
+        forward.merge(&b);
+        assert_same_distribution(&forward, &whole);
+        let mut reverse = b.clone();
+        reverse.merge(&a);
+        assert_same_distribution(&reverse, &whole);
+    }
+
+    #[test]
+    #[should_panic(expected = "different group/chromosome semantics")]
+    fn merge_rejects_a_different_group() {
+        let mut a = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        let b = ThetaAcc::new(1, 4).expect("invariant: nonempty group");
+        a.merge(&b);
+    }
+
+    #[test]
+    #[should_panic(expected = "different group/chromosome semantics")]
+    fn merge_rejects_a_different_chromosome_count() {
+        let mut a = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        let b = ThetaAcc::new(0, 5).expect("invariant: nonempty group");
+        a.merge(&b);
+    }
+
+    #[test]
+    #[should_panic(expected = "terminal output, not a merge input")]
+    fn merge_rejects_a_compacted_accumulator() {
+        let mut a = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        a.compact();
+        let b = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        a.merge(&b);
+    }
+
+    #[test]
+    #[should_panic(expected = "sites/mutations storage shapes differ")]
+    fn merge_rejects_an_internally_invalid_histogram() {
+        let mut a = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        a.sites.pop();
+        let b = ThetaAcc::new(0, 4).expect("invariant: nonempty group");
+        a.merge(&b);
     }
 }

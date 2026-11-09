@@ -558,27 +558,32 @@ pub(crate) fn run_hapmap_to_vcf(
 
     // doc_v26 V26-08: a file output is published from a sibling temporary on
     // finish; stdout has no file to publish.
-    let (atomic, writer): (Option<reed_io::write::atomic::AtomicFile>, Box<dyn std::io::Write + Send>) =
-        match &output.path {
-            None => (
-                None,
-                Box::new(std::io::BufWriter::with_capacity(1 << 20, std::io::stdout())),
-            ),
-            Some(p) => {
-                let (atomic, file) = reed_io::write::atomic::AtomicFile::create(p).map_err(|e| {
-                    // A filesystem failure is runtime (doc_v25 V25-08): the VCF
-                    // route, filter and rename all classify it as exit 1.
-                    crate::Error::from(std::io::Error::new(
-                        e.kind(),
-                        format!("cannot create {}: {e}", p.display()),
-                    ))
-                })?;
-                (
-                    Some(atomic),
-                    Box::new(std::io::BufWriter::with_capacity(1 << 20, file)),
-                )
-            }
-        };
+    let (atomic, writer): (
+        Option<reed_io::write::atomic::AtomicFile>,
+        Box<dyn std::io::Write + Send>,
+    ) = match &output.path {
+        None => (
+            None,
+            Box::new(std::io::BufWriter::with_capacity(
+                1 << 20,
+                std::io::stdout(),
+            )),
+        ),
+        Some(p) => {
+            let (atomic, file) = reed_io::write::atomic::AtomicFile::create(p).map_err(|e| {
+                // A filesystem failure is runtime (doc_v25 V25-08): the VCF
+                // route, filter and rename all classify it as exit 1.
+                crate::Error::from(std::io::Error::new(
+                    e.kind(),
+                    format!("cannot create {}: {e}", p.display()),
+                ))
+            })?;
+            (
+                Some(atomic),
+                Box::new(std::io::BufWriter::with_capacity(1 << 20, file)),
+            )
+        }
+    };
     let ordered = OrderedOutput::new(
         writer,
         output.compressed,

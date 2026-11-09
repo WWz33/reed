@@ -2,11 +2,13 @@
 //! and the `[site_after_mask]` expressions (including the `--set-gts .`
 //! mask rules they produce).
 
-use reed_core::tag_table::{TagNumber, TagType, TagTable};
+use reed_core::tag_table::{TagNumber, TagTable, TagType};
 
 use super::RuleSet;
 use crate::FilterError;
-use crate::plan::{FmtExprField, IntField, MaskRule, TailRule, af_threshold, validate_numeric, warn_stale_info};
+use crate::plan::{
+    FmtExprField, IntField, MaskRule, TailRule, af_threshold, validate_numeric, warn_stale_info,
+};
 use crate::spec::FilterSpec;
 
 /// Compiles the tail section (doc_v25 08 §3 ④: moved from `compile()`).
@@ -67,10 +69,8 @@ pub(super) fn compile(
     // doc_v21 S13: `--maf 0.4 --max-maf 0.2` (and the MAC pair) is an empty
     // intersection — bcftools/plink2 reject it; reed silently emitted an
     // empty file.
-    if let (Some(min), Some(max)) = (
-        spec.site_after_mask.min_maf,
-        spec.site_after_mask.max_maf,
-    ) && min > max
+    if let (Some(min), Some(max)) = (spec.site_after_mask.min_maf, spec.site_after_mask.max_maf)
+        && min > max
     {
         return Err(FilterError::Spec(format!(
             "--maf {min} exceeds --max-maf {max} (empty intersection)"
@@ -82,7 +82,8 @@ pub(super) fn compile(
     if spec.site_after_mask.max_mac > 0 {
         tail.push(TailRule::MaxMac(spec.site_after_mask.max_mac));
     }
-    if spec.site_after_mask.max_mac > 0 && spec.site_after_mask.min_mac > spec.site_after_mask.max_mac
+    if spec.site_after_mask.max_mac > 0
+        && spec.site_after_mask.min_mac > spec.site_after_mask.max_mac
     {
         return Err(FilterError::Spec(format!(
             "--mac {} exceeds --max-mac {} (empty intersection)",

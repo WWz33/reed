@@ -442,8 +442,10 @@ mod tests {
         let chain = Arc::new(FrameChain::new(abort.signal.clone()));
         chain.publish(0, Carried::default());
         let dict = Arc::new(
-            BcfDict::from_header(b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-                .expect("invariant: minimal BCF header"),
+            BcfDict::from_header(
+                b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+            )
+            .expect("invariant: minimal BCF header"),
         );
         InputJob {
             inner: NoopJob,

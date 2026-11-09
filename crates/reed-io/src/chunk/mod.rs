@@ -268,7 +268,8 @@ fn split_text<'a>(chunk: &ChunkBytes, text: &'a [u8]) -> Result<InflatedChunk<'a
     if scan_start > text.len() {
         return Err(IoError::MalformedBgzf {
             locus: None,
-            reason: "chunk start offset is beyond the inflated text (corrupt index virtual offset)".to_string(),
+            reason: "chunk start offset is beyond the inflated text (corrupt index virtual offset)"
+                .to_string(),
         });
     }
 

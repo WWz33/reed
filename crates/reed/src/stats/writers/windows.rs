@@ -16,6 +16,29 @@ use crate::stats::{InvariantMode, PopgenReport, WindowLayoutOptions, WindowRow};
 /// per window. Cell rules match the window-layout writers: SFS bins are
 /// `;`-joined, a missing value is `.`, and `variant_only` picks the
 /// variant-only denominator.
+fn output_for<'a>(
+    row: &'a WindowRow,
+    index: usize,
+    kind: &StatKind,
+    variant_only: bool,
+) -> (
+    Option<&'a reed_stats::request::StatOutput>,
+    Option<reed_stats::request::StatOutput>,
+) {
+    if let Some(output) = row.outputs.get(index) {
+        return (Some(output), None);
+    }
+    let owned = reed_stats::request::StatOutput::from_acc(
+        &row.accs[index],
+        kind,
+        row.bp,
+        row.denom_bp,
+        variant_only,
+    );
+    (None, Some(owned))
+}
+
+/// Renders the wide per-window TSV from structured rows.
 #[must_use]
 pub fn render_tsv(rows: &[WindowRow], kinds: &[StatKind], variant_only: bool) -> String {
     let keys: Vec<StatKey> = kinds.iter().map(StatKind::key).collect();
@@ -31,8 +54,10 @@ pub fn render_tsv(rows: &[WindowRow], kinds: &[StatKind], variant_only: bool) ->
         out.push_str(&row.start1.to_string());
         out.push('\t');
         out.push_str(&row.end.to_string());
-        for (kind, acc) in kinds.iter().zip(&row.accs) {
+        for (kind_idx, kind) in kinds.iter().enumerate() {
             out.push('\t');
+            let (borrowed, owned) = output_for(row, kind_idx, kind, variant_only);
+            let acc = borrowed.or(owned.as_ref()).expect("invariant: one output");
             match acc.sfs_bins() {
                 Some(bins) => {
                     for (i, bin) in bins.iter().enumerate() {
@@ -43,10 +68,13 @@ pub fn render_tsv(rows: &[WindowRow], kinds: &[StatKind], variant_only: bool) ->
                     }
                 }
                 None => {
-                    let value = if variant_only {
-                        acc.value_variant_only(kind, row.bp)
-                    } else {
-                        acc.value(kind, row.bp)
+                    let value = match (kind, acc.theta_columns()) {
+                        (StatKind::ThetaW { per_bp: false, .. }, Some((raw, n_sites, ..)))
+                            if n_sites > 0 =>
+                        {
+                            Some(raw)
+                        }
+                        _ => acc.value(),
                     };
                     match value {
                         Some(value) => {
@@ -149,7 +177,9 @@ pub fn write(
     };
     let variant_only = layout.invariant == InvariantMode::VariantOnly;
     for row in &report.windows {
-        for (kind_idx, (kind, acc)) in kinds.iter().zip(&row.accs).enumerate() {
+        for (kind_idx, kind) in kinds.iter().enumerate() {
+            let (borrowed, owned) = output_for(row, kind_idx, kind, variant_only);
+            let acc = borrowed.or(owned.as_ref()).expect("invariant: one output");
             match kind {
                 StatKind::Pi { .. } | StatKind::Dxy { .. } => {
                     let (Some((diffs, comparable, missing)), Some(n_sites)) =
@@ -159,10 +189,10 @@ pub fn write(
                     };
                     // Empty windows (no site of the file falls in them) print
                     // NA, like the reference layout (04-algorithms.md §4).
-                    let value = if n_sites == 0 {
+                    let value = if n_sites == 0 && !variant_only {
                         "NA".to_string()
                     } else {
-                        match value_of(acc, kind, row.bp, variant_only) {
+                        match value_of(acc, kind, row.denom_bp, variant_only) {
                             Some(v) => format!("{v}"),
                             None => "NA".to_string(),
                         }
@@ -196,10 +226,10 @@ pub fn write(
                     // doc_v21 S21: an empty window printed `0` here while
                     // pi/dxy printed `NA`; the reference layout and the pi
                     // branch both say NA.
-                    let avg = if no_sites == 0 {
+                    let avg = if no_sites == 0 && !variant_only {
                         "NA".to_string()
                     } else {
-                        match value_of(acc, kind, row.bp, variant_only) {
+                        match value_of(acc, kind, row.denom_bp, variant_only) {
                             Some(v) => format!("{v}"),
                             None => "NA".to_string(),
                         }
@@ -219,7 +249,7 @@ pub fn write(
                         Some(v) => format!("{v}"),
                         None => "NA".to_string(),
                     };
-                    let d = match acc.value(kind, row.bp) {
+                    let d = match acc.value() {
                         Some(v) => format!("{v}"),
                         None => "NA".to_string(),
                     };
@@ -235,7 +265,7 @@ pub fn write(
                     );
                 }
                 StatKind::Fst { a, b, .. } => {
-                    let Some((value, no_snps)) = acc.fst_columns(kind) else {
+                    let Some((value, no_snps)) = acc.fst_columns() else {
                         continue;
                     };
                     let name_a = group_names.get(*a).map_or("?", String::as_str);
@@ -251,7 +281,7 @@ pub fn write(
                     );
                 }
                 StatKind::FstGlobal => {
-                    let Some((value, no_snps)) = acc.fst_global_columns(kind) else {
+                    let Some((value, no_snps)) = acc.fst_columns() else {
                         continue;
                     };
                     let cell = match value {
@@ -265,7 +295,7 @@ pub fn write(
                     );
                 }
                 StatKind::Pbs { a, b, c, .. } => {
-                    let Some((value, no_snps, (f_ab, f_ac, f_bc))) = acc.pbs_columns(kind) else {
+                    let Some((value, no_snps, (f_ab, f_ac, f_bc))) = acc.pbs_columns() else {
                         continue;
                     };
                     let cell = |v: Option<f64>| match v {
@@ -339,14 +369,103 @@ pub fn write(
     }
     let log = format!(
         "reed {version}\ncommand: {command}\ninvariant-sites: {:?}\nwindows: {}\nrecords: {}\n\
-         invariant sites seen: {}\nmethods:\n  pi   Nei & Li 1979; missing data: Korunes & Samuk 2021\n  \
+         invariant sites seen: {}\nmultiallelic skipped: {}\nmethods:\n  pi   Nei & Li 1979; missing data: Korunes & Samuk 2021\n  \
          dxy  Nei 1987; missing data: Korunes & Samuk 2021\n",
-        layout.invariant, report.n_windows, report.n_records, report.n_invariant_sites
+        layout.invariant,
+        report.n_windows,
+        report.n_records,
+        report.n_invariant_sites,
+        report.n_multiallelic_skipped
     );
     let path = with_suffix(prefix, ".log");
     reed_io::write::atomic::write_atomic(&path, log)?;
     written.push(path);
     Ok(written)
+}
+
+/// Renders the `methods:` lines for the requested statistics. Keeping this
+/// next to the writer prevents the log from claiming π/dxy were computed
+/// when the run requested θ, Fst, SFS, f-statistics or LD instead (V27-26).
+pub(crate) fn methods_text(kinds: &[StatKind], sfs: bool, fstats: bool, ld: bool) -> String {
+    let mut methods = String::from("methods:\n");
+    let mut push = |name: &str, text: &str| {
+        if !methods.contains(&format!("  {name} ")) {
+            let _ = writeln!(methods, "  {name} {text}");
+        }
+    };
+    for kind in kinds {
+        match kind {
+            StatKind::Pi { .. } => push("pi", "Nei & Li 1979; missing data: Korunes & Samuk 2021"),
+            StatKind::Dxy { .. } => push("dxy", "Nei 1987; missing data: Korunes & Samuk 2021"),
+            StatKind::ThetaW { .. } => push(
+                "theta",
+                "Watterson 1975; missing data: Korunes & Samuk 2021",
+            ),
+            StatKind::TajimaD { .. } => push(
+                "tajima_d",
+                "Tajima 1989; missing data: Korunes & Samuk 2021",
+            ),
+            StatKind::Fst { kind, .. } => match kind {
+                reed_stats::fst::FstKind::Hudson => push("fst", "Hudson 1992; Bhatia et al. 2013"),
+                reed_stats::fst::FstKind::WeirCockerham84 => push("fst", "Weir & Cockerham 1984"),
+            },
+            StatKind::FstGlobal => push("fst_global", "Weir & Cockerham 1984 (r populations)"),
+            StatKind::Pbs { .. } => push("pbs", "Yi et al. 2010; Malaspinas et al. 2016"),
+            StatKind::Sfs { .. } => {}
+        }
+    }
+    if sfs {
+        push("sfs", "Marth et al. 2004; Gutenkunst et al. 2009");
+    }
+    if fstats {
+        push(
+            "fstats",
+            "Patterson et al. 2012; block jackknife: Busing et al. 1999",
+        );
+    }
+    if ld {
+        push("ld", "Rogers & Huff 1974; PLINK-style unphased r2");
+    }
+    methods
+}
+
+/// Writes a `.log` for routes without a window-output session (bare SFS,
+/// f-statistics and LD). The file is written even when no window kind was
+/// requested; an SFS-only run therefore no longer loses its discard count.
+pub fn write_popg_log(
+    prefix: &Path,
+    report: &PopgenReport,
+    kinds: &[StatKind],
+    layout: WindowLayoutOptions,
+    command: &str,
+    version: &str,
+) -> Result<std::path::PathBuf, std::io::Error> {
+    let methods = methods_text(
+        kinds,
+        report.sfs.is_some(),
+        report.fstats.is_some(),
+        report.ld.is_some(),
+    );
+    let mut log = format!(
+        "reed {version}\ncommand: {command}\ninvariant-sites: {:?}\nwindows: {}\nrecords: {}\n\
+         invariant sites seen: {}\nmultiallelic skipped: {}\n{methods}",
+        layout.invariant,
+        report.n_windows,
+        report.n_records,
+        report.n_invariant_sites,
+        report.n_multiallelic_skipped,
+    );
+    if let Some(sfs) = &report.sfs {
+        let _ = writeln!(
+            log,
+            "sfs sites absorbed: {}\nsfs skipped (m < n): {}",
+            sfs.n_sites.iter().sum::<u64>(),
+            sfs.n_skipped_m_lt_n.iter().sum::<u64>()
+        );
+    }
+    let path = with_suffix(prefix, ".log");
+    reed_io::write::atomic::write_atomic(&path, log)?;
+    Ok(path)
 }
 
 /// `PREFIX` + suffix appended to the full path (no extension juggling).
@@ -378,14 +497,10 @@ fn pbs_stem(a: &str, b: &str, c: &str) -> String {
 
 /// The window value for `kind` under the declared invariant policy.
 fn value_of(
-    acc: &reed_stats::request::StatAcc,
-    kind: &StatKind,
-    bp: u64,
-    variant_only: bool,
+    acc: &reed_stats::request::StatOutput,
+    _kind: &StatKind,
+    _bp: u64,
+    _variant_only: bool,
 ) -> Option<f64> {
-    if variant_only {
-        acc.value_variant_only(kind, bp)
-    } else {
-        acc.value(kind, bp)
-    }
+    acc.value()
 }

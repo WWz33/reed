@@ -6,7 +6,8 @@ reed is a population-genetics command-line tool written in Rust. It reads VCF/BC
 
 ## Installation
 
-Requires Rust 1.91 or newer.
+Requires Rust 1.91 or newer. The `--threads` option accepts 1–1024 workers;
+zero and values above 1024 are rejected as usage errors.
 
 ```bash
 git clone https://github.com/WWz33/reed.git

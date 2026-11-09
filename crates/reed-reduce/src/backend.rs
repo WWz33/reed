@@ -63,7 +63,6 @@ impl Parallel {
     }
 }
 
-
 /// Which implementation served a call. Reported so benchmarks and tests can
 /// assert that the fast path was actually taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,12 +207,20 @@ pub fn sym_eig(a: &Mat, par: Parallel) -> SymEigResult {
     #[cfg(feature = "faer-backend")]
     {
         let (values, vectors) = faer_sym_eig(a, par);
-        return SymEigResult { values, vectors, backend: Backend::Faer };
+        return SymEigResult {
+            values,
+            vectors,
+            backend: Backend::Faer,
+        };
     }
     #[cfg(not(feature = "faer-backend"))]
     {
         let e = crate::eig::sym_eig(a);
-        SymEigResult { values: e.values, vectors: e.vectors, backend: Backend::Fallback }
+        SymEigResult {
+            values: e.values,
+            vectors: e.vectors,
+            backend: Backend::Fallback,
+        }
     }
 }
 

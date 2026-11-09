@@ -69,11 +69,7 @@ impl StreamConfig {
         // Retain enough Ritz vectors to cover the requested pairs. The
         // restart block must be at least this wide, otherwise the restart
         // would discard converged directions.
-        let k_keep = if self.k_keep > 0 {
-            self.k_keep
-        } else {
-            k
-        };
+        let k_keep = if self.k_keep > 0 { self.k_keep } else { k };
         // The restart block must be at least k_keep wide; widen the block if
         // the user asked for many pairs.
         let block = block.max(k_keep).min(n.saturating_sub(1).max(1));
@@ -90,8 +86,15 @@ impl StreamConfig {
         .min(n);
         // If n is too small for the requested k_keep, shrink it so that at
         // least one block still fits.
-        let k_keep = k_keep.min(krylov_dim.saturating_sub(block)).max(k.min(krylov_dim.saturating_sub(block)));
-        Resolved { k, block, k_keep, krylov_dim }
+        let k_keep = k_keep
+            .min(krylov_dim.saturating_sub(block))
+            .max(k.min(krylov_dim.saturating_sub(block)));
+        Resolved {
+            k,
+            block,
+            k_keep,
+            krylov_dim,
+        }
     }
 }
 
@@ -158,15 +161,29 @@ fn apply_a_block(op: &Operator, q: &Mat, c0: usize, b: usize, out: &mut Mat) {
 
     #[cfg(feature = "faer-backend")]
     {
-        use faer::Mat as FMat;
         use faer::linalg::matmul::matmul;
+        use faer::Mat as FMat;
         let qm = FMat::<f64>::from_fn(n, b, |i, j| q.get(i, c0 + j));
         // doc_v26 V26-21: explicit parallelism instead of the `*` operator,
         // whose impl reads faer's global setting (the ambient rayon pool).
         let mut t = FMat::<f64>::zeros(m, b);
-        matmul(t.as_mut(), op.wm.transpose(), qm.as_ref(), None, 1.0, op.parallel.faer());
+        matmul(
+            t.as_mut(),
+            op.wm.transpose(),
+            qm.as_ref(),
+            None,
+            1.0,
+            op.parallel.faer(),
+        );
         let mut y = FMat::<f64>::zeros(n, b);
-        matmul(y.as_mut(), op.wm.as_ref(), t.as_ref(), None, 1.0, op.parallel.faer());
+        matmul(
+            y.as_mut(),
+            op.wm.as_ref(),
+            t.as_ref(),
+            None,
+            1.0,
+            op.parallel.faer(),
+        );
         let scale = 1.0 / m as f64;
         for j in 0..b {
             for i in 0..n {
@@ -273,7 +290,11 @@ fn orthonormalize(q: &mut Mat, y: &mut Mat, n_prev: usize, dst: usize, b: usize)
         }
         let nrm = nrm.sqrt();
         for i in 0..n {
-            q.set(i, dst + j, if nrm > 1e-14 { y.get(i, j) / nrm } else { 0.0 });
+            q.set(
+                i,
+                dst + j,
+                if nrm > 1e-14 { y.get(i, j) / nrm } else { 0.0 },
+            );
         }
     }
 }
@@ -299,7 +320,12 @@ fn seed_block(n: usize, b: usize, seed: u64) -> Mat {
 pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
     let n = w.rows;
     let op = Operator::new(w, cfg.parallel);
-    let Resolved { k, block, k_keep, krylov_dim } = cfg.resolved(n);
+    let Resolved {
+        k,
+        block,
+        k_keep,
+        krylov_dim,
+    } = cfg.resolved(n);
     let max_blocks = (krylov_dim / block).max(2);
     // Number of blocks per cycle; at least 2 so the recurrence can advance.
     let blocks_per_cycle = max_blocks;
@@ -546,7 +572,12 @@ pub fn lanczos_top_k(w: &Mat, cfg: &StreamConfig) -> StreamEig {
     // V25-10, R1): without it `--solver stream` and `--solver dense` can
     // write opposite .eigenvec columns for the same analysis.
     crate::backend::fix_column_signs(&mut vectors);
-    StreamEig { values, vectors, cycles, max_residual }
+    StreamEig {
+        values,
+        vectors,
+        cycles,
+        max_residual,
+    }
 }
 
 #[cfg(test)]
@@ -583,7 +614,12 @@ mod tests {
         let x = structured(150, 300, 0xABCDEF);
         let st = standardize_binom2(&x);
         let dense = pca_dense(&x, 5);
-        let cfg = StreamConfig { k: 5, tol: 1e-10, max_cycles: 60, ..Default::default() };
+        let cfg = StreamConfig {
+            k: 5,
+            tol: 1e-10,
+            max_cycles: 60,
+            ..Default::default()
+        };
         let s = lanczos_top_k(&st.w, &cfg);
         for (i, (a, b)) in s.values.iter().zip(&dense.values).enumerate() {
             let rel = (a - b).abs() / b.abs().max(1e-12);
@@ -634,7 +670,13 @@ mod tests {
     fn residual_reaches_tolerance() {
         let x = structured(120, 200, 0x1234);
         let st = standardize_binom2(&x);
-        let cfg = StreamConfig { k: 4, krylov_dim: 48, tol: 1e-9, max_cycles: 80, ..Default::default() };
+        let cfg = StreamConfig {
+            k: 4,
+            krylov_dim: 48,
+            tol: 1e-9,
+            max_cycles: 80,
+            ..Default::default()
+        };
         let s = lanczos_top_k(&st.w, &cfg);
         assert!(
             s.max_residual < 1e-6,
@@ -648,7 +690,10 @@ mod tests {
     fn vectors_are_orthonormal() {
         let x = structured(100, 150, 0x99);
         let st = standardize_binom2(&x);
-        let cfg = StreamConfig { k: 4, ..Default::default() };
+        let cfg = StreamConfig {
+            k: 4,
+            ..Default::default()
+        };
         let s = lanczos_top_k(&st.w, &cfg);
         for a in 0..s.vectors.cols {
             let ca: Vec<f64> = (0..s.vectors.rows).map(|i| s.vectors.get(i, a)).collect();

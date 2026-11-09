@@ -1396,6 +1396,7 @@ dependencies = [
  "reed-stats",
  "serde_json",
  "sha2",
+ "smallvec",
  "tracing",
 ]
 

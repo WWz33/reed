@@ -541,8 +541,7 @@ where
         let rule_index = field_rule_map[local];
         // The shared missing-value table (doc_v25 V25-04): a missing value
         // fires only when the rule opted in with `on_missing = mask`.
-        let mask_ctx =
-            reed_filter::semantics::MissingCtx::ColumnarMask(rule.on_missing);
+        let mask_ctx = reed_filter::semantics::MissingCtx::ColumnarMask(rule.on_missing);
         let missing_fires = reed_filter::semantics::compare_missing(
             rule.cmp.op.into(),
             reed_filter::semantics::MissingSides::Lhs,
@@ -779,13 +778,7 @@ mod tests {
     #[should_panic(expected = "keep mask must be full length")]
     fn s68_short_keep_mask_is_a_programming_error() {
         let plan = empty_plan();
-        let mut pipeline = RecordPipeline::new(
-            2,
-            &[],
-            &[],
-            GenotypePolicies::default(),
-            &[],
-        );
+        let mut pipeline = RecordPipeline::new(2, &[], &[], GenotypePolicies::default(), &[]);
         pipeline.resize_for(&plan);
         let mut funnel = FunnelPartial::default();
         let _ = pipeline.process(

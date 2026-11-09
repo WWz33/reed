@@ -152,7 +152,7 @@ pub struct FstAcc {
     hudson_den: NeumaierSum,
     hudson_any: bool,
     wc: WcAcc,
-    /// Every site pushed (the reference `no_snps` column).
+    /// Variant sites pushed (the reference `no_snps`; invariant records do not count).
     n_sites: u64,
 }
 
@@ -175,7 +175,15 @@ impl FstAcc {
     }
 
     /// Absorbs one site.
+    /// Absorbs one site for callers that do not track site-wide
+    /// variant/invariant status (the legacy unit-test and matrix APIs).
     pub fn push(&mut self, row: &[SiteGroupCounts]) {
+        self.push_with_variant(row, true);
+    }
+
+    /// Absorbs one site and counts it in `no_snps` only when it is variant
+    /// (the reference convention; doc_v27 V27-27).
+    pub fn push_with_variant(&mut self, row: &[SiteGroupCounts], all_variant: bool) {
         let (a, b) = (&row[self.group_a], &row[self.group_b]);
         let n_a = u64::from(a.n_ref_alleles + a.n_alt_alleles);
         let n_b = u64::from(b.n_ref_alleles + b.n_alt_alleles);
@@ -185,23 +193,23 @@ impl FstAcc {
         let comps_b = n_b * n_b.saturating_sub(1) / 2;
         self.within_a.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(a.n_alt_alleles),
-comps_a,
+            comps_a,
         );
         self.within_b.add_partial(
             u64::from(b.n_ref_alleles) * u64::from(b.n_alt_alleles),
-comps_b,
+            comps_b,
         );
         let between_comps = n_a * n_b;
         self.between.add_partial(
             u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles),
-between_comps,
+            between_comps,
         );
 
-        // Hudson (allel inclusion rule): den whenever both groups have ≥1
-        // called allele; num also requires n ≥ 2 within each group. An
-        // absent num contribution sums to 0.0 (allel `nansum`), so the
-        // estimate is 0.0 rather than NA (doc_v15 D15-11).
+        // Hudson (reference rule): both groups need at least two called alleles for
+        // BOTH the numerator and denominator. scikit-allel admits n = 1
+        // into the denominator alone; that convention is deliberately not
+        // used here (doc_v27 V27-03).
         let mpd_a = (n_a >= 2).then(|| {
             u64::from(a.n_ref_alleles) as f64 * u64::from(a.n_alt_alleles) as f64
                 / (n_a * (n_a - 1) / 2) as f64
@@ -210,7 +218,7 @@ between_comps,
             u64::from(b.n_ref_alleles) as f64 * u64::from(b.n_alt_alleles) as f64
                 / (n_b * (n_b - 1) / 2) as f64
         });
-        let mpd_ab = (n_a >= 1 && n_b >= 1).then(|| {
+        let mpd_ab = (n_a >= 2 && n_b >= 2).then(|| {
             (u64::from(a.n_ref_alleles) * u64::from(b.n_alt_alleles)
                 + u64::from(a.n_alt_alleles) * u64::from(b.n_ref_alleles)) as f64
                 / (n_a * n_b) as f64
@@ -253,7 +261,9 @@ between_comps,
             }
         }
 
-        self.n_sites += 1;
+        if all_variant {
+            self.n_sites += 1;
+        }
     }
 
     /// Component-wise merge.
@@ -485,9 +495,14 @@ impl FstMatrixAcc {
 
     /// Component-wise merge.
     pub fn merge(&mut self, other: &Self) {
-        crate::merge_zip_eq("FstMatrixEntry pairs", &mut self.pairs, &other.pairs, |dst, src| {
-            dst.merge(src);
-        });
+        crate::merge_zip_eq(
+            "FstMatrixEntry pairs",
+            &mut self.pairs,
+            &other.pairs,
+            |dst, src| {
+                dst.merge(src);
+            },
+        );
     }
 
     /// The matrix entries in (i, j) row-major order, i < j.

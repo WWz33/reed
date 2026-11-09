@@ -281,9 +281,7 @@ impl Expr {
             Self::Bare(name) | Self::Info(name) => {
                 Field::from_name(name).is_some_and(Field::is_genotype_derived)
             }
-            Self::Cmp(_, a, b) | Self::Logic(_, a, b) => {
-                a.reads_gt_fields() || b.reads_gt_fields()
-            }
+            Self::Cmp(_, a, b) | Self::Logic(_, a, b) => a.reads_gt_fields() || b.reads_gt_fields(),
             Self::Not(e) | Self::Subscript(e, _) => e.reads_gt_fields(),
             _ => false,
         }
@@ -358,16 +356,11 @@ impl Parser {
 
     /// Runs `f` one nesting level deeper, refusing to descend past
     /// [`MAX_NESTING`].
-    fn nested<T>(
-        &mut self,
-        f: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
+    fn nested<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
         self.depth += 1;
         if self.depth > MAX_NESTING {
             self.depth -= 1;
-            return Err(format!(
-                "expression nesting exceeds {MAX_NESTING} levels"
-            ));
+            return Err(format!("expression nesting exceeds {MAX_NESTING} levels"));
         }
         let result = f(self);
         self.depth -= 1;
