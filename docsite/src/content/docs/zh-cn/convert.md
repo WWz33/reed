@@ -207,7 +207,11 @@ AAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…
 AAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…
 ```
 
-位点上的样本值：单字符等位并入 IUPAC 码；indel 等位保留字面文本，全是 indel 时取最短的（平局按字典序）；完全缺失的基因型写参考碱基。各样本的值右填充 `-` 到该位点的最大长度，不调外部比对器。输入必须按 contig 排序；同一位置出现多条记录时取最后一条。
+位点上的样本值：单字符等位并入 IUPAC 码；indel 等位保留字面文本，全是 indel 时取最短的（平局按字典序）；完全缺失的基因型写参考碱基。各样本的值右填充 `-` 到该位点的块宽。
+
+对齐锚定参考坐标（v29 D29-01）：位置 `POS`、`len(REF) = L` 的记录占用参考列 `[POS, POS+L)`，下一条位点在 `POS+L` 之后开始。位点块宽为 `max(len(REF), len(ALT...))`；插入（`len(ALT) > len(REF)`）增加 `len(ALT) - len(REF)` 个 gap 列，但不推进参考游标。每个样本值右填充 `-` 到该块宽。区域输出宽度等于区域长度加上插入带来的额外列，长 REF 之后的 SNP 保持其参考坐标。
+
+整段 REF 必须与参考 FASTA 大小写不敏感地一致，且不能越出 contig；不一致、越界或 FASTA 重复 contig 名都报错。输入必须按 contig 排序；完全相同（同一 POS 且同一 REF span）的重复记录取最后一条，其余 REF span 重叠直接报 unsupported overlap。不是安全文件名片段的 contig 名（例如含 `/`）会在输出名中百分号编码，不能借此创建子目录。不调外部比对器。
 
 ## 投影 SFS（`--sfs`）
 

@@ -1,6 +1,6 @@
 //! `reed distance`: the individual-by-individual matrix family (doc_v17).
 
-use std::io::{BufWriter, Write as _};
+use std::io::Write as _;
 
 use reed::budget::ThreadBudget;
 use reed::distance::matrices::{
@@ -297,33 +297,33 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     // published atomically (a failure while rendering leaves the previous
     // file untouched); both are complete before either is published.
     let id_path = std::path::PathBuf::from(format!("{prefix}.{suffix}.id"));
-    let (matrix_atomic, matrix_file) = reed::atomic_file::AtomicFile::create(&out_path)?;
-    let (id_atomic, id_file) = if is_matrix_kind(kind) {
-        let (a, f) = reed::atomic_file::AtomicFile::create(&id_path)?;
-        (Some(a), Some(f))
+    // doc_v28 V28-23: reed-io's AtomicWriter owns create→flush→close; both
+    // files are finished before either is published.
+    let mut matrix_out = reed::atomic_file::AtomicWriter::with_capacity(&out_path, 1 << 16)?;
+    let mut id_out = if is_matrix_kind(kind) {
+        Some(reed::atomic_file::AtomicWriter::with_capacity(
+            &id_path,
+            1 << 16,
+        )?)
     } else {
-        (None, None)
+        None
     };
     if is_matrix_kind(kind) {
-        let mut f = BufWriter::with_capacity(1 << 16, matrix_file);
-        reed::distance::output::write_matrix_to(&mut f, &result, format)
+        reed::distance::output::write_matrix_to(&mut matrix_out, &result, format)
             .map_err(reed::Error::from)?;
-        f.flush().map_err(reed::Error::from)?;
-        drop(f);
-        if let (Some(atomic), Some(id_file)) = (id_atomic, id_file) {
-            let mut f = BufWriter::with_capacity(1 << 16, id_file);
-            reed::distance::output::write_ids_to(&mut f, &ids).map_err(reed::Error::from)?;
-            f.flush().map_err(reed::Error::from)?;
-            drop(f);
-            matrix_atomic.commit()?;
-            atomic.commit()?;
+        matrix_out.flush().map_err(reed::Error::from)?;
+        let matrix_out = matrix_out.finish()?;
+        if let Some(mut id_out) = id_out.take() {
+            reed::distance::output::write_ids_to(&mut id_out, &ids).map_err(reed::Error::from)?;
+            id_out.flush().map_err(reed::Error::from)?;
+            let id_out = id_out.finish()?;
+            matrix_out.commit()?;
+            id_out.commit()?;
         }
     } else {
-        let mut f = BufWriter::with_capacity(1 << 16, matrix_file);
-        write_table_to(&mut f, &result)?;
-        f.flush().map_err(reed::Error::from)?;
-        drop(f);
-        matrix_atomic.commit()?;
+        write_table_to(&mut matrix_out, &result)?;
+        matrix_out.flush().map_err(reed::Error::from)?;
+        matrix_out.finish()?.commit()?;
     }
 
     if args.verbosity.shows_summary() {

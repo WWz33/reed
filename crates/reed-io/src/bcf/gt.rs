@@ -14,9 +14,10 @@
 //! and INFO cost nothing (the §2.5 advantage over rendering them to text).
 
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters};
+use reed_core::sample::KeepMask;
 
 use super::dict::BcfDict;
-use super::record::{BcfRecordRef, Cursor, malformed, type_width, value_type};
+use super::record::{BcfRecordRef, Cursor, FormatTable, malformed, type_width, value_type};
 use super::render::fmt_gt;
 use crate::error::{IoError, Locus};
 use crate::vcf::genotype_scan::{LocusSource, decode_gt_text};
@@ -49,25 +50,13 @@ pub struct SiteHeader {
 /// htslib rejects such a record; a BCF that no other tool accepts must not
 /// flow through filter/stats looking valid.
 pub fn site_header(record: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
-    let mut c = Cursor::new(record.shared);
-    let chrom = c.i32()?;
-    let pos0 = c.i32()?;
-    let _rlen = c.i32()?;
-    let _qual = c.u32()?;
-    let na_ni = c.u32()?;
-    let nf_ns = c.u32()?;
-    let n_allele = (na_ni >> 16) as usize;
-    if n_allele == 0 {
-        return Err(malformed(
-            "BCF record declares zero alleles (n_allele = 0); REF is required",
-        ));
-    }
+    let (header, _) = super::record::SharedHeader::parse(record.shared)?;
     Ok(SiteHeader {
-        chrom,
-        pos0,
-        n_allele,
-        n_sample: (nf_ns & 0x00FF_FFFF) as usize,
-        n_fmt: (nf_ns >> 24) as usize,
+        chrom: header.chrom,
+        pos0: header.pos0,
+        n_allele: header.n_allele,
+        n_sample: header.n_sample,
+        n_fmt: header.n_fmt,
     })
 }
 
@@ -88,6 +77,10 @@ struct GtEntry {
 /// under. Build once per run and share it across workers.
 pub struct GtTable {
     entries: Box<[GtEntry]>,
+    /// The same table rendered under the VCF 4.4 prefixed-phasing rules.
+    /// The first allele's phasing bit is otherwise inferred away, so a
+    /// header-aware decode needs its own entries (doc_v28 V28-07).
+    entries_vcf44: Box<[GtEntry]>,
     policies: GenotypePolicies,
 }
 
@@ -96,6 +89,14 @@ impl GtTable {
     /// running the text decoder on it.
     #[must_use]
     pub fn new(policies: GenotypePolicies) -> Self {
+        Self {
+            entries: Self::build_entries(&policies, false),
+            entries_vcf44: Self::build_entries(&policies, true),
+            policies,
+        }
+    }
+
+    fn build_entries(policies: &GenotypePolicies, vcf44: bool) -> Box<[GtEntry]> {
         let locus = Locus {
             contig_name: "<bcf-gt-table>".into(),
             pos1: 0,
@@ -115,16 +116,18 @@ impl GtTable {
                 .expect("invariant: the loop is bounded by 65,536")
                 .to_le_bytes();
             text.clear();
-            // INT8 is an integer type, so this never fails (the guard only
-            // rejects CHAR/FLOAT, doc_v23 V23-02).
-            fmt_gt(&mut text, value_type::INT8, raw.len(), &raw, false)
-                .expect("invariant: INT8 is integer-typed");
+            // INT8 is an integer type, so rendering succeeds except for a
+            // negative GT element. Those pairs stay at `TRIG_ERROR` and the
+            // lookup re-runs the slow path for the exact error (V28-04).
+            let Ok(()) = fmt_gt(&mut text, value_type::INT8, raw.len(), &raw, vcf44) else {
+                continue;
+            };
             let mut counters = PolicyCounters::default();
             let mut token = [None; 2];
             // The table spans every allele an int8 pair can name (0..=127);
             // each record's own bound is applied at lookup (doc_v25 V25-01).
             if let Ok(code) =
-                decode_gt_text(&text, &locus, 127, &policies, &mut counters, &mut token)
+                decode_gt_text(&text, &locus, 127, policies, &mut counters, &mut token)
             {
                 entries[pair as usize] = GtEntry {
                     code,
@@ -132,10 +135,7 @@ impl GtTable {
                 };
             }
         }
-        Self {
-            entries: entries.into_boxed_slice(),
-            policies,
-        }
+        entries.into_boxed_slice()
     }
 
     /// The policies the table (and its slow path) decode under.
@@ -166,14 +166,39 @@ impl GtTable {
         n_allele: usize,
         counters: &mut PolicyCounters,
     ) -> Result<GtCode, IoError> {
+        self.decode_pair_with(b0, b1, locus, n_allele, counters, false)
+    }
+
+    fn decode_pair_with<S: LocusSource>(
+        &self,
+        b0: u8,
+        b1: u8,
+        locus: &S,
+        n_allele: usize,
+        counters: &mut PolicyCounters,
+        vcf44: bool,
+    ) -> Result<GtCode, IoError> {
         for b in [b0, b1] {
-            let v = b as i8;
+            let v = i64::from(b as i8);
+            if v < 0 {
+                // The vector-end sentinel is legal and handled by the table;
+                // every other negative code is corrupt (V28-04).
+                let (_, vector_end) = super::record::int_sentinels(value_type::INT8);
+                if v == vector_end {
+                    // Vector-end ends the genotype: later elements are
+                    // padding and must be ignored, not validated.
+                    break;
+                }
+                return Err(IoError::MalformedRecord {
+                    locus: locus.error_locus(),
+                    reason: "BCF GT element is negative".to_string(),
+                });
+            }
             if v < 2 {
-                // 0/1: missing allele (bare phasing bit). Negatives are
-                // invalid encodings the table itself rejects (TRIG_ERROR).
+                // 0/1: missing allele (bare phasing bit).
                 continue;
             }
-            let allele = usize::from((v as u8 >> 1) - 1);
+            let allele = usize::from((b >> 1) - 1);
             if allele >= n_allele {
                 return Err(IoError::MalformedRecord {
                     locus: locus.error_locus(),
@@ -184,7 +209,12 @@ impl GtTable {
                 });
             }
         }
-        let entry = self.entries[usize::from(b0) | (usize::from(b1) << 8)];
+        let entries = if vcf44 {
+            &self.entries_vcf44
+        } else {
+            &self.entries
+        };
+        let entry = entries[usize::from(b0) | (usize::from(b1) << 8)];
         if entry.triggers == TRIG_ERROR {
             // Recover the exact error (and locus) through the text path.
             // The pair's bytes were domain-checked above, so the slow path
@@ -197,6 +227,7 @@ impl GtTable {
                 u32::MAX,
                 counters,
                 &mut text,
+                vcf44,
             );
         }
         apply_triggers(entry.triggers, counters);
@@ -206,6 +237,7 @@ impl GtTable {
     /// Decodes one sample's GT field of any integer encoding through the
     /// text path (render, then parse). `n_alt` bounds the allele domain
     /// (`u32::MAX` = unbounded; doc_v25 V25-01).
+    #[allow(clippy::too_many_arguments)]
     fn decode_slow<S: LocusSource>(
         &self,
         ty: u8,
@@ -214,6 +246,7 @@ impl GtTable {
         n_alt: u32,
         counters: &mut PolicyCounters,
         text: &mut Vec<u8>,
+        vcf44: bool,
     ) -> Result<GtCode, IoError> {
         if !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
             return Err(IoError::MalformedRecord {
@@ -224,7 +257,7 @@ impl GtTable {
         let count = data.len() / type_width(ty);
         text.clear();
         // `ty` was just checked above, so the renderer cannot reject it.
-        fmt_gt(text, ty, count, data, false).map_err(|reason| IoError::MalformedRecord {
+        fmt_gt(text, ty, count, data, vcf44).map_err(|reason| IoError::MalformedRecord {
             locus: locus.error_locus(),
             reason: reason.to_string(),
         })?;
@@ -266,6 +299,119 @@ pub struct GtQuery<'a> {
     pub contig_name: &'a [u8],
     /// 1-based position for the error locus.
     pub pos1: u64,
+    /// The header is VCF ≥ 4.4: apply the prefixed first-allele phasing
+    /// rules when decoding (`BcfDict::vcf44`).
+    pub vcf44: bool,
+}
+
+/// The FORMAT entry of `GT` for one record, without applying any genotype
+/// policy: `(type, count, payload offset)`. `None` when the record carries no
+/// GT field.
+///
+/// This is the raw view a consumer needs when it does not want the policies
+/// applied — `pca`/`distance` accept a haploid genotype as missing data
+/// rather than rejecting it, which is the text path's rule (doc_v28 V28-15).
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] for a truncated or oversized individual
+/// block; the `formats` table, when given, is rebuilt for `record`.
+pub fn gt_field(
+    record: &BcfRecordRef<'_>,
+    header: &SiteHeader,
+    gt_key: Option<u32>,
+    formats: Option<&mut FormatTable>,
+) -> Result<Option<(u8, usize, usize)>, IoError> {
+    let Some(gt_key) = gt_key.filter(|_| header.n_fmt > 0) else {
+        return Ok(None);
+    };
+    if let Some(table) = formats {
+        table.rebuild(record, header.n_fmt, header.n_sample)?;
+        return Ok(table
+            .fields()
+            .iter()
+            .find(|(key, ..)| *key == gt_key)
+            .map(|&(_, ty, count, start)| (ty, count, start)));
+    }
+    let indiv = record.indiv;
+    let mut ci = Cursor::new(indiv);
+    for _ in 0..header.n_fmt {
+        let key = ci.typed_int()?;
+        let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
+        let (ty, count) = ci.typed()?;
+        let start = indiv.len() - ci.remaining();
+        let bytes = type_width(ty)
+            .checked_mul(count)
+            .and_then(|v| v.checked_mul(header.n_sample))
+            .ok_or_else(|| malformed("BCF FORMAT field size overflows"))?;
+        ci.take(bytes)?;
+        if key == gt_key {
+            return Ok(Some((ty, count, start)));
+        }
+    }
+    Ok(None)
+}
+
+/// One sample's raw GT allele indices from a decoded `GT` field: `None` for a
+/// missing element, and the vector-end sentinel truncates the genotype (the
+/// remaining elements are padding).
+///
+/// Values are the BCF codes, not text: `0`/`1` are the missing allele with
+/// the phasing bit, and `>= 2` is `(allele + 1) << 1 | phased`. The function
+/// returns allele indices only — no policy, no counters — so a consumer with
+/// its own genotype rule (`pca`) reads the same bytes as the renderer.
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] for a non-integer GT type, an allele index
+/// beyond `n_allele`, or a corrupt negative element (doc_v28 V28-04).
+pub fn gt_raw_alleles(
+    ty: u8,
+    count: usize,
+    data: &[u8],
+    n_allele: usize,
+    contig_name: &[u8],
+    pos1: u64,
+) -> Result<([Option<u16>; 2], usize), IoError> {
+    let malformed_at = |reason: &str| IoError::MalformedRecord {
+        locus: Locus {
+            contig_name: String::from_utf8_lossy(contig_name).into_owned(),
+            pos1,
+        },
+        reason: reason.to_string(),
+    };
+    if !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
+        return Err(malformed_at("BCF GT field is not integer-typed"));
+    }
+    let width = type_width(ty);
+    let mut slots = [None; 2];
+    let mut n = 0_usize;
+    for i in 0..count {
+        let elem = &data[i * width..(i + 1) * width];
+        let Some(code) = super::record::gt_element(ty, elem).map_err(malformed_at)? else {
+            break;
+        };
+        if code < 2 {
+            // The missing allele carries only the phasing bit.
+            if n < 2 {
+                slots[n] = None;
+                n += 1;
+            }
+            continue;
+        }
+        let allele = usize::from(u16::try_from(code).unwrap_or(u16::MAX) >> 1).saturating_sub(1);
+        if allele >= n_allele {
+            return Err(malformed_at(&format!(
+                "GT allele index {allele} exceeds ALT count {}",
+                n_allele.saturating_sub(1)
+            )));
+        }
+        if n < 2 {
+            slots[n] = Some(u16::try_from(allele).unwrap_or(u16::MAX));
+            n += 1;
+        }
+    }
+    Ok((slots, n))
 }
 
 /// Decodes a whole record's GT column into `codes` (one per sample),
@@ -290,11 +436,81 @@ pub fn decode_record_gt(
     codes: &mut Vec<GtCode>,
     counters: &mut PolicyCounters,
 ) -> Result<bool, IoError> {
+    decode_record_gt_impl(record, header, query, table, codes, counters, None, None)
+}
+
+/// [`decode_record_gt`] restricted to `active` samples: an inactive column
+/// yields [`GtCode::MISSING`] without running the genotype policies.
+///
+/// This is the BCF-native counterpart of
+/// [`GenotypeScanner::with_active_samples`](crate::vcf::genotype_scan::GenotypeScanner::with_active_samples):
+/// excluding a sample must be equivalent to removing its column before
+/// decoding (v29 V29-02 / D29-03).
+///
+/// # Errors
+///
+/// As [`decode_record_gt`].
+pub fn decode_record_gt_masked(
+    record: &BcfRecordRef<'_>,
+    header: &SiteHeader,
+    query: &GtQuery<'_>,
+    table: &GtTable,
+    active: &KeepMask,
+    codes: &mut Vec<GtCode>,
+    counters: &mut PolicyCounters,
+) -> Result<bool, IoError> {
+    debug_assert_eq!(active.len(), query.n_samples);
+    decode_record_gt_impl(
+        record,
+        header,
+        query,
+        table,
+        codes,
+        counters,
+        None,
+        Some(active),
+    )
+}
+
+/// [`decode_record_gt`], also filling the reusable FORMAT table so a caller
+/// that needs typed columns afterwards does not walk the descriptors a
+/// second time (doc_v28 V28-16).
+///
+/// `formats` is rebuilt for every record, including a record without a GT
+/// key, so a caller may always read it after a successful decode.
+///
+/// # Errors
+///
+/// As [`decode_record_gt`].
+pub fn decode_record_gt_with_format(
+    record: &BcfRecordRef<'_>,
+    header: &SiteHeader,
+    query: &GtQuery<'_>,
+    table: &GtTable,
+    codes: &mut Vec<GtCode>,
+    counters: &mut PolicyCounters,
+    formats: Option<&mut FormatTable>,
+) -> Result<bool, IoError> {
+    decode_record_gt_impl(record, header, query, table, codes, counters, formats, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_record_gt_impl(
+    record: &BcfRecordRef<'_>,
+    header: &SiteHeader,
+    query: &GtQuery<'_>,
+    table: &GtTable,
+    codes: &mut Vec<GtCode>,
+    counters: &mut PolicyCounters,
+    formats: Option<&mut FormatTable>,
+    active: Option<&KeepMask>,
+) -> Result<bool, IoError> {
     let GtQuery {
         gt_key,
         n_samples,
         contig_name,
         pos1,
+        vcf44,
     } = *query;
     codes.clear();
     if header.n_sample != n_samples {
@@ -312,21 +528,41 @@ pub fn decode_record_gt(
         });
     }
     let mut found: Option<(u8, usize, usize)> = None;
-    if let Some(gt_key) = gt_key.filter(|_| header.n_fmt > 0) {
-        let indiv = record.indiv;
-        let mut ci = Cursor::new(indiv);
-        for _ in 0..header.n_fmt {
-            let key = ci.typed_int()?;
-            let key = u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
-            let (ty, count) = ci.typed()?;
-            let start = indiv.len() - ci.remaining();
-            let bytes = type_width(ty)
-                .checked_mul(count)
-                .and_then(|v| v.checked_mul(header.n_sample))
-                .ok_or_else(|| malformed("BCF FORMAT field size overflows"))?;
-            ci.take(bytes)?;
-            if key == gt_key {
-                found = Some((ty, count, start));
+    // doc_v28 V28-16: one descriptor walk serves the GT lookup and, when the
+    // caller asked, the FORMAT column table. The old code walked the same
+    // descriptors twice and allocated a fresh `Vec` for the second walk.
+    match formats {
+        Some(table) => {
+            if header.n_fmt > 0 {
+                table.rebuild(record, header.n_fmt, header.n_sample)?;
+            }
+            if let Some(gt_key) = gt_key.filter(|_| header.n_fmt > 0) {
+                found = table
+                    .fields()
+                    .iter()
+                    .find(|(key, ..)| *key == gt_key)
+                    .map(|&(_, ty, count, start)| (ty, count, start));
+            }
+        }
+        None => {
+            if let Some(gt_key) = gt_key.filter(|_| header.n_fmt > 0) {
+                let indiv = record.indiv;
+                let mut ci = Cursor::new(indiv);
+                for _ in 0..header.n_fmt {
+                    let key = ci.typed_int()?;
+                    let key =
+                        u32::try_from(key).map_err(|_| malformed("BCF FORMAT key is negative"))?;
+                    let (ty, count) = ci.typed()?;
+                    let start = indiv.len() - ci.remaining();
+                    let bytes = type_width(ty)
+                        .checked_mul(count)
+                        .and_then(|v| v.checked_mul(header.n_sample))
+                        .ok_or_else(|| malformed("BCF FORMAT field size overflows"))?;
+                    ci.take(bytes)?;
+                    if key == gt_key {
+                        found = Some((ty, count, start));
+                    }
+                }
             }
         }
     }
@@ -334,6 +570,13 @@ pub fn decode_record_gt(
         codes.resize(n_samples, GtCode::MISSING);
         return Ok(false);
     };
+    // `(NULL, count=0)` is how htslib stores an entirely missing GT column
+    // (bcftools renders one `.` per sample). It carries no elements to
+    // decode, but the GT field still exists (doc_v28 V28-08).
+    if ty == value_type::NULL && count == 0 {
+        codes.resize(n_samples, GtCode::MISSING);
+        return Ok(true);
+    }
     // The error locus stays borrowed (A6-11: no per-record String; the
     // `Locus` is built only when an error carries it).
     let locus = (contig_name, pos1);
@@ -345,14 +588,29 @@ pub fn decode_record_gt(
     let n_alt = u32::try_from(header.n_allele.saturating_sub(1)).unwrap_or(u32::MAX);
     if ty == value_type::INT8 && count == 2 {
         for s in 0..header.n_sample {
+            if active.is_some_and(|mask| !mask[s]) {
+                codes.push(GtCode::MISSING);
+                continue;
+            }
             let b = &record.indiv[start + s * 2..start + s * 2 + 2];
-            codes.push(table.decode_pair(b[0], b[1], &locus, header.n_allele, counters)?);
+            codes.push(table.decode_pair_with(
+                b[0],
+                b[1],
+                &locus,
+                header.n_allele,
+                counters,
+                vcf44,
+            )?);
         }
     } else {
         for s in 0..header.n_sample {
+            if active.is_some_and(|mask| !mask[s]) {
+                codes.push(GtCode::MISSING);
+                continue;
+            }
             let off = start + s * stride;
             let data = &record.indiv[off..off + stride];
-            codes.push(table.decode_slow(ty, data, &locus, n_alt, counters, &mut text)?);
+            codes.push(table.decode_slow(ty, data, &locus, n_alt, counters, &mut text, vcf44)?);
         }
     }
     Ok(true)
@@ -435,8 +693,11 @@ mod tests {
             let got = table.decode_pair(b0, b1, &locus, 128, &mut native_counters);
             // The text path: render the same two bytes and decode.
             let mut rendered = Vec::new();
-            fmt_gt(&mut rendered, value_type::INT8, 2, &[b0, b1], false)
-                .expect("invariant: INT8 is integer-typed");
+            if let Err(_negative) = fmt_gt(&mut rendered, value_type::INT8, 2, &[b0, b1], false) {
+                // Negative GT elements are rejected by both paths (V28-04).
+                assert!(got.is_err(), "pair {b0:#04x},{b1:#04x}: native {got:?}");
+                continue;
+            }
             let mut text_counters = PolicyCounters::default();
             let mut token = [None; 2];
             let want = decode_gt_text(
@@ -462,6 +723,96 @@ mod tests {
         }
     }
 
+    /// doc_v28 V28-07: the table is built for 4.3 text, but a 4.4 header's
+    /// first-allele prefix can carry phasing the inferred form drops.
+    #[test]
+    fn vcf44_first_allele_phasing_uses_the_header_aware_entries() {
+        let table = GtTable::new(policies());
+        let locus = Locus {
+            contig_name: "c".into(),
+            pos1: 1,
+        };
+        let mut counters = PolicyCounters::default();
+        // `|0/1`: first REF allele phased, second unphased.
+        let old = table
+            .decode_pair_with(3, 4, &locus, 2, &mut counters, false)
+            .expect("invariant: int8 pair");
+        assert!(!old.phased(), "the inferred 4.3 form is unphased");
+        let new = table
+            .decode_pair_with(3, 4, &locus, 2, &mut counters, true)
+            .expect("invariant: int8 pair");
+        assert!(new.phased(), "the explicit 4.4 prefix keeps phasing");
+
+        let mut text = Vec::new();
+        let missing = table
+            .decode_slow(
+                value_type::INT8,
+                &[1],
+                &locus,
+                2,
+                &mut counters,
+                &mut text,
+                true,
+            )
+            .expect("invariant: phased missing haploid");
+        assert!(missing.phased() && missing.is_fully_missing());
+    }
+
+    /// doc_v28 V28-08: htslib stores an all-missing GT as NULL/count=0. The
+    /// decoder must report `has_gt = true` and one missing code per sample,
+    /// not reject the record as non-integer.
+    #[test]
+    fn null_count_zero_gt_decodes_as_missing() {
+        let dict =
+            BcfDict::from_header(b"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n")
+                .expect("invariant: dict");
+        let gt_key = dict.key_of(b"GT").expect("invariant: GT declared");
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // pos0
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // qual
+        shared.extend_from_slice(&(2_u32 << 16).to_le_bytes()); // REF+ALT
+        shared.extend_from_slice(&((1_u32 << 24) | 1).to_le_bytes()); // 1 fmt, 1 sample
+        // ID, REF, ALT as typed strings, then empty FILTER and INFO.
+        for text in [b".".as_slice(), b"A", b"G"] {
+            shared.push(u8::try_from((text.len() << 4) | usize::from(value_type::CHAR)).unwrap());
+            shared.extend_from_slice(text);
+        }
+        shared.push(0x01); // FILTER: INT8, count 0
+        shared.push(0x01); // INFO: INT8, count 0
+        let indiv = vec![
+            0x11, // FORMAT key: INT8, count 1
+            u8::try_from(gt_key).expect("invariant: small dictionary"),
+            0x00, // GT: NULL, count 0
+        ];
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &indiv,
+        };
+        let header = site_header(&rec).expect("invariant: valid site header");
+        let table = GtTable::new(policies());
+        let mut codes = Vec::new();
+        let mut counters = PolicyCounters::default();
+        let has_gt = decode_record_gt(
+            &rec,
+            &header,
+            &GtQuery {
+                gt_key: Some(gt_key),
+                n_samples: 1,
+                contig_name: b"c",
+                pos1: 1,
+                vcf44: false,
+            },
+            &table,
+            &mut codes,
+            &mut counters,
+        )
+        .expect("NULL GT must decode, not error");
+        assert!(has_gt);
+        assert_eq!(codes, vec![GtCode::MISSING]);
+    }
+
     /// doc_v25 V25-01 (F1): the BCF decode applies the same allele-domain
     /// rule as the text scanner. A framed record naming allele 9 on a
     /// single-ALT site must be refused at decode, not handed to consumers
@@ -485,7 +836,7 @@ mod tests {
 
         // Frame the record through the noodles encoder: it does not check
         // the allele domain, which is exactly how such a record reaches reed.
-        let mut enc = BcfEncoder::new().expect("invariant: noodles");
+        let mut enc = BcfEncoder::new();
         enc.write_header(&header).expect("invariant: header");
         let mut framed = Vec::new();
         enc.encode_record(
@@ -512,6 +863,7 @@ mod tests {
                 n_samples: 1,
                 contig_name: b"Chr01",
                 pos1: 100,
+                vcf44: false,
             },
             &table,
             &mut codes,
@@ -523,5 +875,64 @@ mod tests {
             err.to_string().contains("exceeds ALT count 1"),
             "unexpected error: {err}"
         );
+    }
+
+    /// v29 V29-02 / D29-03: the BCF-native path must decode exactly the
+    /// active columns, so an excluded sample's out-of-domain GT cannot veto
+    /// the record.
+    #[test]
+    fn decode_record_gt_masked_skips_inactive_samples() {
+        use crate::bcf::{BcfDict, BcfEncoder, bcf_header_text, record_ref};
+
+        let header_text = b"##fileformat=VCFv4.2\n\
+            ##FILTER=<ID=PASS,Description=\"All\">\n\
+            ##contig=<ID=Chr01,length=1000>\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"gt\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\ts2\n";
+        let header: noodles::vcf::Header = std::str::from_utf8(header_text)
+            .expect("invariant: utf8")
+            .parse()
+            .expect("invariant: header");
+        let dict_text = bcf_header_text(&header).expect("invariant: bcf header");
+        let dict = BcfDict::from_header(&dict_text).expect("invariant: dict");
+        let mut enc = BcfEncoder::new();
+        enc.write_header(&header).expect("invariant: header");
+        let mut framed = Vec::new();
+        enc.encode_record(
+            &header,
+            b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/9\n",
+            &mut framed,
+        )
+        .expect("invariant: noodles accepts the out-of-domain pair");
+        let rec = record_ref(&framed).expect("invariant: framed");
+        let site = site_header(&rec).expect("invariant: site header");
+        let table = GtTable::new(GenotypePolicies {
+            ploidy: PloidyPolicy::HaploidAsHalfCall,
+            multiallelic: reed_core::genotype::MultiallelicPolicy::CollapseAlt,
+            ..GenotypePolicies::default()
+        });
+        let query = GtQuery {
+            gt_key: format_key(&dict, b"GT"),
+            n_samples: 2,
+            contig_name: b"Chr01",
+            pos1: 100,
+            vcf44: false,
+        };
+        let active = KeepMask::try_new(2, vec![true, false]).expect("invariant: length");
+        let mut codes = Vec::new();
+        let mut counters = PolicyCounters::default();
+        decode_record_gt_masked(
+            &rec,
+            &site,
+            &query,
+            &table,
+            &active,
+            &mut codes,
+            &mut counters,
+        )
+        .expect("the excluded sample's GT must not be decoded");
+        assert_eq!(codes.len(), 2);
+        assert_ne!(codes[0], GtCode::MISSING);
+        assert_eq!(codes[1], GtCode::MISSING);
     }
 }

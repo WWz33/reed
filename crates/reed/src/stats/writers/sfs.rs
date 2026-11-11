@@ -232,10 +232,7 @@ fn write_joint_dadi(
     int_dtype: bool,
     seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
-    let path = claim(
-        prefixed(prefix, &format!("_sfs/dadi/{name1}-{name2}.sfs")),
-        seen,
-    )?;
+    let path = claim(joint_dadi_path(prefix, name1, name2), seen)?;
     let mut out = String::new();
     writeln!(
         out,
@@ -283,20 +280,9 @@ fn write_joint_fsc2(
     int_dtype: bool,
     seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
-    let kind = if folded { "MAF" } else { "DAF" };
     // easySFS names the joint fsc2 file `<prefix>_joint{M,D}AFpop{idx2}_{idx1}.obs`
     // where its prefix is the input basename; reed's analog is the `-o` prefix.
-    let base = prefix
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("reed");
-    let path = claim(
-        prefixed(
-            prefix,
-            &format!("_sfs/fastsimcoal2/{base}_joint{kind}pop{g2}_{g1}.obs"),
-        ),
-        seen,
-    )?;
+    let path = claim(joint_fsc2_path(prefix, g1, g2, folded), seen)?;
     let mut out = String::new();
     out.push_str("1 observation\n");
     let header: Vec<String> = (0..=n1).map(|k| format!("d{g1}_{k}")).collect();
@@ -336,7 +322,7 @@ fn write_dadi(
     int_dtype: bool,
     seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
-    let path = claim(prefixed(prefix, &format!("_sfs/dadi/{name}-{n}.sfs")), seen)?;
+    let path = claim(dadi_path(prefix, name, n), seen)?;
     let mut out = String::new();
     writeln!(
         out,
@@ -373,11 +359,7 @@ fn write_fsc2(
     int_dtype: bool,
     seen: &mut Vec<PathBuf>,
 ) -> Result<PathBuf, EngineError> {
-    let kind = if folded { "MAF" } else { "DAF" };
-    let path = claim(
-        prefixed(prefix, &format!("_sfs/fastsimcoal2/{name}_{kind}pop0.obs")),
-        seen,
-    )?;
+    let path = claim(fsc2_path(prefix, name, folded), seen)?;
     let mut out = String::new();
     out.push_str("1 observation\n");
     let header: Vec<String> = (0..=n).map(|k| format!("d0_{k}")).collect();
@@ -414,18 +396,73 @@ fn prefixed(prefix: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// The one-dimensional dadi path (`<stem>-<n>.sfs`).
+fn dadi_path(prefix: &Path, name: &str, n: u32) -> PathBuf {
+    prefixed(prefix, &format!("_sfs/dadi/{name}-{n}.sfs"))
+}
+
+/// The one-dimensional fastsimcoal2 path (`<stem>_{D,M}AFpop0.obs`).
+fn fsc2_path(prefix: &Path, name: &str, folded: bool) -> PathBuf {
+    let kind = if folded { "MAF" } else { "DAF" };
+    prefixed(prefix, &format!("_sfs/fastsimcoal2/{name}_{kind}pop0.obs"))
+}
+
+/// The joint dadi path (`<name1>-<name2>.sfs`).
+fn joint_dadi_path(prefix: &Path, name1: &str, name2: &str) -> PathBuf {
+    prefixed(prefix, &format!("_sfs/dadi/{name1}-{name2}.sfs"))
+}
+
+/// The joint fastsimcoal2 path, named from the `-o` prefix's basename
+/// (`<base>_joint{D,M}AFpop<idx2>_<idx1>.obs`).
+fn joint_fsc2_path(prefix: &Path, g1: usize, g2: usize, folded: bool) -> PathBuf {
+    let kind = if folded { "MAF" } else { "DAF" };
+    let base = prefix
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("reed");
+    prefixed(
+        prefix,
+        &format!("_sfs/fastsimcoal2/{base}_joint{kind}pop{g2}_{g1}.obs"),
+    )
+}
+
+/// Every path [`write_projected_sfs`] would write for `plan`, in writer
+/// order. The convert driver validates this set before any writer opens
+/// (v29 V29-03); the helpers above are shared with the writers so planning
+/// and writing cannot drift.
+pub(crate) fn planned_paths(
+    prefix: &Path,
+    group_names: &[String],
+    plan: &crate::stats::request::SfsPlan,
+) -> Vec<PathBuf> {
+    let stems = unique_stems(group_names);
+    let mut paths = Vec::with_capacity(2 * plan.projections.len() + 2 * plan.joint_pairs.len());
+    for (stem, &n) in stems.iter().zip(plan.projections.iter()) {
+        paths.push(dadi_path(prefix, stem, n));
+        paths.push(fsc2_path(prefix, stem, plan.folded));
+    }
+    for &(g1, g2) in plan.joint_pairs.iter() {
+        if let (Some(name1), Some(name2)) = (stems.get(g1), stems.get(g2)) {
+            paths.push(joint_dadi_path(prefix, name1, name2));
+            paths.push(joint_fsc2_path(prefix, g1, g2, plan.folded));
+        }
+    }
+    paths
+}
+
 /// Writes one SFS file, creating its `_sfs/{dadi,fastsimcoal2}` parent.
 ///
 /// This is the only output family whose parent directories are part of the
 /// layout rather than the operator's `-o`, so it is the one caller that asks
-/// [`reed_io::write::atomic::AtomicFile::create_with_parents`] to create them
-/// (doc_v26 V26-08).
+/// [`reed_io::write::atomic::AtomicWriter::create_with_parents`] to create
+/// them (doc_v26 V26-08, doc_v28 V28-23).
 fn write_file(path: &Path, text: String) -> Result<(), EngineError> {
     use std::io::Write as _;
-    let (atomic, mut file) = reed_io::write::atomic::AtomicFile::create_with_parents(path, true)
-        .map_err(EngineError::Io)?;
-    file.write_all(text.as_bytes()).map_err(EngineError::Io)?;
-    file.flush().map_err(EngineError::Io)?;
-    drop(file);
-    atomic.commit().map_err(EngineError::Io)
+    let mut writer = reed_io::write::atomic::AtomicWriter::create_with_parents(
+        path,
+        reed_io::write::atomic::DEFAULT_BUFFER,
+    )
+    .map_err(EngineError::Io)?;
+    writer.write_all(text.as_bytes()).map_err(EngineError::Io)?;
+    writer.commit().map_err(EngineError::Io)
 }

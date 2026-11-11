@@ -159,6 +159,11 @@ pub struct StatsJob {
     pub(super) grid: GridMode,
     pub(super) n_groups: usize,
     pub(super) gt_groups: Arc<[Option<u32>]>,
+    /// Samples whose GT is decoded; `gt_groups[i] == None` (excluded or not
+    /// assigned to any population) makes sample `i` inactive. This is the
+    /// scanner-level sample view, so an excluded sample's malformed GT
+    /// cannot reject a record (v29 V29-02).
+    pub(super) active_samples: reed_core::sample::KeepMask,
     pub(super) n_samples: usize,
     pub(super) seed: Arc<[StatAcc]>,
     /// The record-level site selection (`-r/-R` ∧ `-t/-T` ∧
@@ -315,11 +320,17 @@ impl StatsJob {
         plan: SfsPlan,
         contig_len: Arc<HashMap<Vec<u8>, u64>>,
     ) -> Self {
+        let active_samples = reed_core::sample::KeepMask::try_new(
+            n_samples,
+            gt_groups.iter().map(Option::is_some).collect(),
+        )
+        .expect("invariant: one group slot per sample");
         Self {
             grid: GridMode::None,
             stream_windows: false,
             n_groups: plan.projections.len(),
             gt_groups: gt_groups.into(),
+            active_samples,
             n_samples,
             seed: Vec::<StatAcc>::new().into(),
             select: Arc::new(reed_filter::spec::region::SiteSelector::default()),
@@ -330,6 +341,14 @@ impl StatsJob {
             fstats: None,
             ld_layout: None,
         }
+    }
+
+    /// The samples this job's scanner decodes (kept and assigned to an SFS
+    /// group). Convert's pre-scan gate uses the same mask, so its "malformed
+    /// is non-fatal" policy applies to exactly the columns statistics sees
+    /// (v29 V29-02).
+    pub(crate) fn active_samples(&self) -> &reed_core::sample::KeepMask {
+        &self.active_samples
     }
 }
 
@@ -376,9 +395,12 @@ impl ChunkJob for StatsJob {
 
 impl StatsPartial {
     /// Absorbs another partial's SFS state in chunk order (the convert
-    /// sink's merge; doc_v13 §7.5). Every other field is dropped: the
-    /// convert driver only consumes the spectra.
+    /// sink's merge; doc_v13 §7.5). The site counters merge with the
+    /// spectrum: `records()` is the SFS run's record total, so dropping
+    /// later chunks' counts made `ConvertReport::n_records` depend on the
+    /// chunk layout (v29 V29-06).
     pub(crate) fn merge_sfs(&mut self, other: &Self) {
+        self.n_records += other.n_records;
         if let Some(src) = &other.sfs {
             match &mut self.sfs {
                 Some(dst) => dst.merge(src),
@@ -722,8 +744,10 @@ impl StatsJob {
         } = scratch;
         *counters = PolicyCounters::default();
         let n_samples = self.n_samples;
-        let scanner = scanner
-            .get_or_insert_with(|| GenotypeScanner::new(n_samples, &[], &[], stats_policies()));
+        let scanner = scanner.get_or_insert_with(|| {
+            GenotypeScanner::new(n_samples, &[], &[], stats_policies())
+                .with_active_samples(self.active_samples.clone())
+        });
         let out = scanner
             .scan(&lr, &site, counters)
             .map_err(EngineError::from)?;
@@ -863,12 +887,14 @@ impl StatsJob {
             n_samples: self.n_samples,
             contig_name: contig,
             pos1,
+            vcf44: bcf.dict.vcf44(),
         };
-        reed_io::bcf::decode_record_gt(
+        reed_io::bcf::decode_record_gt_masked(
             rec,
             &header,
             &query,
             &bcf.table,
+            &self.active_samples,
             &mut scratch.codes,
             &mut scratch.counters,
         )

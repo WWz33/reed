@@ -10,6 +10,7 @@ use reed_core::coord::{Interval0, Pos0};
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::OrderedSink;
+use reed_io::write::atomic::AtomicWriter;
 use reed_stats::ld::LdDecayAcc;
 use reed_stats::request::StatAcc;
 use reed_stats::window::{BpBinning, ContigBins};
@@ -122,10 +123,7 @@ pub(super) struct StatsSink {
     /// leaving stale rows behind (doc_v27 V27-05). Kept as a `(writer,
     /// atomic owner)` pair so publication still waits for every integrity
     /// check (doc_v27 V27-02).
-    pub(super) pairs_file: Option<(
-        std::io::BufWriter<std::fs::File>,
-        reed_io::write::atomic::AtomicFile,
-    )>,
+    pub(super) pairs_file: Option<AtomicWriter>,
     pub(super) genome_span: u64,
     pub(super) genome_denom_bp: u64,
     pub(super) n_windows: u64,
@@ -299,10 +297,10 @@ impl OrderedSink<StatsPartial> for StatsSink {
         // good file while the run then failed (doc_v27 V27-02). The
         // `AtomicFile` travels out in the slot; the driver commits it only
         // after every check passed, and dropping it unpublishes the temp.
-        if let Some((mut writer, atomic)) = self.pairs_file.take() {
-            std::io::Write::flush(&mut writer).map_err(EngineError::Io)?;
-            drop(writer);
-            pending_commit = Some(atomic);
+        // doc_v28 V28-23: `finish` flushes, closes and hands back the
+        // unpublished temporary; the driver commits it after every check.
+        if let Some(writer) = self.pairs_file.take() {
+            pending_commit = Some(writer.finish().map_err(EngineError::Io)?);
         }
         *self.out.lock().expect("invariant: stats slot not poisoned") = Some(SinkOutput {
             ld,
@@ -325,21 +323,11 @@ impl OrderedSink<StatsPartial> for StatsSink {
 /// Opens the run's pair table and writes its header immediately. Publication
 /// remains deferred: `AtomicFile` is committed only after input validation,
 /// and dropping it removes the temporary on every failure path.
-pub(super) fn open_pairs(
-    path: &std::path::Path,
-) -> Result<
-    Option<(
-        std::io::BufWriter<std::fs::File>,
-        reed_io::write::atomic::AtomicFile,
-    )>,
-    EngineError,
-> {
-    let (atomic, handle) =
-        reed_io::write::atomic::AtomicFile::create(path).map_err(EngineError::Io)?;
-    let mut writer = std::io::BufWriter::with_capacity(1 << 16, handle);
+pub(super) fn open_pairs(path: &std::path::Path) -> Result<Option<AtomicWriter>, EngineError> {
+    let mut writer = AtomicWriter::with_capacity(path, 1 << 16).map_err(EngineError::Io)?;
     std::io::Write::write_all(&mut writer, crate::stats::writers::ld::PAIRS_HEADER)
         .map_err(EngineError::Io)?;
-    Ok(Some((writer, atomic)))
+    Ok(Some(writer))
 }
 
 /// Appends one contig's pair rows to the streaming table. The rows and the
@@ -347,10 +335,7 @@ pub(super) fn open_pairs(
 /// so a streamed run and an accumulated run produce identical files
 /// (doc_v23 V23-14).
 fn write_pairs(
-    file: &mut Option<(
-        std::io::BufWriter<std::fs::File>,
-        reed_io::write::atomic::AtomicFile,
-    )>,
+    file: &mut Option<AtomicWriter>,
     path: &std::path::Path,
     rows: &[(Vec<u8>, u64, u64, f64)],
 ) -> Result<(), EngineError> {
@@ -360,7 +345,7 @@ fn write_pairs(
     if file.is_none() {
         *file = open_pairs(path)?;
     }
-    let (sink, _) = file.as_mut().expect("invariant: opened above");
+    let sink = file.as_mut().expect("invariant: opened above");
     let mut buf = String::with_capacity(rows.len() * 40);
     for (contig, a, b, r2) in rows {
         crate::stats::writers::ld::render_pair_row(

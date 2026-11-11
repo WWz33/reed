@@ -320,11 +320,17 @@ pub fn run_popgen_opened(
             .clone()
             .unwrap_or_else(|| vec![true; sample_names.len()]),
     );
+    let active_samples = reed_core::sample::KeepMask::try_new(
+        sample_names.len(),
+        gt_groups.iter().map(Option::is_some).collect(),
+    )
+    .expect("invariant: one group slot per sample");
     let job = StatsJob {
         grid: grid_mode.clone(),
         stream_windows: request.compact_window_accumulators,
         n_groups,
         gt_groups: gt_groups.into(),
+        active_samples,
         n_samples: sample_names.len(),
         seed: accs.clone().into(),
         contig_len: Arc::clone(&contig_len),

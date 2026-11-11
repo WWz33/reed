@@ -179,6 +179,9 @@
 - 改动：`crates/reed/src/convert/job.rs:180-183,246,947-968`：
   `msa_lens` → `Vec<u32>`、`MsaSite::width` → `u32`，去掉 `as u8`。
 - 测试：REF 300bp 删除夹具断言输出宽度 1299、无跨样本错位。
+- **v29 D29-01 B 已取代本条的 1299 契约**：默认改为参考坐标对齐，同一夹具的
+  宽度是 1000（REF span 消耗参考列，不再为每个剩余位点补一列）。1299 只保留为
+  历史记录。
 
 ### D15-29 gzip hapmap stdin
 - 改动：`crates/reed/src/convert/hapmap.rs:493-515`：stdin 分支嗅探前两

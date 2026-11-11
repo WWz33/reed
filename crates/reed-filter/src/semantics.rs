@@ -164,7 +164,7 @@ pub enum InfoAfOutcome {
 /// length mismatch lives here so every caller shares it.
 #[must_use]
 pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
-    use reed_io::vcf::info::{InfoIndex, info_fragments};
+    use reed_io::vcf::info::InfoIndex;
 
     // doc_v26 V26-04: one lookup convention for every INFO reader. The
     // expression/head path reads through `InfoIndex` (first match, like
@@ -172,12 +172,31 @@ pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
     // `AC=1;AC=3;AN=4` filtered differently depending on the rule that ran.
     // `classify_line` now rejects duplicate tags outright, and this reader
     // uses the same index so the convention cannot drift again.
+    //
+    // doc_v28 V28-13: a caller that already holds the record's index passes
+    // it to [`info_af_indexed`] and this walk disappears.
     let mut index = InfoIndex::default();
     if index.build(info).is_err() {
         // Unreachable for records that passed `classify_line`; a directly
         // constructed call still must not pick an element silently.
         return InfoAfOutcome::Absent;
     }
+    info_af_indexed(&index, info, n_alt)
+}
+
+/// [`info_af_outcome`] over an index the caller already built for `info`
+/// (doc_v28 V28-13). The index must have been built from `info`; a caller
+/// cannot satisfy that with a stale table, because the ranges are offsets
+/// into this column.
+///
+/// A failed (empty) index yields [`InfoAfOutcome::Absent`], the same
+/// conservative answer as a rebuild failure.
+#[must_use]
+pub fn info_af_indexed(
+    index: &reed_io::vcf::info::InfoIndex,
+    info: &[u8],
+    n_alt: u32,
+) -> InfoAfOutcome {
     let mut ac: Option<Vec<u64>> = None;
     let mut an: Option<u64> = None;
     for tag in [&b"AC"[..], &b"AN"[..]] {
@@ -222,7 +241,6 @@ pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
                 .and_then(|t| t.parse::<u64>().ok());
         }
     }
-    let _ = info_fragments;
     let (alts, an) = match (ac, an) {
         (Some(ac), Some(an)) if an > 0 => (ac, an),
         _ => return InfoAfOutcome::Absent,

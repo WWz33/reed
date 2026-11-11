@@ -11,8 +11,7 @@
 // reference offsets are far below u32::MAX (the addressable sequence space).
 #![allow(clippy::cast_possible_truncation)]
 
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use reed_engine::error::EngineError;
@@ -33,62 +32,12 @@ fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
 
 /// Opens a buffered atomic writer for `path`.
 ///
-/// doc_v26 V26-08: the file is written to a sibling temporary and published
-/// by [`AtomicWriter::commit`]. The call sites flush and then commit; a
-/// caller that returns early drops the value unpublished, which removes the
-/// temporary and leaves the previous file untouched.
-struct AtomicWriter {
-    writer: Option<BufWriter<File>>,
-    atomic: reed_io::write::atomic::AtomicFile,
-}
-
-impl AtomicWriter {
-    fn create(path: &Path) -> Result<Self, EngineError> {
-        let (atomic, file) =
-            reed_io::write::atomic::AtomicFile::create(path).map_err(EngineError::Io)?;
-        Ok(Self {
-            writer: Some(BufWriter::new(file)),
-            atomic,
-        })
-    }
-
-    /// Flushes, closes the handle and publishes the file.
-    fn commit(mut self) -> std::io::Result<()> {
-        let mut writer = self
-            .writer
-            .take()
-            .ok_or_else(|| std::io::Error::other("the convert writer was already committed"))?;
-        writer.flush()?;
-        drop(writer);
-        // `atomic` is still in place; `commit` consumes it.
-        self.atomic.commit()
-    }
-}
-
-impl Write for AtomicWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self.writer.as_mut() {
-            Some(w) => w.write(buf),
-            None => Err(std::io::Error::other("the convert writer was committed")),
-        }
-    }
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        match self.writer.as_mut() {
-            Some(w) => w.write_all(buf),
-            None => Err(std::io::Error::other("the convert writer was committed")),
-        }
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        match self.writer.as_mut() {
-            Some(w) => w.flush(),
-            None => Err(std::io::Error::other("the convert writer was committed")),
-        }
-    }
-}
-
-/// Opens a buffered writer for `path`.
-fn writer(path: &Path) -> Result<AtomicWriter, EngineError> {
-    AtomicWriter::create(path)
+/// doc_v28 V28-23: the create→write→flush→close→commit sequence lives in
+/// reed-io's [`reed_io::write::atomic::AtomicWriter`]. The call sites flush
+/// and then commit; a caller that returns early drops the value unpublished,
+/// which removes the temporary and leaves the previous file untouched.
+fn writer(path: &Path) -> Result<reed_io::write::atomic::AtomicWriter, EngineError> {
+    reed_io::write::atomic::AtomicWriter::create(path).map_err(EngineError::Io)
 }
 
 /// The row order: the outgroup first (when named), then the header order.
@@ -127,6 +76,79 @@ fn write_padded_row(
     seq.write_to(out)?;
     out.write_all(b"\n").map_err(EngineError::Io)?;
     Ok(())
+}
+
+/// The output paths the row targets will create, in writer order. Used by
+/// the driver's pre-run alias check (v29 V29-03); the individual writers use
+/// the same suffix helpers so planning and writing cannot drift.
+pub(crate) fn planned_outputs(
+    prefix: &Path,
+    phylo: Option<&super::job::PhyloPlan>,
+    count: bool,
+    hmp: bool,
+    msa_outputs: &[MsaOutput],
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(plan) = phylo {
+        let formats: PhyloFormats = plan.formats;
+        if formats.phylip {
+            paths.push(with_suffix(prefix, ".phy"));
+        }
+        if formats.fasta {
+            paths.push(with_suffix(prefix, ".fasta"));
+        }
+        if formats.nexus {
+            paths.push(with_suffix(prefix, ".nexus"));
+        }
+        if plan.bin {
+            paths.push(with_suffix(prefix, ".bin.nexus"));
+        }
+        if plan.options.write_used_sites {
+            paths.push(with_suffix(prefix, ".used_sites.tsv"));
+        }
+    }
+    if count {
+        paths.push(with_suffix(prefix, ".012"));
+        paths.push(with_suffix(prefix, ".012.pos"));
+        paths.push(with_suffix(prefix, ".012.indv"));
+    }
+    if hmp {
+        paths.push(with_suffix(prefix, ".hmp.txt"));
+    }
+    for output in msa_outputs {
+        paths.push(msa_path(prefix, output));
+    }
+    paths
+}
+
+/// The MSA output path for one region: `PREFIX_<contig>[_start-end].fasta`.
+///
+/// The contig becomes one filename component: bytes outside
+/// `[A-Za-z0-9._:-]` are percent-encoded, so `/`, `\` and non-UTF-8 bytes
+/// cannot create directories or collide through `from_utf8_lossy` (v29
+/// V29-07).
+fn msa_path(prefix: &Path, output: &MsaOutput) -> PathBuf {
+    let name_suffix = if output.explicit {
+        format!("_{}-{}", output.start1, output.end1)
+    } else {
+        String::new()
+    };
+    let contig_text = msa_contig_component(&output.contig);
+    with_suffix(prefix, &format!("_{contig_text}{name_suffix}.fasta"))
+}
+
+/// A reversible, single-component spelling of a contig name.
+fn msa_contig_component(contig: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(contig.len());
+    for &byte in contig {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-' | b':') {
+            out.push(char::from(byte));
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
 }
 
 /// Writes the phylogenetic alignment files for `plan.formats` plus the
@@ -358,13 +380,8 @@ pub(crate) fn write_msa(
             .filter(|(name, _)| *name == output.contig)
             .map(|(_, blob)| blob)
             .collect();
-        let name_suffix = if output.explicit {
-            format!("_{}-{}", output.start1, output.end1)
-        } else {
-            String::new()
-        };
         let contig_text = String::from_utf8_lossy(&output.contig).into_owned();
-        let path = with_suffix(prefix, &format!("_{contig_text}{name_suffix}.fasta"));
+        let path = msa_path(prefix, output);
         let mut out = writer(&path)?;
         // One pass per sample: the frames are re-walked for every sample, so
         // no region-sized buffer is ever materialized (doc_v15 D15-7; each
@@ -382,11 +399,13 @@ pub(crate) fn write_msa(
             out.write_all(b"\n").map_err(EngineError::Io)?;
 
             let mut cursor = start0;
-            let mut pending: Option<u64> = None;
+            let mut pending: Option<(u64, u32)> = None;
             let mut last_pos: Option<u64> = None;
             for blob in &blobs {
                 let mut reader = MsaFrameReader::open(blob, names.len())?;
-                while let Some(pos0) = reader.next_frame_for_sample(sample, &mut frame)? {
+                while let Some((pos0, ref_len)) =
+                    reader.next_frame_for_sample(sample, &mut frame)?
+                {
                     // doc_v20 review of R12: the sortedness check must see
                     // every frame of the contig, including those outside the
                     // emitted window — otherwise a regression before
@@ -409,35 +428,48 @@ pub(crate) fn write_msa(
                     if pos0 >= end0 {
                         break;
                     }
-                    // doc_v20 R12: frames must strictly ascend per contig
-                    // across blobs (a revisited contig — chr1…, chr2…, chr1…
-                    // — arrives as a later blob with lower positions). The
-                    // old walk clamped the cursor and re-emitted the region,
-                    // silently misaligning the FASTA. Only an exact duplicate
-                    // of the pending site keeps the last-record-wins rule;
-                    // a position below the newest seen site — pending or
-                    // already flushed — is unsorted input and refuses the
-                    // run, the same contract as the stats sink.
-                    if let Some(prev) = pending
-                        && pos0 < prev
-                    {
+                    // D29-01 rule 1: the record consumes its whole REF span;
+                    // an insertion's extra columns do not move the cursor.
+                    let site_end = pos0 + u64::from(ref_len);
+                    if site_end > end0 {
                         return Err(EngineError::job(format!(
-                            "contig {} site {} follows {}: input is not contig-sorted",
+                            "MSA record {}:{}: REF span of {ref_len} bp crosses the output region end {end0}",
                             String::from_utf8_lossy(&output.contig),
-                            pos0 + 1,
-                            prev + 1
+                            pos0 + 1
                         )));
                     }
-                    if pending == Some(pos0) {
-                        // Duplicate positions: the last record wins
-                        // (vcf2msa's per-record overwrite).
-                        chosen.clear();
-                        chosen.extend_from_slice(&frame);
-                        continue;
+                    // D29-01 rule 4: only an exact duplicate (same POS and
+                    // same REF span) keeps the last-record-wins rule; every
+                    // other overlap is refused instead of silently spliced.
+                    if let Some((prev_pos, prev_ref_len)) = pending {
+                        if pos0 == prev_pos {
+                            if ref_len == prev_ref_len {
+                                chosen.clear();
+                                chosen.extend_from_slice(&frame);
+                                continue;
+                            }
+                            return Err(EngineError::job(format!(
+                                "unsupported overlap: MSA record {}:{} has a {ref_len} bp REF span, \
+                                 the previous record at the same position has {prev_ref_len} bp",
+                                String::from_utf8_lossy(&output.contig),
+                                pos0 + 1
+                            )));
+                        }
+                        if pos0 < prev_pos + u64::from(prev_ref_len) {
+                            return Err(EngineError::job(format!(
+                                "unsupported overlap: MSA record {}:{} starts inside the previous \
+                                 record's REF span ({}..{})",
+                                String::from_utf8_lossy(&output.contig),
+                                pos0 + 1,
+                                prev_pos + 1,
+                                prev_pos + u64::from(prev_ref_len)
+                            )));
+                        }
                     }
                     flush_msa_site(&mut out, sequence, &mut cursor, pending, &mut chosen)?;
+                    chosen.clear();
                     chosen.extend_from_slice(&frame);
-                    pending = Some(pos0);
+                    pending = Some((pos0, ref_len));
                 }
             }
             flush_msa_site(&mut out, sequence, &mut cursor, pending, &mut chosen)?;
@@ -452,23 +484,23 @@ pub(crate) fn write_msa(
 }
 
 /// The MSA walk's flush step: writes the reference run between `cursor` and
-/// the pending site, then the site's bytes.
+/// the pending site, then the site's bytes. The cursor advances by the
+/// record's REF span, not by one column (v29 D29-01).
 fn flush_msa_site(
     out: &mut impl Write,
     sequence: &[u8],
     cursor: &mut u64,
-    pending: Option<u64>,
+    pending: Option<(u64, u32)>,
     chosen: &mut Vec<u8>,
 ) -> Result<(), EngineError> {
-    if let Some(pos0) = pending {
-        // doc_v20 review of R12: the regressing-frame guard makes
-        // `cursor <= pos0` an invariant, so the old `min` clamp was dead
-        // code that would hide a future violation.
+    if let Some((pos0, ref_len)) = pending {
+        // The overlap checks make `cursor <= pos0` an invariant, so the old
+        // `min` clamp was dead code that would hide a future violation.
         debug_assert!(*cursor <= pos0, "MSA cursor {cursor} ran past site {pos0}");
         out.write_all(&sequence[*cursor as usize..pos0 as usize])
             .map_err(EngineError::Io)?;
         out.write_all(chosen).map_err(EngineError::Io)?;
-        *cursor = pos0 + 1;
+        *cursor = pos0 + u64::from(ref_len);
         chosen.clear();
     }
     Ok(())
@@ -482,10 +514,12 @@ mod tests {
     use super::super::spill::{RowsBlob, SpilledMsa};
 
     /// One frame for a single sample, one byte wide (the on-disk layout the
-    /// sink writes: `pos0: u64 LE || width: u32 LE || vals`).
+    /// sink writes: `pos0: u64 LE || width: u32 LE || ref_len: u32 LE ||
+    /// vals`; these fixtures consume one reference base).
     fn frame(pos0: u64, val: u8) -> RowsBlob {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&pos0.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
         bytes.extend_from_slice(&1_u32.to_le_bytes());
         bytes.push(val);
         RowsBlob::Memory(bytes)

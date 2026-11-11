@@ -17,7 +17,10 @@ use reed_engine::abort::Abort;
 use reed_engine::error::EngineError;
 use reed_engine::frame_chain::{Carried, FrameChain};
 use reed_engine::pipeline::ChunkJob;
-use reed_io::bcf::{BcfDict, VirtualMap, declared_len, record_len, record_ref, render_record};
+use reed_io::bcf::{
+    BcfDict, FrameStep, VirtualMap, declared_len, frame_chunk, record_len, record_ref,
+    render_record,
+};
 use reed_io::chunk::ChunkBytes;
 use reed_io::chunk::framing::RecordFraming;
 
@@ -179,44 +182,25 @@ impl<J: ChunkJob> InputJob<J> {
             return Ok(None);
         }
         let crossing_len = carried.prefix_len as usize;
-        let body_start;
-        let body_end;
-        if carried.is_empty() {
-            body_start = skip;
-            body_end = walk_records(text, skip);
-            // doc_v26 review item 2: the first-fragment branch publishes the
-            // crossing record below without the ceiling check the
-            // has-carry branch performs. `text[body_end..]` can be the whole
-            // chunk (a record that starts in this chunk and only ends after
-            // it), so a small --memory could admit a carried prefix far above
-            // its budget. The check must cover this branch too — and, when
-            // the length prefix is already complete in this chunk, the
-            // declared total is the tighter of the two bounds.
-            let crossing = text.len() - body_end;
-            self.check_carried(0, crossing, declared_len(&text[body_end..]))?;
-        } else {
-            // doc_v26 V26-07: the old code appended a whole chunk's text
-            // and *then* compared a later chunk's declared length against the
-            // ceiling, so both growth branches below could pass 1 GiB (and,
-            // with a small --memory, pass the budget by orders of magnitude).
-            // The ceiling therefore applies before every append.
-            let Some(total) = declared_len_across(&carried.head, text) else {
+        // doc_v28 V28-25: the seam arithmetic itself is shared with the index
+        // job; this job keeps the carried bytes, the ceiling and the decode.
+        let (body_start, body_end) = match frame_chunk(&carried.head, crossing_len, text, skip) {
+            FrameStep::PrefixIncomplete => {
                 // Even the length prefix is still incomplete.
                 self.check_carried(crossing_len, text.len(), None)?;
                 carried.head.extend_from_slice(text);
                 carried.prefix_len += text.len() as u64;
                 guard.publish(carried.clone());
                 return Ok(None);
-            };
-            if total > self.record_ceiling {
-                return Err(EngineError::job(format!(
-                    "BCF record of {total} bytes exceeds the {}-byte ceiling (the smaller of \
-                     the hard limit and the --memory budget)",
-                    self.record_ceiling
-                )));
             }
-            let need = total.saturating_sub(crossing_len);
-            if need > text.len() {
+            FrameStep::Spans { total } => {
+                if total > self.record_ceiling {
+                    return Err(EngineError::job(format!(
+                        "BCF record of {total} bytes exceeds the {}-byte ceiling (the smaller of \
+                         the hard limit and the --memory budget)",
+                        self.record_ceiling
+                    )));
+                }
                 // The record spans this whole chunk.
                 self.check_carried(crossing_len, text.len(), Some(total))?;
                 carried.head.extend_from_slice(text);
@@ -224,8 +208,23 @@ impl<J: ChunkJob> InputJob<J> {
                 guard.publish(carried.clone());
                 return Ok(None);
             }
-            body_start = need;
-            body_end = walk_records(text, need);
+            FrameStep::Complete {
+                body_start,
+                body_end,
+            } => (body_start, body_end),
+        };
+        if crossing_len == 0 {
+            // doc_v26 review item 2: the first-fragment branch publishes the
+            // crossing record below without the ceiling check the has-carry
+            // branch performs. `text[body_end..]` can be the whole chunk (a
+            // record that starts in this chunk and only ends after it), so a
+            // small --memory could admit a carried prefix far above its
+            // budget. The check must cover this branch too — and, when the
+            // length prefix is already complete in this chunk, the declared
+            // total is the tighter of the two bounds.
+            let crossing = text.len() - body_end;
+            self.check_carried(0, crossing, declared_len(&text[body_end..]))?;
+        } else {
             carried.head.extend_from_slice(&text[..body_start]);
         }
         // Publish the crossing record of the *next* chunk before decoding.
@@ -266,16 +265,6 @@ impl<J: ChunkJob> InputJob<J> {
         }
         Ok(())
     }
-}
-
-/// Walks the length prefixes from `from` and returns the offset after the
-/// last complete record (the record starting there crosses the boundary).
-fn walk_records(text: &[u8], from: usize) -> usize {
-    let mut p = from;
-    while let Some(len) = record_len(&text[p..]) {
-        p += len;
-    }
-    p
 }
 
 impl<J: ChunkJob + Sync> ChunkJob for InputJob<J> {
@@ -370,22 +359,6 @@ impl<J: ChunkJob + Sync> ChunkJob for InputJob<J> {
             )),
         }
     }
-}
-
-/// The record's declared total length, taking the missing prefix bytes from
-/// `text` (a chunk may end inside the 8-byte prefix).
-fn declared_len_across(carried: &[u8], text: &[u8]) -> Option<usize> {
-    if carried.len() >= 8 {
-        return declared_len(carried);
-    }
-    let need = 8 - carried.len();
-    if text.len() < need {
-        return None;
-    }
-    let mut head = [0_u8; 8];
-    head[..carried.len()].copy_from_slice(carried);
-    head[carried.len()..].copy_from_slice(&text[..need]);
-    declared_len(&head)
 }
 
 #[cfg(test)]

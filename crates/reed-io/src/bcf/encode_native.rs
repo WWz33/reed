@@ -31,7 +31,7 @@ use super::dict::BcfDict;
 use super::gt_decode::{gt_codes_into, gt_shape, parse_i64};
 use super::record::{
     BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, INT8_MAX_VALUE, INT8_MIN_VALUE,
-    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, field_bytes, int_element,
+    INT16_MAX_VALUE, INT16_MIN_VALUE, INT32_MAX_VALUE, INT32_MIN_VALUE, field_bytes, gt_element,
     malformed, type_width, value_type,
 };
 
@@ -53,6 +53,10 @@ pub struct NativeEncoder {
     /// `sample * n_keys + key` (one pass over the sample text per record).
     cells: Vec<(u32, u32)>,
     ints: Vec<i64>,
+    /// Scratch for one Float INFO value list (reused; the encoder used to
+    /// allocate a fresh `Vec` per Float INFO tag per record — doc_v28
+    /// V28-20).
+    floats: Vec<f32>,
     /// One sample's decoded GT codes (reused; the text GT walk allocates
     /// nothing per record).
     codes: Vec<i32>,
@@ -132,6 +136,7 @@ impl NativeEncoder {
             indiv: Vec::with_capacity(1 << 16),
             cells: Vec::new(),
             ints: Vec::with_capacity(64),
+            floats: Vec::with_capacity(64),
             codes: Vec::with_capacity(8),
             bcf_fields: Vec::new(),
         })
@@ -182,17 +187,18 @@ impl NativeEncoder {
         edit: &EditPlan<'_>,
         out: &mut Vec<u8>,
     ) -> Result<(), IoError> {
-        let mut head = Cursor::new(rec.shared);
-        let in_chrom = head.i32()?;
-        let pos0 = head.i32()?;
-        let rlen = head.i32()?;
-        let qual = head.u32()?;
-        let na_ni = head.u32()?;
-        let nf_ns = head.u32()?;
-        let n_allele = (na_ni >> 16) as usize;
-        let n_info = (na_ni & 0xFFFF) as usize;
-        let n_fmt = (nf_ns >> 24) as usize;
-        let n_sample_in = (nf_ns & 0x00FF_FFFF) as usize;
+        // doc_v28 V28-21: one shared decode, so this entry point cannot skip
+        // the zero-allele rejection `site_header`/the renderer apply
+        // (doc_v28 V28-10).
+        let (header, _) = super::record::SharedHeader::parse(rec.shared)?;
+        let in_chrom = header.chrom;
+        let pos0 = header.pos0;
+        let rlen = header.rlen;
+        let qual = header.qual;
+        let n_allele = header.n_allele;
+        let n_info = header.n_info;
+        let n_fmt = header.n_fmt;
+        let n_sample_in = header.n_sample;
         debug_assert_eq!(
             n_samples_out(edit, n_sample_in),
             self.n_samples,
@@ -374,12 +380,14 @@ impl NativeEncoder {
                 self.ints = ints;
             }
             (InfoType::Float, Some(v)) => {
-                let mut floats = Vec::new();
+                let mut floats = std::mem::take(&mut self.floats);
+                floats.clear();
                 parse_float_vector(v, &mut floats);
                 encode_size(s, floats.len(), value_type::FLOAT);
-                for f in floats {
+                for &f in &floats {
                     s.extend_from_slice(&f.to_le_bytes());
                 }
+                self.floats = floats;
             }
             (_, Some(v)) => encode_typed_string(s, v),
             (InfoType::Integer, None) => {
@@ -936,12 +944,17 @@ impl NativeEncoder {
         n_allele: usize,
     ) -> Result<(), IoError> {
         let width = type_width(ty);
+        // NULL/count=0 is a legal all-missing GT column; copy its descriptor
+        // and no payload (doc_v28 V28-08).
+        if ty == value_type::NULL && count == 0 {
+            encode_size(&mut self.indiv, 0, ty);
+            return Ok(());
+        }
         if width == 0 || !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
             // A CHAR GT carries a 1-byte element; `int_element` reads four
             // bytes and would panic (doc_v23 V23-02).
             return Err(malformed("BCF GT field is not integer-typed"));
         }
-        let (_, vector_end) = super::record::int_sentinels(ty);
         let stride = width * count;
         let mut max_ploidy = 0_usize;
         let mut max_allele = 0_i64;
@@ -956,10 +969,11 @@ impl NativeEncoder {
             let sample = &payload[s * stride..(s + 1) * stride];
             let mut ploidy = 0_usize;
             for j in 0..count {
-                let v = int_element(ty, &sample[j * width..(j + 1) * width]);
-                if v == vector_end {
+                let Some(v) =
+                    gt_element(ty, &sample[j * width..(j + 1) * width]).map_err(malformed)?
+                else {
                     break;
-                }
+                };
                 ploidy += 1;
                 if v > 0 {
                     max_allele = max_allele.max((v >> 1) - 1);
@@ -999,10 +1013,11 @@ impl NativeEncoder {
             let sample = &payload[s * stride..(s + 1) * stride];
             let mut written = 0_usize;
             for j in 0..count {
-                let v = int_element(ty, &sample[j * width..(j + 1) * width]);
-                if v == vector_end {
+                let Some(v) =
+                    gt_element(ty, &sample[j * width..(j + 1) * width]).map_err(malformed)?
+                else {
                     break;
-                }
+                };
                 push_int(
                     &mut self.indiv,
                     i32::try_from(v).unwrap_or(vector_end_out),
@@ -1336,6 +1351,35 @@ mod tests {
         std::str::from_utf8(HEADER).unwrap().parse().unwrap()
     }
 
+    /// doc_v28 V28-10: `encode_bcf` is a public entry point and must apply
+    /// the same zero-allele contract as `site_header`/the renderer.
+    #[test]
+    fn encode_bcf_rejects_a_zero_allele_record_before_writing() {
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // pos
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&u32::MAX.to_le_bytes()); // qual
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // n_allele|n_info
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // n_fmt|n_samples
+        let rec = BcfRecordRef {
+            shared: &shared,
+            indiv: &[],
+        };
+        let mut enc = NativeEncoder::new(&header()).expect("invariant: encoder");
+        let mut out = Vec::new();
+        let err = enc
+            .encode_bcf(
+                &rec,
+                &crate::bcf::BcfDict::default(),
+                &EditPlan::default(),
+                &mut out,
+            )
+            .expect_err("zero alleles must be rejected");
+        assert!(err.to_string().contains("zero alleles"), "{err}");
+        assert!(out.is_empty(), "nothing may be written before the check");
+    }
+
     /// The reference path: edit the text, then noodles encodes the result.
     fn reference_encode(
         line: &[u8],
@@ -1366,7 +1410,7 @@ mod tests {
         };
         let out_header: vcf::Header = out_text.parse().expect("invariant: header");
         assert_eq!(out_header.sample_names().len(), n_out);
-        let mut enc = BcfEncoder::new().expect("invariant: noodles");
+        let mut enc = BcfEncoder::new();
         enc.write_header(&out_header).expect("invariant: header");
         let mut out = Vec::new();
         enc.encode_record(&out_header, &edited, &mut out)
@@ -1501,7 +1545,7 @@ mod tests {
     fn encode_bcf_rejects_gt_alleles_beyond_the_alt_count() {
         // Frame through the noodles encoder (it does not domain-check),
         // which is exactly how such a record reaches the re-encode path.
-        let mut enc = BcfEncoder::new().expect("invariant: noodles");
+        let mut enc = BcfEncoder::new();
         enc.write_header(&header()).expect("invariant: header");
         let mut framed = Vec::new();
         enc.encode_record(

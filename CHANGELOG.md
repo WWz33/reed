@@ -5,7 +5,42 @@ All notable changes to reed are documented here. The format follows
 lockstep workspace versions, and the CLI flags plus the output file formats
 are the stability promise (`docs/spec/cli.md` §0).
 
-## [Unreleased] — doc_v26：IO/filter 遗留缺陷与并行资源（2026-11-06）
+## [Unreleased] — doc_v29：convert 复审拍板落地（2026-11-11）
+
+`docs/rounds/v29/` 的 8 项拍板与 10 条发现落地。验收：
+`cargo test -p reed -p reed-cli -p reed-io -p reed-stats` 全绿（`e2e_convert` 41 项）、
+clippy 0、`cargo fmt --check` 与 `ci/check-doc-drift.sh` 通过。
+
+### Changed（输出契约）
+- **MSA 改为参考坐标对齐（破坏性输出变化，D29-01 B）**：记录 `POS, REF.len()=L`
+  占用参考列 `[POS, POS+L)`，块宽 `max(len(REF), len(ALTs))`，插入只增加 gap 列。
+  300 bp 删除夹具的输出宽度由 1299 变为 1000；D15-26 被 v29 取代。REF 与 FASTA
+  大小写不敏感比较，越界、不一致、重复 FASTA contig、非重复的 REF span 重叠均报错；
+  不安全的 contig 文件名片段做百分号编码。
+- **`--012` / `--sfs` 多倍体**：`--012` 保持 vcftools 的 `-1`，`--sfs` 跳过该记录；
+  两者都警告一次并计入 `polyploid`，不再静默（D29-06）。
+- **`to_args()`** 明确为 target-only 的 CLI 拼写，不承诺完整重放请求（D29-08）。
+
+### Fixed
+- **binary NEXUS**：`FORMAT=DP:GT` 时改用 GT 子字段真实 span，不再把 `0/0`/`1/1`
+  写成 `? ?`（V29-01）。
+- **SFS `-s`**：只解码/校验参与样本；被排除样本的 `0/9`、多倍体或超长 token 不再
+  丢掉保留样本的位点（V29-02）。
+- **输出路径**：运行前计算完整输出集合，拒绝重复路径以及与 input/reference/
+  populations/`PREFIX.log` 的别名冲突；`foo.012` + `--012 -o foo` 不再覆盖输入
+  （V29-03/V29-07/D29-04）。
+- **HapMap 半缺失**：双字母 `AN`/`NG` 保留为 `0/.`/`1/.`，不再纯合成 `0/0`/`1/1`
+  （V29-04）。
+- **header-only SFS**：请求了 `--sfs` 就写零谱，plain/BGZF/BCF 一致（V29-05）。
+- **多 chunk SFS**：`n_records` 随 spectrum 一起合并（V29-06）。
+- **malformed 计数**：每条坏记录最多计一次，不再随 target 数放大（V29-09）。
+
+### Added
+- 公开 API：`ConvertRequest::validate`、`GenotypeScanner::with_active_samples`、
+  `reed_io::bcf::decode_record_gt_masked`、`OpenedInput::path`。
+- `ConvertCounters.polyploid` 与 `ConvertReport.polyploid`。
+
+## [Unreleased] — doc_v26：IO/filter 遗留缺陷与并行资源（2026-11-06)
 
 对 v25 之后的 IO/filter/并行审查（`docs/rounds/v26/`）逐条落地：V26-00…V26-21。
 每条先补能失败的输入测试，再改共享底层契约。含两轮 2026-11-06 复核的 9 项追加修复。验收：1062 项测试全绿、clippy 0、

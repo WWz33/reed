@@ -780,6 +780,74 @@ fn bcf_contig_idx_wins_over_line_order() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v28 V28-01: the BCF output header must carry the contig `IDX=` the
+/// record encoder uses. Dropping it made htslib re-number contigs by line
+/// order and silently moved records to another chromosome.
+#[test]
+fn bcf_output_preserves_explicit_contig_idx() {
+    let dir = dir("contig-idx-output");
+    let input = dir.join("in.vcf");
+    std::fs::write(
+        &input,
+        "##fileformat=VCFv4.3\n\
+         ##contig=<ID=chr2,length=200,IDX=1>\n\
+         ##contig=<ID=chr1,length=100,IDX=0>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr2\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\n",
+    )
+    .expect("invariant: input");
+    let output = dir.join("out.bcf");
+    let opts = FilterOptions {
+        threads: 1,
+        output: Some(output.clone()),
+        write_index: reed::WriteIndex::Csi,
+        output_bcf: Some(1),
+        no_version: true,
+        no_command: true,
+        ..FilterOptions::default()
+    };
+    run_filter(Some(&input), &FilterSpec::default(), &opts).expect("filter runs");
+    let rendered = render_via_reed(&output);
+    let chroms: Vec<&str> = rendered
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| line.split('\t').next().unwrap_or_default())
+        .collect();
+    assert_eq!(chroms, ["chr2", "chr1"], "{rendered}");
+
+    // The same dictionary order must drive the output CSI: a region read
+    // through it must not see a record from the other contig.
+    let region_out = dir.join("region.vcf");
+    let region_opts = FilterOptions {
+        threads: 1,
+        output: Some(region_out.clone()),
+        write_index: reed::WriteIndex::None,
+        output_compressed: Some(false),
+        no_version: true,
+        no_command: true,
+        regions: vec![reed_io::chunk::region::Region {
+            contig: "chr1".into(),
+            start1: None,
+            end1: None,
+        }],
+        ..FilterOptions::default()
+    };
+    run_filter(Some(&output), &FilterSpec::default(), &region_opts).expect("region read");
+    let region_text = std::fs::read_to_string(&region_out).expect("invariant: region output");
+    let region_records: Vec<&str> = region_text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert_eq!(region_records.len(), 1, "{region_records:?}");
+    assert!(
+        region_records[0].starts_with("chr1\t"),
+        "{region_records:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// doc_v21 M1: `pca`, `dapc` and `distance` read BCF as raw text (they did
 /// not wrap their job in `InputJob`, so BCF bytes were split on '\\n'), while
 /// every other command accepted the same file. The matrix reader must give
@@ -887,5 +955,75 @@ fn bcf_dp_mask_falls_back_to_ad() {
     assert!(records[3].starts_with("1/1:"), "{records:?}");
     assert!(records[4].starts_with("0/0:"), "{records:?}");
     assert!(records[5].starts_with("0/1:"), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v28 V28-28: an indexed BCF's CSI must name its reference sequences in
+/// the **record tid** space (the dictionary order), not header line order.
+///
+/// The filter built the index table from `##contig` line order while the
+/// native encoder wrote record tids honouring an explicit `IDX=`. Reed's own
+/// reader resolved queries through the same (wrong) table, so every test above
+/// passed; htslib resolves them through the dictionary and returned **zero
+/// records** for both contigs. This test reads the CSI's own header and each
+/// reference's chunks, so it fails on the index bytes rather than on a
+/// self-consistent round-trip.
+#[test]
+fn bcf_index_reference_table_follows_the_record_tid_space() {
+    let dir = dir("contig-idx-index-table");
+    let input = dir.join("in.vcf");
+    std::fs::write(
+        &input,
+        "##fileformat=VCFv4.3\n\
+         ##contig=<ID=chr2,length=200,IDX=1>\n\
+         ##contig=<ID=chr1,length=100,IDX=0>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+         chr2\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\n",
+    )
+    .expect("invariant: input");
+    let output = dir.join("out.bcf");
+    let opts = FilterOptions {
+        threads: 1,
+        output: Some(output.clone()),
+        write_index: reed::WriteIndex::Csi,
+        output_bcf: Some(1),
+        no_version: true,
+        no_command: true,
+        ..FilterOptions::default()
+    };
+    run_filter(Some(&input), &FilterSpec::default(), &opts).expect("filter runs");
+
+    let index = reed_io::chunk::region::FileIndex::open(&output.with_extension("bcf.csi"))
+        .expect("invariant: csi written");
+    use reed_io::chunk::region::IndexQuery as _;
+    assert_eq!(
+        index.tid_of("chr1"),
+        Some(0),
+        "the CSI must key chr1 at its record tid (IDX=0)"
+    );
+    assert_eq!(index.tid_of("chr2"), Some(1), "and chr2 at IDX=1");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v28 V28-28: `reed index` used to reject a BCF whose record tids
+/// descend (`IDX=1` contig first, then `IDX=0`) even though htslib indexes it
+/// — `bcftools index` accepts it and both `-r` queries return their records.
+/// The repo's own `idx.bcf` fixture is exactly such a file.
+#[test]
+fn index_accepts_descending_record_tids_like_htslib() {
+    let dir = dir("descending-tids");
+    let input = dir.join("idx.bcf");
+    std::fs::copy(fixture("idx.bcf"), &input).expect("invariant: fixture copy");
+    reed::run_index(&input, reed::WriteIndex::Csi, None, 1)
+        .expect("descending tids are indexable, as in htslib");
+
+    let index = reed_io::chunk::region::FileIndex::open(&dir.join("idx.bcf.csi"))
+        .expect("invariant: csi written");
+    use reed_io::chunk::region::IndexQuery as _;
+    // idx.bcf declares chr1 with IDX=1 and chr2 with IDX=0.
+    assert_eq!(index.tid_of("chr2"), Some(0));
+    assert_eq!(index.tid_of("chr1"), Some(1));
     let _ = std::fs::remove_dir_all(&dir);
 }

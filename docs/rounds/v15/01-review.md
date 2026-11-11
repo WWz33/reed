@@ -169,6 +169,7 @@ Rust 测试直测对比，测后已删）。重放 `oracle_parity` 种子：996 
 - **D15-26**：REF 300bp 删除 → 输出宽度 1043（应为 1299，300 显示 44）；
   ALT 256bp → 宽度 1000（应 1255），且 0/0 样本取到 ALT 第 2 个碱基
   （跨样本错位）。exit 0。
+  **v29 D29-01 B 已取代 1299 契约**：参考坐标对齐后同一夹具宽度为 1000。
 - **D15-27**：debug `attempt to subtract with overflow`（job.rs:443，
   worker panic → exit 1）；release 接受记录并 `.012.pos` 写出 `chr1 0`。
 - **D15-28**：3M 记录 `-Oz`：`--idspace-to '_'` 0.090s vs

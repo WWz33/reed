@@ -59,7 +59,7 @@ fn native_and_noodles_encoders_agree() {
     let (header_text, records) = fixture_parts();
     let header: noodles::vcf::Header = header_text.parse().expect("invariant: header parses");
     let mut native = reed_io::bcf::NativeEncoder::new(&header).expect("invariant: native encoder");
-    let mut noodles = reed_io::bcf::BcfEncoder::new().expect("invariant: noodles encoder");
+    let mut noodles = reed_io::bcf::BcfEncoder::new();
     noodles.write_header(&header).expect("invariant: header");
     for (i, record) in records.iter().enumerate() {
         let mut expected = Vec::new();

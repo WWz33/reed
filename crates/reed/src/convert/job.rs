@@ -50,6 +50,12 @@ pub struct ConvertCounters {
     /// Skipped malformed records: column-count mismatches, bad genotype
     /// tokens, unknown allele letters or indices (B13-2/B13-9).
     pub malformed: u64,
+    /// Records with a polyploid kept genotype that entered an SFS-only or
+    /// `--012` target. Polyploidy is outside the supported domain (diploid
+    /// plus haploid-as-half-call): `--sfs` skips the record and `--012`
+    /// writes its documented `-1`, both with one warning and this count
+    /// (v29 D29-06).
+    pub polyploid: u64,
 }
 
 impl ConvertCounters {
@@ -60,6 +66,7 @@ impl ConvertCounters {
         self.accepted += other.accepted;
         self.biallelic_for_bin += other.biallelic_for_bin;
         self.malformed += other.malformed;
+        self.polyploid += other.polyploid;
     }
 }
 
@@ -76,6 +83,10 @@ pub struct ConvertReport {
     /// Records processed (the statistics count when SFS ran, else the
     /// row-target total).
     pub n_records: u64,
+    /// Records skipped because a kept genotype is polyploid, regardless of
+    /// which targets ran (also in [`ConvertCounters::polyploid`] when a row
+    /// target ran). v29 D29-06.
+    pub polyploid: u64,
     /// Total wall time.
     pub elapsed: Duration,
     /// Pipeline stage metrics.
@@ -101,10 +112,15 @@ pub(crate) struct PhyloPlan {
 /// Per-contig MSA regions, 0-based half-open.
 pub(crate) type MsaRegions = Arc<HashMap<Vec<u8>, Vec<(u64, u64)>>>;
 
-/// The MSA plan: the in-region predicate (0-based half-open per contig).
+/// The reference FASTA: contig name → sequence bytes.
+pub(crate) type ReferenceMap = HashMap<Vec<u8>, Arc<[u8]>>;
+
+/// The MSA plan: the in-region predicate (0-based half-open per contig) and
+/// the reference sequence the fold validates each REF span against.
 #[derive(Clone, Debug)]
 pub(crate) struct MsaPlan {
     pub(crate) regions: MsaRegions,
+    pub(crate) reference: Arc<ReferenceMap>,
 }
 
 impl MsaPlan {
@@ -147,7 +163,7 @@ pub(crate) struct DrawKey {
 
 /// One sample's parsed genotype tokens (the single row-level view every
 /// target consumes, D13-7).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GtSlots {
     /// Allele indices; `None` is the `.` missing allele. Up to four tokens
     /// are stored (more is malformed for reed).
@@ -166,9 +182,11 @@ pub(crate) struct GtSlots {
     pub(crate) strict_bad: bool,
     /// The raw GT text does not start with `.` (vcf2phylip's presence rule).
     pub(crate) present: bool,
-    /// The raw GT field range within the samples region (for GEN_BIN).
-    pub(crate) raw_start: u32,
-    pub(crate) raw_len: u32,
+    /// The raw GT subfield range within the samples region (for GEN_BIN).
+    /// `None` when the sample column has no GT subfield (`FORMAT=DP:GT` with
+    /// a `30`-only column); callers must treat that as missing, never slice
+    /// the sample column itself.
+    pub(crate) raw: Option<std::ops::Range<u32>>,
 }
 
 /// Worker-local buffers.
@@ -191,6 +209,10 @@ pub struct ConvertScratch {
     msa_padded: Vec<u8>,
     /// Once-flags for the skip warnings.
     warned: WarnFlags,
+    /// Whether the current record's malformed skip was already counted. A
+    /// bad record is one input line, not one failure per enabled target
+    /// (v29 V29-09 / D29-07).
+    record_malformed: bool,
     /// The composed statistics scratch.
     stats: StatsScratch,
 }
@@ -200,6 +222,7 @@ struct WarnFlags {
     malformed: bool,
     multiallelic_012: bool,
     padded_msa: bool,
+    polyploid: bool,
 }
 
 /// The per-chunk fold of every target.
@@ -247,9 +270,12 @@ pub(crate) struct MsaRun {
     pub(crate) sites: Vec<MsaSite>,
 }
 
-/// One MSA site: every kept sample's value, all `width` bytes long.
+/// One MSA site: every kept sample's value, all `width` bytes long, plus the
+/// reference span the record consumes (`ref_len`; `width >= ref_len`, the
+/// extra columns are insertion gaps).
 pub(crate) struct MsaSite {
     pub(crate) pos0: u64,
+    pub(crate) ref_len: u32,
     pub(crate) vals: Vec<u8>,
     pub(crate) width: u32,
 }
@@ -380,6 +406,8 @@ impl OrderedSink<ConvertPartial> for ConvertSink {
                     self.msa_scratch.extend_from_slice(&site.pos0.to_le_bytes());
                     self.msa_scratch
                         .extend_from_slice(&site.width.to_le_bytes());
+                    self.msa_scratch
+                        .extend_from_slice(&site.ref_len.to_le_bytes());
                     self.msa_scratch.extend_from_slice(&site.vals);
                 }
                 blob.append(&mut self.msa_scratch, SPILL_THRESHOLD)?;
@@ -496,6 +524,7 @@ impl ChunkJob for ConvertJob {
         // same file into a fatal `--sfs` run. A clean chunk still hands the
         // original slice over (zero copy).
         let want_sfs = self.sfs.is_some();
+        let sfs_samples = self.sfs.as_ref().map(StatsJob::active_samples);
         let mut dropped: Vec<usize> = Vec::new();
         let mut line_no: u32 = 0;
         for (index, line) in body.split(|&b| b == b'\n').enumerate() {
@@ -505,13 +534,13 @@ impl ChunkJob for ConvertJob {
             };
             // Blank lines are not records: they do not consume a draw slot
             // (the key must stay aligned with the emitted rows).
-            let outcome = self.push_line(line, key, &mut partial, scratch);
+            let outcome = self.push_line(line, key, &mut partial, scratch)?;
             if outcome != LineOutcome::Blank {
                 line_no += 1;
             }
             if want_sfs {
                 let keep = match outcome {
-                    LineOutcome::Record => sfs_accepts_gt(scratch),
+                    LineOutcome::Record => sfs_accepts_gt(scratch, sfs_samples),
                     // `Blank` passes through: the statistics job skips it.
                     LineOutcome::Blank => true,
                     LineOutcome::Malformed => false,
@@ -561,13 +590,13 @@ impl ChunkJob for ConvertJob {
             chunk: id.get().saturating_sub(1),
             line: u32::MAX,
         };
-        let outcome = self.push_line(line, key, &mut partial, scratch);
+        let outcome = self.push_line(line, key, &mut partial, scratch)?;
         // Feed the SFS target only what convert accepts (the same policy as
         // the body path: structural blanks/malformed and GT-domain rejects
         // never reach the strict statistics scanner).
         if let Some(stats) = &self.sfs
             && outcome == LineOutcome::Record
-            && sfs_accepts_gt(scratch)
+            && sfs_accepts_gt(scratch, Some(stats.active_samples()))
         {
             let ConvertScratch {
                 stats: stats_scratch,
@@ -580,14 +609,18 @@ impl ChunkJob for ConvertJob {
 }
 
 /// Whether the genotype just parsed by [`ConvertJob::parse_gts`] passes the
-/// strict statistics scanner's grammar (doc_v25 V25-01): every sample's GT is
-/// diploid-or-haploid, digit-only within the scanner's five-digit token cap,
-/// and inside the record's allele domain.
-fn sfs_accepts_gt(scratch: &ConvertScratch) -> bool {
-    !scratch
-        .gts
-        .iter()
-        .any(|gt| gt.bad || gt.strict_bad || gt.overflow || gt.n > 2)
+/// strict statistics scanner's grammar (doc_v25 V25-01): every *participating*
+/// sample's GT is diploid-or-haploid, digit-only within the scanner's
+/// five-digit token cap, and inside the record's allele domain.
+///
+/// `active` is the statistics sample view: excluded samples and samples
+/// outside the SFS populations never reach the scanner, so neither may veto a
+/// record here (v29 V29-02 / D29-03).
+fn sfs_accepts_gt(scratch: &ConvertScratch, active: Option<&reed_core::sample::KeepMask>) -> bool {
+    scratch.gts.iter().enumerate().all(|(sample, gt)| {
+        active.is_some_and(|mask| !mask[sample])
+            || !(gt.bad || gt.strict_bad || gt.overflow || gt.n > 2)
+    })
 }
 
 impl ConvertJob {
@@ -604,20 +637,21 @@ impl ConvertJob {
         key: DrawKey,
         partial: &mut ConvertPartial,
         scratch: &mut ConvertScratch,
-    ) -> LineOutcome {
+    ) -> Result<LineOutcome, EngineError> {
+        scratch.record_malformed = false;
         let lr = match classify_line(line, self.n_samples) {
             RecordClass::Record(lr) => lr,
             // `line_is_sane` used to call a blank seam line sane and hand it
             // to the statistics job; a blank line is now simply not a record
             // (doc_v25 V25-03).
-            RecordClass::Blank => return LineOutcome::Blank,
+            RecordClass::Blank => return Ok(LineOutcome::Blank),
             RecordClass::Malformed(why) => {
                 // vcf2phylip counts every non-empty, non-`#` line as
                 // processed, malformed ones included (`snp_num` increments
                 // before its checks).
                 partial.counters.total_records += 1;
                 self.bump_malformed(partial, scratch, why.label());
-                return LineOutcome::Malformed;
+                return Ok(LineOutcome::Malformed);
             }
         };
         partial.counters.total_records += 1;
@@ -629,6 +663,24 @@ impl ConvertJob {
 
         // The single per-sample GT parse (D13-7).
         self.parse_gts(&lr, scratch);
+        // Polyploidy is outside the supported domain (v29 D29-06): when it
+        // would reach `--sfs` or `--012`, count the record once and warn.
+        let polyploid = scratch
+            .gts
+            .iter()
+            .zip(self.keep.iter())
+            .any(|(gt, &kept)| kept && gt.n > 2);
+        if polyploid && (self.sfs.is_some() || self.count) {
+            partial.counters.polyploid += 1;
+            if !scratch.warned.polyploid {
+                scratch.warned.polyploid = true;
+                tracing::warn!(
+                    "reed convert: records with polyploid genotypes are outside the supported \
+                     domain; --sfs skips them and --012 keeps vcftools' -1, counted once \
+                     (v29 D29-06)"
+                );
+            }
+        }
 
         // Presence count over the kept samples (vcf2phylip counts samples
         // whose GT text does not start with `.`; v13 §3.1 step 2).
@@ -696,8 +748,11 @@ impl ConvertJob {
                     if !kept {
                         continue;
                     }
-                    let raw = &samples
-                        [gt.raw_start as usize..(gt.raw_start as usize + gt.raw_len as usize)];
+                    let raw = gt
+                        .raw
+                        .as_ref()
+                        .and_then(|span| samples.get(span.start as usize..span.end as usize))
+                        .unwrap_or(&b"."[..]);
                     cells.push(iupac::gen_bin_lookup(raw).unwrap_or(b'?'));
                 }
                 {
@@ -713,8 +768,8 @@ impl ConvertJob {
 
         self.push_count_matrix(&lr, present, partial, scratch);
         self.push_hapmap(&lr, present, partial, scratch);
-        self.push_msa(&lr, pos0, partial, scratch);
-        LineOutcome::Record
+        self.push_msa(&lr, pos0, partial, scratch)?;
+        Ok(LineOutcome::Record)
     }
 
     /// The phylogenetic partial, created with the shape both branches agree
@@ -747,6 +802,10 @@ impl ConvertJob {
         scratch: &mut ConvertScratch,
         why: &str,
     ) {
+        if scratch.record_malformed {
+            return;
+        }
+        scratch.record_malformed = true;
         partial.counters.malformed += 1;
         if !scratch.warned.malformed {
             scratch.warned.malformed = true;
@@ -762,7 +821,6 @@ impl ConvertJob {
     /// the `--012` path used to code a haploid out-of-domain call as `-1`
     /// silently.
     fn parse_gts(&self, lr: &LineRef<'_>, scratch: &mut ConvertScratch) {
-        let samples = lr.samples_text();
         // The record's ALT count (0 for `ALT=.`): legal indices are 0..=n_alt.
         let n_alt: u32 = if lr.alts() == b"." {
             0
@@ -775,19 +833,21 @@ impl ConvertJob {
         let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
         scratch.gts.clear();
         scratch.gts.resize(self.n_samples, GtSlots::default());
-        let mut start = 0_usize;
-        for gt in &mut scratch.gts {
-            let begin = start.min(samples.len());
-            let end =
-                memchr::memchr(b'\t', &samples[begin..]).map_or(samples.len(), |rel| begin + rel);
-            let column = &samples[begin..end];
-            start = end + 1;
+        // doc_v28 V28-24: one borrowed-span pass. The GT range is stored
+        // relative to the sample region (what the binary-NEXUS path slices);
+        // it points at the GT subfield, not the whole sample column.
+        let base = lr.samples_start();
+        for (gt, span) in scratch.gts.iter_mut().zip(lr.sample_ranges()) {
+            let column = &lr.line[span.clone()];
+            let begin = span.start - base;
+            let raw_span =
+                gt_index.and_then(|i| reed_io::vcf::format_layout::subfield_span(column, i));
             // A column shorter than the GT position has no GT text; treat it
             // as missing, never as the first subfield.
-            let raw =
-                reed_io::vcf::format_layout::gt_subfield(column, gt_index).unwrap_or(&b"."[..]);
-            gt.raw_start = begin as u32;
-            gt.raw_len = raw.len() as u32;
+            let raw = raw_span
+                .as_ref()
+                .map_or(&b"."[..], |range| &column[range.clone()]);
+            gt.raw = raw_span.map(|range| (begin + range.start) as u32..(begin + range.end) as u32);
             gt.present = !raw.starts_with(b".");
             let mut tokens = 0_usize;
             for token in raw.split(|&b| b == b'/' || b == b'|') {
@@ -1105,17 +1165,65 @@ impl ConvertJob {
         pos0: u64,
         partial: &mut ConvertPartial,
         scratch: &mut ConvertScratch,
-    ) {
-        let Some(plan) = &self.msa else { return };
+    ) -> Result<(), EngineError> {
+        let Some(plan) = &self.msa else {
+            return Ok(());
+        };
         if !plan.allows(lr.chrom(), pos0) {
-            return;
+            return Ok(());
         }
+        // D29-01 rule 5: the record's whole REF span must exist in the
+        // reference and match it (case-insensitive).
+        let reference = lr.reference();
+        let Some(sequence) = plan.reference.get(lr.chrom()) else {
+            return Err(EngineError::job(format!(
+                "MSA record {}:{} names a contig missing from the reference FASTA",
+                String::from_utf8_lossy(lr.chrom()),
+                pos0 + 1
+            )));
+        };
+        let ref_len = u64::try_from(reference.len()).unwrap_or(u64::MAX);
+        let end = pos0.checked_add(ref_len).ok_or_else(|| {
+            EngineError::job(format!(
+                "MSA record {}:{}: REF span overflows the coordinate space",
+                String::from_utf8_lossy(lr.chrom()),
+                pos0 + 1
+            ))
+        })?;
+        let contig_len = sequence.len() as u64;
+        if end > contig_len {
+            return Err(EngineError::job(format!(
+                "MSA record {}:{}: REF span of {ref_len} bp exceeds the reference contig length {contig_len}",
+                String::from_utf8_lossy(lr.chrom()),
+                pos0 + 1
+            )));
+        }
+        if !sequence[pos0 as usize..end as usize].eq_ignore_ascii_case(reference) {
+            return Err(EngineError::job(format!(
+                "MSA record {}:{}: REF {} does not match the reference FASTA",
+                String::from_utf8_lossy(lr.chrom()),
+                pos0 + 1,
+                String::from_utf8_lossy(reference)
+            )));
+        }
+        let ref_len = u32::try_from(ref_len).map_err(|_| {
+            EngineError::job(format!(
+                "MSA record {}:{}: REF span is longer than u32",
+                String::from_utf8_lossy(lr.chrom()),
+                pos0 + 1
+            ))
+        })?;
         // Literal allele texts (vcf2msa's genotype_resolve domain).
         self.build_alleles(lr, false, scratch);
         match self.msa_values(scratch) {
             Ok((vals, width)) => {
                 let out = partial.msa.get_or_insert_with(MsaPartial::default);
-                let site = MsaSite { pos0, vals, width };
+                let site = MsaSite {
+                    pos0,
+                    ref_len,
+                    vals,
+                    width,
+                };
                 match out.runs.last_mut() {
                     Some(run) if run.contig == lr.chrom() => run.sites.push(site),
                     _ => out.runs.push(MsaRun {
@@ -1128,11 +1236,14 @@ impl ConvertJob {
                 self.bump_malformed(partial, scratch, "an MSA genotype with an unknown allele");
             }
         }
+        Ok(())
     }
 
     /// Resolves every kept sample's MSA value for one record (vcf2msa's
-    /// `genotype_resolve` minus the external aligner: values are right-padded
-    /// with `-` to the site's maximum length, B13-6).
+    /// `genotype_resolve` minus the external aligner). The block width is
+    /// `max(len(REF), len(ALTs))`; every value is right-padded with `-` to
+    /// that width, while the reference cursor advances by `len(REF)` only
+    /// (v29 D29-01).
     fn msa_values(&self, scratch: &mut ConvertScratch) -> Result<(Vec<u8>, u32), Malformed> {
         let ConvertScratch {
             gts,
@@ -1160,7 +1271,12 @@ impl ConvertJob {
             let start = *msa_starts.last().expect("invariant: just pushed");
             msa_lens.push(msa_vals.len() as u32 - start);
         }
-        let width = msa_lens.iter().copied().max().unwrap_or(1).max(1);
+        let width = allele_ranges
+            .iter()
+            .map(|&(_, len)| len)
+            .max()
+            .unwrap_or(1)
+            .max(1);
         if width == 1 {
             return Ok((std::mem::take(msa_vals), 1));
         }
@@ -1168,7 +1284,7 @@ impl ConvertJob {
             warned.padded_msa = true;
             tracing::warn!(
                 "reed convert --msa: indel sites are gap-padded deterministically \
-                 (no external aligner; B13-6)"
+                 (no external aligner; B13-6, v29 D29-01)"
             );
         }
         msa_padded.clear();
@@ -1336,7 +1452,7 @@ pub(crate) struct MsaOutput {
 /// V23-11). Only the current contig's sequence is buffered twice (the
 /// `Vec` and the `Arc` it is moved into), and the `Arc` is the only copy
 /// that outlives a record.
-fn read_reference(path: &PathBuf) -> Result<HashMap<Vec<u8>, Arc<[u8]>>, crate::Error> {
+fn read_reference(path: &PathBuf) -> Result<Arc<ReferenceMap>, crate::Error> {
     use std::io::BufRead as _;
     let file = std::fs::File::open(path).map_err(|e| {
         crate::Error::usage(format!("cannot read --reference {}: {e}", path.display()))
@@ -1352,7 +1468,16 @@ fn read_reference(path: &PathBuf) -> Result<HashMap<Vec<u8>, Arc<[u8]>>, crate::
         let line = line.strip_suffix(b"\r").unwrap_or(&line);
         if let Some(header) = line.strip_prefix(b">") {
             if let Some(n) = name.take() {
-                map.insert(n, Arc::from(std::mem::take(&mut seq)));
+                let duplicate = map
+                    .insert(n.clone(), Arc::from(std::mem::take(&mut seq)))
+                    .is_some();
+                if duplicate {
+                    return Err(crate::Error::usage(format!(
+                        "--reference {}: duplicate FASTA record name {}",
+                        path.display(),
+                        String::from_utf8_lossy(&n)
+                    )));
+                }
             }
             let token = header
                 .split(|&b| b == b' ' || b == b'\t')
@@ -1372,18 +1497,25 @@ fn read_reference(path: &PathBuf) -> Result<HashMap<Vec<u8>, Arc<[u8]>>, crate::
         }
     }
     if let Some(n) = name.take() {
-        map.insert(n, Arc::from(seq));
+        let duplicate = map.insert(n.clone(), Arc::from(seq)).is_some();
+        if duplicate {
+            return Err(crate::Error::usage(format!(
+                "--reference {}: duplicate FASTA record name {}",
+                path.display(),
+                String::from_utf8_lossy(&n)
+            )));
+        }
     }
     if map.is_empty() {
         return Err(crate::Error::usage("--reference: no FASTA records"));
     }
-    Ok(map)
+    Ok(Arc::new(map))
 }
 
 /// Builds the MSA plan and output list from the reference and the request
 /// regions (whole contigs when none were given).
 fn build_msa(
-    reference: &HashMap<Vec<u8>, Arc<[u8]>>,
+    reference: &Arc<ReferenceMap>,
     regions: &[MsaRegion],
     flank: u64,
 ) -> Result<(MsaPlan, Vec<MsaOutput>), crate::Error> {
@@ -1438,6 +1570,7 @@ fn build_msa(
     Ok((
         MsaPlan {
             regions: Arc::new(predicates),
+            reference: Arc::clone(reference),
         },
         outputs,
     ))
@@ -1453,6 +1586,7 @@ pub fn run_convert(
     request: &ConvertRequest,
     budget: &ThreadBudget,
 ) -> Result<ConvertReport, crate::Error> {
+    request.validate()?;
     // The hapmap→VCF target reads a hapmap input, which the VCF opener would
     // reject; it is exclusive with every VCF-input target (doc_v13 §1.1
     // rule 6, §7.7).
@@ -1482,6 +1616,15 @@ pub fn run_convert(
             command_line: command_line.clone(),
             no_version: *no_version,
         };
+        // `-o` is written verbatim by this route: refuse it naming the
+        // hapmap input before the writer truncates it (v29 V29-03).
+        if let Some(output) = output {
+            let mut inputs: Vec<(&std::path::Path, &str)> = Vec::new();
+            if let Some(input) = path {
+                inputs.push((input, "input"));
+            }
+            super::plan::validate_outputs(std::slice::from_ref(output), &inputs)?;
+        }
         return crate::convert::hapmap::run_hapmap_to_vcf(path, &out, budget);
     }
     let opened = crate::input::open(path).map_err(EngineError::from)?;
@@ -1499,6 +1642,7 @@ pub fn run_convert_opened(
     request: &ConvertRequest,
     budget: &ThreadBudget,
 ) -> Result<ConvertReport, crate::Error> {
+    request.validate()?;
     let sample_names = opened.facts.sample_names.clone();
     let n_samples = sample_names.len();
     if n_samples == 0 {
@@ -1534,7 +1678,7 @@ pub fn run_convert_opened(
     let mut hmp = false;
     let mut msa: Option<MsaPlan> = None;
     let mut msa_outputs: Vec<MsaOutput> = Vec::new();
-    let mut reference: Option<HashMap<Vec<u8>, Arc<[u8]>>> = None;
+    let mut reference: Option<Arc<ReferenceMap>> = None;
     let mut sfs_request: Option<(crate::stats::request::SfsRequest, bool)> = None;
     let mut nexus_bin = false;
     let mut msa_collapse: Option<String> = None;
@@ -1670,6 +1814,37 @@ pub fn run_convert_opened(
         .map(|(sfs, _)| build_sfs_plan(sfs, &group_names, &group_sizes))
         .transpose()?;
 
+    // The complete output set is known before the first writer opens: refuse
+    // two targets writing the same file, and any output naming the input, the
+    // MSA reference or the populations file (v29 V29-03 / D29-04 A).
+    let mut planned = writers::planned_outputs(
+        request.prefix.as_path(),
+        phylo.as_ref(),
+        count,
+        hmp,
+        &msa_outputs,
+    );
+    if let (Some(_), Some(plan)) = (&sfs_request, &sfs_plan) {
+        planned.extend(crate::stats::writers::sfs::planned_paths(
+            request.prefix.as_path(),
+            &group_names,
+            plan,
+        ));
+    }
+    let mut guarded: Vec<(&std::path::Path, &str)> = Vec::new();
+    if let Some(path) = opened.path() {
+        guarded.push((path, "input"));
+    }
+    for target in &request.targets {
+        if let ConvertTarget::Msa { reference, .. } = target {
+            guarded.push((reference.as_path(), "reference FASTA"));
+        }
+    }
+    if let crate::stats::request::Populations::File(path) = &request.populations {
+        guarded.push((path.as_path(), "populations file"));
+    }
+    super::plan::validate_outputs(&planned, &guarded)?;
+
     let abort = reed_engine::abort::abort_for(budget);
     let contig_len: Arc<HashMap<Vec<u8>, u64>> = Arc::new(
         opened
@@ -1746,6 +1921,7 @@ pub fn run_convert_opened(
     // ---- Render and write (drain) ---------------------------------------
     let mut files: Vec<PathBuf> = Vec::new();
     let prefix = request.prefix.as_path();
+    let polyploid = merged.counters.polyploid;
     let mut counters = None;
     if has_row_targets {
         counters = Some(merged.counters);
@@ -1780,19 +1956,16 @@ pub fn run_convert_opened(
     }
     let mut sfs_report_out = None;
     let mut n_records = merged.counters.total_records;
-    if let (Some((_, int_dtype)), Some(plan), Some(partial)) =
-        (&sfs_request, &sfs_plan, &merged.sfs)
-    {
-        // `SfsPartial` is seeded lazily by the first site that reaches the
-        // projector, so an input where every record is skipped (all
-        // multiallelic, ALT `.` with a GT call, out-of-domain GT, polyploid)
-        // leaves the accumulator unseeded. That is a legitimate empty
-        // spectrum, not a broken invariant: write the zero spectrum like
-        // `stats` does for a 0-site request instead of panicking (the
-        // `--sfs` panic is what made v25's stricter GT rejection abort runs
-        // the old build completed).
+    if let (Some((_, int_dtype)), Some(plan)) = (&sfs_request, &sfs_plan) {
+        // A requested SFS target always writes its outputs (v27-05), even
+        // when no chunk ever reached the sink: a header-only file has no
+        // records, so the spectrum is all zero. `SfsPartial` is seeded lazily
+        // by the first projector site, and an input where every record is
+        // skipped (all multiallelic, ALT `.` with a GT call, out-of-domain
+        // GT, polyploid) leaves it unseeded. Both shapes are the legitimate
+        // zero spectrum `stats` writes for a 0-site request (v29 V29-05).
         let empty;
-        let partial_sfs = match partial.sfs_partial() {
+        let partial_sfs = match merged.sfs.as_ref().and_then(StatsPartial::sfs_partial) {
             Some(sfs) => sfs,
             None => {
                 empty = SfsPartial::new(plan)
@@ -1808,13 +1981,14 @@ pub fn run_convert_opened(
             *int_dtype,
         )?);
         sfs_report_out = Some(report);
-        n_records = partial.records();
+        n_records = merged.sfs.as_ref().map_or(0, StatsPartial::records);
     }
     Ok(ConvertReport {
         files,
         counters,
         sfs: sfs_report_out,
         n_records,
+        polyploid,
         elapsed: report.elapsed,
         metrics: report.metrics,
     })

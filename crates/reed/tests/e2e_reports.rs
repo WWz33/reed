@@ -6,6 +6,8 @@ use std::io::Write;
 use reed::reports::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
+mod support;
+
 fn bgzf(text: &str) -> Vec<u8> {
     let mut deflater =
         reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
@@ -283,5 +285,37 @@ fn summary_depth_falls_back_to_ad() {
     };
     assert_eq!(avg_depth("s0"), "25.0", "{text}");
     assert_eq!(avg_depth("s1"), "48.8", "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v28 V28-06: reports are staged to temporaries and published only
+/// after the BCF tail check. A truncated input leaves the previous `.afreq`
+/// byte-identical.
+#[test]
+fn truncated_bcf_keeps_the_previous_report() {
+    let dir = std::env::temp_dir().join(format!("reed-reports-trunc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let input = support::truncated_bcf(&dir, "truncated.bcf");
+    let prefix = dir.join("out");
+    let mut report = prefix.as_os_str().to_os_string();
+    report.push(".afreq");
+    std::fs::write(&report, b"previous complete report").expect("invariant: old report");
+    let request = StatsReportRequest {
+        freq: true,
+        prefix,
+        ..StatsReportRequest::default()
+    };
+    let budget = ThreadBudget {
+        threads: 1,
+        mem: MemBudget::default_half_memory(),
+    };
+    let err =
+        run_stats(Some(&input), &request, &budget).expect_err("a truncated BCF must be reported");
+    assert!(err.to_string().contains("truncated"), "{err}");
+    assert_eq!(
+        std::fs::read(&report).expect("invariant: old report still exists"),
+        b"previous complete report",
+        "a failed run must not publish a partial report"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -275,6 +275,25 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
                 )
             })?,
     };
+    // The run log is the CLI's own output; the driver plans the target
+    // outputs. Both must stay off the input/reference/population files
+    // (v29 D29-04 A).
+    let log_path = {
+        let mut path = prefix.clone().into_os_string();
+        path.push(".log");
+        PathBuf::from(path)
+    };
+    let mut guarded: Vec<(&Path, &str)> = Vec::new();
+    if let Some(input) = input_file.as_deref() {
+        guarded.push((input, "input"));
+    }
+    if let Some(reference) = args.reference.as_deref() {
+        guarded.push((Path::new(reference), "reference FASTA"));
+    }
+    if let Some(populations) = args.pop.as_deref() {
+        guarded.push((Path::new(populations), "populations file"));
+    }
+    super::common::refuse_sidecar_alias(&log_path, &guarded)?;
     let mut opened = Some(reed::open_regions(input_file.as_deref(), &[])?);
     let facts = opened.as_ref().expect("invariant: just opened").facts();
     let sample_names: Vec<String> = facts.sample_names.clone();
@@ -369,13 +388,14 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
             let _ = writeln!(
                 log,
                 "counters: total_records={} excess_missing={} mnps={} accepted={} \
-                 biallelic_for_bin={} malformed={}",
+                 biallelic_for_bin={} malformed={} polyploid={}",
                 counters.total_records,
                 counters.excess_missing,
                 counters.mnps,
                 counters.accepted,
                 counters.biallelic_for_bin,
-                counters.malformed
+                counters.malformed,
+                counters.polyploid
             );
         }
         let _ = writeln!(
@@ -390,13 +410,9 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
              msa    reference-driven alignment (vcf2msa semantics, no external aligner)\n  \
              sfs    Marth 2004; Gutenkunst 2009\n",
         );
-        let mut path = prefix.clone().into_os_string();
-        path.push(".log");
-        let path = PathBuf::from(path);
-        reed::write_atomic(&path, log)?;
-        files.push(path);
+        reed::write_atomic(&log_path, log)?;
+        files.push(log_path);
     }
-
     if args.verbosity.shows_summary() {
         eprintln!(
             "{} records in {:.1}s -> {}",

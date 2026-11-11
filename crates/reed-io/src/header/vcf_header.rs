@@ -163,6 +163,41 @@ impl VcfHeader {
         self.inner.filters().contains_key(id)
     }
 
+    /// Contig names in **BCF dictionary order** (the space a BCF record's
+    /// `tid` lives in), with gaps filled by the empty name.
+    ///
+    /// This is the order noodles' `StringMaps` (and therefore the native
+    /// encoder) assigns, honouring an explicit `IDX=` and falling back to the
+    /// next free slot exactly as [`crate::bcf::BcfDict`] does. It differs from
+    /// header line order whenever the header pins `IDX=` (doc_v28 V28-28).
+    ///
+    /// A contig whose `IDX=` leaves a hole produces an empty name at that
+    /// position: the dictionary is sparse by definition, and a caller that
+    /// needs a dense table (an index reference list) must reject the holes
+    /// rather than silently shift every later entry.
+    #[must_use]
+    pub fn contig_names_in_dict_order(&self) -> Vec<String> {
+        let mut names: Vec<Option<&str>> = Vec::new();
+        for (name, map) in self.inner.contigs() {
+            let idx = map.idx().unwrap_or_else(|| {
+                // No explicit IDX: htslib takes the next free slot.
+                let mut next = 0;
+                while names.get(next).is_some_and(Option::is_some) {
+                    next += 1;
+                }
+                next
+            });
+            if idx >= names.len() {
+                names.resize(idx + 1, None);
+            }
+            names[idx] = Some(name.as_str());
+        }
+        names
+            .into_iter()
+            .map(|name| name.unwrap_or_default().to_string())
+            .collect()
+    }
+
     /// A copy with the declared samples pruned to `keep` (a full-length
     /// mask, one entry per declared sample, in header order).
     ///
@@ -311,7 +346,7 @@ impl VcfHeader {
     ///
     /// [`IoError`] when the header cannot be encoded.
     pub fn noodles_encoder(&self) -> Result<crate::bcf::BcfEncoder, IoError> {
-        let mut encoder = crate::bcf::BcfEncoder::new()?;
+        let mut encoder = crate::bcf::BcfEncoder::new();
         encoder.write_header(&self.inner)?;
         Ok(encoder)
     }
@@ -428,5 +463,45 @@ mod tests {
         let with_pass = header.with_pass_filter();
         assert!(with_pass.declares_filter("PASS"));
         assert!(with_pass.with_pass_filter().declares_filter("PASS"));
+    }
+
+    /// doc_v28 V28-28: a BCF record's `tid` is the dictionary index, which an
+    /// explicit `IDX=` reorders. For a header that declares `chr2` first but
+    /// pins it to `IDX=1`, the dictionary order is `[chr1, chr2]` — the exact
+    /// inverse of line order. Writers that build their index reference table
+    /// from line order then key every chunk at the wrong reference sequence,
+    /// and htslib returns no records at all for either contig.
+    #[test]
+    fn contig_names_in_dict_order_honours_explicit_idx() {
+        let text = b"##fileformat=VCFv4.3\n\
+                     ##contig=<ID=chr2,length=200,IDX=1>\n\
+                     ##contig=<ID=chr1,length=100,IDX=0>\n\
+                     #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header = VcfHeader::parse(text).expect("invariant: header");
+        assert_eq!(header.contig_names(), ["chr2", "chr1"], "line order");
+        assert_eq!(
+            header.contig_names_in_dict_order(),
+            ["chr1", "chr2"],
+            "dictionary order (record tid space)"
+        );
+    }
+
+    /// Without `IDX=` the two orders coincide, and a gap left by a sparse
+    /// `IDX=` keeps its position instead of shifting later entries down.
+    #[test]
+    fn contig_names_in_dict_order_fills_sparse_and_identity_cases() {
+        let plain = b"##fileformat=VCFv4.3\n\
+                      ##contig=<ID=chr1,length=10>\n\
+                      ##contig=<ID=chr2,length=20>\n\
+                      #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header = VcfHeader::parse(plain).expect("invariant: header");
+        assert_eq!(header.contig_names_in_dict_order(), ["chr1", "chr2"]);
+
+        // IDX=2 leaves slots 0 and 1 empty; the name must stay at index 2.
+        let sparse = b"##fileformat=VCFv4.3\n\
+                       ##contig=<ID=chrX,length=10,IDX=2>\n\
+                       #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+        let header = VcfHeader::parse(sparse).expect("invariant: header");
+        assert_eq!(header.contig_names_in_dict_order(), ["", "", "chrX"]);
     }
 }

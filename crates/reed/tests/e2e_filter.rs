@@ -9,6 +9,8 @@ use reed_filter::FilterError;
 use reed_filter::spec::{FilterSpec, OnMissing};
 use std::fmt::Write as _;
 
+mod support;
+
 /// Compresses `text` into a BGZF stream cut at `block_data`-byte blocks —
 /// boundaries fall mid-line, forcing seams.
 fn bgzf(text: &str, block_data: usize) -> Vec<u8> {
@@ -2197,6 +2199,35 @@ fn info_spelling_reads_the_pre_subset_info_like_bcftools() {
         records(&full).lines().count(),
         1,
         "full-cohort INFO/AC=4 passes AC>2"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v28 V28-06: a BCF truncated at its last record must fail before the
+/// new VCF is published. The previous complete output stays byte-identical.
+#[test]
+fn truncated_bcf_keeps_the_previous_filter_output() {
+    let dir = std::env::temp_dir().join(format!("reed-filter-trunc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let input = support::truncated_bcf(&dir, "truncated.bcf");
+    let output = dir.join("out.vcf.gz");
+    std::fs::write(&output, b"previous complete output").expect("invariant: old output");
+    let opts = FilterOptions {
+        threads: 1,
+        output: Some(output.clone()),
+        write_index: reed::WriteIndex::None,
+        output_compressed: Some(true),
+        no_version: true,
+        no_command: true,
+        ..FilterOptions::default()
+    };
+    let err = run_filter(Some(&input), &FilterSpec::default(), &opts)
+        .expect_err("a truncated BCF must be reported");
+    assert!(err.to_string().contains("truncated"), "{err}");
+    assert_eq!(
+        std::fs::read(&output).expect("invariant: old output still exists"),
+        b"previous complete output",
+        "a failed run must not publish a truncated VCF"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -77,18 +77,35 @@ impl WriteIndex {
     }
 }
 
-/// The index writer, per flavor. CSI is keyed by header contig id; TBI maps
-/// names itself and is limited to 29-bit coordinates.
+/// The index writer, per flavor. CSI is keyed by contig id; TBI maps names
+/// itself and is limited to 29-bit coordinates.
+///
+/// The CSI flavor keeps **one noodles indexer per contig** and assembles them
+/// in reference-id order when writing. noodles' indexer rejects a record whose
+/// reference id is lower than the previous record's; htslib accepts that (it
+/// only requires each chromosome's records to be contiguous), and a BCF whose
+/// header pins `IDX=` produces exactly such a file once its records follow
+/// dictionary order (doc_v28 V28-28). Per-contig indexers keep the serialized
+/// bytes identical while removing the cross-contig ordering rule.
 pub enum Indexer {
-    /// Coordinate-sorted index (contig-id keyed, with the contig count).
-    Csi(
-        Box<
-            noodles::csi::binning_index::indexer::Indexer<
-                noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex,
+    /// Coordinate-sorted index: the header, the reference count, and one
+    /// indexer per contig (created on first record).
+    Csi {
+        /// The tabix-style header carrying the reference-sequence names.
+        header: noodles::csi::binning_index::index::Header,
+        /// Number of reference sequences to serialize.
+        n_ref: usize,
+        /// Per-contig accumulators; `None` = no record on that contig.
+        per_contig: Vec<
+            Option<
+                Box<
+                    noodles::csi::binning_index::indexer::Indexer<
+                        noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex,
+                    >,
+                >,
             >,
         >,
-        usize,
-    ),
+    },
     /// Tabix index (name keyed).
     Tbi(Box<noodles::tabix::index::Indexer>),
 }
@@ -119,14 +136,13 @@ impl Indexer {
                 indexer.set_header(header);
                 Ok(Self::Tbi(Box::new(indexer)))
             }
-            WriteIndex::Csi | WriteIndex::None => {
-                use noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex;
-                let indexer =
-                    noodles::csi::binning_index::indexer::Indexer::<BinnedIndex>::new(14, 6)
-                        .expect("invariant: min_shift/depth are valid")
-                        .set_header(header);
-                Ok(Self::Csi(Box::new(indexer), contig_names.len()))
-            }
+            WriteIndex::Csi | WriteIndex::None => Ok(Self::Csi {
+                header,
+                n_ref: contig_names.len(),
+                per_contig: std::iter::repeat_with(|| None)
+                    .take(contig_names.len())
+                    .collect(),
+            }),
         }
     }
 
@@ -137,8 +153,8 @@ impl Indexer {
     ///
     /// # Errors
     ///
-    /// [`IoError::Io`] for out-of-range positions or an over-long TBI
-    /// coordinate.
+    /// [`IoError::Io`] for out-of-range positions, an undeclared contig id,
+    /// or an over-long TBI coordinate.
     pub fn add(
         &mut self,
         name: &[u8],
@@ -165,17 +181,25 @@ impl Indexer {
             .and_then(|p| CorePosition::try_from(p).ok())
             .ok_or_else(|| IoError::Io(format!("index end {end_pos1} out of range")))?;
         match self {
-            Self::Csi(indexer, _) => indexer
-                .add_record(
-                    Some((
-                        usize::try_from(contig.get()).expect("invariant: contig id fits usize"),
-                        start,
-                        end,
-                        true,
-                    )),
-                    chunk,
-                )
-                .map_err(|e| IoError::Io(format!("index add_record: {e}"))),
+            Self::Csi { per_contig, .. } => {
+                let tid = usize::try_from(contig.get()).expect("invariant: contig id fits usize");
+                let n_ref = per_contig.len();
+                let slot = per_contig.get_mut(tid).ok_or_else(|| {
+                    IoError::Io(format!(
+                        "record references contig id {tid} beyond the index's {n_ref} references"
+                    ))
+                })?;
+                let indexer = slot.get_or_insert_with(|| {
+                    use noodles::csi::binning_index::index::reference_sequence::index::BinnedIndex;
+                    Box::new(
+                        noodles::csi::binning_index::indexer::Indexer::<BinnedIndex>::new(14, 6)
+                            .expect("invariant: min_shift/depth are valid"),
+                    )
+                });
+                indexer
+                    .add_record(Some((0, start, end, true)), chunk)
+                    .map_err(|e| IoError::Io(format!("index add_record: {e}")))
+            }
             Self::Tbi(indexer) => {
                 if end_pos1 > TBI_MAX_POS1 {
                     return Err(IoError::Io(format!(
@@ -207,10 +231,46 @@ impl Indexer {
         // so the bytes are serialized into a buffer through noodles' own
         // `Writer` and published with the shared atomic helper.
         let bytes = match self {
-            Self::Csi(indexer, n_ref) => {
+            Self::Csi {
+                header,
+                n_ref,
+                per_contig,
+            } => {
+                // Assemble the final index in reference-id order: each
+                // contig's indexer built a one-entry index of its own, and
+                // its 0th reference sequence is that contig's bins.
+                let mut reference_sequences = Vec::with_capacity(n_ref);
+                for (tid, slot) in per_contig.into_iter().enumerate() {
+                    let reference_sequence = match slot {
+                        Some(indexer) => {
+                            let mut built = indexer.build(1).reference_sequences().to_vec();
+                            debug_assert_eq!(built.len(), 1, "one indexer per contig");
+                            built.pop().ok_or_else(|| {
+                                IoError::Io(format!(
+                                    "index builder returned no reference sequence for contig {tid}"
+                                ))
+                            })?
+                        }
+                        // No records on this contig: an empty bin map with
+                        // an empty linear index. The container type is
+                        // noodles' (not a direct dependency here).
+                        None => noodles::csi::binning_index::index::ReferenceSequence::new(
+                            <_>::default(),
+                            <_>::default(),
+                            None,
+                        ),
+                    };
+                    reference_sequences.push(reference_sequence);
+                }
+                let index = noodles::csi::Index::builder()
+                    .set_min_shift(14)
+                    .set_depth(6)
+                    .set_header(header)
+                    .set_reference_sequences(reference_sequences)
+                    .build();
                 let mut out = Vec::new();
                 noodles::csi::io::Writer::new(&mut out)
-                    .write_index(&indexer.build(n_ref))
+                    .write_index(&index)
                     .map_err(|e| IoError::Io(e.to_string()))?;
                 out
             }

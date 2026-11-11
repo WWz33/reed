@@ -84,6 +84,9 @@ pub(crate) struct PcaScratch {
     /// (doc_v24 V24-07). The old `gt`/`n_alt` fields were written but never
     /// read.
     values: Vec<f64>,
+    /// The FORMAT descriptor table the native BCF reader reuses across
+    /// records (doc_v28 V28-15/V28-16).
+    formats: reed_io::bcf::FormatTable,
 }
 
 pub(crate) struct PcaJob {
@@ -91,9 +94,93 @@ pub(crate) struct PcaJob {
     pub(crate) keep: Vec<bool>,
     /// Only biallelic records contribute; multiallelic sites are skipped.
     pub(crate) allow_multiallelic: bool,
+    /// The input's BCF dictionary, when the input is BCF and the native
+    /// record hook is active (doc_v28 V28-15).
+    pub(crate) bcf_input: Option<std::sync::Arc<reed_io::bcf::BcfDict>>,
 }
 
 impl PcaJob {
+    /// The native BCF record entry point (doc_v28 V28-15): the framed records
+    /// arrive already inflated, so the GT column is read without rendering
+    /// the whole record to text and re-scanning it.
+    ///
+    /// The dosage rule is exactly the text path's (`PcaJob::dosage`): two
+    /// allele slots, both called, each `0`/`1`; anything else is missing. No
+    /// ploidy policy applies — a haploid or half call is missing data here,
+    /// not a run error — so this reads the raw GT elements instead of the
+    /// policy-applying [`reed_io::bcf::decode_record_gt`].
+    pub(crate) fn run_bcf_records(
+        &self,
+        _chunk: &reed_io::chunk::ChunkBytes,
+        records: &[&[u8]],
+        scratch: &mut PcaScratch,
+    ) -> Result<GenotypeBlock, EngineError> {
+        let Some(dict) = self.bcf_input.as_ref() else {
+            return Err(EngineError::job(
+                "internal: the native BCF path needs the input dictionary",
+            ));
+        };
+        let mut out = GenotypeBlock::default();
+        for bytes in records {
+            let rec = reed_io::bcf::record_ref(bytes).map_err(EngineError::from)?;
+            let header = reed_io::bcf::site_header(&rec).map_err(EngineError::from)?;
+            let n_alt = header.n_allele.saturating_sub(1);
+            if n_alt == 0 || (n_alt > 1 && !self.allow_multiallelic) {
+                continue;
+            }
+            let contig = dict
+                .contig(header.chrom)
+                .ok_or_else(|| EngineError::job("BCF contig index is not in the dictionary"))?;
+            let pos1 = u64::try_from(header.pos0).unwrap_or(0) + 1;
+            let field = reed_io::bcf::gt_field(
+                &rec,
+                &header,
+                reed_io::bcf::format_key(dict, b"GT"),
+                Some(&mut scratch.formats),
+            )
+            .map_err(EngineError::from)?;
+            let Some((ty, count, start)) = field else {
+                // No GT field: every sample is missing, so the site has no
+                // ALT dosage and contributes nothing.
+                continue;
+            };
+            let width = reed_io::bcf::type_width(ty);
+            if count == 0 || width == 0 {
+                // `(NULL, 0)` / a non-integer GT column reads as all-missing.
+                continue;
+            }
+            scratch.values.clear();
+            scratch.values.reserve(self.n_samples);
+            let stride = width * count;
+            for s in 0..header.n_sample {
+                if !self.keep[s] {
+                    continue;
+                }
+                let data = &rec.indiv[start + s * stride..start + (s + 1) * stride];
+                let (slots, n) =
+                    reed_io::bcf::gt_raw_alleles(ty, count, data, header.n_allele, contig, pos1)
+                        .map_err(EngineError::from)?;
+                let dosage = match (slots[0], slots[1], n) {
+                    // Two called indices: the dosage is their sum, exactly the
+                    // `PcaJob::dosage` rule (`a + b`).
+                    (Some(a), Some(b), 2) => f64::from(u32::from(a) + u32::from(b)),
+                    // Missing, half-called, haploid or polyploid: missing data.
+                    _ => f64::NAN,
+                };
+                scratch.values.push(dosage);
+            }
+            if scratch.values.is_empty() {
+                continue;
+            }
+            if !scratch.values.iter().any(|v| !v.is_nan() && *v > 0.0) {
+                continue;
+            }
+            out.n_sites += 1;
+            out.dosages.extend_from_slice(&scratch.values);
+        }
+        Ok(out)
+    }
+
     /// Parses the GT column of one sample into `0/1/2` or `NaN`.
     ///
     /// Returns `Ok(None)` when the genotype is not a diploid biallelic call
@@ -184,21 +271,15 @@ impl ChunkJob for PcaJob {
                 continue;
             }
             let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
-            let samples = lr.samples_text();
-            let mut start = 0usize;
+            // doc_v28 V28-24: one borrowed-span pass over the sample region
+            // instead of a hand-rolled tab cursor.
             scratch.values.clear();
             scratch.values.reserve(self.n_samples);
-            for i in 0..self.n_samples {
-                let begin = start.min(samples.len());
-                let end = samples[begin..]
-                    .iter()
-                    .position(|&c| c == b'\t')
-                    .map_or(samples.len(), |rel| begin + rel);
-                start = end + 1;
+            for (i, span) in lr.sample_ranges().take(self.n_samples).enumerate() {
                 if !self.keep[i] {
                     continue;
                 }
-                let column = &samples[begin..end];
+                let column = &line[span];
                 scratch
                     .values
                     .push(dosage_from_column(line, column, gt_index, n_alt)?);
@@ -258,21 +339,13 @@ impl ChunkJob for PcaJob {
             return Ok(out);
         }
         let gt_index = reed_io::vcf::format_layout::gt_index(lr.format_text());
-        let samples = lr.samples_text();
-        let mut start = 0usize;
         scratch.values.clear();
         scratch.values.reserve(self.n_samples);
-        for i in 0..self.n_samples {
-            let begin = start.min(samples.len());
-            let end = samples[begin..]
-                .iter()
-                .position(|&c| c == b'\t')
-                .map_or(samples.len(), |rel| begin + rel);
-            start = end + 1;
+        for (i, span) in lr.sample_ranges().take(self.n_samples).enumerate() {
             if !self.keep[i] {
                 continue;
             }
-            let column = &samples[begin..end];
+            let column = &line[span];
             scratch
                 .values
                 .push(dosage_from_column(line, column, gt_index, n_alt)?);
@@ -376,7 +449,19 @@ pub(crate) fn collect_via_engine(
     // renders BCF records to text; a bare `PcaJob` has `RecordFraming::Newline`
     // and splits raw BCF bytes on '\n' (documented-input command failure). Wrap
     // unconditionally — on text input `InputJob` is a transparent passthrough.
-    let wrapped = crate::bcf_input::InputJob::new(job, opened, abort, budget);
+    // doc_v28 V28-15: a BCF input goes through the native record hook, so
+    // the GT column is not rendered to text and re-scanned.
+    let wrapped = if job.bcf_input.is_some() {
+        crate::bcf_input::InputJob::with_bcf_records(
+            job,
+            opened,
+            abort,
+            budget,
+            PcaJob::run_bcf_records,
+        )
+    } else {
+        crate::bcf_input::InputJob::new(job, opened, abort, budget)
+    };
     let report = reed_engine::pipeline::run(opened.source_mut(), &wrapped, stash, budget, abort)
         .map_err(crate::Error::from)?;
     wrapped
@@ -400,6 +485,7 @@ mod tests {
             n_samples,
             keep: vec![true; n_samples],
             allow_multiallelic: false,
+            bcf_input: None,
         }
     }
 

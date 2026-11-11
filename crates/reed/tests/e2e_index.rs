@@ -5,8 +5,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use reed::{WriteIndex, run_index};
+use reed::{FilterOptions, WriteIndex, run_filter, run_index};
+use reed_filter::spec::FilterSpec;
 use std::fmt::Write as _;
+
+mod support;
 
 fn bgzf(text: &str) -> Vec<u8> {
     let mut deflater =
@@ -95,6 +98,54 @@ fn csi_index_resolves_queries() {
     assert!(got.iter().all(|l| l.starts_with("chr1\t")));
     let got2 = query(&outcome.path, &vcf, "chr2");
     assert_eq!(got2.len(), 1, "{got2:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v28 V28-02: BCF record tids follow the dictionary (`IDX=`), while a
+/// CSI is keyed by header contig order. `idx.bcf` deliberately disagrees, so
+/// the index must translate through the contig name.
+#[test]
+fn bcf_dictionary_tid_is_mapped_to_the_csi_header_order() {
+    let dir = std::env::temp_dir().join(format!("reed-index-bcf-tid-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("idx.bcf");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/idx.bcf"),
+        &vcf,
+    )
+    .expect("invariant: fixture copy");
+    let index = dir.join("idx.bcf.csi");
+    let outcome =
+        run_index(&vcf, WriteIndex::Csi, Some(&index), 4).expect("invariant: BCF index builds");
+    assert_eq!(outcome.n_records, 4);
+
+    // Read through Reed's region source: a raw binary chunk split works,
+    // unlike the text `noodles::csi::io::Query` helper above.
+    let output = dir.join("chr1.vcf");
+    let opts = FilterOptions {
+        threads: 1,
+        output: Some(output.clone()),
+        write_index: WriteIndex::None,
+        output_compressed: Some(false),
+        no_version: true,
+        no_command: true,
+        regions: vec![reed_io::chunk::region::Region {
+            contig: "chr1".into(),
+            start1: None,
+            end1: None,
+        }],
+        ..FilterOptions::default()
+    };
+    run_filter(Some(&vcf), &FilterSpec::default(), &opts).expect("region read");
+    let text = std::fs::read_to_string(&output).expect("invariant: output VCF");
+    let records: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+    assert_eq!(records.len(), 2, "{records:?}");
+    assert!(
+        records.iter().all(|line| line.starts_with("chr1\t")),
+        "{records:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -330,5 +381,25 @@ fn truncated_bcf_errors_without_panicking() {
         let _ = run_index(&out, WriteIndex::Csi, None, 4)
             .expect_err("a truncated BCF must be reported, not panic");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v28 V28-06: the index is written only after `FrameChain` confirms the
+/// BCF tail. A truncated input must leave the previous index byte-identical.
+#[test]
+fn truncated_bcf_keeps_the_previous_index() {
+    let dir = std::env::temp_dir().join(format!("reed-index-trunc-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let input = support::truncated_bcf(&dir, "truncated.bcf");
+    let index = dir.join("truncated.bcf.csi");
+    std::fs::write(&index, b"previous complete index").expect("invariant: old index");
+    let err = run_index(&input, WriteIndex::Csi, Some(&index), 1)
+        .expect_err("a truncated BCF must be reported");
+    assert!(err.to_string().contains("truncated"), "{err}");
+    assert_eq!(
+        std::fs::read(&index).expect("invariant: old index still exists"),
+        b"previous complete index",
+        "a failed run must not publish a new index"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

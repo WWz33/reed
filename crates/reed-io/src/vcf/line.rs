@@ -107,6 +107,33 @@ impl<'a> LineRef<'a> {
         no_newline.strip_suffix(b"\r").unwrap_or(no_newline)
     }
 
+    /// The original line terminator (`\n`, `\r\n`, or empty).
+    ///
+    /// Editors copy it back so an untouched CRLF record is not silently
+    /// rewritten to LF (doc_v28 V28-11).
+    #[must_use]
+    pub fn terminator(&self) -> &'a [u8] {
+        let without_lf = self.line.strip_suffix(b"\n").unwrap_or(self.line);
+        if without_lf.len() != self.line.len() {
+            if without_lf.ends_with(b"\r") {
+                &self.line[self.line.len() - 2..]
+            } else {
+                &self.line[self.line.len() - 1..]
+            }
+        } else if self.line.ends_with(b"\r") {
+            &self.line[self.line.len() - 1..]
+        } else {
+            &[]
+        }
+    }
+
+    /// The line without its terminator.
+    #[must_use]
+    pub fn body(&self) -> &'a [u8] {
+        let end = self.line.len() - self.terminator().len();
+        &self.line[..end]
+    }
+
     /// CHROM column.
     #[must_use]
     pub fn chrom(&self) -> &'a [u8] {
@@ -283,6 +310,169 @@ impl<'a> LineRef<'a> {
             Ok(())
         }
     }
+
+    /// The byte range of column `index` in the full `line` (0-based column,
+    /// terminator trimmed), or `None` when the line has fewer columns.
+    ///
+    /// Non-validating and allocation-free (doc_v28 V28-24): a caller that
+    /// needs the sample columns *checked* keeps using
+    /// [`Self::sample_spans`]; this is the borrowed-range view for callers
+    /// that only need one column.
+    #[must_use]
+    pub fn field_span(&self, index: usize) -> Option<std::ops::Range<usize>> {
+        let n_tabs = usize::from(self.n_tabs);
+        if index > n_tabs {
+            return None;
+        }
+        let start = if index == 0 {
+            0
+        } else {
+            self.tabs[index - 1] + 1
+        };
+        let end = if index < n_tabs {
+            self.tabs[index]
+        } else {
+            self.line.len()
+        };
+        let field = self.trim_line_end(&self.line[start..end]);
+        Some(start..start + field.len())
+    }
+
+    /// Column `index`'s bytes, or `&[]` when absent — the shape every
+    /// consumer of a fixed VCF column already used (chrom, pos, ref, alt…).
+    #[must_use]
+    pub fn field_at(&self, index: usize) -> &'a [u8] {
+        self.field(index)
+    }
+
+    /// The byte range of sample column `i` in the full `line`, or `None`
+    /// when `i` is past the last column.
+    ///
+    /// A linear scan from the sample region's start: for a whole-row walk use
+    /// [`Self::sample_spans`], which validates the column count as it
+    /// records every boundary in one pass.
+    #[must_use]
+    pub fn sample_span(&self, i: usize) -> Option<std::ops::Range<usize>> {
+        let base = self.samples_start();
+        if self.shape() != Shape::WithSamples {
+            return None;
+        }
+        let samples = self.samples_text();
+        let mut offset = 0_usize;
+        for (position, field) in samples.split(|&b| b == b'\t').enumerate() {
+            let start = base + offset;
+            offset += field.len() + 1;
+            if position == i {
+                return Some(start..start + field.len());
+            }
+        }
+        None
+    }
+
+    /// Sample column `i`'s bytes, or `None` when absent.
+    #[must_use]
+    pub fn sample_at(&self, i: usize) -> Option<&'a [u8]> {
+        self.sample_span(i).map(|span| &self.line[span])
+    }
+
+    /// Every sample column as a range, trailing empty columns included, with
+    /// no column-count check (doc_v28 V28-24).
+    ///
+    /// The editor's `-S` path needs exactly the spans of the first `n`
+    /// columns it knows exist; validating here would reject a record the scan
+    /// stage already accepted.
+    pub fn sample_ranges(&self) -> impl Iterator<Item = std::ops::Range<usize>> + 'a {
+        let base = self.samples_start();
+        let samples = if self.shape() == Shape::WithSamples {
+            self.samples_text()
+        } else {
+            &[][..]
+        };
+        // An empty region has no columns at all, while `split` would
+        // fabricate one empty slice; a non-empty region keeps every column
+        // (a trailing tab is a real, empty final column).
+        let mut offset = 0_usize;
+        let mut done = samples.is_empty();
+        std::iter::from_fn(move || {
+            if done {
+                return None;
+            }
+            let rest = &samples[offset..];
+            let len = memchr::memchr(b'\t', rest).unwrap_or(rest.len());
+            let span = base + offset..base + offset + len;
+            if len == rest.len() {
+                done = true;
+            } else {
+                offset += len + 1;
+            }
+            Some(span)
+        })
+    }
+
+    /// The byte offset where the first `n` sample columns end (one past the
+    /// last of their bytes), or the sample region's end when fewer exist —
+    /// the prefix length an editor keeps when it rewrites only the first `n`
+    /// columns.
+    #[must_use]
+    pub fn sample_prefix_len(&self, n: usize) -> usize {
+        match self.sample_span(n.saturating_sub(1)) {
+            Some(span) if n > 0 => span.end,
+            _ => self.samples_text().len() + self.samples_start(),
+        }
+    }
+
+    /// Validates the sample columns **and** records their boundaries in one
+    /// pass, appending `(start, end)` byte ranges (relative to the full
+    /// `line`) to `out` (doc_v28 V28-17).
+    ///
+    /// `out` is cleared first and always holds exactly the declared samples
+    /// on success. The scanner used to call [`Self::validate_sample_cols`]
+    /// and then walk the same sample region again to find its columns; one
+    /// pass now serves both, so the region is read once per record.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleColumnsError`] exactly as [`Self::validate_sample_cols`];
+    /// `out` is left cleared.
+    pub fn sample_spans(
+        &self,
+        expected: usize,
+        out: &mut Vec<std::ops::Range<usize>>,
+    ) -> Result<(), SampleColumnsError> {
+        out.clear();
+        if self.shape() != Shape::WithSamples {
+            return if expected == 0 {
+                Ok(())
+            } else {
+                Err(SampleColumnsError::TooFew { found: 0, expected })
+            };
+        }
+        let base = self.samples_start();
+        let samples = self.samples_text();
+        // The same split `validate_sample_cols` walks, but recording each
+        // declared column's full-line range while the cursor is there.
+        let mut offset = 0_usize;
+        for (position, field) in samples.split(|&b| b == b'\t').enumerate() {
+            let start = base + offset;
+            offset += field.len() + 1;
+            if position < expected {
+                out.push(start..start + field.len());
+            } else if !field.is_empty() {
+                out.clear();
+                return Err(SampleColumnsError::TooMany {
+                    found: position + 1,
+                    expected,
+                });
+            }
+        }
+        if out.len() < expected {
+            // Read the count before clearing: the diagnostic carries it.
+            let found = out.len();
+            out.clear();
+            return Err(SampleColumnsError::TooFew { found, expected });
+        }
+        Ok(())
+    }
 }
 
 /// A fixed column that must carry text but is empty (doc_v26 V26-06).
@@ -417,6 +607,23 @@ pub fn body_lines(body: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// (no terminator), seam records arrive with one.
 #[must_use]
 pub fn classify_line(line: &[u8], n_samples: usize) -> RecordClass<'_> {
+    classify_line_with_index(line, n_samples, None)
+}
+
+/// [`classify_line`], optionally handing back the INFO ranges the column was
+/// validated with.
+///
+/// The filter head needs the same [`InfoIndex`](super::info::InfoIndex) to
+/// answer its typed rules and expressions; building it here means one INFO
+/// walk per record instead of two (doc_v28 V28-13). The index is left
+/// untouched when the line is not a record, so a caller must only reuse it
+/// for the [`LineRef`] this call returned.
+#[must_use]
+pub fn classify_line_with_index<'a>(
+    line: &'a [u8],
+    n_samples: usize,
+    index: Option<&mut super::info::InfoIndex>,
+) -> RecordClass<'a> {
     if line.iter().all(|&b| b == b'\n' || b == b'\r') {
         return RecordClass::Blank;
     }
@@ -430,7 +637,14 @@ pub fn classify_line(line: &[u8], n_samples: usize) -> RecordClass<'_> {
     if let Some(field) = lr.first_empty_required() {
         return RecordClass::Malformed(MalformedLine::Empty(field));
     }
-    if let Err(err) = crate::vcf::info::validate_info(lr.info_text()) {
+    // One walk serves both the duplicate/tag-count rule (doc_v26 V26-04) and
+    // the ranges the head reuses; `validate_info` and `InfoIndex::build`
+    // share `admit_tag`, so the two entrances cannot disagree.
+    let info_check = match index {
+        Some(index) => index.build(lr.info_text()),
+        None => crate::vcf::info::validate_info(lr.info_text()),
+    };
+    if let Err(err) = info_check {
         return RecordClass::Malformed(MalformedLine::InfoColumn(err));
     }
     if let Err(err) = lr.validate_sample_cols(n_samples) {
@@ -607,6 +821,104 @@ mod tests {
             let want = reference_validation(&fields, expected);
             proptest::prop_assert_eq!(got, want);
         }
+
+        /// doc_v28 V28-17: the one-pass `sample_spans` must reach the same
+        /// verdicts as `validate_sample_cols`, and on success its ranges must
+        /// slice exactly the declared sample columns.
+        #[test]
+        fn sample_spans_matches_the_validator_and_the_columns(
+            fields in proptest::collection::vec(
+                proptest::string::string_regex("[A-Za-z0-9._,:=/|.-]{0,6}")
+                    .expect("invariant: regex"),
+                5..=12,
+            ),
+            expected in 0_usize..=6,
+        ) {
+            let line = format!("{}\n", fields.join("\t"));
+            let Some(line_ref) = LineRef::parse(line.as_bytes()) else {
+                return Ok(());
+            };
+            let mut spans = Vec::new();
+            let got = line_ref.sample_spans(expected, &mut spans);
+            let want = reference_validation(&fields, expected);
+            proptest::prop_assert_eq!(got, want);
+            if got.is_ok() {
+                proptest::prop_assert_eq!(spans.len(), expected);
+                for (i, span) in spans.iter().enumerate() {
+                    let column = std::str::from_utf8(&line.as_bytes()[span.clone()])
+                        .expect("invariant: the generator writes ASCII");
+                    proptest::prop_assert_eq!(column, fields[9 + i].as_str());
+                }
+            } else {
+                proptest::prop_assert!(spans.is_empty(), "a failed validation leaves no table");
+            }
+        }
+    }
+
+    /// doc_v28 V28-24: the unvalidated accessors must agree with
+    /// `sample_spans` and with the fixed-column accessors, including the
+    /// missing-column and trailing-empty cases.
+    #[test]
+    fn borrowed_span_accessors_match_the_validated_walk() {
+        let line = b"chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:9\t0/0:4\n";
+        let lr = LineRef::parse(line).expect("invariant: 8 fixed columns plus samples");
+        // Fixed columns: the whole-line range slices the field's bytes. Only
+        // the nine stored tab offsets are addressable (the struct is `Copy`
+        // and holds exactly those), so column 9 is the last indexable one.
+        for index in 0..10 {
+            let span = lr.field_span(index).expect("invariant: column present");
+            assert_eq!(&line[span], lr.field_at(index), "column {index}");
+        }
+        assert_eq!(lr.field_at(0), b"chr1");
+        assert_eq!(lr.field_at(3), b"A");
+        assert_eq!(lr.field_at(4), b"G");
+        // Column 9 starts after the FORMAT tab, so it is the whole sample
+        // region: the last column is open-ended by construction.
+        assert_eq!(lr.field_at(9), b"0/1:9\t0/0:4");
+        // Past the stored columns both views report absence.
+        assert_eq!(lr.field_span(10), None);
+        assert_eq!(lr.field_at(10), b"");
+
+        // Sample columns: the single-column accessor matches the validated
+        // table for every declared column, and past the end is `None`.
+        let mut spans = Vec::new();
+        lr.sample_spans(2, &mut spans)
+            .expect("invariant: two columns");
+        assert_eq!(spans.len(), 2);
+        for (i, want) in spans.iter().enumerate() {
+            let got = lr.sample_span(i).expect("invariant: declared column");
+            assert_eq!(&got, want, "sample {i}");
+            assert_eq!(lr.sample_at(i), Some(&line[want.clone()]));
+        }
+        assert_eq!(lr.sample_span(2), None);
+        assert_eq!(lr.sample_at(5), None);
+        let all: Vec<_> = lr.sample_ranges().collect();
+        assert_eq!(all.len(), 2, "exactly the two sample columns");
+        assert_eq!(&all[0], &spans[0]);
+        assert_eq!(&all[1], &spans[1]);
+        // The prefix length ends where the nth column ends.
+        assert_eq!(lr.sample_prefix_len(2), spans[1].end);
+        assert_eq!(lr.sample_prefix_len(1), spans[0].end);
+
+        // A trailing empty column past the declared count is a column of the
+        // region but not a sample: the validated walk accepts it, the
+        // iterator sees it, and `.take(n)` drops it — the consumers' rule.
+        let padded = b"chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT:DP\t0/1:9\t0/0:4\t\n";
+        let lr = LineRef::parse(padded).expect("invariant: trailing empty column");
+        let mut spans = Vec::new();
+        lr.sample_spans(2, &mut spans)
+            .expect("invariant: trailing empties are ignored");
+        assert_eq!(spans.len(), 2);
+        let all: Vec<_> = lr.sample_ranges().collect();
+        assert_eq!(all.len(), 3, "two columns plus the empty tail");
+        assert_eq!(all[2].start, all[2].end, "the tail column is empty");
+
+        // A sites-only record has no sample columns at all.
+        let sites =
+            LineRef::parse(b"chr1\t10\t.\tA\tG\t50\tPASS\t.\n").expect("invariant: 8 columns");
+        assert_eq!(sites.sample_span(0), None);
+        assert_eq!(sites.sample_ranges().count(), 0);
+        assert_eq!(sites.sample_prefix_len(3), sites.samples_start());
     }
 
     /// Every terminator-only form is Blank, not malformed: a blank line may

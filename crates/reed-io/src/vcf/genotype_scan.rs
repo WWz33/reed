@@ -10,7 +10,8 @@
 
 use std::ops::Range;
 
-use reed_core::genotype::{GenotypePolicies, GtCode, Ploidy, PolicyCounters};
+use reed_core::genotype::{GenotypePolicies, GtCode, HalfCallPolicy, Ploidy, PolicyCounters};
+use reed_core::sample::KeepMask;
 
 use crate::error::{IoError, Locus};
 use crate::vcf::format_layout::{FormatLayoutCache, IntSpec};
@@ -55,8 +56,15 @@ pub struct GenotypeScanner {
     track_alleles: bool,
     /// Subfield ranges of the current sample column, up to `last_needed`.
     subfields: Vec<Range<usize>>,
+    /// Byte ranges of the current record's sample columns, filled by the
+    /// one-pass validation ([`LineRef::sample_spans`], doc_v28 V28-17).
+    spans: Vec<Range<usize>>,
     /// Raw allele indices of the current sample.
     token: [Option<u16>; 2],
+    /// Samples whose GT/FORMAT values are decoded. Inactive samples are still
+    /// part of the structural column count but decode as missing, so a
+    /// malformed value in an excluded sample cannot reject the record.
+    active_samples: Option<KeepMask>,
 }
 
 impl GenotypeScanner {
@@ -99,8 +107,24 @@ impl GenotypeScanner {
             alleles: Vec::new(),
             track_alleles: false,
             subfields: Vec::new(),
+            spans: Vec::new(),
             token: [None, None],
+            active_samples: None,
         }
+    }
+
+    /// Decodes only the samples active in `active`; inactive columns yield
+    /// [`GtCode::MISSING`], [`INT_MISSING`] and `NaN` without running the GT
+    /// policy. The sample-column count is still validated for every column.
+    ///
+    /// This is the scanner-level contract behind the convert/statistics
+    /// sample view: excluding a sample must be equivalent to removing its
+    /// column before decoding, not merely to ignoring its decoded result.
+    #[must_use]
+    pub fn with_active_samples(mut self, active: KeepMask) -> Self {
+        debug_assert_eq!(active.len(), self.n_samples);
+        self.active_samples = Some(active);
+        self
     }
 
     /// Also records each sample's raw allele indices (`ScanOutput::alleles`).
@@ -147,7 +171,9 @@ impl GenotypeScanner {
             alleles,
             track_alleles,
             subfields,
+            spans,
             token,
+            active_samples,
         } = self;
         codes.clear();
         for column in int_columns.iter_mut() {
@@ -161,8 +187,10 @@ impl GenotypeScanner {
         }
 
         // The structural contract lives in `LineRef` (doc_v22 R22-3): the
-        // scanner does not re-derive it from the tab count.
-        line.validate_sample_cols(*n_samples)
+        // scanner does not re-derive it from the tab count. The same walk
+        // records each column's byte range, so the sample region is read
+        // once per record instead of twice (doc_v28 V28-17).
+        line.sample_spans(*n_samples, spans)
             .map_err(|err| IoError::MalformedRecord {
                 locus: site.locus(),
                 // Name the counts: the old message dropped the
@@ -184,16 +212,29 @@ impl GenotypeScanner {
         let gt_index = layouts.get(layout_ix).gt_index;
         let last_needed = layouts.get(layout_ix).last_needed;
 
-        let samples = line.samples_text();
-        let mut field_start = 0_usize;
-        // `validate_sample_cols` already fixed the structural contract: at
-        // least `n_samples` fields, and every field past them empty
-        // (V22-R16). Decode exactly the declared samples; the trailing tabs
-        // need no second check here.
-        for _ in 0..*n_samples {
-            let field_end = memchr::memchr(b'\t', &samples[field_start..])
-                .map_or(samples.len(), |rel| field_start + rel);
-            let field = &samples[field_start..field_end];
+        // `sample_spans` already fixed the structural contract: exactly
+        // `n_samples` fields, every field past them empty (V22-R16).
+        for (sample, field) in spans.iter().enumerate() {
+            let field = &line.line[field.clone()];
+            // An excluded sample is structurally present but semantically
+            // absent: do not parse its GT or FORMAT values, and emit the
+            // missing sentinels a consumer would see after physical subsetting.
+            if active_samples
+                .as_ref()
+                .is_some_and(|active| !active[sample])
+            {
+                codes.push(GtCode::MISSING);
+                for column in int_columns.iter_mut() {
+                    column.push(INT_MISSING);
+                }
+                for column in float_columns.iter_mut() {
+                    column.push(f32::NAN);
+                }
+                if *track_alleles {
+                    alleles.extend_from_slice(&[None, None]);
+                }
+                continue;
+            }
             split_needed(subfields, field, last_needed);
 
             let code = match gt_index.and_then(|gi| subfields.get(gi)) {
@@ -247,8 +288,6 @@ impl GenotypeScanner {
                         .map_or(f32::NAN, |range| parse_float(&field[range.clone()])),
                 );
             }
-
-            field_start = field_end + 1;
         }
 
         Ok(ScanOutput {
@@ -264,23 +303,9 @@ impl GenotypeScanner {
 /// Splits the subfields a record's plan needs: ranges 0..`needed`, then the
 /// rest of the field is skipped (trailing subfields are never scanned).
 fn split_needed(ranges: &mut Vec<Range<usize>>, field: &[u8], needed: usize) {
-    ranges.clear();
-    if needed == 0 {
-        return;
-    }
-    // One pass over the (short) field instead of one `memchr` per subfield
-    // (doc_v3 03 O6, level 1: the scan is call-bound on ~30-byte fields).
-    let mut from = 0;
-    for (i, &b) in field.iter().enumerate() {
-        if b == b':' {
-            ranges.push(from..i);
-            from = i + 1;
-            if ranges.len() == needed {
-                return;
-            }
-        }
-    }
-    ranges.push(from..field.len());
+    // doc_v28 V28-24: the colon walk is shared with the encoder and the
+    // editors through `format_layout`.
+    crate::vcf::format_layout::subfield_spans(field, needed, ranges);
 }
 
 /// A cheap source of a record's error locus: the text scanner passes the
@@ -364,6 +389,30 @@ fn decode_gt<S: LocusSource>(
             (s1 != reed_core::genotype::STATE_MISSING)
                 .then(|| u16::from(s1 == reed_core::genotype::STATE_ALT)),
         ];
+        // Half calls are the one policy this 3-byte form can trigger. The
+        // old construction skipped `from_alleles`, so `TreatAsMissing`
+        // returned a called REF allele and counted nothing (V28-09).
+        if policies.half_call == HalfCallPolicy::TreatAsMissing
+            && token[0].is_none() != token[1].is_none()
+        {
+            return GtCode::from_alleles(
+                [token[0], token[1]],
+                Ploidy::Diploid,
+                phased,
+                policies,
+                counters,
+            )
+            .map_err(|err| match err {
+                reed_core::CoreError::PolicyRejected(reason) => IoError::PolicyRejected {
+                    locus: site.error_locus(),
+                    reason,
+                },
+                other => IoError::MalformedRecord {
+                    locus: site.error_locus(),
+                    reason: reason_str(&other).to_string(),
+                },
+            });
+        }
         return Ok(GtCode::from_states(s0, s1, phased, false));
     }
     if gt == b"." {
@@ -599,6 +648,25 @@ mod tests {
 
     fn line(text: &[u8]) -> LineRef<'_> {
         LineRef::parse(text).expect("invariant: test line has 10 columns")
+    }
+
+    /// doc_v28 V28-09: the 3-byte fast path must still execute the declared
+    /// half-call policy.
+    #[test]
+    fn fast_half_calls_respect_treat_as_missing() {
+        let locus = ("Chr01".as_bytes(), 1_u64);
+        let policies = GenotypePolicies {
+            half_call: HalfCallPolicy::TreatAsMissing,
+            ..permissive()
+        };
+        for gt in [b"0/.".as_slice(), b"./1".as_slice()] {
+            let mut counters = PolicyCounters::default();
+            let mut token = [None; 2];
+            let code = decode_gt_text(gt, &locus, u32::MAX, &policies, &mut counters, &mut token)
+                .expect("invariant: half call is accepted");
+            assert!(code.is_fully_missing(), "{gt:?} => {code:?}");
+            assert_eq!(counters.n_half_call_as_missing, 1, "{gt:?}");
+        }
     }
 
     fn permissive() -> GenotypePolicies {

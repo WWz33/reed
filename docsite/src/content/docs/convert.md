@@ -222,7 +222,11 @@ AAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…
 AAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…
 ```
 
-Per-site sample values: single-character alleles merge into the IUPAC code; indel alleles keep their literal text, and when all alleles are indels the shortest wins (ties by lexicographic order); a fully missing genotype writes the reference base. Each sample's value is right-padded with `-` to the site's maximum length; no external aligner is called. The input must be sorted by contig; several records at one position take the last one.
+Per-site sample values: single-character alleles merge into the IUPAC code; indel alleles keep their literal text, and when all alleles are indels the shortest wins (ties by lexicographic order); a fully missing genotype writes the reference base. Each sample's value is right-padded with `-` to the site's block width.
+
+The alignment is anchored to reference coordinates (v29 D29-01): a record at `POS` with `len(REF) = L` consumes reference columns `[POS, POS+L)`, and the next site starts after `POS+L`. The block width is `max(len(REF), len(ALTs))`; an insertion (`len(ALT) > len(REF)`) adds `len(ALT) - len(REF)` gap columns without advancing the reference cursor. Every sample value is right-padded with `-` to that width. Within a region the output width is therefore the region length plus the insertion columns, and a SNP after a long REF keeps its reference coordinate.
+
+The whole REF span must match the reference FASTA case-insensitively and stay inside the contig; a mismatch, an out-of-bounds span, or a repeated FASTA contig name is an error. The input must be sorted by contig; an exact duplicate (same POS and same REF span) takes the last record, while any other overlapping REF span is refused as unsupported. Contig names that are not safe filename components (for example `/`) are percent-encoded in the output name, so they cannot create directories. No external aligner is called.
 
 ## Projected SFS (`--sfs`)
 

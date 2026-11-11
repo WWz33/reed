@@ -30,7 +30,7 @@ use reed_filter::funnel::{FilterReport, FunnelPartial};
 use reed_filter::plan::{ExecStrategy, HeadRule};
 use reed_filter::spec::{FilterSpec, SampleList};
 use reed_io::write::index::Indexer;
-use reed_io::write::ordered_output::OrderedOutput;
+use reed_io::write::ordered_output::{OrderedOutput, PendingOrderedOutput};
 
 mod emit;
 mod mid_stage;
@@ -162,6 +162,7 @@ enum OutputTarget {
     Stdout(Box<dyn Write + Send>),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn output_sink(
     target: OutputTarget,
     compressed: bool,
@@ -170,6 +171,7 @@ fn output_sink(
     index_path: Option<PathBuf>,
     contig_names: Arc<[Vec<u8>]>,
     slot: Arc<Mutex<Option<FunnelPartial>>>,
+    pending: Arc<Mutex<Option<PendingOrderedOutput>>>,
 ) -> OutputSink {
     let (writer, atomic) = match target {
         OutputTarget::File(w, a) => (w, Some(a)),
@@ -178,14 +180,29 @@ fn output_sink(
     let out = OrderedOutput::new(writer, compressed, level, indexer, index_path, contig_names);
     OutputSink {
         // doc_v26 V26-08: with a file output the sink owns the atomic
-        // temporary; `finish` publishes it after the data is complete.
+        // temporary; `finish` flushes it and the driver publishes it only
+        // after the input-completeness check (doc_v28 V28-06).
         out: match atomic {
             Some(atomic) => out.adopting(atomic),
             None => out,
         },
         funnel: FunnelPartial::default(),
         slot,
+        pending,
     }
+}
+
+fn commit_pending(slot: &Arc<Mutex<Option<PendingOrderedOutput>>>) -> Result<(), FilterError> {
+    let pending = slot
+        .lock()
+        .expect("invariant: pending-output slot not poisoned")
+        .take()
+        .ok_or_else(|| {
+            FilterError::Io(std::io::Error::other(
+                "filter sink finished without a pending output",
+            ))
+        })?;
+    pending.commit().map_err(FilterError::from)
 }
 
 /// The per-run inputs every pass1 stream shares (the strategy supplies the
@@ -722,15 +739,33 @@ pub fn run_filter(
             format!("genotype.mask.{field}")
         })
         .collect();
-    let contig_names: Arc<[Vec<u8>]> = Arc::from(
-        facts
-            .header
-            .contig_names()
-            .iter()
-            .map(|name| name.as_bytes().to_vec())
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
+    // The id space every record key and the index entry live in. It is the
+    // *written* header's contig space: for text output that is header line
+    // order (the text carries no `IDX`), but a BCF record's tid is the
+    // dictionary index, which the native encoder assigns honouring an
+    // explicit `IDX=`. Building the table in line order while the records
+    // carry dictionary tids made every index chunk point at the wrong
+    // reference sequence — bcftools returned no records for either contig
+    // (doc_v28 V28-28).
+    let contig_names: Arc<[Vec<u8>]> = if bcf_level.is_some() {
+        Arc::from(
+            out_header
+                .contig_names_in_dict_order()
+                .into_iter()
+                .map(String::into_bytes)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        )
+    } else {
+        Arc::from(
+            out_header
+                .contig_names()
+                .iter()
+                .map(|name| name.as_bytes().to_vec())
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        )
+    };
     let indexer = if gz_out && opts.write_index.is_some() {
         Some(Indexer::new(opts.write_index, &contig_names).map_err(io_err)?)
     } else {
@@ -741,6 +776,10 @@ pub fn run_filter(
         .as_ref()
         .filter(|_| gz_out && opts.write_index.is_some())
         .map(|p| opts.write_index.path_for(p));
+
+    // The data file/index are prepared by the sink but published only after
+    // `job.finish` proves the input is complete (doc_v28 V28-06).
+    let pending_output: Arc<Mutex<Option<PendingOrderedOutput>>> = Arc::new(Mutex::new(None));
 
     // The report funnel: the FilterJob paths collect it in the sink slot;
     // the sketch path assembled it during the mid stage.
@@ -764,6 +803,7 @@ pub fn run_filter(
             index_path,
             Arc::clone(&contig_names),
             Arc::clone(&slot),
+            Arc::clone(&pending_output),
         );
         // Header first (as BGZF block(s) on the compressed path).
         sink.out.write_header(&header_bytes).map_err(io_err)?;
@@ -782,6 +822,7 @@ pub fn run_filter(
             &mut timing_phases,
             &mut timing_engine,
         )?;
+        commit_pending(&pending_output)?;
         sketch_funnel
     } else {
         let bcf = bcf_level.map(|_| Arc::new(out_header.clone()));
@@ -820,6 +861,7 @@ pub fn run_filter(
             index_path,
             Arc::clone(&contig_names),
             Arc::clone(&slot),
+            Arc::clone(&pending_output),
         );
         sink.out.write_header(&header_bytes).map_err(io_err)?;
         let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
@@ -849,6 +891,7 @@ pub fn run_filter(
             &mut timing_phases,
             &mut timing_engine,
         )?;
+        commit_pending(&pending_output)?;
         slot.lock()
             .expect("invariant: funnel slot not poisoned")
             .take()
@@ -1037,6 +1080,7 @@ struct OutputSink {
     out: OrderedOutput,
     funnel: FunnelPartial,
     slot: Arc<Mutex<Option<FunnelPartial>>>,
+    pending: Arc<Mutex<Option<PendingOrderedOutput>>>,
 }
 
 impl OrderedSink<FilterPartial> for OutputSink {
@@ -1054,8 +1098,12 @@ impl OrderedSink<FilterPartial> for OutputSink {
             out,
             mut funnel,
             slot,
+            pending,
         } = self;
-        out.finish().map_err(job_err)?;
+        let prepared = out.finish_pending().map_err(job_err)?;
+        *pending
+            .lock()
+            .expect("invariant: pending-output slot not poisoned") = Some(prepared);
         let n_output = funnel.n_output;
         *slot.lock().expect("invariant: funnel slot not poisoned") =
             Some(std::mem::take(&mut funnel));

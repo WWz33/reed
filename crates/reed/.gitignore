@@ -1,1 +1,4 @@
-tests/
+# The test tree is mostly local fixtures; tracked tests are added explicitly.
+tests/*
+# Shared integration-test helpers are source, not generated fixtures.
+!tests/support/

@@ -13,7 +13,7 @@
 // Casts in this file are bounded by construction: The %g exponent is bounded by the f64 range.
 #![allow(clippy::cast_possible_truncation)]
 
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +28,7 @@ use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::line::LineRef;
 use reed_io::vcf::site::SiteView;
+use reed_io::write::atomic::AtomicWriter;
 use reed_stats::IndividualFAcc;
 use reed_stats::summary::report::QcReportAcc;
 
@@ -702,15 +703,11 @@ impl ReportJob {
     /// keys are read once per record, so a tag costs one split per sample.
     fn push_hist(&self, lr: &LineRef<'_>, acc: &mut crate::stats::writers::histogram::HistAcc) {
         // FORMAT key offsets, computed lazily (only when a FMT metric asks).
-        let mut fmt_keys: Option<Vec<Vec<u8>>> = None;
-        let key_index = |keys: &mut Option<Vec<Vec<u8>>>, tag: &[u8]| -> Option<usize> {
-            let list = keys.get_or_insert_with(|| {
-                lr.format_text()
-                    .split(|&b| b == b':')
-                    .map(<[u8]>::to_vec)
-                    .collect()
-            });
-            list.iter().position(|k| k.as_slice() == tag)
+        let mut fmt_keys: Option<()> = None;
+        // doc_v28 V28-24: the FORMAT key position comes from the shared
+        // colon walk (itself the `key_index` primitive).
+        let key_index = |_keys: &mut Option<()>, tag: &[u8]| -> Option<usize> {
+            reed_io::vcf::format_layout::key_index(lr.format_text(), tag)
         };
         for (idx, metric) in self.hist.iter().enumerate() {
             let tag_bytes: &[u8];
@@ -770,12 +767,9 @@ impl ReportJob {
             // The scanner accepts trailing empty columns (doc_v22 V22-5);
             // they are not samples, so never count them as missing
             // observations (V22-R4).
-            for sample in lr
-                .samples_text()
-                .split(|&b| b == b'\t')
-                .take(self.n_samples)
-            {
-                let token = sample.split(|&b| b == b':').nth(key).unwrap_or(b".");
+            for span in lr.sample_ranges().take(self.n_samples) {
+                let sample = &lr.line[span];
+                let token = reed_io::vcf::format_layout::subfield(sample, key).unwrap_or(b".");
                 // A Number=A/G/R subfield carries several comma-separated
                 // values; each is one observation (the INFO path's rule).
                 for value in token.split(|&b| b == b',') {
@@ -1012,18 +1006,20 @@ struct ReportSink {
     hist: crate::stats::writers::histogram::HistAcc,
     /// The rendered histograms, filled at `finish`.
     hist_out: Vec<crate::stats::writers::histogram::HistOut>,
+    /// Prepared report files, published by the driver only after the input
+    /// completeness check passes (doc_v28 V28-06).
+    pending: Arc<Mutex<Vec<(PathBuf, reed_io::write::atomic::AtomicFile)>>>,
     out: Arc<Mutex<Option<StatsOutcome>>>,
 }
 
 impl ReportSink {
     /// Opens a report file atomically (doc_v26 V26-08): the returned sink
-    /// writes to a sibling temporary and publishes on [`AtomicSink::commit`].
-    /// Callers that finish the sink immediately use
-    /// [`AtomicSink::write_all_and_commit`].
+    /// writes to a sibling temporary and publishes on
+    /// [`AtomicWriter::commit`].
     fn open(prefix: &Path, suffix: &str) -> Result<AtomicSink, EngineError> {
         let mut path = prefix.as_os_str().to_os_string();
         path.push(suffix);
-        AtomicSink::create(&PathBuf::from(&path)).map_err(EngineError::Io)
+        AtomicWriter::create(&PathBuf::from(&path)).map_err(EngineError::Io)
     }
 }
 
@@ -1031,56 +1027,27 @@ impl ReportSink {
 ///
 /// The report sink opens its files *before* the run and streams rows into
 /// them, so a plain `File::create` truncated the user's previous report at
-/// start-up and left it truncated if the run failed. The temporary is
-/// published at `finish` (or by [`AtomicSink::write_all_and_commit`] for the
-/// files rendered at the end).
-pub(super) struct AtomicSink {
-    writer: BufWriter<std::fs::File>,
-    atomic: reed_io::write::atomic::AtomicFile,
-}
+/// start-up and left it truncated if the run failed. reed-io's
+/// [`AtomicWriter`] owns the create→flush→close sequence (doc_v28 V28-23);
+/// `prepare_commit` returns the unpublished temporary, which the driver
+/// publishes only after `job.finish` (doc_v28 V28-06).
+pub(super) type AtomicSink = AtomicWriter;
 
-impl std::io::Write for AtomicSink {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.writer.write(buf)
-    }
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.writer.write_all(buf)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
-    }
-}
-
-impl AtomicSink {
-    /// Creates the temporary for `path` and a buffered writer over it.
-    pub(super) fn create(path: &Path) -> std::io::Result<Self> {
-        let (atomic, file) = reed_io::write::atomic::AtomicFile::create(path)?;
-        Ok(Self {
-            writer: BufWriter::new(file),
-            atomic,
-        })
-    }
-
-    /// Writes bytes, unbuffered by the caller (the writer buffers).
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        self.writer.write_all(bytes)
-    }
-
-    /// Flushes, closes the handle and publishes the file.
-    ///
-    /// The writer must be closed before the rename: the temporary's data is
-    /// only complete once the `BufWriter` has flushed, and `commit` reopens
-    /// the path to `fsync` it.
-    fn commit(mut self) -> std::io::Result<()> {
-        self.writer.flush()?;
-        // Drop the writer (closing the handle) before the sync+rename.
-        let temp = self.atomic.temp_path().to_path_buf();
-        drop(std::mem::replace(
-            &mut self.writer,
-            BufWriter::new(std::fs::File::open(&temp)?),
-        ));
-        self.atomic.commit()
-    }
+/// Closes one report file into its unpublished temporary. The driver
+/// publishes the collected owners after `job.finish` (doc_v28 V28-06).
+fn stage_report_file(
+    pending: &Mutex<Vec<(PathBuf, reed_io::write::atomic::AtomicFile)>>,
+    files: &mut Vec<PathBuf>,
+    sink: AtomicSink,
+    path: PathBuf,
+) -> Result<(), EngineError> {
+    let atomic = sink.finish().map_err(EngineError::Io)?;
+    pending
+        .lock()
+        .expect("invariant: pending-report slot not poisoned")
+        .push((path.clone(), atomic));
+    files.push(path);
+    Ok(())
 }
 
 impl OrderedSink<ReportPartial> for ReportSink {
@@ -1129,35 +1096,28 @@ impl OrderedSink<ReportPartial> for ReportSink {
             p.push(suffix);
             PathBuf::from(p)
         };
-        // doc_v26 V26-08: commit publishes the temporary; an error before
-        // this point leaves every previous report file untouched.
+        // doc_v28 V28-06: close every file into its temporary, then let the
+        // driver publish after `job.finish` proves the input is complete.
         if let Some(w) = self.afreq.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".afreq"));
+            stage_report_file(&self.pending, &mut files, w, path(".afreq"))?;
         }
         if let Some(w) = self.singletons.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".singletons"));
+            stage_report_file(&self.pending, &mut files, w, path(".singletons"))?;
         }
         if let Some(w) = self.hardy.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".hardy"));
+            stage_report_file(&self.pending, &mut files, w, path(".hardy"))?;
         }
         if let Some(w) = self.vmiss.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".vmiss"));
+            stage_report_file(&self.pending, &mut files, w, path(".vmiss"))?;
         }
         if let Some(w) = self.ldepth.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".ldepth.mean"));
+            stage_report_file(&self.pending, &mut files, w, path(".ldepth.mean"))?;
         }
         if let Some(w) = self.freq_pop.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".afreq.pop"));
+            stage_report_file(&self.pending, &mut files, w, path(".afreq.pop"))?;
         }
         if let Some(w) = self.vmiss_pop.take() {
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".vmiss.pop"));
+            stage_report_file(&self.pending, &mut files, w, path(".vmiss.pop"))?;
         }
         if self.request.depth {
             let mut w = ReportSink::open(&self.request.prefix, ".idepth")?;
@@ -1171,8 +1131,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 };
                 writeln!(w, "{name}\t{n}\t{mean}").map_err(EngineError::Io)?;
             }
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".idepth"));
+            stage_report_file(&self.pending, &mut files, w, path(".idepth"))?;
         }
         if self.request.het {
             let f = self.individual.f_values();
@@ -1190,8 +1149,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 writeln!(w, "{name}\t{o_hom}\t{}\t{obs}\t{f_cell}", g6(e_hom))
                     .map_err(EngineError::Io)?;
             }
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".het"));
+            stage_report_file(&self.pending, &mut files, w, path(".het"))?;
         }
         if self.request.missing {
             // plink2's .smiss OBS_CT is the number of variants (the sample's
@@ -1208,8 +1166,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 let name = self.sample_names.get(i).map_or("?", String::as_str);
                 writeln!(w, "{name}\t{missing}\t{obs}\t{f_miss}").map_err(EngineError::Io)?;
             }
-            w.commit().map_err(EngineError::Io)?;
-            files.push(path(".smiss"));
+            stage_report_file(&self.pending, &mut files, w, path(".smiss"))?;
         }
         // `--hist`: one `PREFIX.<m>.hist` per metric (doc_v14 02 §3.2).
         if self.request.hist.is_empty() {
@@ -1225,8 +1182,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
                 let mut w = ReportSink::open(&self.request.prefix, &suffix)?;
                 let text = crate::stats::writers::histogram::render_hist(out);
                 w.write_all(text.as_bytes()).map_err(EngineError::Io)?;
-                w.commit().map_err(EngineError::Io)?;
-                files.push(path(&suffix));
+                stage_report_file(&self.pending, &mut files, w, path(&suffix))?;
             }
             // The library caller gets the same histograms the files carry
             // (`StatsOutcome::hist`); it used to be left empty.
@@ -1485,6 +1441,8 @@ pub fn run_stats_opened(
     let crate::input::OpenedInput {
         mut source, facts, ..
     } = opened;
+    let pending_reports: Arc<Mutex<Vec<(PathBuf, reed_io::write::atomic::AtomicFile)>>> =
+        Arc::new(Mutex::new(Vec::new()));
     let sink = ReportSink {
         request: request.clone(),
         plan,
@@ -1510,11 +1468,21 @@ pub fn run_stats_opened(
         }),
         hist: crate::stats::writers::histogram::HistAcc::new(&request.hist),
         hist_out: Vec::new(),
+        pending: Arc::clone(&pending_reports),
         out: Arc::new(Mutex::new(None)),
     };
     let out = Arc::clone(&sink.out);
     let report = run(source.as_mut(), &job, sink, budget, &abort)?;
     job.finish(report.n_chunks, true)?;
+    // Publish only after the BCF tail check: a failed run leaves every
+    // previous report file byte-identical (doc_v28 V28-06).
+    for (_path, atomic) in pending_reports
+        .lock()
+        .expect("invariant: pending-report slot not poisoned")
+        .drain(..)
+    {
+        atomic.commit().map_err(EngineError::Io)?;
+    }
     let mut outcome = out
         .lock()
         .expect("invariant: reports slot not poisoned")

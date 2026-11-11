@@ -484,6 +484,159 @@ fn v25_01_convert_sfs_skips_the_same_out_of_domain_record_as_the_row_targets() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// v29 V29-02 / D29-03: `-s` is a physical pre-subset for `--sfs`. The
+/// excluded sample's out-of-domain, polyploid and over-long GT tokens must
+/// neither enter the spectrum nor veto the record for the retained sample.
+#[test]
+fn v29_02_sfs_sample_subset_ignores_the_excluded_genotypes() {
+    let dir = fixture_dir("v29-sfs-subset");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    // s1 carries one malformed shape per record; s0 stays projectable.
+    let full = format!(
+        "{header}chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/9\n\
+         chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0/1\n\
+         chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0000000/0\n"
+    );
+    let subset_header = header.replace("FORMAT\ts0\ts1\n", "FORMAT\ts0\n");
+    let subsetted = format!(
+        "{subset_header}chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
+         chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\n\
+         chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\n"
+    );
+    let full = write_fixture(&dir, "full.vcf", &full);
+    let subsetted = write_fixture(&dir, "subsetted.vcf", &subsetted);
+    let run = |input: &Path, tag: &str, keep: Option<Vec<bool>>| -> String {
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Sfs {
+                request: SfsRequest {
+                    projections: vec![2],
+                    folded: false,
+                },
+                int_dtype: false,
+            }],
+            prefix: dir.join(tag),
+            keep_samples: keep,
+            ..ConvertRequest::default()
+        };
+        run_convert(Some(input), &request, &budget()).expect("convert --sfs");
+        read(&dir.join(format!("{tag}_sfs/dadi/all-2.sfs")))
+    };
+    let want = run(&subsetted, "subsetted", None);
+    let got = run(&full, "subset", Some(vec![true, false]));
+    assert_eq!(
+        got, want,
+        "an excluded sample's malformed GT must not change the SFS"
+    );
+    let counts: Vec<&str> = got
+        .lines()
+        .nth(1)
+        .expect("the spectrum's count line")
+        .split_whitespace()
+        .collect();
+    assert_eq!(counts, ["1", "1", "1"], "one site per derived-copy count");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-05 / D29-05: a requested `--sfs` always writes its outputs. A
+/// header-only input produces no chunk at all, so the old drain never saw an
+/// `SfsPartial` and wrote nothing; the requested target must yield the same
+/// zero spectrum for plain, BGZF and BCF inputs.
+#[test]
+fn v29_05_header_only_sfs_writes_the_zero_spectrum() {
+    let dir = fixture_dir("v29-sfs-header-only");
+    let header = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let plain = write_fixture(&dir, "plain.vcf", header);
+    let bgzf = dir.join("empty.vcf.gz");
+    write_bgzf(&bgzf, header.as_bytes());
+    let bcf = dir.join("empty.bcf");
+    write_header_only_bcf(&bcf, header);
+    for (tag, input) in [("plain", &plain), ("bgzf", &bgzf), ("bcf", &bcf)] {
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Sfs {
+                request: SfsRequest {
+                    projections: vec![4],
+                    folded: false,
+                },
+                int_dtype: false,
+            }],
+            prefix: dir.join(tag),
+            ..ConvertRequest::default()
+        };
+        let report = run_convert(Some(input), &request, &budget())
+            .expect("a requested SFS target must write its outputs");
+        assert_eq!(report.n_records, 0, "{tag}: no record was read");
+        assert_eq!(report.files.len(), 2, "{tag}: dadi + fastsimcoal2");
+        let spectrum = read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs")));
+        let counts: Vec<&str> = spectrum
+            .lines()
+            .nth(1)
+            .expect("the spectrum's count line")
+            .split_whitespace()
+            .collect();
+        assert_eq!(counts.len(), 5, "{tag}: one bin per projection state");
+        assert!(
+            counts.iter().all(|c| *c == "0"),
+            "{tag}: every bin must be zero, got {spectrum}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-06: `merge_sfs` must carry `n_records` across chunks. The old
+/// merge kept only the first SFS partial's count, so a multi-chunk run
+/// under-reported records (the spectrum itself merged correctly).
+#[test]
+fn v29_06_multi_chunk_sfs_counts_every_record() {
+    let dir = fixture_dir("v29-sfs-chunks");
+    let input = dir.join("multi.vcf.gz");
+    std::fs::write(&input, seam_blank_vcf(None)).expect("invariant: fixture write");
+    let text = inflate_bgzf(&input);
+    let expected = text
+        .split(|&b| b == b'\n')
+        .filter(|line| line.starts_with(b"chr1\t"))
+        .count() as u64;
+    assert!(expected > 0, "the fixture must carry records");
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Sfs {
+            request: SfsRequest {
+                projections: vec![4],
+                folded: false,
+            },
+            int_dtype: false,
+        }],
+        prefix: dir.join("multi"),
+        ..ConvertRequest::default()
+    };
+    let report = run_convert(Some(&input), &request, &budget()).expect("convert --sfs");
+    assert_eq!(
+        report.n_records, expected,
+        "every SFS-scanned record must be counted once"
+    );
+    let spectrum = read(&dir.join("multi_sfs/dadi/all-4.sfs"));
+    let counts: Vec<&str> = spectrum
+        .lines()
+        .nth(1)
+        .expect("the spectrum's count line")
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        counts[1],
+        expected.to_string(),
+        "all sites carry one derived copy (0/1 0/0)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// doc_v25 review: an input where the SFS projector never sees a site (every
 /// record skipped by the row targets: out-of-domain GT, ALT `.`, polyploid,
 /// or all-multiallelic) used to abort with the "spectra partial" invariant.
@@ -571,6 +724,34 @@ fn v25_02_gt_position_follows_the_format_order() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v29 V29-01: binary NEXUS must resolve the GT subfield, not the whole
+/// sample column. `DP:GT` used to slice `"30:"` / `"40:"` and emit `??`.
+#[test]
+fn v29_01_binary_nexus_uses_the_gt_subfield_span() {
+    let dir = fixture_dir("v29-gtpos-binary");
+    let text = "\
+##fileformat=VCFv4.3
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"d\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tDP:GT\t30:0/0\t40:1/1\t50:.
+";
+    let vcf = write_fixture(&dir, "in.vcf", text);
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::NexusBin],
+        prefix: dir.join("out"),
+        min_samples_locus: Some(1),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let nexus = read(&dir.join("out.bin.nexus"));
+    assert!(nexus.contains("s0   0"), "{nexus}");
+    assert!(nexus.contains("s1   2"), "{nexus}");
+    assert!(nexus.contains("s2   ?"), "{nexus}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The hapmap layout: 11 fixed columns, declared REF/ALT alleles, IUPAC
 /// cells restricted to TASSEL's diploid alphabet.
 #[test]
@@ -623,6 +804,358 @@ chr1\t20\tchr1:20\tC\tT\t.\tPASS\t.\tGT\t0/1\t0/0\t1/1\t1/1
 chr1\t30\tchr1:30\tA\tC\t.\tPASS\t.\tGT\t1/1\t1/1\t0/0\t0/1
 chr1\t40\tchr1:40\tG\tT\t.\tPASS\t.\tGT\t0/1\t1/1\t0/1\t0/0
 ";
+
+/// doc_v29 V29-04: a two-letter HapMap half call keeps its missing allele
+/// slot (`AN -> 0/.`, `NG -> 1/.`), instead of collapsing to a homozygote.
+#[test]
+fn v29_04_hapmap_two_letter_half_calls_keep_a_missing_slot() {
+    let dir = fixture_dir("v29-hmp-half");
+    let hmp = write_fixture(
+        &dir,
+        "in.hmp.txt",
+        "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\ts1\ts2\n\
+         r1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tAN\tNG\tNN\n",
+    );
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Vcf {
+            compressed: false,
+            level: 6,
+            output: Some(dir.join("out.vcf")),
+            command_line: String::new(),
+            no_version: true,
+        }],
+        ..ConvertRequest::default()
+    };
+    let report = run_convert(Some(&hmp), &request, &budget()).expect("hapmap -> vcf");
+    assert_eq!(report.n_records, 1);
+    assert_eq!(report.counters.expect("counters").malformed, 0);
+    let text = read(&dir.join("out.vcf"));
+    let row = text.lines().find(|l| !l.starts_with('#')).expect("record");
+    let fields: Vec<&str> = row.split('\t').collect();
+    assert_eq!(fields[8], "GT");
+    assert_eq!(&fields[9..], &["0/.", "1/.", "./."], "{row}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-09 / D29-07 A: a bad input line is one malformed *record*, not
+/// one failure per enabled target; the count never exceeds `total_records`.
+#[test]
+fn v29_09_malformed_counts_once_per_record_across_targets() {
+    let dir = fixture_dir("v29-malformed");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/9
+",
+    );
+    let phylo = ConvertTarget::Phylo {
+        formats: PhyloFormats {
+            phylip: true,
+            ..PhyloFormats::default()
+        },
+        options: PhyloOptions::default(),
+    };
+    for (tag, targets) in [
+        ("one", vec![phylo.clone()]),
+        (
+            "three",
+            vec![phylo, ConvertTarget::CountMatrix, ConvertTarget::Hapmap],
+        ),
+    ] {
+        let report = run_convert(
+            Some(&vcf),
+            &ConvertRequest {
+                targets,
+                prefix: dir.join(tag),
+                ..ConvertRequest::default()
+            },
+            &budget(),
+        )
+        .expect("convert");
+        let counters = report.counters.expect("row targets");
+        assert_eq!(counters.total_records, 1, "{tag}");
+        assert_eq!(
+            counters.malformed, 1,
+            "{tag}: the enabled target count must not change the record count"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-10 / D29-08 A: the library validates header-independent
+/// invariants before opening the input, and `to_args` is target-only.
+#[test]
+fn v29_10_library_validation_and_target_only_to_args() {
+    let empty = ConvertRequest::default()
+        .validate()
+        .expect_err("an empty target set is a usage error");
+    assert_eq!(empty.kind(), reed::ErrorKind::Usage, "{empty}");
+
+    let sfs = |projection| ConvertTarget::Sfs {
+        request: SfsRequest {
+            projections: vec![projection],
+            folded: false,
+        },
+        int_dtype: false,
+    };
+    let repeated = ConvertRequest {
+        targets: vec![sfs(4), sfs(4)],
+        ..ConvertRequest::default()
+    }
+    .validate()
+    .expect_err("a repeated --sfs target must be refused");
+    assert!(
+        repeated.to_string().contains("repeated --sfs"),
+        "{repeated}"
+    );
+
+    let too_small = ConvertRequest {
+        targets: vec![sfs(1)],
+        ..ConvertRequest::default()
+    }
+    .validate()
+    .expect_err("one chromosome cannot be projected");
+    assert!(too_small.to_string().contains("at least 2"), "{too_small}");
+
+    let vcf = |level, keep: Option<Vec<bool>>| ConvertRequest {
+        targets: vec![ConvertTarget::Vcf {
+            compressed: true,
+            level,
+            output: Some(std::path::PathBuf::from("out.vcf.gz")),
+            command_line: String::new(),
+            no_version: false,
+        }],
+        keep_samples: keep,
+        ..ConvertRequest::default()
+    };
+    let bad_level = vcf(10, None)
+        .validate()
+        .expect_err("the compression level is 1..=9");
+    assert!(bad_level.to_string().contains("1..=9"), "{bad_level}");
+    let kept = vcf(6, Some(vec![true]))
+        .validate()
+        .expect_err("--vcf cannot honor a sample subset");
+    assert!(kept.to_string().contains("does not take"), "{kept}");
+
+    let msa = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference: std::path::PathBuf::from("ref.fa"),
+            regions: vec![MsaRegion {
+                contig: "chr1".into(),
+                start1: Some(0),
+                end1: Some(10),
+            }],
+            flank: 0,
+            collapse_suffix: Some(String::new()),
+        }],
+        ..ConvertRequest::default()
+    };
+    let msa_err = msa.validate().expect_err("empty suffix / 0-based bound");
+    assert_eq!(msa_err.kind(), reed::ErrorKind::Usage, "{msa_err}");
+
+    let args = ConvertRequest {
+        targets: vec![ConvertTarget::Phylo {
+            formats: PhyloFormats {
+                phylip: true,
+                ..PhyloFormats::default()
+            },
+            options: PhyloOptions::default(),
+        }],
+        keep_samples: Some(vec![true]),
+        ..ConvertRequest::default()
+    }
+    .to_args()
+    .expect("target-only spelling");
+    assert_eq!(args, ["--phylip"], "to_args does not encode sample subsets");
+}
+
+/// v29 D29-06: polyploid genotypes are outside the supported domain. When
+/// they reach `--sfs` or `--012`, the occurrence is counted (and warned
+/// once); `--sfs` skips the record while `--012` keeps vcftools' `-1`.
+#[test]
+fn d29_06_polyploid_records_are_counted_not_silent() {
+    let dir = fixture_dir("v29-polyploid");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0/1\t0/1
+",
+    );
+    let count = run_convert(
+        Some(&vcf),
+        &ConvertRequest {
+            targets: vec![ConvertTarget::CountMatrix],
+            prefix: dir.join("count"),
+            ..ConvertRequest::default()
+        },
+        &budget(),
+    )
+    .expect("convert --012");
+    assert_eq!(count.polyploid, 1, "the polyploid record is counted");
+    assert_eq!(count.counters.expect("row targets").polyploid, 1);
+    assert_eq!(read(&dir.join("count.012.pos")), "chr1\t1\nchr1\t2\n");
+    assert_eq!(
+        read(&dir.join("count.012")),
+        "0\t1\t-1\n1\t0\t1\n",
+        "the polyploid cell keeps the documented -1"
+    );
+
+    let sfs = run_convert(
+        Some(&vcf),
+        &ConvertRequest {
+            targets: vec![ConvertTarget::Sfs {
+                request: SfsRequest {
+                    projections: vec![4],
+                    folded: false,
+                },
+                int_dtype: false,
+            }],
+            prefix: dir.join("sfs"),
+            ..ConvertRequest::default()
+        },
+        &budget(),
+    )
+    .expect("convert --sfs");
+    assert_eq!(sfs.polyploid, 1, "SFS-only runs report the count too");
+    let spectrum = read(&dir.join("sfs_sfs/dadi/all-4.sfs"));
+    let counts: Vec<&str> = spectrum
+        .lines()
+        .nth(1)
+        .expect("the spectrum's count line")
+        .split_whitespace()
+        .collect();
+    assert_eq!(counts, ["0", "1", "0", "0", "0"], "only the normal site");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-03 / D29-04 A: the complete output set is checked before any
+/// writer opens. `foo.012` as input with `--012 -o foo` used to overwrite
+/// the input with the matrix.
+#[test]
+fn v29_03_output_aliasing_the_input_is_refused_before_writing() {
+    let dir = fixture_dir("v29-alias");
+    let vcf_text = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+";
+    // The VCF is named like the `--012` matrix the run would produce.
+    let input = write_fixture(&dir, "input.012", vcf_text);
+    let before = std::fs::read(&input).expect("invariant: input");
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::CountMatrix],
+        prefix: dir.join("input"),
+        ..ConvertRequest::default()
+    };
+    let err = run_convert(Some(&input), &request, &budget())
+        .expect_err("an output naming the input must be refused");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+    assert!(err.to_string().contains("would overwrite"), "{err}");
+    assert_eq!(
+        std::fs::read(&input).expect("invariant: input"),
+        before,
+        "the refused run must not touch the input"
+    );
+    assert!(
+        !dir.join("input.012.pos").exists(),
+        "no sidecar may be written"
+    );
+    assert!(
+        !dir.join("input.012.indv").exists(),
+        "no sidecar may be written"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-03 / V29-07: repeated MSA regions converge on one output path;
+/// the plan refuses the duplicate before writing either file.
+#[test]
+fn v29_03_duplicate_msa_regions_are_refused_before_writing() {
+    let dir = fixture_dir("v29-msa-dup");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=10>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1
+",
+    );
+    let reference = write_fixture(&dir, "ref.fa", ">chr1\nAACCGGTTAA\n");
+    let region = MsaRegion {
+        contig: "chr1".into(),
+        start1: Some(2),
+        end1: Some(6),
+    };
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference,
+            regions: vec![region.clone(), region],
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    let err = run_convert(Some(&vcf), &request, &budget())
+        .expect_err("two regions writing one FASTA must be refused");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+    assert!(err.to_string().contains("two outputs would write"), "{err}");
+    assert!(
+        !dir.join("out_chr1_2-6.fasta").exists(),
+        "the refused run must write nothing"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-03: the hapmap→VCF route writes `-o` verbatim, so it must refuse
+/// an output naming its input before the writer truncates it.
+#[test]
+fn v29_03_hapmap_to_vcf_refuses_output_eq_input() {
+    let dir = fixture_dir("v29-vcf-alias");
+    let hmp = write_fixture(
+        &dir,
+        "in.hmp.txt",
+        "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\n\
+         r1\tA/G\tchr1\t1\t+\tNA\tNA\tNA\tNA\tNA\tNA\tAA\n",
+    );
+    let before = std::fs::read(&hmp).expect("invariant: hapmap");
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Vcf {
+            compressed: false,
+            level: 6,
+            output: Some(hmp.clone()),
+            command_line: String::new(),
+            no_version: true,
+        }],
+        ..ConvertRequest::default()
+    };
+    let err = run_convert(Some(&hmp), &request, &budget())
+        .expect_err("the VCF output must not replace the hapmap input");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+    assert!(err.to_string().contains("would overwrite"), "{err}");
+    assert_eq!(
+        std::fs::read(&hmp).expect("invariant: hapmap"),
+        before,
+        "the input must be untouched"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
 /// The hapmap↔VCF pair is faithful on its domain and thread-independent:
 /// VCF → hapmap → VCF reproduces every record (CHROM/POS/ID/REF/ALT/GT), the
@@ -906,6 +1439,40 @@ fn push_block(
     (out.len() - before) as u64
 }
 
+/// Wraps `data` as one BGZF member plus the EOF marker.
+fn write_bgzf(path: &Path, data: &[u8]) {
+    let mut deflater =
+        reed_io::bgzf::deflate::Deflater::new(6).expect("invariant: level 6 is valid");
+    let mut out = Vec::new();
+    deflater
+        .deflate_block(data, &mut out)
+        .expect("invariant: one block");
+    out.extend_from_slice(&reed_io::bgzf::block::EOF_BLOCK);
+    std::fs::write(path, out).expect("invariant: BGZF fixture write");
+}
+
+/// The uncompressed bytes of a BGZF stream.
+fn inflate_bgzf(path: &Path) -> Vec<u8> {
+    let bytes = std::fs::read(path).expect("invariant: BGZF fixture read");
+    let mut inflater = reed_io::bgzf::inflate::Inflater::new();
+    let mut out = Vec::new();
+    let mut rest = bytes.as_slice();
+    while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
+        inflater
+            .inflate_block(&rest[..total], &mut out)
+            .expect("invariant: BGZF member");
+        rest = &rest[total..];
+    }
+    out
+}
+
+/// A BGZF-compressed BCF carrying `header_text` and no records.
+fn write_header_only_bcf(path: &Path, header_text: &str) {
+    let header: noodles::vcf::Header = header_text.parse().expect("invariant: BCF header parses");
+    let raw = reed_io::bcf::bcf_file_header(&header).expect("invariant: BCF file header");
+    write_bgzf(path, &raw);
+}
+
 /// A two-sample `--sfs` fixture whose second chunk starts with `blank`
 /// (doc_v25 V25-03).
 ///
@@ -1172,9 +1739,259 @@ fn msa_covers_whole_contigs_by_default() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// doc_v15 D15-26: a 300 bp REF value must survive the MSA (the per-sample
-/// lengths used to wrap at 255, truncating the alignment and shifting every
-/// downstream column).
+/// v29 D29-01 B: a deletion's REF span consumes its reference columns, so
+/// the following SNP keeps its reference coordinate (the old contract
+/// emitted one column per remaining position).
+#[test]
+fn v29_01_msa_reference_coordinates_for_deletions() {
+    let dir = fixture_dir("v29-msa-del");
+    let reference = write_fixture(&dir, "ref.fa", ">chr1\nAAAAAAAAAA\n");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=10>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t2\t.\tAA\tA\t50\tPASS\t.\tGT\t1/1\t0/0
+chr1\t6\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0
+",
+    );
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference,
+            regions: Vec::new(),
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert --msa");
+    let fasta = read(&dir.join("out_chr1.fasta"));
+    assert_eq!(
+        fasta, ">chr1:1-10_s0\nAA-AAGAAAA\n>chr1:1-10_s1\nAAAAAAAAAA\n",
+        "the deletion consumes two reference columns"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 D29-01 B: an insertion adds `len(ALT) - len(REF)` columns but only
+/// consumes `len(REF)` reference bases; the following site is not shifted.
+#[test]
+fn v29_01_msa_insertion_adds_columns_without_advancing_the_cursor() {
+    let dir = fixture_dir("v29-msa-ins");
+    let reference = write_fixture(&dir, "ref.fa", ">chr1\nACGTACGT\n");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=8>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t2\t.\tC\tCT\t50\tPASS\t.\tGT\t1/1\t0/0
+chr1\t4\t.\tT\tA\t50\tPASS\t.\tGT\t1/1\t1/1
+",
+    );
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference,
+            regions: Vec::new(),
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert --msa");
+    let fasta = read(&dir.join("out_chr1.fasta"));
+    assert_eq!(
+        fasta, ">chr1:1-8_s0\nACTGAACGT\n>chr1:1-8_s1\nAC-GAACGT\n",
+        "one insertion column; the 9th column is the extra insertion base"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 D29-01 B rule 4: an exact duplicate (same POS and REF span) keeps
+/// last-wins; any other overlap is refused.
+#[test]
+fn v29_01_msa_overlap_rules() {
+    let dir = fixture_dir("v29-msa-overlap");
+    let reference = write_fixture(&dir, "ref.fa", ">chr1\nAAAAAAAAAA\n");
+    let run = |tag: &str, body: &str| {
+        let vcf = write_fixture(
+            &dir,
+            &format!("{tag}.vcf"),
+            &format!(
+                "##fileformat=VCFv4.2\n\
+             ##contig=<ID=chr1,length=10>\n\
+             ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n{body}"
+            ),
+        );
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Msa {
+                reference: reference.clone(),
+                regions: Vec::new(),
+                flank: 0,
+                collapse_suffix: None,
+            }],
+            prefix: dir.join(tag),
+            ..ConvertRequest::default()
+        };
+        run_convert(Some(&vcf), &request, &budget())
+    };
+    let duplicate = run(
+        "dup",
+        "chr1\t2\t.\tAAA\tA\t50\tPASS\t.\tGT\t0/0\n\
+         chr1\t2\t.\tAAA\tA\t50\tPASS\t.\tGT\t1/1\n",
+    )
+    .expect("an exact duplicate is last-wins");
+    assert_eq!(duplicate.files.len(), 1);
+    let fasta = read(&dir.join("dup_chr1.fasta"));
+    assert_eq!(
+        fasta, ">chr1:1-10_s0\nAA--AAAAAA\n",
+        "the second record's ALT replaces the first"
+    );
+    let overlap = run(
+        "overlap",
+        "chr1\t2\t.\tAAA\tA\t50\tPASS\t.\tGT\t1/1\n\
+         chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\n",
+    )
+    .expect_err("a record starting inside the previous REF span must be refused");
+    assert!(
+        overlap.to_string().contains("unsupported overlap"),
+        "{overlap}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 D29-01 B rule 5 / V29-08: the record REF must match the reference
+/// span, stay inside the contig, and the FASTA must not repeat a contig.
+#[test]
+fn v29_01_msa_reference_mismatch_bounds_and_duplicates() {
+    let dir = fixture_dir("v29-msa-ref");
+    let reference = write_fixture(&dir, "ref.fa", ">chr1\nACGTACGTAC\n");
+    let run = |tag: &str, ref_text: &str, pos: u32| {
+        let vcf = write_fixture(
+            &dir,
+            &format!("{tag}.vcf"),
+            &format!(
+                "##fileformat=VCFv4.2\n\
+                 ##contig=<ID=chr1,length=10>\n\
+                 ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+                 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
+                 chr1\t{pos}\t.\t{ref_text}\tA\t50\tPASS\t.\tGT\t1/1\n"
+            ),
+        );
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Msa {
+                reference: reference.clone(),
+                regions: Vec::new(),
+                flank: 0,
+                collapse_suffix: None,
+            }],
+            prefix: dir.join(tag),
+            ..ConvertRequest::default()
+        };
+        run_convert(Some(&vcf), &request, &budget())
+    };
+    let mismatch = run("mismatch", "T", 2).expect_err("REF must match the reference");
+    assert!(
+        mismatch
+            .to_string()
+            .contains("does not match the reference"),
+        "{mismatch}"
+    );
+    let out_of_bounds =
+        run("bounds", "AAA", 10).expect_err("a REF span past the contig end must be refused");
+    assert!(
+        out_of_bounds
+            .to_string()
+            .contains("exceeds the reference contig length"),
+        "{out_of_bounds}"
+    );
+
+    let duplicate_ref = write_fixture(&dir, "dup-ref.fa", ">chr1\nACGTACGTAC\n>chr1\nACGTACGTAC\n");
+    let vcf = write_fixture(
+        &dir,
+        "ok.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=10>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t1/1
+",
+    );
+    let err = run_convert(
+        Some(&vcf),
+        &ConvertRequest {
+            targets: vec![ConvertTarget::Msa {
+                reference: duplicate_ref,
+                regions: Vec::new(),
+                flank: 0,
+                collapse_suffix: None,
+            }],
+            prefix: dir.join("dup-ref"),
+            ..ConvertRequest::default()
+        },
+        &budget(),
+    )
+    .expect_err("a duplicate FASTA contig name must be refused");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+    assert!(
+        err.to_string().contains("duplicate FASTA record name"),
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v29 V29-07: a contig name containing `/` becomes one percent-encoded
+/// filename component instead of a subdirectory.
+#[test]
+fn v29_07_msa_contig_slash_is_percent_encoded() {
+    let dir = fixture_dir("v29-msa-slash");
+    let reference = write_fixture(&dir, "ref.fa", ">a/b\nACGT\n>chr1\nACGT\n");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=4>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0
+chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t1/1
+",
+    );
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference,
+            regions: Vec::new(),
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &budget()).expect("convert --msa");
+    assert!(
+        dir.join("out_a%2Fb.fasta").exists(),
+        "the slash must be encoded into the filename"
+    );
+    assert!(
+        !dir.join("out_a").exists(),
+        "no subdirectory may be created"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A 300 bp REF value must survive the MSA (the per-sample lengths used to
+/// wrap at 255, truncating the alignment). v29 D29-01 B replaces the old
+/// D15-26 width: the REF span consumes its reference columns instead of
+/// adding one column per remaining position.
 #[test]
 fn msa_long_deletion_is_not_truncated() {
     let dir = fixture_dir("msa-long");
@@ -1220,11 +2037,10 @@ fn msa_long_deletion_is_not_truncated() {
     let (s1_name, s1) = &seqs[1];
     assert_eq!(s0_name, "chr1:1-1000_s0");
     assert_eq!(s1_name, "chr1:1-1000_s1");
-    // The indel record contributes its 300-column REF block, then the walk
-    // emits one column per remaining position (the SNP site included as its
-    // own column): 300 + 999 = 1299. Pre-fix the u8 wrap gave 1043.
-    assert_eq!(s0.len(), 1299, "alignment width follows the REF block");
-    assert_eq!(s1.len(), 1299);
+    // v29 D29-01 B: the 300 bp REF consumes its 300 reference columns, and
+    // the SNP at POS 601 is its own column — width 1000, not 1299.
+    assert_eq!(s0.len(), 1000, "alignment width equals the region length");
+    assert_eq!(s1.len(), 1000);
     // s0 carries the 1-base ALT plus 299 gaps; s1 the full 300 bp REF.
     assert!(
         s0.starts_with(&format!("A{}", "-".repeat(299))),
@@ -1232,6 +2048,10 @@ fn msa_long_deletion_is_not_truncated() {
         &s0[..320]
     );
     assert_eq!(&s1[..300], &reference_seq[..300]);
+    // The POS 601 block lands at column 601 (0-based 600): s0 is A/G (R),
+    // s1 is the REF A.
+    assert_eq!(&s0[600..601], "R");
+    assert_eq!(&s1[600..601], "A");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

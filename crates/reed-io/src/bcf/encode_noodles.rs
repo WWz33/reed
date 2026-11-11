@@ -25,16 +25,17 @@ impl BcfEncoder {
     /// Creates the encoder; [`BcfEncoder::write_header`] must run before the
     /// first record (it builds the dictionary→id `StringMaps`).
     ///
-    /// # Errors
-    ///
-    /// none today; the signature keeps room for setup failures.
-    pub fn new() -> Result<Self, IoError> {
+    /// Infallible: the writer is created over an owned cursor, so there is no
+    /// I/O to fail and the old `Result` only invited `?` at every call site
+    /// (doc_v28 V28-18).
+    #[must_use]
+    pub fn new() -> Self {
         let buffer = std::io::Cursor::new(Vec::new());
-        Ok(Self {
+        Self {
             writer: noodles::bcf::io::Writer::from(buffer),
             scratch: Vec::with_capacity(1 << 16),
             string_keys: Vec::new(),
-        })
+        }
     }
 
     /// Writes the header once, building the string maps every record is
@@ -150,11 +151,9 @@ fn fix_missing_strings(string_keys: &[String], record: &mut vcf::variant::Record
     *record.samples_mut() = Samples::new(keys, values);
 }
 
-/// An owned error string squeezed into a `&'static str` slot. The message is
-/// leaked: encode errors are fatal per-record diagnostics, not a hot path.
 impl Default for BcfEncoder {
     fn default() -> Self {
-        Self::new().expect("invariant: the encoder allocates")
+        Self::new()
     }
 }
 
@@ -201,12 +200,13 @@ pub fn bcf_header_text(header: &vcf::Header) -> Result<Vec<u8>, IoError> {
         .map_err(|e| IoError::Io(format!("BCF header encode: {e}")))?;
     let mut out = Vec::with_capacity(raw.len() + 512);
     for line in raw.split_inclusive(|&b| b == b'\n') {
-        const KINDS: [&[u8]; 3] = [b"##FILTER=<", b"##INFO=<", b"##FORMAT=<"];
+        const KINDS: [&[u8]; 4] = [b"##contig=<", b"##FILTER=<", b"##INFO=<", b"##FORMAT=<"];
         let kind = KINDS.iter().find(|k| line.starts_with(k)).copied();
         let Some(kind) = kind else {
             out.extend_from_slice(line);
             continue;
         };
+        let is_contig = kind == b"##contig=<";
         // The payload starts with `ID=value,` (or ends right after the value).
         let rest = &line[kind.len()..];
         let value = rest
@@ -218,10 +218,18 @@ pub fn bcf_header_text(header: &vcf::Header) -> Result<Vec<u8>, IoError> {
             .unwrap_or(value.len());
         let id = std::str::from_utf8(&value[..id_len])
             .map_err(|_| IoError::Io("BCF header ID is not UTF-8".into()))?;
-        let idx = maps.strings().get_index_of(id).ok_or_else(|| {
-            IoError::Io(format!(
-                "BCF header tag {id:?} is not in the string dictionary"
-            ))
+        // Contigs use their own dictionary: an explicit `IDX=` pins the
+        // record's tid, and the written header must pin htslib to the same
+        // index. Without this line, htslib re-numbers contigs by header
+        // order and every record can move to another chromosome (V28-01).
+        let index = if is_contig {
+            maps.contigs().get_index_of(id)
+        } else {
+            maps.strings().get_index_of(id)
+        };
+        let idx = index.ok_or_else(|| {
+            let what = if is_contig { "contig" } else { "tag" };
+            IoError::Io(format!("BCF header {what} {id:?} is not in its dictionary"))
         })?;
         // Insert `,IDX=n` before the closing '>'.
         let close = line.iter().rposition(|&b| b == b'>').unwrap_or(line.len());
@@ -250,5 +258,31 @@ mod tests {
         assert_eq!(len as usize, text.len());
         assert_eq!(&bytes[9..], text.as_slice());
         assert_eq!(bytes.last(), Some(&0), "the text is NUL-terminated");
+    }
+
+    /// doc_v28 V28-01: an explicit contig `IDX=` must be written back, and
+    /// it must match the dictionary the record encoder uses.
+    #[test]
+    fn contig_idx_is_written_and_roundtrips() {
+        let header: vcf::Header = "##fileformat=VCFv4.2\n\
+            ##contig=<ID=chr2,length=200,IDX=1>\n\
+            ##contig=<ID=chr1,length=100,IDX=0>\n\
+            ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n"
+            .parse()
+            .expect("invariant: header");
+        let text = bcf_header_text(&header).expect("invariant: text");
+        let rendered = String::from_utf8(text.clone()).expect("invariant: utf8");
+        assert!(
+            rendered.contains("##contig=<ID=chr2,length=200,IDX=1>"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("##contig=<ID=chr1,length=100,IDX=0>"),
+            "{rendered}"
+        );
+        let dict = crate::bcf::BcfDict::from_header(&text).expect("invariant: dict");
+        assert_eq!(dict.contig(1), Some(b"chr2".as_slice()));
+        assert_eq!(dict.contig(0), Some(b"chr1".as_slice()));
     }
 }

@@ -8,7 +8,7 @@ pub mod block_writer;
 pub mod index;
 pub mod ordered_output;
 
-pub use atomic::{AtomicFile, write_atomic};
+pub use atomic::{AtomicFile, AtomicWriter, write_atomic};
 pub use block_writer::{
     BGZF_BLOCK_SIZE, BlockWriter, ChunkOutput, IndexKey, IndexRecord, OutBlock,
 };

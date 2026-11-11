@@ -13,6 +13,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use reed_core::ChunkId;
 
+use crate::bgzf::address::VirtualOffset;
 use crate::bgzf::block::{BGZF_HEADER_LEN, block_entry, parse_block_size};
 use crate::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes};
 use crate::error::IoError;
@@ -33,26 +34,35 @@ pub struct Region {
 /// length)` entry.
 type BlockRead = (Vec<u8>, u64, (u32, u32));
 
-/// Reads only the compressed byte range covering `regions`.
+/// Reads only the compressed byte ranges covering `regions`.
+///
+/// The index returns one span per region; the source walks them in order and
+/// seeks between them, so a query for two distant regions reads two ranges
+/// instead of everything in between (doc_v28 V28-14).
 pub struct RegionChunkSource<R: Read + Seek> {
     inner: R,
-    end_coffset: u64,
-    /// In-block offset of the range end (low 16 bits of the index's end
-    /// virtual offset): a record boundary. The block read at `end_coffset`
-    /// may extend past it, so the chunk carrying that block truncates its
-    /// inflated text here (doc_v21 M3).
-    end_uoffset: u64,
+    /// The remaining virtual-offset spans, first one current. Empty = done.
+    spans: std::collections::VecDeque<(u64, u64)>,
+    /// The current span's end virtual offset: a record boundary. The block
+    /// read at its compressed offset may extend past the in-block half, so
+    /// the chunk carrying that block truncates its inflated text there
+    /// (doc_v21 M3).
+    span_end: VirtualOffset,
     chunk_target: u64,
     next_chunk_id: u64,
     first_in_block_offset: u64,
     /// Validates members (doc_v26 V26-01).
     inflater: crate::bgzf::inflate::Inflater,
+    /// The current span is exhausted; the next chunk advances to the next
+    /// one. A chunk never mixes two spans, because its compressed bytes are
+    /// contiguous and drive the virtual-offset table.
+    span_done: bool,
     done: bool,
 }
 
 impl<R: Read + Seek> RegionChunkSource<R> {
-    /// Computes the byte range for `regions` from `index` and positions the
-    /// reader at its first block.
+    /// Computes the byte ranges for `regions` from `index` and positions the
+    /// reader at the first one.
     ///
     /// # Errors
     ///
@@ -64,23 +74,48 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         regions: &[Region],
         contig_names: &[String],
     ) -> Result<Self, IoError> {
-        let Some((start, end)) = index.query_range(regions, contig_names)? else {
+        let Some(spans) = index.query_ranges(regions, contig_names)? else {
+            return Ok(Self::open_empty(inner));
+        };
+        let mut spans: std::collections::VecDeque<(u64, u64)> = spans.into();
+        let Some((start, end)) = spans.pop_front() else {
             return Ok(Self::open_empty(inner));
         };
         // The index's virtual offset carries both halves: the compressed
         // offset of the record's block and its offset inside that block's
         // inflated text — exactly the chunk's `first_in_block_offset`.
-        inner.seek(SeekFrom::Start(start >> 16))?;
+        let start = VirtualOffset::from_raw(start);
+        let end = VirtualOffset::from_raw(end);
+        inner.seek(SeekFrom::Start(start.compressed()))?;
         Ok(Self {
             inner,
-            end_coffset: end >> 16,
-            end_uoffset: end & 0xFFFF,
+            spans,
+            span_end: end,
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
-            first_in_block_offset: start & 0xFFFF,
+            first_in_block_offset: u64::from(start.in_block()),
             inflater: crate::bgzf::inflate::Inflater::new(),
+            span_done: false,
             done: false,
         })
+    }
+
+    /// Moves to the next span after the current one is exhausted: seeks to
+    /// its start block and adopts its end offset. `false` when there is no
+    /// next span.
+    fn advance_span(&mut self) -> Result<bool, IoError> {
+        let Some((start, end)) = self.spans.pop_front() else {
+            self.done = true;
+            return Ok(false);
+        };
+        let start = VirtualOffset::from_raw(start);
+        self.inner.seek(SeekFrom::Start(start.compressed()))?;
+        self.span_end = VirtualOffset::from_raw(end);
+        // A span starts mid-block by construction (the index names the first
+        // matching record's virtual offset), so its chunks begin inside the
+        // first block at the low half of the virtual offset.
+        self.first_in_block_offset = u64::from(start.in_block());
+        Ok(true)
     }
 
     /// Reads one block; `None` once the region's range is exhausted or the
@@ -91,18 +126,27 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         }
         let position = self.inner.stream_position()?;
         // doc_v21 M3: a range whose end offset sits exactly on a block
-        // boundary needs nothing from the block starting there.
-        if position > self.end_coffset || (position == self.end_coffset && self.end_uoffset == 0) {
-            self.done = true;
+        // boundary needs nothing from the block starting there. The caller
+        // closes the chunk and advances to the next span (doc_v28 V28-14).
+        if position > self.span_end.compressed()
+            || (position == self.span_end.compressed() && self.span_end.in_block() == 0)
+        {
+            self.span_done = true;
             return Ok(None);
         }
         let mut header = [0_u8; BGZF_HEADER_LEN];
         let mut filled = 0;
         while filled < BGZF_HEADER_LEN {
             match self.inner.read(&mut header[filled..]) {
-                Ok(0) => {
+                Ok(0) if filled == 0 => {
                     self.done = true;
                     return Ok(None);
+                }
+                Ok(0) => {
+                    return Err(IoError::MalformedBgzf {
+                        locus: None,
+                        reason: "stream ends inside a block header".to_string(),
+                    });
                 }
                 Ok(n) => filled += n,
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
@@ -134,11 +178,24 @@ impl<R: Read + Seek> RegionChunkSource<R> {
     ///
     /// Transport failures.
     pub fn next_chunk(&mut self) -> Result<Option<ChunkBytes>, IoError> {
-        if self.done {
-            return Ok(None);
-        }
-        let Some((first, compressed_start, first_entry)) = self.read_block()? else {
-            return Ok(None);
+        // Find the first block of a span before building the chunk: a span
+        // can end exactly on a block boundary, in which case it contributes
+        // no chunk at all (doc_v28 V28-14). `read_block` consumes it, so the
+        // loop hands the block back out of the match.
+        let (first, compressed_start, first_entry) = loop {
+            if self.done {
+                return Ok(None);
+            }
+            if self.span_done {
+                if !self.advance_span()? {
+                    self.done = true;
+                    return Ok(None);
+                }
+                self.span_done = false;
+            }
+            if let Some(block) = self.read_block()? {
+                break block;
+            }
         };
         let mut blocks = vec![first_entry];
         let mut compressed = first;
@@ -158,12 +215,12 @@ impl<R: Read + Seek> RegionChunkSource<R> {
         // cut at 64 KB, not at record boundaries). Keep only the prefix up to
         // the end virtual offset's in-block position — a record boundary — so
         // the engine never sees an unterminated trailing record.
-        let truncate_to = (last_block_offset == self.end_coffset).then(|| {
+        let truncate_to = (last_block_offset == self.span_end.compressed()).then(|| {
             let prior: u64 = blocks[..blocks.len() - 1]
                 .iter()
                 .map(|&(_, ilen)| u64::from(ilen))
                 .sum();
-            prior + self.end_uoffset
+            prior + u64::from(self.span_end.in_block())
         });
         let id = ChunkId(self.next_chunk_id);
         self.next_chunk_id += 1;
@@ -191,12 +248,13 @@ impl<R: Read + Seek> RegionChunkSource<R> {
     pub fn open_empty(inner: R) -> Self {
         Self {
             inner,
-            end_coffset: 0,
-            end_uoffset: 0,
+            spans: std::collections::VecDeque::new(),
+            span_end: VirtualOffset::from_raw(0),
             chunk_target: CHUNK_TARGET_COMPRESSED,
             next_chunk_id: 0,
             first_in_block_offset: 0,
             inflater: crate::bgzf::inflate::Inflater::new(),
+            span_done: true,
             done: true,
         }
     }
@@ -233,21 +291,25 @@ pub trait IndexQuery {
         None
     }
 
-    /// The virtual-offset range covering every region, or `None` when no
-    /// chunk matches.
+    /// The virtual-offset ranges covering every region, sorted and with
+    /// overlapping or touching spans merged, or `None` when no chunk matches.
+    ///
+    /// Each span is a `(start, end)` pair of virtual offsets. Returning the
+    /// spans separately (instead of one min..max range) keeps a sparse
+    /// multi-region query from reading the whole interval between two distant
+    /// regions (doc_v28 V28-14).
     ///
     /// # Errors
     ///
     /// Unknown contigs and index failures.
-    fn query_range(
+    fn query_ranges(
         &self,
         regions: &[Region],
         contig_names: &[String],
-    ) -> Result<Option<(u64, u64)>, IoError> {
+    ) -> Result<Option<Vec<(u64, u64)>>, IoError> {
         let unknown =
             |name: &str| IoError::Header(format!("region contig {name:?} is not in the header"));
-        let mut start = u64::MAX;
-        let mut end = 0_u64;
+        let mut spans: Vec<(u64, u64)> = Vec::new();
         for region in regions {
             // doc_v21 M2: the id must be the index's own. A TBI's reference
             // table (and an htslib CSI's) is first-record-appearance order,
@@ -271,13 +333,48 @@ pub trait IndexQuery {
                     .position(|name| name == &region.contig)
                     .ok_or_else(|| unknown(&region.contig))?,
             };
-            for (s, e) in self.query(tid, region.start1, region.end1)? {
-                start = start.min(s);
-                end = end.max(e);
-            }
+            spans.extend(self.query(tid, region.start1, region.end1)?);
         }
-        Ok((start != u64::MAX).then_some((start, end)))
+        Ok(Some(merge_spans(spans)))
     }
+
+    /// The single virtual-offset range covering every region.
+    ///
+    /// Kept for callers that only need the overall extent; a reader should
+    /// prefer [`Self::query_ranges`] so a gap between two regions is not
+    /// read.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::query_ranges`].
+    fn query_range(
+        &self,
+        regions: &[Region],
+        contig_names: &[String],
+    ) -> Result<Option<(u64, u64)>, IoError> {
+        Ok(self.query_ranges(regions, contig_names)?.and_then(|spans| {
+            spans
+                .first()
+                .map(|_| (spans[0].0, spans.last().map_or(0, |s| s.1)))
+        }))
+    }
+}
+
+/// Sorts virtual-offset spans and merges overlapping or touching ones.
+///
+/// A zero-length span (the index can name a block start) is kept: it still
+/// marks one block to read. Touching spans are merged so the reader does not
+/// stop and re-seek between adjacent blocks.
+fn merge_spans(mut spans: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    spans.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
+    for (start, end) in spans {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
 }
 
 /// A noodles-backed index file (CSI or TBI), sniffed by magic.
@@ -423,6 +520,141 @@ mod tests {
 
     fn voff(coffset: u64, uoffset: u64) -> u64 {
         (coffset << 16) | uoffset
+    }
+
+    /// An index that answers with a fixed span list, so a multi-region test
+    /// can hand the source distant ranges without a real .csi.
+    struct SpanIndex {
+        spans: Vec<(u64, u64)>,
+    }
+
+    impl IndexQuery for SpanIndex {
+        fn query(
+            &self,
+            _tid: usize,
+            _start1: Option<u64>,
+            _end1: Option<u64>,
+        ) -> Result<Vec<(u64, u64)>, IoError> {
+            Ok(self.spans.clone())
+        }
+
+        fn has_reference_names(&self) -> bool {
+            false
+        }
+
+        fn tid_of(&self, name: &str) -> Option<usize> {
+            (name == "chr1").then_some(0)
+        }
+    }
+
+    /// doc_v28 V28-14: two distant regions must read two spans, not the bytes
+    /// between them. The middle block's text never reaches a chunk, and its
+    /// record is absent from the inflated stream.
+    #[test]
+    fn v28_14_distant_regions_do_not_read_the_blocks_between_them() {
+        let far: &[u8] = b"chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let middle: &[u8] = b"chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        let near: &[u8] = b"chr1\t300\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
+        // Three data blocks: one per record, so each span covers exactly one.
+        let deflate_one = |text: &[u8]| {
+            let mut deflater = crate::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+            let mut one = Vec::new();
+            deflater
+                .deflate_block(text, &mut one)
+                .expect("invariant: fits");
+            one
+        };
+        let first = deflate_one(far);
+        let second = deflate_one(middle);
+        let third = deflate_one(near);
+        let offset0 = 0_u64;
+        let offset1 = first.len() as u64;
+        let offset2 = offset1 + second.len() as u64;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&first);
+        bytes.extend_from_slice(&second);
+        bytes.extend_from_slice(&third);
+        bytes.extend_from_slice(&crate::bgzf::block::EOF_BLOCK);
+
+        let index = SpanIndex {
+            spans: vec![
+                // Each span covers exactly its own block: the end virtual
+                // offset names the block boundary that follows it.
+                (voff(offset0, 0), voff(offset1, 0)),
+                (voff(offset2, 0), voff(offset2 + third.len() as u64, 0)),
+            ],
+        };
+        let mut source = RegionChunkSource::open(
+            std::io::Cursor::new(bytes),
+            &index,
+            &[
+                Region {
+                    contig: "chr1".into(),
+                    start1: Some(100),
+                    end1: Some(100),
+                },
+                Region {
+                    contig: "chr1".into(),
+                    start1: Some(300),
+                    end1: Some(300),
+                },
+            ],
+            &["chr1".to_string()],
+        )
+        .expect("invariant: source opens");
+        let mut text = Vec::new();
+        let mut inflater = crate::bgzf::inflate::Inflater::new();
+        let mut scratch = Vec::new();
+        while let Some(chunk) = source.next_chunk().expect("invariant: read") {
+            let view = crate::chunk::inflate_chunk(&chunk, &mut inflater, &mut scratch)
+                .expect("invariant: inflates");
+            text.extend_from_slice(view.text);
+        }
+        let text = String::from_utf8(text).expect("invariant: ASCII");
+        assert!(text.contains("chr1\t100\t"), "first region missing: {text}");
+        assert!(
+            text.contains("chr1\t300\t"),
+            "second region missing: {text}"
+        );
+        assert!(
+            !text.contains("chr1\t200\t"),
+            "the block between the regions must not be read: {text}"
+        );
+    }
+
+    fn raw_source(bytes: Vec<u8>) -> RegionChunkSource<std::io::Cursor<Vec<u8>>> {
+        // No span follows: reaching the end offset marks the stream done.
+        RegionChunkSource {
+            inner: std::io::Cursor::new(bytes),
+            spans: std::collections::VecDeque::new(),
+            span_end: VirtualOffset::new(10, 0),
+            chunk_target: CHUNK_TARGET_COMPRESSED,
+            next_chunk_id: 0,
+            first_in_block_offset: 0,
+            inflater: crate::bgzf::inflate::Inflater::new(),
+            span_done: false,
+            done: false,
+        }
+    }
+
+    /// doc_v28 V28-03: the range may legitimately end at EOF, but a partial
+    /// BGZF header inside the indexed range is truncation, not EOF.
+    #[test]
+    fn clean_eof_is_end_of_range_but_a_short_header_is_malformed() {
+        let mut empty = raw_source(Vec::new());
+        assert!(empty.read_block().expect("invariant: clean EOF").is_none());
+
+        for len in 1..BGZF_HEADER_LEN {
+            let mut short = raw_source(vec![0_u8; len]);
+            let err = short
+                .read_block()
+                .expect_err("a short header inside the range is truncation");
+            assert!(
+                err.to_string()
+                    .contains("stream ends inside a block header"),
+                "{err}"
+            );
+        }
     }
 
     /// doc_v26 V26-01: the region source used to record any member's ISIZE

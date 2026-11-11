@@ -131,6 +131,7 @@ fn native_inputs_match_the_text_path() {
                 n_samples: header.n_sample,
                 contig_name: nsite.contig_name,
                 pos1: nsite.pos1,
+                vcf44: dict.vcf44(),
             },
             &table,
             &mut codes,
