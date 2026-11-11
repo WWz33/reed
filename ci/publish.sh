@@ -31,7 +31,9 @@ git read-tree --empty
 # The Pages workflow needs docsite/, which is not part of the public subset.
 # `crates/reed/.gitignore` un-ignores `tests/support/` (shared integration
 # fixtures), so the explicit exclude is what keeps the whole test tree out.
-git add -- $PUB_PATHS ':!.github/workflows/docs.yml' ':!crates/*/tests'
+# The trailing slash matters: `:!crates/*/tests` does not exclude a staged
+# file under it, only `:!crates/*/tests/` does.
+git add -- $PUB_PATHS ':!.github/workflows/docs.yml' ':!crates/*/tests/'
 tree="$(git write-tree)"
 
 if git ls-tree -r --name-only "$tree" | grep -qE '^(DESIGN\.md|docs/|bench/)|/tests/'; then
