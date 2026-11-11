@@ -29,10 +29,12 @@ export GIT_INDEX_FILE="$idx"
 trap 'rm -f "$GIT_INDEX_FILE"' EXIT
 git read-tree --empty
 # The Pages workflow needs docsite/, which is not part of the public subset.
-git add -- $PUB_PATHS ':!.github/workflows/docs.yml'
+# `crates/reed/.gitignore` un-ignores `tests/support/` (shared integration
+# fixtures), so the explicit exclude is what keeps the whole test tree out.
+git add -- $PUB_PATHS ':!.github/workflows/docs.yml' ':!crates/*/tests'
 tree="$(git write-tree)"
 
-if git ls-tree -r --name-only "$tree" | grep -qE '^(DESIGN\.md|docs/|bench/)'; then
+if git ls-tree -r --name-only "$tree" | grep -qE '^(DESIGN\.md|docs/|bench/)|/tests/'; then
     echo "publish.sh: internal path leaked into publish tree" >&2
     exit 1
 fi
