@@ -11,6 +11,7 @@
 
 mod hapmap;
 mod job;
+mod plan;
 mod spill;
 pub(crate) mod writers;
 
@@ -153,8 +154,147 @@ impl Default for ConvertRequest {
 }
 
 impl ConvertRequest {
-    /// Renders the request back to CLI spellings (`to_args` is the text
-    /// contract the CLI contract tests round-trip, v11 N3).
+    /// Validates the header-independent request invariants: a non-empty,
+    /// duplicate-free target set, target exclusivity, the compression level,
+    /// SFS projections and the MSA reference/region/collapse arguments.
+    ///
+    /// Header-dependent checks (sample names, outgroup membership, group
+    /// sizes) run when the input is opened, in the driver's plan step
+    /// (v29 V29-10 / D29-08).
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::usage`] naming the invalid combination.
+    pub fn validate(&self) -> Result<(), crate::Error> {
+        use crate::Error;
+        if self.targets.is_empty() {
+            return Err(Error::usage(
+                "nothing to convert: give --sfs, a phylo format (--phylip/--fasta/--nexus), \
+                 --012, --hapmap, --msa or --vcf",
+            ));
+        }
+        let mut sfs = false;
+        let mut phylo = false;
+        let mut msa = false;
+        let mut count = false;
+        let mut hapmap = false;
+        let mut nexus_bin = false;
+        let mut vcf = false;
+        for target in &self.targets {
+            match target {
+                ConvertTarget::Sfs { request, .. } => {
+                    if std::mem::replace(&mut sfs, true) {
+                        return Err(Error::usage("repeated --sfs target"));
+                    }
+                    if request.projections.is_empty() {
+                        return Err(Error::usage(
+                            "--sfs needs at least one --proj value (one per population)",
+                        ));
+                    }
+                    for &n in &request.projections {
+                        if n < 2 {
+                            return Err(Error::usage(format!(
+                                "projection size must be at least 2 chromosomes, got {n}"
+                            )));
+                        }
+                    }
+                }
+                ConvertTarget::Phylo { formats, options } => {
+                    if std::mem::replace(&mut phylo, true) {
+                        return Err(Error::usage("repeated phylo target"));
+                    }
+                    if !formats.any() && options.outgroup.is_none() {
+                        return Err(Error::usage(
+                            "the phylo target selects no format (--phylip/--fasta/--nexus)",
+                        ));
+                    }
+                }
+                ConvertTarget::NexusBin => {
+                    if std::mem::replace(&mut nexus_bin, true) {
+                        return Err(Error::usage("repeated --nexus-binary target"));
+                    }
+                }
+                ConvertTarget::CountMatrix => {
+                    if std::mem::replace(&mut count, true) {
+                        return Err(Error::usage("repeated --012 target"));
+                    }
+                }
+                ConvertTarget::Hapmap => {
+                    if std::mem::replace(&mut hapmap, true) {
+                        return Err(Error::usage("repeated --hapmap target"));
+                    }
+                }
+                ConvertTarget::Msa {
+                    reference,
+                    regions,
+                    collapse_suffix,
+                    ..
+                } => {
+                    if std::mem::replace(&mut msa, true) {
+                        return Err(Error::usage("repeated --msa target"));
+                    }
+                    if reference.as_os_str().is_empty() {
+                        return Err(Error::usage("--msa needs --reference FILE (a FASTA)"));
+                    }
+                    if collapse_suffix.as_deref() == Some("") {
+                        return Err(Error::usage("--collapse-suffix must not be empty"));
+                    }
+                    for region in regions {
+                        if region.contig.is_empty() {
+                            return Err(Error::usage("--region needs a contig name"));
+                        }
+                        if region.start1 == Some(0) || region.end1 == Some(0) {
+                            return Err(Error::usage(format!(
+                                "--region {} uses a 0 bound; positions are 1-based",
+                                region.contig
+                            )));
+                        }
+                        if let (Some(start), Some(end)) = (region.start1, region.end1)
+                            && start > end
+                        {
+                            return Err(Error::usage(format!(
+                                "--region {}:{start}-{end} has a start above its end",
+                                region.contig
+                            )));
+                        }
+                    }
+                }
+                ConvertTarget::Vcf { level, .. } => {
+                    if std::mem::replace(&mut vcf, true) {
+                        return Err(Error::usage("repeated --vcf target"));
+                    }
+                    if !(1..=9).contains(level) {
+                        return Err(Error::usage(format!(
+                            "the compression level must be 1..=9, got {level}"
+                        )));
+                    }
+                }
+            }
+        }
+        if vcf {
+            if self.targets.len() > 1 {
+                return Err(Error::usage(
+                    "cannot mix --vcf (a hapmap input) with VCF-input targets",
+                ));
+            }
+            if self.keep_samples.is_some()
+                || self.force_samples
+                || self.min_samples_locus.is_some()
+                || !matches!(&self.populations, Populations::All)
+            {
+                return Err(Error::usage(
+                    "--vcf (a hapmap input) does not take the VCF sample options \
+                     (-s/-S/--keep/--remove, --pop, --force-samples, --min-samples-locus)",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Renders the target spellings back to CLI flags. This is the
+    /// target-only contract the CLI contract tests round-trip (v11 N3); it
+    /// is not a complete replay of the request — sample subsets, populations
+    /// and the seed are not encoded (v29 D29-08).
     ///
     /// # Errors
     ///

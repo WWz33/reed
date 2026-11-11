@@ -36,7 +36,58 @@ pub fn gt_index(format_text: &[u8]) -> Option<usize> {
 /// subfield: `FORMAT=DP:GT` with a `30`-only column has no GT text).
 #[must_use]
 pub fn gt_subfield(sample_col: &[u8], gt_index: Option<usize>) -> Option<&[u8]> {
-    gt_index.and_then(|i| sample_col.split(|&b| b == b':').nth(i))
+    gt_index.and_then(|i| subfield(sample_col, i))
+}
+
+/// Subfield `key` of one sample column, or `None` when the column has fewer
+/// subfields than `key` — the one colon-scan primitive (doc_v28 V28-24).
+///
+/// Callers that splice the column rather than read it use [`subfield_span`].
+#[must_use]
+pub fn subfield(sample_col: &[u8], key: usize) -> Option<&[u8]> {
+    sample_col.split(|&b| b == b':').nth(key)
+}
+
+/// The byte range of subfield `key` within `sample_col`, or `None` when the
+/// column has fewer subfields.
+///
+/// The range is relative to `sample_col`; a caller working in full-line
+/// offsets adds the column's own start.
+#[must_use]
+pub fn subfield_span(sample_col: &[u8], key: usize) -> Option<std::ops::Range<usize>> {
+    let mut from = 0_usize;
+    for (index, part) in sample_col.split(|&b| b == b':').enumerate() {
+        if index == key {
+            return Some(from..from + part.len());
+        }
+        from += part.len() + 1;
+    }
+    None
+}
+
+/// The ranges of the first `needed` subfields of `sample_col` (relative to
+/// the column), written into `out` (cleared first).
+///
+/// The scanner stops splitting at its plan's `last_needed` and the encoder
+/// walks every subfield; both want this same colon walk (doc_v28 V28-24).
+pub fn subfield_spans(sample_col: &[u8], needed: usize, out: &mut Vec<std::ops::Range<usize>>) {
+    out.clear();
+    if needed == 0 {
+        return;
+    }
+    // One pass over the (short) field instead of one `memchr` per subfield
+    // (doc_v3 03 O6, level 1: the scan is call-bound on ~30-byte fields).
+    let mut from = 0_usize;
+    for (i, &b) in sample_col.iter().enumerate() {
+        if b == b':' {
+            out.push(from..i);
+            from = i + 1;
+            if out.len() == needed {
+                return;
+            }
+        }
+    }
+    out.push(from..sample_col.len());
 }
 
 /// One planned integer FORMAT column. The policy is **explicit**: the

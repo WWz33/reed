@@ -405,6 +405,33 @@ impl FilterPlan {
             )
         })
     }
+
+    /// Whether any stage reads the record's INFO column: typed head rules,
+    /// `-i/-e` expressions (head or `--set-gts .`) and the AC/AN readers all
+    /// need the same [`InfoIndex`](reed_io::vcf::info::InfoIndex).
+    ///
+    /// The filter pipeline asks this once per plan: when false, the line
+    /// classifier keeps its allocation-free duplicate check and no index is
+    /// built at all (doc_v28 V28-13).
+    #[must_use]
+    pub fn reads_info(&self) -> bool {
+        let head = self.head.iter().any(|r| {
+            matches!(
+                r,
+                HeadRule::Info(_)
+                    | HeadRule::Expr { .. }
+                    | HeadRule::MinAfInfo(_)
+                    | HeadRule::MaxAfInfo(_)
+            )
+        });
+        let tail = self.tail.iter().any(|r| {
+            matches!(
+                r,
+                TailRule::Expr { .. } | TailRule::MinAf(..) | TailRule::MaxAf(..)
+            )
+        });
+        head || tail || self.mask.iter().any(|r| r.expr.is_some())
+    }
 }
 
 /// bcftools parses `-q/-Q` with `sscanf("%f")` into a **float**, so its

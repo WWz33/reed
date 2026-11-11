@@ -113,39 +113,58 @@ pub const MAX_INFO_TAGS: usize = 4096;
 /// fragments and compares each key against the keys *before* it by re-slicing
 /// `info`, so it allocates nothing.
 ///
+/// [`admit_tag`] is the shared rule; [`InfoIndex::build`] calls the same
+/// function, so a record the classifier accepts cannot fail the index build
+/// for a different reason (doc_v28 V28-13).
+///
 /// It is O(k²) in the number of tags, which is the honest description: k is a
 /// handful (`DP`, `AC`, `AN`, `MQ`, …) in every real call, and the constant is
 /// a `memcmp` of short keys. A linear check would need per-worker scratch and
 /// a hash of the keys, which costs more than it saves at this k. A caller
-/// that already builds an [`InfoIndex`] gets the check for free from
-/// [`InfoIndex::build`] (same rule, one walk); [`crate::vcf::line::classify_line`]
-/// uses this function because it has no scratch of its own.
+/// that already builds an [`InfoIndex`] gets the check for free because
+/// [`InfoIndex::build`] applies [`admit_tag`] itself;
+/// [`crate::vcf::line::classify_line`] uses this function because it has no
+/// scratch of its own.
 ///
 /// # Errors
 ///
 /// [`DuplicateInfoKey`] when a tag repeats, and [`InfoTagOverflow`] when the
 /// record carries more than [`MAX_INFO_TAGS`] tags.
 pub fn validate_info(info: &[u8]) -> Result<(), InfoColumnError> {
-    let mut tags = 0_usize;
-    for (tag, _) in info_fragments(info) {
-        tags += 1;
-        // Checked before the quadratic scan below, so the bound really does
-        // cap the work (review item 2).
-        if tags > MAX_INFO_TAGS {
-            return Err(InfoColumnError::TooManyTags {
-                limit: MAX_INFO_TAGS,
-            });
-        }
+    for (tags, (tag, _)) in info_fragments(info).enumerate() {
         let key_start = tag.as_ptr() as usize - info.as_ptr() as usize;
-        // Compare against every earlier key: the earlier region is
-        // `info[..key_start]`, so re-walking that prefix keeps the check
-        // allocation-free and identical to the index's rule.
-        if prefix_has_key(&info[..key_start], tag) {
-            return Err(InfoColumnError::Duplicate(DuplicateInfoKey {
-                key_start,
-                key_len: tag.len(),
-            }));
-        }
+        admit_tag(info, tag, tags, key_start)?;
+    }
+    Ok(())
+}
+
+/// The one "may this tag join the record?" rule (doc_v26 V26-04, doc_v28
+/// V28-13). `info` is the whole column, `key_start` the candidate tag's
+/// offset, and `tags` the fragments already admitted.
+///
+/// [`validate_info`] and [`InfoIndex::build`] both call this, so the
+/// classifier and the index cannot disagree about which columns are legal.
+fn admit_tag(
+    info: &[u8],
+    tag: &[u8],
+    tags: usize,
+    key_start: usize,
+) -> Result<(), InfoColumnError> {
+    // Checked before the quadratic scan, so the bound really does cap the
+    // work (review item 2).
+    if tags >= MAX_INFO_TAGS {
+        return Err(InfoColumnError::TooManyTags {
+            limit: MAX_INFO_TAGS,
+        });
+    }
+    // Compare against every earlier key: the earlier region is
+    // `info[..key_start]`, so re-walking that prefix keeps the check
+    // allocation-free.
+    if prefix_has_key(&info[..key_start], tag) {
+        return Err(InfoColumnError::Duplicate(DuplicateInfoKey {
+            key_start,
+            key_len: tag.len(),
+        }));
     }
     Ok(())
 }
@@ -210,25 +229,11 @@ impl InfoIndex {
         self.frags.clear();
         for (tag, value) in info_fragments(info) {
             let tag_start = tag.as_ptr() as usize - info.as_ptr() as usize;
-            if self.frags.len() >= MAX_INFO_TAGS {
+            // Same rule as `validate_info` (doc_v28 V28-13): the classifier
+            // and the index cannot disagree about which columns are legal.
+            if let Err(err) = admit_tag(info, tag, self.frags.len(), tag_start) {
                 self.frags.clear();
-                return Err(InfoColumnError::TooManyTags {
-                    limit: MAX_INFO_TAGS,
-                });
-            }
-            // Duplicate check: the fragment list is short (a handful of
-            // tags), so a linear scan beats any map here.
-            if self
-                .frags
-                .iter()
-                .any(|(range, _)| &info[range.clone()] == tag)
-            {
-                let duplicate = DuplicateInfoKey {
-                    key_start: tag_start,
-                    key_len: tag.len(),
-                };
-                self.frags.clear();
-                return Err(duplicate.into());
+                return Err(err);
             }
             let value = value.map(|v| {
                 let start = v.as_ptr() as usize - info.as_ptr() as usize;

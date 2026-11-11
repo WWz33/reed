@@ -174,20 +174,24 @@ impl InflatedChunk<'_> {
 /// inflated size — every block inflates straight into its exact-size window,
 /// so after the first chunk a worker does no zero-fill at all (A6-6).
 ///
+/// A plain (uncompressed) chunk is already the text: the returned view
+/// borrows the chunk's own payload, so a worker does not copy a whole
+/// megabyte per chunk just to read it (doc_v28 V28-19).
+///
 /// # Errors
 ///
 /// [`IoError::MalformedBgzf`] when the metadata disagrees with the payload
 /// or a block is corrupt.
 pub fn inflate_chunk<'a>(
-    chunk: &ChunkBytes,
+    chunk: &'a ChunkBytes,
     inflater: &mut crate::bgzf::inflate::Inflater,
     scratch: &'a mut Vec<u8>,
 ) -> Result<InflatedChunk<'a>, IoError> {
     if chunk.plain {
-        scratch.clear();
-        // Uncompressed input: the "compressed" bytes are the text itself.
-        scratch.extend_from_slice(&chunk.compressed);
-        let text: &'a [u8] = truncate(chunk, scratch.as_slice());
+        // The "compressed" bytes are the text itself: borrow, never copy.
+        // `scratch` is left untouched so its capacity survives for a later
+        // compressed chunk.
+        let text = truncate(chunk, chunk.compressed.as_slice());
         return split_text(chunk, text);
     }
     let total_inflated: usize = chunk.blocks.iter().map(|&(_, ilen)| ilen as usize).sum();

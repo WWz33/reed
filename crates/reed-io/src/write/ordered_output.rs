@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::bgzf::address::VirtualOffset;
 use crate::bgzf::block::EOF_BLOCK;
 use crate::bgzf::deflate::Deflater;
 use crate::error::IoError;
@@ -22,6 +23,17 @@ use crate::write::index::Indexer;
 /// A record whose index chunk is still open: its key plus the virtual offset
 /// where it starts.
 type PendingRecord = (IndexRecord, u64);
+
+/// Narrows a block- or record-relative offset to the low 16 bits a virtual
+/// offset carries, with the reason a violation is impossible in well-formed
+/// BGZF: a block's inflated payload is at most 65,536 bytes.
+fn in_block(offset: u32, what: &'static str) -> Result<u16, IoError> {
+    u16::try_from(offset).map_err(|_| {
+        IoError::Io(format!(
+            "{what} ({offset}) does not fit a virtual offset's 16-bit half"
+        ))
+    })
+}
 
 /// Ordered sink for the filter's and `reed index`'s output streams.
 pub struct OrderedOutput {
@@ -36,7 +48,7 @@ pub struct OrderedOutput {
     /// The record whose index chunk is still open.
     pending_record: Option<PendingRecord>,
     /// Virtual offset just past the last written block.
-    last_block_end: u64,
+    last_block_end: VirtualOffset,
     /// Deflate time observed on the chunks handed in (A6-4), reported to the
     /// engine through `OrderedSink::deflate_time`.
     deflate_nanos: u64,
@@ -67,7 +79,7 @@ impl OrderedOutput {
             contig_names,
             coffset: 0,
             pending_record: None,
-            last_block_end: 0,
+            last_block_end: VirtualOffset::from_raw(0),
             deflate_nanos: 0,
             atomic: None,
         }
@@ -165,27 +177,35 @@ impl OrderedOutput {
     /// # Errors
     ///
     /// [`IoError`] from the writer or the indexer.
-    pub fn finish(mut self) -> Result<(), IoError> {
+    pub fn finish(self) -> Result<(), IoError> {
+        self.finish_pending()?.commit()
+    }
+
+    /// Finishes writing but does **not** publish the file or its index.
+    ///
+    /// The caller owns the final integrity check (for filter, `job.finish`
+    /// rejects a BCF truncated at its last record) and calls
+    /// [`PendingOrderedOutput::commit`] only after it passes. Dropping the
+    /// pending value removes the temporary and leaves the old output and
+    /// index untouched (doc_v28 V28-06).
+    ///
+    /// # Errors
+    ///
+    /// [`IoError`] from the writer or the indexer.
+    pub fn finish_pending(mut self) -> Result<PendingOrderedOutput, IoError> {
         if self.compressed {
             self.writer.write_all(&EOF_BLOCK)?;
         }
         self.writer.flush()?;
         if let Some(pending) = self.pending_record.take() {
             // The last record's chunk runs to the end of the last block.
-            self.close_index_record(pending, self.last_block_end)?;
+            self.close_index_record(pending, self.last_block_end.raw())?;
         }
-        // doc_v26 V26-08: publish the data file first, then its index. A new
-        // VCF with a stale index is a visible mismatch (bcftools warns and
-        // `reed index -f` rebuilds it); a new index over an old VCF would
-        // answer region queries with the wrong records, silently. Both files
-        // are individually atomic.
-        if let Some(atomic) = self.atomic.take() {
-            atomic.commit()?;
-        }
-        if let (Some(indexer), Some(path)) = (self.indexer.take(), self.index_path.take()) {
-            indexer.write(&path)?;
-        }
-        Ok(())
+        Ok(PendingOrderedOutput {
+            atomic: self.atomic.take(),
+            indexer: self.indexer.take(),
+            index_path: self.index_path.take(),
+        })
     }
 
     fn accept_block(
@@ -195,10 +215,17 @@ impl OrderedOutput {
         let coffset_before = self.coffset;
         self.writer.write_all(&block.compressed)?;
         self.coffset += block.compressed.len() as u64;
-        self.last_block_end = (coffset_before << 16) | u64::from(block.uncompressed_len);
+        self.last_block_end = VirtualOffset::new(
+            coffset_before,
+            in_block(block.uncompressed_len, "a block's inflated length")?,
+        );
         if self.indexer.is_some() {
             for record in &block.records {
-                let voff_start = (coffset_before << 16) | u64::from(record.offset_in_block);
+                let voff_start = VirtualOffset::new(
+                    coffset_before,
+                    in_block(record.offset_in_block, "a record's in-block offset")?,
+                )
+                .raw();
                 if let Some(pending) = self.pending_record.take() {
                     self.close_index_record(pending, voff_start)?;
                 }
@@ -234,5 +261,35 @@ impl OrderedOutput {
     #[must_use]
     pub fn index_path_for(output: &Path, flavor: crate::write::index::WriteIndex) -> PathBuf {
         flavor.path_for(output)
+    }
+}
+
+/// A finished output whose publication is still pending an external check.
+///
+/// Dropping it removes the data temporary and writes no index. `commit`
+/// publishes the data file first, then its index — a new VCF with a stale
+/// index is a visible mismatch; a new index over an old VCF would answer
+/// region queries with the wrong records silently. The two renames are
+/// individual, not a group transaction.
+pub struct PendingOrderedOutput {
+    atomic: Option<AtomicFile>,
+    indexer: Option<Indexer>,
+    index_path: Option<PathBuf>,
+}
+
+impl PendingOrderedOutput {
+    /// Publishes the data file and, when requested, its index.
+    ///
+    /// # Errors
+    ///
+    /// The commit or index-write failure.
+    pub fn commit(self) -> Result<(), IoError> {
+        if let Some(atomic) = self.atomic {
+            atomic.commit()?;
+        }
+        if let (Some(indexer), Some(path)) = (self.indexer, self.index_path) {
+            indexer.write(&path)?;
+        }
+        Ok(())
     }
 }

@@ -265,6 +265,14 @@ impl<R: Read> BgzfChunkReader<R> {
         &mut self,
         inflater: &mut crate::bgzf::inflate::Inflater,
     ) -> Result<HeaderScan, IoError> {
+        self.scan_header_with_limit(inflater, crate::header::MAX_HEADER_BYTES)
+    }
+
+    fn scan_header_with_limit(
+        &mut self,
+        inflater: &mut crate::bgzf::inflate::Inflater,
+        limit: usize,
+    ) -> Result<HeaderScan, IoError> {
         let mut text = Vec::new();
         loop {
             let Some((block, block_offset)) = self.read_block()? else {
@@ -274,11 +282,11 @@ impl<R: Read> BgzfChunkReader<R> {
             inflater.inflate_block(&block, &mut text)?;
             // doc_v26 V26-13: bound the accumulation. A stream with no
             // #CHROM line used to grow `text` until memory was exhausted
-            // before reporting the missing header.
-            if text.len() > crate::header::MAX_HEADER_BYTES {
+            // before reporting the missing header. The limit is injectable
+            // so the test exercises this branch (doc_v28 V28-12).
+            if text.len() > limit {
                 return Err(IoError::Header(format!(
-                    "header exceeds {} bytes without a #CHROM line",
-                    crate::header::MAX_HEADER_BYTES
+                    "header exceeds {limit} bytes without a #CHROM line"
                 )));
             }
             if let Some(end) = find_chrom_line_end(&text) {
@@ -924,10 +932,10 @@ mod tests {
         let mut inflater = crate::bgzf::inflate::Inflater::new();
         // The scan walks blocks until the stream ends; with no #CHROM it must
         // report the missing header rather than succeed or hang.
-        let Err(err) = reader.scan_header(&mut inflater) else {
+        let Err(err) = reader.scan_header_with_limit(&mut inflater, 1 << 20) else {
             panic!("a stream with no #CHROM must fail");
         };
-        assert!(err.to_string().contains("#CHROM"), "{err}");
+        assert!(err.to_string().contains("header exceeds 1048576"), "{err}");
         // The real ceiling admits the reference header with room to spare.
         const { assert!(crate::header::MAX_HEADER_BYTES >= 4 << 20) };
     }

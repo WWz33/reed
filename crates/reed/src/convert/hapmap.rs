@@ -366,6 +366,7 @@ impl HapmapVcfJob {
                 .position(|a| a.len() == 1 && a[0].eq_ignore_ascii_case(&letter))
         };
         let mut set: Vec<usize> = Vec::with_capacity(2);
+        let mut missing = 0_usize;
         if self.two_letter {
             if cell.len() != 2 {
                 return Err(());
@@ -374,6 +375,7 @@ impl HapmapVcfJob {
             // the output is unphased either way, so keep the written order.
             for &c in cell {
                 if iupac::is_hapmap_missing(c) {
+                    missing += 1;
                     continue;
                 }
                 if let Some(i) = index_of(c) {
@@ -393,26 +395,37 @@ impl HapmapVcfJob {
                     return Err(());
                 }
             }
-        } else {
-            if cell.len() != 1 {
-                return Err(());
-            }
-            let c = cell[0];
-            if iupac::is_hapmap_missing(c) {
-                return Ok(b"./.".to_vec());
-            }
-            let Some(exp) = iupac::ambig_expand(c) else {
-                return Err(());
+            set.sort_unstable();
+            set.dedup();
+            // A missing character is a missing allele slot, not a reason to
+            // collapse the call to a homozygote (v29 V29-04): AN -> 0/.,
+            // NG -> 1/., NN -> ./.
+            return match (set.as_slice(), missing) {
+                (&[], 2) => Ok(b"./.".to_vec()),
+                (&[i], 1) => Ok(format!("{i}/.").into_bytes()),
+                (&[i], 0) => Ok(format!("{i}/{i}").into_bytes()),
+                (&[a, b], 0) => Ok(format!("{a}/{b}").into_bytes()),
+                _ => Err(()),
             };
-            if exp.len() > 2 {
-                // V/H/D/B: a three-base set is not a diploid genotype.
-                return Err(());
-            }
-            for &letter in exp {
-                match index_of(letter) {
-                    Some(i) => set.push(i),
-                    None => return Err(()),
-                }
+        }
+        if cell.len() != 1 {
+            return Err(());
+        }
+        let c = cell[0];
+        if iupac::is_hapmap_missing(c) {
+            return Ok(b"./.".to_vec());
+        }
+        let Some(exp) = iupac::ambig_expand(c) else {
+            return Err(());
+        };
+        if exp.len() > 2 {
+            // V/H/D/B: a three-base set is not a diploid genotype.
+            return Err(());
+        }
+        for &letter in exp {
+            match index_of(letter) {
+                Some(i) => set.push(i),
+                None => return Err(()),
             }
         }
         if set.is_empty() {
@@ -634,6 +647,7 @@ pub(crate) fn run_hapmap_to_vcf(
         }),
         sfs: None,
         n_records,
+        polyploid: 0,
         elapsed: report.elapsed,
         metrics: report.metrics,
     })

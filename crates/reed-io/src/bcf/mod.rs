@@ -46,10 +46,16 @@ pub(crate) mod gt_decode;
 pub mod record;
 pub mod render;
 
-pub use columns::decode_format_columns;
+pub use columns::{decode_format_columns, decode_format_columns_with_table};
 pub use dict::BcfDict;
 pub use encode_native::NativeEncoder;
 pub use encode_noodles::{BcfEncoder, bcf_file_header, bcf_header_text};
-pub use gt::{GtQuery, GtTable, SiteHeader, decode_record_gt, format_key, site_header};
-pub use record::{BcfRecordRef, VirtualMap, declared_len, record_len, record_ref, record_site};
+pub use gt::{
+    GtQuery, GtTable, SiteHeader, decode_record_gt, decode_record_gt_masked,
+    decode_record_gt_with_format, format_key, gt_field, gt_raw_alleles, site_header,
+};
+pub use record::{
+    BcfRecordRef, FormatTable, FrameStep, SharedHeader, VirtualMap, declared_len, frame_chunk,
+    record_boundary, record_len, record_ref, record_site, type_width,
+};
 pub use render::{render_record, render_sample_part, render_site_line, render_site_part};

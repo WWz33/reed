@@ -7,8 +7,8 @@
 //!
 //! The descriptor walk collects the field table because an `IntSpec` may
 //! reference any key (and a fallback); the renderer collects the same table.
-//! Both use `record::format_fields`, so the field-major layout rule lives in
-//! one place (V22-R11).
+//! Both use [`FormatTable`], so the field-major layout rule lives in one
+//! place (V22-R11, doc_v28 V28-16).
 
 // Casts in this file are bounded by construction: Element widths and counts come from the record descriptor.
 #![allow(clippy::cast_possible_truncation)]
@@ -16,7 +16,7 @@
 use super::dict::BcfDict;
 use super::gt::SiteHeader;
 use super::record::{
-    BcfRecordRef, format_fields, int_element, int_sentinels, malformed, type_width, value_type,
+    BcfRecordRef, FormatTable, int_element, int_sentinels, type_width, value_type,
 };
 use crate::error::IoError;
 use crate::vcf::format_layout::IntSpec;
@@ -36,6 +36,11 @@ use crate::vcf::genotype_scan::{INT_MISSING, clamp_int_sum};
 /// exactly as the text scanner's `parse_int` does, so the native and text
 /// paths agree bit for bit.
 ///
+/// This builds its own descriptor table; a caller that already walked the
+/// record's FORMAT (the GT decoder does) passes that table to
+/// [`decode_format_columns_with_table`] and skips the second walk (doc_v28
+/// V28-16).
+///
 /// # Errors
 ///
 /// [`IoError::MalformedRecord`] for a truncated individual block.
@@ -43,6 +48,40 @@ pub fn decode_format_columns(
     rec: &BcfRecordRef<'_>,
     header: &SiteHeader,
     dict: &BcfDict,
+    int_specs: &[IntSpec],
+    float_keys: &[&[u8]],
+    int_columns: &mut [Vec<u32>],
+    float_columns: &mut [Vec<f32>],
+) -> Result<(), IoError> {
+    let mut table = FormatTable::new();
+    if header.n_fmt > 0 {
+        table.rebuild(rec, header.n_fmt, header.n_sample)?;
+    }
+    decode_format_columns_with_table(
+        rec,
+        header,
+        dict,
+        &table,
+        int_specs,
+        float_keys,
+        int_columns,
+        float_columns,
+    )
+}
+
+/// [`decode_format_columns`] over a table the caller already built for
+/// `rec` (doc_v28 V28-16). The GT decoder builds it once per record, so the
+/// descriptor walk and its allocation happen once instead of twice.
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] for a truncated individual block.
+#[allow(clippy::too_many_arguments)]
+pub fn decode_format_columns_with_table(
+    rec: &BcfRecordRef<'_>,
+    header: &SiteHeader,
+    dict: &BcfDict,
+    table: &FormatTable,
     int_specs: &[IntSpec],
     float_keys: &[&[u8]],
     int_columns: &mut [Vec<u32>],
@@ -60,10 +99,8 @@ pub fn decode_format_columns(
     if header.n_fmt == 0 || n_sample == 0 || (int_specs.is_empty() && float_keys.is_empty()) {
         return Ok(());
     }
-    // The individual block is field-major: descriptors first, then each
-    // field's `n_sample × count` elements.
     let indiv = rec.indiv;
-    let fields = format_fields(indiv, header.n_fmt, n_sample, malformed)?;
+    let fields = table.fields();
     // Integer columns: each spec resolves its primary field (or the fallback
     // when this record's FORMAT lacks the primary) once, then the column is
     // filled sample by sample.
@@ -95,7 +132,7 @@ pub fn decode_format_columns(
             };
         }
     }
-    for &(key, ty, count, start) in &fields {
+    for &(key, ty, count, start) in fields {
         let Some(name) = dict.tag(key) else { continue };
         let width = type_width(ty);
         if width == 0 || count != 1 {
@@ -165,9 +202,9 @@ fn float_element_column(ty: u8, elem: &[u8]) -> f32 {
             f32::from_bits(bits)
         }
     } else if matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
-        let (missing, _) = int_sentinels(ty);
+        let (missing, vector_end) = int_sentinels(ty);
         let value = int_element(ty, elem);
-        if value == missing {
+        if value == missing || value == vector_end {
             f32::NAN
         } else {
             value as f32
@@ -191,6 +228,11 @@ mod tests {
         // Integer and FLOAT types keep their values.
         assert_eq!(float_element_column(value_type::INT8, &[7]), 7.0);
         assert!(float_element_column(value_type::INT8, &[i8::MIN as u8]).is_nan());
+        // doc_v28 V28-05: the integer vector-end sentinel is missing too;
+        // leaking it made an integer-backed float column read -127.0.
+        assert!(float_element_column(value_type::INT8, &[(i8::MIN + 1) as u8]).is_nan());
+        assert!(float_element_column(value_type::INT16, &(i16::MIN + 1).to_le_bytes()).is_nan());
+        assert!(float_element_column(value_type::INT32, &(i32::MIN + 1).to_le_bytes()).is_nan());
         assert_eq!(
             float_element_column(value_type::FLOAT, &1.5_f32.to_le_bytes()),
             1.5

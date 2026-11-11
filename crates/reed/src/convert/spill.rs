@@ -148,9 +148,10 @@ impl RowsBlob {
 
 /// The MSA sites, one frame stream per contig run (the `runs` merge rule is
 /// preserved: a run continues while the contig does not change). Each frame
-/// is `pos0: u64 LE || width: u32 LE || vals (n_samples x width)` — the
+/// is `pos0: u64 LE || width: u32 LE || ref_len: u32 LE || vals (n_samples x
+/// width)` — `ref_len` is the reference span the record consumes; the
 /// render walks the frames once per sample, so nothing region-sized is ever
-/// buffered (doc_v15 D15-7).
+/// buffered (doc_v15 D15-7, v29 D29-01).
 pub(crate) struct SpilledMsa {
     pub(crate) runs: Vec<(Vec<u8>, RowsBlob)>,
 }
@@ -190,19 +191,19 @@ impl<'a> MsaFrameReader<'a> {
         &mut self,
         sample: usize,
         buf: &mut Vec<u8>,
-    ) -> Result<Option<u64>, EngineError> {
-        let mut header = [0_u8; 12];
+    ) -> Result<Option<(u64, u32)>, EngineError> {
+        let mut header = [0_u8; 16];
         match &mut self.source {
             MsaFrameSource::Memory { bytes, cursor } => {
-                if *cursor + 12 > bytes.len() {
+                if *cursor + 16 > bytes.len() {
                     return if *cursor == bytes.len() {
                         Ok(None)
                     } else {
                         Err(EngineError::job("MSA spill: truncated frame header"))
                     };
                 }
-                header.copy_from_slice(&bytes[*cursor..*cursor + 12]);
-                *cursor += 12;
+                header.copy_from_slice(&bytes[*cursor..*cursor + 16]);
+                *cursor += 16;
             }
             MsaFrameSource::Spilled { file } => match file.read_exact(&mut header) {
                 Ok(()) => {}
@@ -212,7 +213,8 @@ impl<'a> MsaFrameReader<'a> {
         }
         let pos0 = u64::from_le_bytes(header[..8].try_into().expect("invariant: 8 bytes"));
         let width =
-            u32::from_le_bytes(header[8..].try_into().expect("invariant: 4 bytes")) as usize;
+            u32::from_le_bytes(header[8..12].try_into().expect("invariant: 4 bytes")) as usize;
+        let ref_len = u32::from_le_bytes(header[12..].try_into().expect("invariant: 4 bytes"));
         let len = self.n_samples * width;
         let lo = sample * width;
         buf.clear();
@@ -232,6 +234,6 @@ impl<'a> MsaFrameReader<'a> {
                 file.seek_relative(tail as i64).map_err(EngineError::Io)?;
             }
         }
-        Ok(Some(pos0))
+        Ok(Some((pos0, ref_len)))
     }
 }

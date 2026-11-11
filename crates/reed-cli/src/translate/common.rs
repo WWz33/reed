@@ -530,6 +530,36 @@ pub(crate) fn refuse_output_eq_input(
     Ok(())
 }
 
+/// Refuses a sidecar output (convert's `PREFIX.log`) that aliases one of the
+/// run's inputs. The convert driver checks its target outputs against the
+/// same inputs; the log is CLI-only, so its alias check lives here (v29
+/// D29-04 A).
+///
+/// # Errors
+///
+/// A usage error naming the sidecar and the input it would overwrite.
+pub(crate) fn refuse_sidecar_alias(
+    out: &Path,
+    inputs: &[(&Path, &str)],
+) -> Result<(), reed::Error> {
+    let Ok(target) = std::fs::canonicalize(out).or_else(|_| std::path::absolute(out)) else {
+        return Ok(());
+    };
+    for (input, role) in inputs {
+        let Ok(input) = std::fs::canonicalize(input) else {
+            continue;
+        };
+        if input == target {
+            return Err(reed::Error::usage(format!(
+                "the run log {} would overwrite the {role} {}; give a different output prefix",
+                out.display(),
+                input.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Validates the `-o PREFIX` of the commands that write several files from a
 /// prefix (`stats`, `convert`, `pca`, `distance`, `popg`).
 ///

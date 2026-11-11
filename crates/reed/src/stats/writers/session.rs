@@ -10,7 +10,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use reed_engine::error::EngineError;
-use reed_io::write::atomic::AtomicFile;
+use reed_io::write::atomic::AtomicWriter;
 use reed_stats::request::StatKind;
 
 use crate::stats::{InvariantMode, WindowLayoutOptions, WindowRow};
@@ -35,22 +35,18 @@ pub struct WindowOutputConfig {
 
 struct Pending {
     path: PathBuf,
-    writer: std::io::BufWriter<std::fs::File>,
-    atomic: Option<AtomicFile>,
+    writer: AtomicWriter,
 }
 
 impl Pending {
     fn create(path: PathBuf, header: &str) -> Result<Self, EngineError> {
-        let (atomic, file) = AtomicFile::create(&path).map_err(EngineError::Io)?;
-        let mut writer = std::io::BufWriter::with_capacity(1 << 16, file);
+        // doc_v28 V28-23: reed-io owns the create→flush→close→commit
+        // sequence; this type keeps only the header convention.
+        let mut writer = AtomicWriter::with_capacity(&path, 1 << 16).map_err(EngineError::Io)?;
         writer
             .write_all(header.as_bytes())
             .map_err(EngineError::Io)?;
-        Ok(Self {
-            path,
-            writer,
-            atomic: Some(atomic),
-        })
+        Ok(Self { path, writer })
     }
 
     fn line(&mut self, text: &str) -> Result<(), EngineError> {
@@ -59,14 +55,8 @@ impl Pending {
             .map_err(EngineError::Io)
     }
 
-    fn finish(mut self) -> Result<PathBuf, EngineError> {
-        self.writer.flush().map_err(EngineError::Io)?;
-        drop(self.writer);
-        self.atomic
-            .take()
-            .expect("invariant: uncommitted output")
-            .commit()
-            .map_err(EngineError::Io)?;
+    fn finish(self) -> Result<PathBuf, EngineError> {
+        self.writer.commit().map_err(EngineError::Io)?;
         Ok(self.path)
     }
 }

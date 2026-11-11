@@ -326,6 +326,133 @@ pub fn write_atomic(path: &Path, text: impl AsRef<[u8]>) -> std::io::Result<()> 
     out.commit()
 }
 
+/// An atomic output file with its buffered writer (doc_v28 V28-23).
+///
+/// Every command used to repeat the same five steps — `AtomicFile::create`,
+/// wrap the handle in a `BufWriter`, write, flush, close, `commit` — with a
+/// different buffer size and a different way of closing the handle (an
+/// `Option` take, a `mem::replace` with a reopened `File`, a plain scope
+/// exit). This type owns that sequence once.
+///
+/// Two publication seams are provided on purpose: [`Self::commit`] for a
+/// command that publishes immediately, and [`Self::finish`] for one that must
+/// prove the *input* complete first (the filter, `reed index`, the report
+/// writers). It decides nothing about *when* to publish, and it promises
+/// single-file atomicity only.
+///
+/// Dropping an unfinished value drops the `BufWriter` (a best-effort flush)
+/// and the [`AtomicFile`], which removes the temporary.
+#[derive(Debug)]
+pub struct AtomicWriter {
+    writer: Option<std::io::BufWriter<File>>,
+    atomic: AtomicFile,
+}
+
+/// The default buffer size for [`AtomicWriter::create`].
+pub const DEFAULT_BUFFER: usize = 8 << 10;
+
+impl AtomicWriter {
+    /// Creates the temporary sibling of `path` with a default buffer.
+    ///
+    /// # Errors
+    ///
+    /// As [`AtomicFile::create`].
+    pub fn create(path: &Path) -> std::io::Result<Self> {
+        Self::with_capacity(path, DEFAULT_BUFFER)
+    }
+
+    /// [`Self::create`] with an explicit buffer size.
+    ///
+    /// # Errors
+    ///
+    /// As [`AtomicFile::create`].
+    pub fn with_capacity(path: &Path, capacity: usize) -> std::io::Result<Self> {
+        Self::from_atomic(path, capacity, false)
+    }
+
+    /// [`Self::create`], optionally creating missing parent directories (the
+    /// report layouts that write into their own subdirectories).
+    ///
+    /// # Errors
+    ///
+    /// As [`AtomicFile::create_with_parents`].
+    pub fn create_with_parents(path: &Path, capacity: usize) -> std::io::Result<Self> {
+        Self::from_atomic(path, capacity, true)
+    }
+
+    fn from_atomic(path: &Path, capacity: usize, create_parents: bool) -> std::io::Result<Self> {
+        let (atomic, file) = AtomicFile::create_with_parents(path, create_parents)?;
+        Ok(Self {
+            writer: Some(std::io::BufWriter::with_capacity(capacity, file)),
+            atomic,
+        })
+    }
+
+    /// The temporary path (for diagnostics; it is not the published name).
+    #[must_use]
+    pub fn temp_path(&self) -> &Path {
+        self.atomic.temp_path()
+    }
+
+    /// The final path this writer publishes to.
+    #[must_use]
+    pub fn target_path(&self) -> &Path {
+        self.atomic.target_path()
+    }
+
+    /// Flushes and closes the handle, returning the unpublished owner.
+    ///
+    /// The caller commits it once its own integrity check passes.
+    ///
+    /// # Errors
+    ///
+    /// I/O failures while flushing or closing.
+    pub fn finish(mut self) -> std::io::Result<AtomicFile> {
+        self.flush_and_close()?;
+        Ok(self.atomic)
+    }
+
+    /// Flushes, closes, and publishes the file.
+    ///
+    /// # Errors
+    ///
+    /// I/O failures while flushing, closing, syncing, or renaming.
+    pub fn commit(mut self) -> std::io::Result<()> {
+        self.flush_and_close()?;
+        self.atomic.commit()
+    }
+
+    /// Flushes the buffer and drops the handle so the file is closed before a
+    /// commit (or a deferred commit) can rename it.
+    fn flush_and_close(&mut self) -> std::io::Result<()> {
+        if let Some(mut writer) = self.writer.take() {
+            writer.flush()?;
+            // Dropping closes the handle. Nothing was written after the
+            // flush, so no buffered byte can be lost.
+        }
+        Ok(())
+    }
+}
+
+impl Write for AtomicWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.writer.as_mut() {
+            Some(writer) => writer.write(buf),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the atomic writer is already finished",
+            )),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self.writer.as_mut() {
+            Some(writer) => writer.flush(),
+            None => Ok(()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

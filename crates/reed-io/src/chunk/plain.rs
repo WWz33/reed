@@ -53,6 +53,23 @@ impl PlainChunkSource {
     }
 
     fn open_inner(mut reader: Box<dyn BufRead + Send>) -> Result<(Self, HeaderFacts), IoError> {
+        Self::open_inner_with_limit(&mut reader, crate::header::MAX_HEADER_BYTES).map(|facts| {
+            (
+                Self {
+                    reader,
+                    next_chunk_id: 0,
+                    header_done: true,
+                    buf: Vec::with_capacity(PLAIN_CHUNK_BYTES + (1 << 14)),
+                },
+                facts,
+            )
+        })
+    }
+
+    fn open_inner_with_limit(
+        reader: &mut dyn BufRead,
+        limit: usize,
+    ) -> Result<HeaderFacts, IoError> {
         let mut header_text = Vec::new();
         loop {
             let mut line = Vec::new();
@@ -62,11 +79,11 @@ impl PlainChunkSource {
             }
             // doc_v26 V26-13: a malformed input with no #CHROM line used to
             // grow this buffer until memory ran out, and only then report the
-            // missing header.
-            if header_text.len().saturating_add(line.len()) > crate::header::MAX_HEADER_BYTES {
+            // missing header. The limit is a parameter so the test drives the
+            // real branch instead of waiting for 256 MiB (doc_v28 V28-12).
+            if header_text.len().saturating_add(line.len()) > limit {
                 return Err(IoError::Header(format!(
-                    "header exceeds {} bytes without a #CHROM line",
-                    crate::header::MAX_HEADER_BYTES
+                    "header exceeds {limit} bytes without a #CHROM line"
                 )));
             }
             header_text.extend_from_slice(&line);
@@ -74,16 +91,7 @@ impl PlainChunkSource {
                 break;
             }
         }
-        let facts = HeaderFacts::parse(&header_text)?;
-        Ok((
-            Self {
-                reader,
-                next_chunk_id: 0,
-                header_done: true,
-                buf: Vec::with_capacity(PLAIN_CHUNK_BYTES + (1 << 14)),
-            },
-            facts,
-        ))
+        HeaderFacts::parse(&header_text)
     }
 }
 
@@ -132,11 +140,13 @@ mod tests {
         for _ in 0..40_000 {
             text.push_str("##INFO=<ID=DP,Number=1,Type=Integer,Description=\"d\">\n");
         }
-        assert!(text.len() > 1 << 20 && text.len() < crate::header::MAX_HEADER_BYTES);
-        let Err(err) = PlainChunkSource::open_vcf(std::io::Cursor::new(text.into_bytes())) else {
+        let limit = 1 << 20;
+        assert!(text.len() > limit);
+        let mut reader = std::io::BufReader::new(std::io::Cursor::new(text.into_bytes()));
+        let Err(err) = PlainChunkSource::open_inner_with_limit(&mut reader, limit) else {
             panic!("a header with no #CHROM line must fail");
         };
-        assert!(err.to_string().contains("#CHROM"), "{err}");
+        assert!(err.to_string().contains("header exceeds 1048576"), "{err}");
     }
 
     /// A legal header near the ceiling still parses; the bound is not a

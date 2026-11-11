@@ -13,8 +13,8 @@
 
 use super::dict::BcfDict;
 use super::record::{
-    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, format_fields, int_element,
-    int_sentinels, malformed, type_width, value_type,
+    BcfRecordRef, Cursor, FLOAT_MISSING, FLOAT_VECTOR_END, field_bytes, format_fields, gt_element,
+    int_element, int_sentinels, malformed, type_width, value_type,
 };
 use crate::error::IoError;
 use crate::vcf::genotype_scan::LocusSource;
@@ -58,24 +58,17 @@ pub fn render_site_part(
     dict: &BcfDict,
     out: &mut Vec<u8>,
 ) -> Result<(usize, usize), IoError> {
-    let mut c = Cursor::new(rec.shared);
-    let chrom = c.i32()?;
-    let pos0 = c.i32()?;
-    let _rlen = c.i32()?;
-    let qual_bits = c.u32()?;
-    let na_ni = c.u32()?;
-    let nf_ns = c.u32()?;
-    let n_allele = (na_ni >> 16) as usize;
-    let n_info = (na_ni & 0xFFFF) as usize;
-    let n_fmt = (nf_ns >> 24) as usize;
-    let n_sample = (nf_ns & 0x00FF_FFFF) as usize;
-    // doc_v26 V26-05: REF is required. The renderer used to emit REF/ALT as
-    // `.` and carry on, so a corrupt BCF produced a "valid" text line.
-    if n_allele == 0 {
-        return Err(malformed(
-            "BCF record declares zero alleles (n_allele = 0); REF is required",
-        ));
-    }
+    // doc_v28 V28-21: the fixed header decode (including doc_v26 V26-05's
+    // zero-allele rejection) is shared, so the renderer cannot drift from the
+    // GT path and the encoder.
+    let (header, mut c) = super::record::SharedHeader::parse(rec.shared)?;
+    let chrom = header.chrom;
+    let pos0 = header.pos0;
+    let qual_bits = header.qual;
+    let n_allele = header.n_allele;
+    let n_info = header.n_info;
+    let n_fmt = header.n_fmt;
+    let n_sample = header.n_sample;
 
     let contig_name = dict
         .contig(chrom)
@@ -412,20 +405,24 @@ pub(crate) fn fmt_gt(
     data: &[u8],
     vcf44: bool,
 ) -> Result<(), &'static str> {
+    // htslib represents an all-missing GT field as BCF_BT_NULL with count 0;
+    // every sample renders as `.` (doc_v28 V28-08).
+    if ty == value_type::NULL && count == 0 {
+        out.push(b'.');
+        return Ok(());
+    }
     if !matches!(ty, value_type::INT8 | value_type::INT16 | value_type::INT32) {
         return Err("BCF GT field is not integer-typed");
     }
     let width = type_width(ty);
-    let (_, vector_end) = int_sentinels(ty);
     let mark = out.len();
     let mut val0 = 0_i64;
     let mut ploidy = 0_usize;
     let mut anyunphased = false;
     for i in 0..count {
-        let v = int_element(ty, &data[i * width..(i + 1) * width]);
-        if v == vector_end {
+        let Some(v) = gt_element(ty, &data[i * width..(i + 1) * width])? else {
             break;
-        }
+        };
         if i == 0 {
             val0 = v;
         } else {
@@ -670,6 +667,37 @@ mod tests {
                 .expect("invariant: INT8 is integer-typed");
             assert_eq!(out, want.to_vec(), "codes {codes:02x?} vcf44={vcf44}");
         }
+    }
+
+    /// doc_v28 V28-04: a negative GT code is malformed, not REF allele 0.
+    #[test]
+    fn negative_gt_element_is_rejected_not_rendered_as_ref() {
+        let mut out = Vec::new();
+        let err = fmt_gt(
+            &mut out,
+            value_type::INT8,
+            2,
+            &[i8::MIN as u8, i8::MIN as u8],
+            false,
+        )
+        .expect_err("negative GT codes are corrupt");
+        assert!(err.contains("negative"), "{err}");
+        // Vector-end still truncates the allele vector.
+        let mut out = Vec::new();
+        fmt_gt(
+            &mut out,
+            value_type::INT8,
+            2,
+            &[2, (i8::MIN + 1) as u8],
+            false,
+        )
+        .expect("vector-end is legal");
+        assert_eq!(out, b"0");
+
+        // V28-08: NULL/count=0 is an all-missing GT, not a type error.
+        let mut out = Vec::new();
+        fmt_gt(&mut out, value_type::NULL, 0, &[], true).expect("NULL GT is all-missing");
+        assert_eq!(out, b".");
     }
 
     /// doc_v23 V23-02: a GT descriptor whose type nibble is CHAR has a 1-byte

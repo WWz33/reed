@@ -12,7 +12,7 @@ use reed_core::count::SiteCounts;
 use reed_core::genotype::{GenotypePolicies, GtCode, PolicyCounters};
 use reed_core::math::hwe::HweCache;
 use reed_engine::error::EngineError;
-use reed_filter::eval::head::{HeadScratch, eval_head};
+use reed_filter::eval::head::{HeadScratch, eval_head_with_built_index};
 use reed_filter::eval::tail::eval_tail;
 use reed_filter::expr;
 use reed_filter::funnel::FunnelPartial;
@@ -20,7 +20,7 @@ use reed_filter::plan::FilterPlan;
 use reed_io::vcf::format_layout::IntSpec;
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
 use reed_io::vcf::info::InfoIndex;
-use reed_io::vcf::line::{LineRef, RecordClass, classify_line};
+use reed_io::vcf::line::{LineRef, RecordClass, classify_line_with_index};
 use reed_io::vcf::site::{ContigTable, SiteView};
 
 use super::job_err;
@@ -72,6 +72,30 @@ pub(crate) struct Processed {
     /// Whether the record reached the body (head passed and, when the tail
     /// runs inline, the tail passed).
     pub(crate) emitted: bool,
+}
+
+/// The filter's line policy (doc_v25 V25-03): blank and malformed lines
+/// are both errors, and `classify_line` owns the judgement. Before the
+/// split, a blank LF line inside a chunk body was skipped while the same
+/// line at a seam (or with CRLF) failed as "fewer than 8 columns".
+///
+/// `index` receives the INFO ranges the classifier validated the column
+/// with, so the head and tail do not walk the same text again (doc_v28
+/// V28-13). It is only passed when the plan reads INFO at all, so a plan
+/// without INFO rules keeps the allocation-free classifier.
+fn record_line<'a>(
+    line: &'a [u8],
+    n_samples: usize,
+    index: Option<&mut InfoIndex>,
+) -> Result<LineRef<'a>, EngineError> {
+    match classify_line_with_index(line, n_samples, index) {
+        RecordClass::Record(lr) => Ok(lr),
+        RecordClass::Blank => Err(EngineError::job("blank record line")),
+        RecordClass::Malformed(why) => Err(EngineError::job(format!(
+            "record line is malformed ({})",
+            why.label()
+        ))),
+    }
 }
 
 /// Per-worker record pipeline: decoder, contig table, head scratch and the
@@ -146,21 +170,6 @@ impl RecordPipeline {
             .collect();
     }
 
-    /// The filter's line policy (doc_v25 V25-03): blank and malformed lines
-    /// are both errors, and `classify_line` owns the judgement. Before the
-    /// split, a blank LF line inside a chunk body was skipped while the same
-    /// line at a seam (or with CRLF) failed as "fewer than 8 columns".
-    fn record_line<'a>(&self, line: &'a [u8]) -> Result<LineRef<'a>, EngineError> {
-        match classify_line(line, self.n_samples) {
-            RecordClass::Record(lr) => Ok(lr),
-            RecordClass::Blank => Err(EngineError::job("blank record line")),
-            RecordClass::Malformed(why) => Err(EngineError::job(format!(
-                "record line is malformed ({})",
-                why.label()
-            ))),
-        }
-    }
-
     /// Runs head → decode → mask → count → tail for one record and calls
     /// `body` when the strategy gets the record.
     ///
@@ -184,7 +193,19 @@ impl RecordPipeline {
         F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
     {
         funnel.n_input += 1;
-        let lr = self.record_line(line)?;
+        // The classifier validates the INFO column; when any stage reads
+        // INFO, it hands the ranges back so the head rules, the AC/AN reader
+        // and the tail reuse that one walk (doc_v28 V28-13).
+        let reads_info = plan.reads_info();
+        let lr = if reads_info {
+            record_line(line, self.n_samples, Some(&mut self.head.index))?
+        } else {
+            record_line(line, self.n_samples, None)?
+        };
+        // The classifier built the index for exactly this line (or none was
+        // needed); a stale table from the previous record must never be
+        // handed to the tail stage.
+        self.head.index_current = reads_info;
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
         } else {
@@ -196,7 +217,7 @@ impl RecordPipeline {
         // ---- head stage (§11.2: order is semantics) ----
         // `ΣAC > AN` aborts the run like bcftools' `[E::bcf_calc_ac]`
         // (doc_v25 V25-04): a job error, so it exits 1, not 2.
-        let head_passed = eval_head(
+        let head_passed = eval_head_with_built_index(
             &lr,
             pos1,
             &plan.head,
@@ -283,7 +304,16 @@ impl RecordPipeline {
         F: FnMut(&mut RecordView<'_, '_>) -> Result<(), EngineError>,
     {
         funnel.n_input += 1;
-        let lr = self.record_line(line)?;
+        let reads_info = plan.reads_info();
+        let lr = if reads_info {
+            record_line(line, self.n_samples, Some(&mut self.head.index))?
+        } else {
+            record_line(line, self.n_samples, None)?
+        };
+        // The classifier built the index for exactly this line (or none was
+        // needed); a stale table from the previous record must never be
+        // handed to the tail stage.
+        self.head.index_current = reads_info;
         let site = if opts.require_contig {
             SiteView::parse_declared(&lr, &mut self.contigs)
         } else {
@@ -291,7 +321,7 @@ impl RecordPipeline {
         }
         .map_err(job_err)?;
         let pos1 = site.pos1;
-        let head_passed = eval_head(
+        let head_passed = eval_head_with_built_index(
             &lr,
             pos1,
             &plan.head,
@@ -353,6 +383,9 @@ pub(crate) struct NativeScratch {
     pub(crate) float_columns: Vec<Vec<f32>>,
     /// Policy triggers from the GT decode.
     pub(crate) counters: PolicyCounters,
+    /// The record's FORMAT descriptors, walked once by the GT decoder and
+    /// reused by the column decoder (doc_v28 V28-16).
+    pub(crate) formats: reed_io::bcf::FormatTable,
     /// Whether the last decoded record's FORMAT carried a GT key.
     pub(crate) has_gt: bool,
 }
@@ -376,6 +409,7 @@ impl NativeScratch {
             int_columns: vec![Vec::with_capacity(n_samples); int_specs.len()],
             float_columns: vec![Vec::with_capacity(n_samples); float_keys.len()],
             counters: PolicyCounters::default(),
+            formats: reed_io::bcf::FormatTable::new(),
             has_gt: false,
         }
     }
@@ -405,7 +439,9 @@ impl NativeScratch {
             .ok_or_else(|| EngineError::job("BCF contig index is not in the dictionary"))?;
         let pos1 = u64::try_from(header.pos0).unwrap_or(0) + 1;
         self.counters = PolicyCounters::default();
-        self.has_gt = reed_io::bcf::decode_record_gt(
+        // One descriptor walk serves the GT lookup and the typed columns
+        // (doc_v28 V28-16).
+        self.has_gt = reed_io::bcf::decode_record_gt_with_format(
             &rec,
             &header,
             &reed_io::bcf::GtQuery {
@@ -413,17 +449,20 @@ impl NativeScratch {
                 n_samples,
                 contig_name: contig,
                 pos1,
+                vcf44: dict.vcf44(),
             },
             &self.table,
             &mut self.codes,
             &mut self.counters,
+            Some(&mut self.formats),
         )
         .map_err(EngineError::from)?;
         let float_keys: Vec<&[u8]> = float_keys.iter().map(Vec::as_slice).collect();
-        reed_io::bcf::decode_format_columns(
+        reed_io::bcf::decode_format_columns_with_table(
             &rec,
             &header,
             dict,
+            &self.formats,
             int_specs,
             &float_keys,
             &mut self.int_columns,

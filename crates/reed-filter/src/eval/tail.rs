@@ -120,7 +120,18 @@ fn af_of(
     // `ΣAC > AN` malformed-record guard, so one record reads the same way on
     // both sides (doc_v25 V25-04).
     let info = if values.info_trusted {
-        crate::semantics::info_af(values.info, values.n_alt)
+        // doc_v28 V28-13: the head's index (when it built one) is the same
+        // column, so the AC/AN lookup reuses it instead of walking INFO a
+        // second time. `info_af` folds the malformed cases into `None`.
+        match values.info_index {
+            Some(index) => {
+                match crate::semantics::info_af_indexed(index, values.info, values.n_alt) {
+                    crate::semantics::InfoAfOutcome::Usable(counts) => Some(counts),
+                    _ => None,
+                }
+            }
+            None => crate::semantics::info_af(values.info, values.n_alt),
+        }
     } else {
         None
     };

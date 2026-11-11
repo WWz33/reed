@@ -83,6 +83,21 @@ pub fn edit_vcf_line(
     gt_index: Option<usize>,
     out: &mut Vec<u8>,
 ) {
+    // Nothing to change: copy the original bytes, including a CRLF tail.
+    // The old segmented path stripped `\r` and appended `\n` even for an
+    // empty plan (doc_v28 V28-11).
+    if plan.info_untouched() && !plan.samples_edited() {
+        out.extend_from_slice(line.line);
+        if line.terminator().is_empty() {
+            out.push(b'\n');
+        }
+        return;
+    }
+    let terminator = if line.terminator().is_empty() {
+        b"\n".as_slice()
+    } else {
+        line.terminator()
+    };
     // Columns 1–7 (CHROM .. FILTER) with their tabs: the bytes before INFO.
     out.extend_from_slice(&line.line[..line.info_start()]);
 
@@ -99,7 +114,7 @@ pub fn edit_vcf_line(
     // (bcftools writes legal 8-column records and warns once). `keep_samples`
     // is `Some` only when a sample edit was requested.
     if plan.keep_samples.is_some_and(|k| k.n_selected() == 0) {
-        out.push(b'\n');
+        out.extend_from_slice(terminator);
         return;
     }
     // The shape is preserved (doc_v22 R22-3): a sites-only record stays
@@ -107,13 +122,13 @@ pub fn edit_vcf_line(
     // writes the sample region.
     match line.shape() {
         Shape::SitesOnly => {
-            out.push(b'\n');
+            out.extend_from_slice(terminator);
             return;
         }
         Shape::FormatOnly => {
             out.push(b'\t');
             out.extend_from_slice(line.format_text());
-            out.push(b'\n');
+            out.extend_from_slice(terminator);
             return;
         }
         Shape::WithSamples => {}
@@ -130,7 +145,7 @@ pub fn edit_vcf_line(
     } else {
         out.extend_from_slice(samples);
     }
-    out.push(b'\n');
+    out.extend_from_slice(terminator);
 }
 
 /// INFO edit: drop `info_remove`, replace any tag present in `info_set` in
@@ -262,6 +277,8 @@ fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_index: Option<usize>, ou
 /// the same place so the verbatim tail copy cannot resurrect them
 /// (doc_v23 V23-03).
 fn sample_region_end(samples: &[u8], n: usize) -> usize {
+    // Tab-separated columns, not colon-separated subfields: walk the first
+    // `n` tabs and end at the last column's content.
     let mut start = 0;
     for _ in 0..n {
         let Some(rel) = memchr::memchr(b'\t', &samples[start..]) else {
@@ -279,24 +296,14 @@ fn replace_gt_subfield(field: &[u8], gt_index: Option<usize>, out: &mut Vec<u8>)
         out.extend_from_slice(field);
         return;
     };
-    let mut subfield_start = 0;
-    let mut index = 0_usize;
-    loop {
-        let subfield_end = memchr::memchr(b':', &field[subfield_start..])
-            .map_or(field.len(), |rel| subfield_start + rel);
-        if index == gt_index {
-            out.extend_from_slice(&field[..subfield_start]);
-            out.extend_from_slice(b"./.");
-            out.extend_from_slice(&field[subfield_end..]);
-            return;
-        }
-        if subfield_end == field.len() {
-            break;
-        }
-        subfield_start = subfield_end + 1;
-        index += 1;
-    }
-    out.extend_from_slice(field);
+    // doc_v28 V28-24: the colon walk lives in `format_layout`.
+    let Some(span) = crate::vcf::format_layout::subfield_span(field, gt_index) else {
+        out.extend_from_slice(field);
+        return;
+    };
+    out.extend_from_slice(&field[..span.start]);
+    out.extend_from_slice(b"./.");
+    out.extend_from_slice(&field[span.end..]);
 }
 
 /// C's `%g` with precision 6 — the htslib INFO float rendering
@@ -531,13 +538,14 @@ mod tests {
     }
 
     fn edit(line: &[u8], plan: &EditPlan<'_>, gt_idx: Option<usize>) -> String {
+        edit_raw(line, plan, gt_idx).trim_end().to_string()
+    }
+
+    fn edit_raw(line: &[u8], plan: &EditPlan<'_>, gt_idx: Option<usize>) -> String {
         let lr = LineRef::parse(line).expect("invariant: full line");
         let mut out = Vec::new();
         edit_vcf_line(&lr, plan, gt_idx, &mut out);
-        String::from_utf8(out)
-            .expect("invariant: utf-8")
-            .trim_end()
-            .to_string()
+        String::from_utf8(out).expect("invariant: utf-8")
     }
 
     const LINE: &[u8] =
@@ -564,6 +572,27 @@ mod tests {
         assert_eq!(
             edit(LINE, &plan, Some(0)),
             String::from_utf8_lossy(LINE).trim_end()
+        );
+    }
+
+    /// doc_v28 V28-11: an untouched CRLF record keeps its terminator, and a
+    /// local edit does not normalize it to LF.
+    #[test]
+    fn crlf_terminator_is_preserved() {
+        let line = b"Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\r\n";
+        assert_eq!(
+            edit_raw(line, &EditPlan::default(), Some(0)),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\r\n"
+        );
+        let mut bits = Bitset::new(1);
+        bits.set(0, true);
+        let plan = EditPlan {
+            mask_gt: Some(&bits),
+            ..EditPlan::default()
+        };
+        assert_eq!(
+            edit_raw(line, &plan, Some(0)),
+            "Chr01\t100\t.\tA\tG\t50\tPASS\t.\tGT\t./.\r\n"
         );
     }
 

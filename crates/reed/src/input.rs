@@ -35,9 +35,18 @@ pub struct OpenedInput {
     /// Present when the input is BCF: the tag dictionaries the renderer
     /// needs (doc_v3 02-bcf.md B1).
     pub(crate) bcf: Option<std::sync::Arc<reed_io::bcf::BcfDict>>,
+    /// The opened path (`None` for stdin). Output planning compares it with
+    /// every path the run would write (v29 V29-03).
+    pub(crate) path: Option<std::path::PathBuf>,
 }
 
 impl OpenedInput {
+    /// The opened file's path, or `None` when the input is stdin.
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     /// Header facts (noodles header, samples, contigs) of the opened input.
     #[must_use]
     pub const fn facts(&self) -> &HeaderFacts {
@@ -93,28 +102,19 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
             "regions need a seekable file, not stdin",
         ));
     };
-    let format = {
-        let mut probe = open_path(p)?;
-        let (prefix, inflated) = sniff(&mut probe)?;
-        Format::detect(&prefix, inflated.as_deref())?
-    };
-    let file = open_path(p)?;
-    let (_, facts) = BgzfChunkSource::open(file)?;
+    use std::io::{Seek, SeekFrom};
+    // doc_v28 V28-26: one open serves the sniff, the header scan and the
+    // region reader (it used to open the same path three times, leaving two
+    // windows for the file to change between them).
+    let mut file = open_path(p)?;
+    let (prefix, inflated) = sniff(&mut file)?;
+    let format = Format::detect(&prefix, inflated.as_deref())?;
+    file.seek(SeekFrom::Start(0))?;
+    // The header scan runs on a dup of the handle, so `file`'s own offset
+    // stays at 0 for the region reader's first seek.
+    let (_, facts) = BgzfChunkSource::open(file.try_clone()?)?;
     // The index sits next to the input as `.csi` or `.tbi`.
-    let mut csi = p.as_os_str().to_os_string();
-    csi.push(".csi");
-    let mut tbi = p.as_os_str().to_os_string();
-    tbi.push(".tbi");
-    let index = if Path::new(&csi).exists() {
-        FileIndex::open(Path::new(&csi))?
-    } else if Path::new(&tbi).exists() {
-        FileIndex::open(Path::new(&tbi))?
-    } else {
-        return Err(IoError::UnsupportedInput(
-            "regions need an index next to the input (.csi or .tbi; build one with `reed index`)",
-        ));
-    };
-    let file = open_path(p)?;
+    let index = sidecar_index(p)?;
     let source = RegionChunkSource::open(
         std::io::BufReader::with_capacity(1 << 20, file),
         &index,
@@ -132,7 +132,24 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
         source: Box::new(source),
         facts,
         bcf,
+        path: Some(p.to_path_buf()),
     })
+}
+
+/// Opens the `.csi` or `.tbi` next to `p` — the one place the sidecar rule
+/// lives (doc_v28 V28-26).
+fn sidecar_index(p: &Path) -> Result<FileIndex, IoError> {
+    for suffix in [".csi", ".tbi"] {
+        let mut sidecar = p.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let sidecar = Path::new(&sidecar);
+        if sidecar.exists() {
+            return FileIndex::open(sidecar);
+        }
+    }
+    Err(IoError::UnsupportedInput(
+        "regions need an index next to the input (.csi or .tbi; build one with `reed index`)",
+    ))
 }
 
 /// Detects a file's input format from its magic bytes without opening the
@@ -223,54 +240,83 @@ fn open_all(path: Option<&Path>) -> Result<OpenedInput, IoError> {
     }
 }
 
+/// Opens a file once: sniffs its format, rewinds, and hands the same handle
+/// to the source the format names (doc_v28 V28-26).
+///
+/// The previous version opened the path twice — once to sniff and once for
+/// the source — which also left a window for the file to change between the
+/// two opens. One handle serves both.
 fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
-    let (prefix, inflated) = {
-        let mut file = open_path(p)?;
-        sniff(&mut file)?
-    };
-    match Format::detect(&prefix, inflated.as_deref())? {
+    use std::io::{Seek, SeekFrom};
+    let mut file = open_path(p)?;
+    let (prefix, inflated) = sniff(&mut file)?;
+    let format = Format::detect(&prefix, inflated.as_deref())?;
+    file.seek(SeekFrom::Start(0))?;
+    build_source(format, file, Some(p.to_path_buf()))
+}
+
+/// The four format arms, written once for files and stdin alike.
+///
+/// `reader` yields the stream from its first byte; the caller owns the sniff
+/// and the rewind (a file seeks, stdin chains the probed prefix back).
+fn build_source(
+    format: Format,
+    reader: impl Read + Send + 'static,
+    path: Option<std::path::PathBuf>,
+) -> Result<OpenedInput, IoError> {
+    match format {
         Format::VcfBgzf => {
-            let (source, facts) = open_bgzf(p)?;
+            let (source, facts) = BgzfChunkSource::open(reader)?;
             Ok(OpenedInput {
-                source,
+                source: Box::new(source),
                 facts,
                 bcf: None,
+                path,
             })
         }
         Format::Vcf => {
-            let file = open_path(p)?;
-            let (source, facts) = PlainChunkSource::open_vcf(file)?;
+            let (source, facts) = PlainChunkSource::open_vcf(reader)?;
             Ok(OpenedInput {
                 source: Box::new(source),
                 facts,
                 bcf: None,
+                path,
             })
         }
         Format::VcfGzip => {
-            let file = open_path(p)?;
             warn_serial_gzip();
-            let (source, facts) = PlainChunkSource::open_gzip(file)?;
+            let (source, facts) = PlainChunkSource::open_gzip(reader)?;
             Ok(OpenedInput {
                 source: Box::new(source),
                 facts,
                 bcf: None,
+                path,
             })
         }
         Format::Bcf => {
             // BCF shares the BGZF chunk source; the dictionaries come from
             // the header text embedded in the file.
-            let (source, facts) = open_bgzf(p)?;
+            let (source, facts) = BgzfChunkSource::open(reader)?;
             let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
             Ok(OpenedInput {
-                source,
+                source: Box::new(source),
                 facts,
                 bcf: Some(std::sync::Arc::new(dict)),
+                path,
             })
         }
     }
 }
 
-/// Opens a BGZF file with the streaming reader.
+fn open_stdin() -> Result<OpenedInput, IoError> {
+    let mut stdin = std::io::stdin();
+    let (prefix, inflated) = sniff(&mut stdin)?;
+    let format = Format::detect(&prefix, inflated.as_deref())?;
+    // stdin cannot seek, so the probed bytes are chained back on the front.
+    build_source(format, std::io::Cursor::new(prefix).chain(stdin), None)
+}
+
+/// Opens a BGZF file with the streaming reader, not a memory map.
 ///
 /// This used to prefer the memory-mapped source (doc_v4 03 §3.4 step 3 — no
 /// copies, no read syscalls). `memmap2::Mmap::map` is only sound while the
@@ -283,56 +329,6 @@ fn open_file(p: &Path) -> Result<OpenedInput, IoError> {
 ///
 /// [`reed_io::chunk::bgzf::MmapChunkSource`] remains available to callers
 /// that can prove an immutable snapshot; `reed`'s own commands do not use it.
-fn open_bgzf(p: &Path) -> Result<(Box<dyn ChunkSource>, HeaderFacts), IoError> {
-    let (source, facts) = BgzfChunkSource::open(open_path(p)?)?;
-    Ok((Box::new(source), facts))
-}
-
-/// Streams stdin: the format probe's prefix is chained back so the source
-/// sees every byte exactly once.
-fn open_stdin() -> Result<OpenedInput, IoError> {
-    let mut stdin = std::io::stdin();
-    let (prefix, inflated) = sniff(&mut stdin)?;
-    let format = Format::detect(&prefix, inflated.as_deref())?;
-    let reader = std::io::Cursor::new(prefix).chain(stdin);
-    match format {
-        Format::VcfBgzf => {
-            let (source, facts) = BgzfChunkSource::open(reader)?;
-            Ok(OpenedInput {
-                source: Box::new(source),
-                facts,
-                bcf: None,
-            })
-        }
-        Format::Vcf => {
-            let (source, facts) = PlainChunkSource::open_vcf(reader)?;
-            Ok(OpenedInput {
-                source: Box::new(source),
-                facts,
-                bcf: None,
-            })
-        }
-        Format::VcfGzip => {
-            warn_serial_gzip();
-            let (source, facts) = PlainChunkSource::open_gzip(reader)?;
-            Ok(OpenedInput {
-                source: Box::new(source),
-                facts,
-                bcf: None,
-            })
-        }
-        Format::Bcf => {
-            let (source, facts) = BgzfChunkSource::open(reader)?;
-            let dict = reed_io::bcf::BcfDict::from_header(&facts.text)?;
-            Ok(OpenedInput {
-                source: Box::new(source),
-                facts,
-                bcf: Some(std::sync::Arc::new(dict)),
-            })
-        }
-    }
-}
-
 fn warn_serial_gzip() {
     tracing::warn!(
         "the input is plain gzip, not BGZF; decompression is serial \

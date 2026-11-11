@@ -13,7 +13,7 @@
 //! Output files follow plink so existing scripts can consume them:
 //! `PREFIX.eigenvec` (`#FID IID PC1..PCk`), `PREFIX.eigenval`, `PREFIX.pve`.
 
-use std::io::{BufWriter, Write as _};
+use std::io::Write as _;
 
 use reed_engine::budget::ThreadBudget;
 
@@ -164,10 +164,19 @@ pub fn read_genotype_matrix(
     if !keep.iter().any(|&k| k) {
         return Err(crate::Error::usage("the sample subset selects no samples"));
     }
+    // doc_v28 V28-15: a BCF input feeds the framed records straight to the
+    // dosage reader; text input stays on the rendered-text path.
+    let native_bcf = opened.bcf.is_some();
     let job = PcaJob {
         n_samples,
         keep: keep.as_slice().to_vec(),
         allow_multiallelic: false,
+        bcf_input: native_bcf.then(|| {
+            opened
+                .bcf
+                .clone()
+                .expect("invariant: a BCF input carries its dictionary")
+        }),
     };
     let abort = reed_engine::abort::abort_for(budget);
     // doc_v20 review of S76: cap the collection itself, not just the final
@@ -537,14 +546,17 @@ fn write_outputs(
     vectors: &Mat,
     pve: &[f64],
 ) -> Result<(), crate::Error> {
-    use reed_io::write::atomic::AtomicFile;
+    use reed_io::write::atomic::AtomicWriter;
     let vec_path = std::path::Path::new(&format!("{prefix}.eigenvec")).to_path_buf();
     let val_path = std::path::Path::new(&format!("{prefix}.eigenval")).to_path_buf();
     let pve_path = std::path::Path::new(&format!("{prefix}.pve")).to_path_buf();
 
-    let (vec_out, target) = AtomicFile::create(&vec_path)?;
+    // doc_v28 V28-23: reed-io's AtomicWriter owns the create→flush→close
+    // sequence; each file is finished here and published in a fixed order
+    // below, so a failure leaves no partially written file behind.
+    let mut vec_out = AtomicWriter::with_capacity(&vec_path, 1 << 16)?;
     {
-        let mut f = BufWriter::with_capacity(1 << 16, target);
+        let f = &mut vec_out;
         // plink's header: `#FID IID PC1..PCk`; reed uses the sample name for
         // both FID and IID so single-name datasets round-trip.
         write!(f, "#FID\tIID").map_err(io_err)?;
@@ -562,24 +574,27 @@ fn write_outputs(
         }
         f.flush().map_err(io_err)?;
     }
+    let vec_out = vec_out.finish()?;
 
-    let (val_out, target) = AtomicFile::create(&val_path)?;
+    let mut val_out = AtomicWriter::with_capacity(&val_path, 1 << 16)?;
     {
-        let mut f = BufWriter::with_capacity(1 << 16, target);
+        let f = &mut val_out;
         for v in values {
             writeln!(f, "{v:.9}").map_err(io_err)?;
         }
         f.flush().map_err(io_err)?;
     }
+    let val_out = val_out.finish()?;
 
-    let (pve_out, target) = AtomicFile::create(&pve_path)?;
+    let mut pve_out = AtomicWriter::with_capacity(&pve_path, 1 << 16)?;
     {
-        let mut f = BufWriter::with_capacity(1 << 16, target);
+        let f = &mut pve_out;
         for v in pve {
             writeln!(f, "{v:.9}").map_err(io_err)?;
         }
         f.flush().map_err(io_err)?;
     }
+    let pve_out = pve_out.finish()?;
 
     // Publish in a fixed order; any earlier rename succeeded, later ones
     // still happen, so no write failure leaves a *partially written* file.

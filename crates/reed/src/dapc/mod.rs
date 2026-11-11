@@ -16,7 +16,7 @@
 //! (`LD1..LDk`) differ by a per-axis scale. See
 //! `docs/rounds/v17b/01-research.md` §1.5.
 
-use std::io::{BufWriter, Write as _};
+use std::io::Write as _;
 
 use reed_engine::budget::ThreadBudget;
 use reed_reduce::Mat;
@@ -432,13 +432,15 @@ fn write_outputs(o: &Outputs<'_>) -> Result<(), crate::Error> {
     // doc_v26 V26-08: every file is written to a sibling temporary and
     // published only after all of them are complete, so a write error cannot
     // leave a partial group.
-    use reed_io::write::atomic::AtomicFile;
+    use reed_io::write::atomic::AtomicWriter;
     let ind_path = std::path::Path::new(&format!("{prefix}.dapc.ind")).to_path_buf();
     let eig_path = std::path::Path::new(&format!("{prefix}.dapc.eig")).to_path_buf();
     let var_path = std::path::Path::new(&format!("{prefix}.dapc.var")).to_path_buf();
 
-    let (ind_out, target) = AtomicFile::create(&ind_path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, target);
+    // doc_v28 V28-23: reed-io's AtomicWriter owns create→flush→close; each
+    // file is finished here and published in a fixed order below.
+    let mut ind_out = AtomicWriter::with_capacity(&ind_path, 1 << 16)?;
+    let f = &mut ind_out;
     write!(f, "#IID\tPOP\tASSIGN").map_err(io_err)?;
     for k in 0..n_da {
         write!(f, "\tLD{}", k + 1).map_err(io_err)?;
@@ -456,26 +458,27 @@ fn write_outputs(o: &Outputs<'_>) -> Result<(), crate::Error> {
         }
         writeln!(f).map_err(io_err)?;
     }
-
     f.flush().map_err(io_err)?;
-    drop(f);
+    let ind_out = ind_out.finish()?;
 
-    let (eig_out, target) = AtomicFile::create(&eig_path)?;
+    let mut eig_out = AtomicWriter::with_capacity(&eig_path, 1 << 16)?;
     {
-        let mut f = BufWriter::with_capacity(1 << 16, target);
+        let f = &mut eig_out;
         for v in eig {
             writeln!(f, "{v:.9}").map_err(io_err)?;
         }
         f.flush().map_err(io_err)?;
     }
+    let eig_out = eig_out.finish()?;
 
-    let (var_out, target) = AtomicFile::create(&var_path)?;
+    let mut var_out = AtomicWriter::with_capacity(&var_path, 1 << 16)?;
     {
-        let mut f = BufWriter::with_capacity(1 << 16, target);
+        let f = &mut var_out;
         writeln!(f, "#n_pca\tn_da\tvar").map_err(io_err)?;
         writeln!(f, "{n_pca}\t{n_da}\t{var:.9}").map_err(io_err)?;
         f.flush().map_err(io_err)?;
     }
+    let var_out = var_out.finish()?;
     ind_out.commit()?;
     eig_out.commit()?;
     var_out.commit()?;
@@ -485,8 +488,8 @@ fn write_outputs(o: &Outputs<'_>) -> Result<(), crate::Error> {
 /// Writes `PREFIX.dapc.xval`: one row per candidate plus the summary lines.
 fn write_xval(prefix: &str, xv: &XvalOutcome) -> Result<(), crate::Error> {
     let path = std::path::Path::new(&format!("{prefix}.dapc.xval")).to_path_buf();
-    let (out, target) = reed_io::write::atomic::AtomicFile::create(&path)?;
-    let mut f = BufWriter::with_capacity(1 << 16, target);
+    let mut out = reed_io::write::atomic::AtomicWriter::with_capacity(&path, 1 << 16)?;
+    let f = &mut out;
     writeln!(f, "#n_pca\tmean_success").map_err(io_err)?;
     for (n, s) in &xv.candidates {
         writeln!(f, "{n}\t{s:.9}").map_err(io_err)?;
@@ -500,7 +503,6 @@ fn write_xval(prefix: &str, xv: &XvalOutcome) -> Result<(), crate::Error> {
     .map_err(io_err)?;
     writeln!(f, "#random_chance\t{:.9}", xv.random_chance).map_err(io_err)?;
     f.flush().map_err(io_err)?;
-    drop(f);
     out.commit()?;
     Ok(())
 }

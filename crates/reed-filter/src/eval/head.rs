@@ -30,6 +30,12 @@ impl HeadScratch {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// The current record's index, when it belongs to that record
+    /// (doc_v28 V28-13: the AC/AN reader reuses the same walk).
+    fn info_index(&self) -> Option<&InfoIndex> {
+        self.index_current.then_some(&self.index)
+    }
 }
 
 /// Evaluates the head rules in order; increments `hits[i]` for every rule
@@ -57,6 +63,39 @@ pub fn eval_head(
     scratch: &mut HeadScratch,
     tags: &reed_core::tag_table::TagTable,
 ) -> Result<bool, FilterError> {
+    eval_head_with(line, pos1, rules, hits, scratch, tags, false)
+}
+
+/// [`eval_head`] when the caller already built [`HeadScratch::index`] for
+/// this line (doc_v28 V28-13: the classifier validated the INFO column with
+/// the same index, so the head need not walk it twice).
+///
+/// The caller guarantees the index belongs to `line`; [`eval_head`] is the
+/// entry point that builds it.
+///
+/// # Errors
+///
+/// As [`eval_head`].
+pub fn eval_head_with_built_index(
+    line: &LineRef<'_>,
+    pos1: u64,
+    rules: &[HeadRule],
+    hits: &mut [u64],
+    scratch: &mut HeadScratch,
+    tags: &reed_core::tag_table::TagTable,
+) -> Result<bool, FilterError> {
+    eval_head_with(line, pos1, rules, hits, scratch, tags, true)
+}
+
+fn eval_head_with(
+    line: &LineRef<'_>,
+    pos1: u64,
+    rules: &[HeadRule],
+    hits: &mut [u64],
+    scratch: &mut HeadScratch,
+    tags: &reed_core::tag_table::TagTable,
+    index_built: bool,
+) -> Result<bool, FilterError> {
     // The counters are aligned with the rule list; a short slice would make
     // the zip below silently skip rules (a caller invariant violation).
     assert_eq!(
@@ -67,19 +106,31 @@ pub fn eval_head(
     let chrom = line.chrom();
     let reference = line.reference();
     let alts = line.alts();
-    // One fragment walk per record serves every INFO reader (A6-18).
-    scratch.index_current = rules
-        .iter()
-        .any(|r| matches!(r, HeadRule::Info(_) | HeadRule::Expr { .. }));
-    if scratch.index_current {
-        // doc_v26 V26-04: a duplicate INFO tag rejects the record at
-        // `classify_line`, so this rebuild cannot fail for a line that
-        // reached the head. A caller that bypassed the classifier gets an
-        // empty index (every INFO rule then reads a missing operand), which
-        // is the conservative outcome: no rule may pick an element.
-        if scratch.index.build(line.info_text()).is_err() {
-            scratch.index_current = false;
+    // One fragment walk per record serves every INFO reader (A6-18): the
+    // typed rules, the expressions *and* the `-q/-Q` AC/AN reader.
+    let needs_info = rules.iter().any(|r| {
+        matches!(
+            r,
+            HeadRule::Info(_)
+                | HeadRule::Expr { .. }
+                | HeadRule::MinAfInfo(_)
+                | HeadRule::MaxAfInfo(_)
+        )
+    });
+    if needs_info {
+        if !index_built {
+            // doc_v26 V26-04: a duplicate INFO tag rejects the record at
+            // `classify_line`, so this rebuild cannot fail for a line that
+            // reached the head. A caller that bypassed the classifier gets an
+            // empty index (every INFO rule then reads a missing operand),
+            // which is the conservative outcome: no rule may pick an element.
+            scratch.index_current = scratch.index.build(line.info_text()).is_ok();
         }
+        // With a prebuilt index the caller has already set `index_current`;
+        // rebuilding it here would be the second walk V28-13 removes.
+    } else if !index_built {
+        // No rule needs the index and nobody prebuilt one.
+        scratch.index_current = false;
     }
     for (rule, hit) in rules.iter().zip(hits.iter_mut()) {
         let ok = match rule {
@@ -139,7 +190,7 @@ pub fn eval_head(
             // these rules when the sample set changes, so a rule that is
             // present always reads trusted INFO here.
             HeadRule::MinAfInfo(bound) => {
-                match af_info_decision(line.info_text(), n_alt_of(alts)) {
+                match af_info_decision(line.info_text(), n_alt_of(alts), scratch.info_index()) {
                     AfInfoDecision::Usable(freq) => freq >= *bound,
                     // No usable INFO: the tail's genotype rule decides. The
                     // wrong-length AC keeps D12-13's fallback (bcftools'
@@ -154,7 +205,7 @@ pub fn eval_head(
                 }
             }
             HeadRule::MaxAfInfo(bound) => {
-                match af_info_decision(line.info_text(), n_alt_of(alts)) {
+                match af_info_decision(line.info_text(), n_alt_of(alts), scratch.info_index()) {
                     AfInfoDecision::Usable(freq) => freq <= *bound,
                     AfInfoDecision::Absent | AfInfoDecision::AcLength => true,
                     AfInfoDecision::AcExceedsAn { alt_sum, an } => {
@@ -229,9 +280,17 @@ enum AfInfoDecision {
     AcOverflow,
 }
 
-fn af_info_decision(info: &[u8], n_alt: u32) -> AfInfoDecision {
-    use crate::semantics::{InfoAfOutcome, info_af_outcome};
-    match info_af_outcome(info, n_alt) {
+fn af_info_decision(
+    info: &[u8],
+    n_alt: u32,
+    index: Option<&reed_io::vcf::info::InfoIndex>,
+) -> AfInfoDecision {
+    use crate::semantics::{InfoAfOutcome, info_af_indexed, info_af_outcome};
+    let outcome = match index {
+        Some(index) => info_af_indexed(index, info, n_alt),
+        None => info_af_outcome(info, n_alt),
+    };
+    match outcome {
         InfoAfOutcome::Usable(counts) => {
             AfInfoDecision::Usable((counts.an - counts.per_allele[0]) as f64 / counts.an as f64)
         }
@@ -388,24 +447,73 @@ mod tests {
     #[test]
     fn malformed_ac_an_decisions_match_bcftools() {
         assert!(matches!(
-            af_info_decision(b"AC=2;AN=4", 1),
+            af_info_decision(b"AC=2;AN=4", 1, None),
             AfInfoDecision::Usable(_)
         ));
         assert!(matches!(
-            af_info_decision(b"AC=1,2;AN=4", 1),
+            af_info_decision(b"AC=1,2;AN=4", 1, None),
             AfInfoDecision::AcLength
         ));
         assert!(matches!(
-            af_info_decision(b"AC=200;AN=100", 1),
+            af_info_decision(b"AC=200;AN=100", 1, None),
             AfInfoDecision::AcExceedsAn {
                 alt_sum: 200,
                 an: 100
             }
         ));
         assert!(matches!(
-            af_info_decision(b"AN=4", 1),
+            af_info_decision(b"AN=4", 1, None),
             AfInfoDecision::Absent
         ));
+    }
+
+    /// doc_v28 V28-13: a head evaluated with a caller-built index must reach
+    /// exactly the same verdicts as one that builds its own, including for
+    /// the `-q/-Q` AC/AN rules (which read through the same index).
+    #[test]
+    fn a_prebuilt_index_gives_the_same_verdicts() {
+        use crate::spec::OnMissing;
+        let tags = reed_core::tag_table::TagTable::new();
+        let rules = vec![
+            HeadRule::MinAfInfo(0.3),
+            HeadRule::Info(InfoRule {
+                tag: b"DP".to_vec(),
+                cmp: crate::spec::predicate::Cmp::parse(">=10").expect("invariant: operator"),
+                on_missing: OnMissing::Pass,
+                quantifier: crate::spec::Quantifier::Any,
+                number_a: false,
+            }),
+        ];
+        for info in [b"AC=2;AN=4;DP=20".as_slice(), b"AC=1;AN=4;DP=5", b"DP=20"] {
+            let text = format!(
+                "chr1\t100\t.\tA\tG\t50\tPASS\t{}\tGT\t0/0\t0/1",
+                String::from_utf8_lossy(info)
+            );
+            let line = LineRef::parse(text.as_bytes()).expect("invariant: 10 columns");
+            let mut built_hits = [0_u64; 2];
+            let mut built = HeadScratch::new();
+            built
+                .index
+                .build(line.info_text())
+                .expect("invariant: unique tags");
+            built.index_current = true;
+            let with_index =
+                eval_head_with_built_index(&line, 100, &rules, &mut built_hits, &mut built, &tags)
+                    .expect("invariant: well-formed AC/AN");
+
+            let mut own_hits = [0_u64; 2];
+            let mut own = HeadScratch::new();
+            let rebuilt = eval_head(&line, 100, &rules, &mut own_hits, &mut own, &tags)
+                .expect("invariant: well-formed AC/AN");
+
+            assert_eq!(
+                with_index,
+                rebuilt,
+                "the prebuilt and self-built paths must agree for {:?}",
+                String::from_utf8_lossy(info)
+            );
+            assert_eq!(built_hits, own_hits, "funnel counters must agree too");
+        }
     }
 
     #[test]
