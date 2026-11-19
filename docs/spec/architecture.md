@@ -29,7 +29,7 @@
 7. 执行引擎（reed-engine）：融合式 chunk 流水线、确定性、背压、线程预算
 8. 统计层（reed-stats）：计数表内核 + 可加累加器 + 窗口分箱
 9. 统计算法细则（逐族）
-10. QC 统计层（reed-qc）：对标 bcftools stats / vcftools 报告，带 INFO
+10. QC 统计层（原 reed-qc，现并入 reed-stats::summary）：对标 bcftools stats / vcftools 报告，带 INFO
 11. 过滤层（reed-filter）：通用类型化谓词、计划编译器、三种执行策略、字节级编辑
 12. 输出格式与产物
 13. 命名规范（终版）
@@ -167,12 +167,17 @@ dxy/Fst，100 kb 窗）≤ 30 s；QC 全报告 ≤ 30 s。估算依据见 §17.1
 ### 3.1 分层
 
 ```
-L5  reed-cli        二进制 `reed`：filter / stats / qc / … 子命令（clap），只做参数 → Spec 的翻译
-L4  reed            门面库：把 L3 的纯策略接到 L2 引擎上的 driver（run_filter / run_stats / run_qc），
+L5  reed-cli        二进制 `reed`：filter / stats / popg / convert / rename / index /
+                    distance / pca 子命令（clap），只做参数 → 请求类型的翻译
+L4  reed            门面库：把 L3 的纯策略接到 L2 引擎上的 driver（run_filter / run_popgen /
+                    run_stats / run_convert / run_rename / run_pca / run_dapc / run_index），
                     以及对外 re-export。下游 Rust 用户只依赖这一个 crate。
 L3  reed-stats      群体遗传统计：封死估计器、可加累加器、窗口网格        （纯：无 I/O、无线程）
-    reed-qc         QC 汇总统计：对标 bcftools stats / vcftools 报告      （纯）
+                    QC 报告（bcftools stats 风格）作为 `summary` 模块留在这里，不再是独立 crate。
     reed-filter     过滤：Spec、计划编译器、谓词求值、编辑计划、漏斗     （纯）
+    reed-distance   个体距离矩阵：allele-count/IBS/GRM/KING/PI_HAT/relatedness（纯，依赖 L0）
+    reed-reduce     降维：PCA/PCoA/kernel/diffusion/UMAP/t-SNE（纯，依赖 L0 + reed-distance）
+    reed-graph      树与网络：Newick、NJ/UPGMA 等                         （纯，依赖 L0）
 L2  reed-engine     并行执行底座：chunk 调度、融合流水线、票据背压、
                     首错即停、确定性归约、线程预算、区域分片、阶段指标
 L1  reed-io         传输：格式探测、BGZF 并行 inflate/deflate、块对齐切分、
@@ -187,14 +192,23 @@ L0  reed-core       模型 + 内核：ID/坐标/样本掩码/群体表/位平面
 ```
 reed-core ◄── reed-io ◄── reed-engine ◄──┐
     ▲   ▲                                │
-    │   └── reed-stats ◄─────────────────┤
-    │   └── reed-qc    ◄─────────────────┼── reed ◄── reed-cli
-    └────── reed-filter ◄────────────────┘
+    │   ├── reed-stats ◄─────────────────┤
+    │   ├── reed-filter ◄────────────────┤
+    │   ├── reed-distance ◄── reed-reduce┤
+    │   └── reed-graph ◄─────────────────┴── reed ◄── reed-cli
+
+reed-oracle (test-only, frozen 0.2) ◄── dev-dependencies of reed-core / reed-stats
 ```
 
-- L3 三个策略 crate **只依赖 reed-core**，单测不需要任何文件和线程，可以直接用内存数据构造。
+- L3 策略 crate **只依赖 reed-core**；唯一的同层边是 `reed-reduce → reed-distance`
+  （降维复用距离矩阵，无环），单测不需要任何文件和线程，可以直接用内存数据构造。
 - 只有 L4 `reed` 同时看得到引擎和策略。"怎么并行"和"算什么"在类型层面就隔开了。
-- 禁止反向依赖和同层互相依赖。stats 和 filter 共享的东西（如位点计数）下沉到 reed-core。
+- 禁止反向依赖与环。stats 和 filter 共享的东西（如位点计数）下沉到 reed-core。
+- `reed-oracle` 不在生产 DAG 里：它是冻结的 reed-core 0.2 实现，只作为
+  `reed-core`/`reed-stats` 的 dev-dependency 做差分测试，`publish = false`。
+- `reed-qc` 已撤销：QC 报告并入 `reed-stats::summary`，由 L4 的 `run_stats`/报告写出器
+  驱动；CLI 不再有 `reed qc` 子命令，`reed stats` 的 summary/report 选项是唯一入口，
+  这样 QC 与统计共享同一计数、窗口和缺失语义。
 - 第三方依赖白名单见 §14.6。
 
 ### 3.3 三条主数据流
@@ -351,9 +365,13 @@ reed-rs/
 │   │   │   ├── allele_freq.rs    # 原 allele_counts.rs
 │   │   │   └── error.rs          # Unavailable、StatsError
 │   │   └── tests/{contracts,parity_allel,unequal_groups,accumulator_laws,window_bins}.rs
-│   ├── reed-qc/                  # L3
-│   │   ├── src/{lib.rs, report.rs, site.rs, sample.rs, info_dist.rs, histogram.rs, sketch.rs, tstv.rs, error.rs}
-│   │   └── tests/{parity_bcftools_stats,merge_laws}.rs
+│   ├── reed-distance/            # L3
+│   │   └── src/{lib.rs, matrices.rs, grm.rs, standard.rs, output.rs}
+│   ├── reed-reduce/              # L3
+│   │   └── src/{lib.rs, pca.rs, eig.rs, lanczos.rs, graph.rs, umap.rs, lda.rs, xval.rs, grm_reduce.rs, backend.rs, extra.rs}
+│   ├── reed-graph/               # L3
+│   │   └── src/{lib.rs, newick.rs, tree.rs, bootstrap.rs, error.rs}
+│   ├── oracle/                   # test-only: reed-oracle（冻结的 reed-core 0.2 差分参考）
 │   ├── reed-filter/              # L3
 │   │   ├── src/
 │   │   │   ├── lib.rs
@@ -863,7 +881,7 @@ pub fn run<J: ChunkJob, S: OrderedSink<J::Partial>>(
 ) -> Result<RunReport, EngineError>;
 ```
 
-reed-filter、reed-stats、reed-qc 都不直接碰线程。L4 的 driver 把它们的纯逻辑包装成 `ChunkJob` 和 `OrderedSink`。
+reed-filter、reed-stats、reed-distance、reed-reduce、reed-graph 都不直接碰线程。L4 的 driver 把它们的纯逻辑包装成 `ChunkJob` 和 `OrderedSink`。
 
 ### 7.2 融合式 chunk 处理【规】
 
@@ -1208,7 +1226,11 @@ PBS 无法重聚合问题：PBS 的累加器保存三对的 num/den，而不是 
 
 ---
 
-## 10. QC 统计层（reed-qc）：`reed qc`
+## 10. QC 统计层（原 `reed-qc`，现并入 `reed-stats::summary`）
+
+> **去向**：独立的 `reed-qc` crate 已撤销；这些可加汇总现在住在 `reed-stats::summary`，
+> 由 L4 的 `run_stats`/报告写出器产生，CLI 入口是 `reed stats` 的 summary/report 选项。
+> 下面的报告目录仍是行为契约，只是代码位置不再是独立 crate。
 
 **动机**：你提到的 "stats vcf" 除了群体遗传统计，还包括 bcftools stats / vcftools 风格的质控汇总。
 这类汇总全部是可加的，最容易做到线性加速；而且只有 reed 能在多核下同时给出 INFO/FORMAT 的分布（plink2 做不到）。
@@ -2013,7 +2035,7 @@ reed index <INPUT>   [-c|--csi | -t|--tbi]      （薄壳，调用 noodles index
 | **M4 stats v2** | 全部现有估计器改写为累加器；分箱窗口；L4 driver；`reed stats` | 与 oracle 对拍（整数精确、浮点 ≤ 1e−12）；累加器定律；**全量 3 群体统计 ≤ 30 s** |
 | **M5 filter v2** | Spec v2 + compat；plan 编译器；SinglePass/TwoPassReparse；LineEditor；worker 内 deflate + 有序写出 + 同步建索引；provenance/清单回写 | gold L_site/L_gt/L_tags；确定性；**≤ 120 s** |
 | **M5b SketchThenEmit** | sketch、中段并行判定、pass1 跳过非存活者 | 三策略输出 sha256 相同；**≤ 60 s** |
-| **M6 qc** | reed-qc 全部节；bcftools-stats 兼容输出 | 重叠节与 bcftools stats 对拍；**≤ 30 s** |
+| **M6 qc** | 原 reed-qc 全部节（现 `reed-stats::summary`）；bcftools-stats 兼容输出 | 重叠节与 bcftools stats 对拍；**≤ 30 s** |
 | **M7 算法升级** | 投影 SFS（默认切换在 easySFS 对拍之后）；f 统计校正 + jackknife；HWE mid-p + 记忆化；位平面 LD + 平面存储 + 衰减 + pruning；WC84/Nei 多群体；Fst 矩阵；联合 SFS；个体 F | 每项都有正典对拍；性能前后对照 |
 | **M8 扩展** | 原生 BCF 编辑器；区域分片；HaplotypeStream（EHH/iHS）；Python 绑定（pyo3，可选） | 各自 ADR |
 

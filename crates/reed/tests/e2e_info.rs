@@ -59,7 +59,6 @@ fn options(
     out: &std::path::Path,
 ) -> FilterOptions {
     FilterOptions {
-        threads: 4,
         output: Some(out.to_path_buf()),
         write_index: reed::WriteIndex::None,
         compress_level: 6,
@@ -72,7 +71,6 @@ fn options(
         tmp_dir: None,
         output_compressed: None,
         output_bcf: None,
-        mem_bytes: None,
         no_version: false,
         no_command: false,
     }
@@ -93,7 +91,13 @@ fn run_keep_lines(
     out_name: &str,
 ) -> Vec<String> {
     let out = path.parent().expect("invariant: parent").join(out_name);
-    run_filter(Some(path), spec, &options(strategy, &out)).expect("invariant: filter runs");
+    run_filter(
+        Some(path),
+        spec,
+        &options(strategy, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter runs");
     inflate_to_string(&out)
         .lines()
         .filter(|l| !l.starts_with('#'))
@@ -286,7 +290,13 @@ fn run_bcf_roundtrip(path: &std::path::Path, out_name: &str) -> Vec<String> {
     let out = path.parent().expect("invariant: parent").join(out_name);
     let mut opts = options(None, &out);
     opts.output_bcf = Some(0); // -Ou
-    run_filter(Some(path), &FilterSpec::default(), &opts).expect("invariant: filter runs");
+    run_filter(
+        Some(path),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter runs");
     bcftools_view(&out)
 }
 
@@ -476,8 +486,13 @@ fn expression_bare_tag_is_rejected_at_compile_time() {
     let mut spec = FilterSpec::default();
     spec.site.include = vec!["DP".to_string()];
     let out = d.join("out.vcf.gz");
-    let err = run_filter(Some(&path), &spec, &options(None, &out))
-        .expect_err("a bare tag must not silently filter");
+    let err = run_filter(
+        Some(&path),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("a bare tag must not silently filter");
     let msg = err.to_string();
     assert!(
         msg.contains("bare") || msg.contains("always false"),
@@ -575,8 +590,13 @@ fn info_count_overflow_errors_instead_of_corrupting() {
     let out = d.join("out.bcf");
     let mut opts = options(None, &out);
     opts.output_bcf = Some(0); // -Ou
-    let err = run_filter(Some(&path), &FilterSpec::default(), &opts)
-        .expect_err("65 536 INFO fields cannot be packed into n_info");
+    let err = run_filter(
+        Some(&path),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("65 536 INFO fields cannot be packed into n_info");
     assert!(
         err.to_string().contains("INFO") || err.to_string().contains("too many"),
         "the error must name the limit, got {err:?}"
@@ -677,8 +697,13 @@ Chr01\t5\t.\tA\tG\t50\tPASS\tAC=200;AN=100\tGT\t0/1\t0/1
     let mut spec = FilterSpec::default();
     spec.site_after_mask.min_af = Some(0.1);
     let out = d.join("out.vcf.gz");
-    let err = run_filter(Some(&path), &spec, &options(None, &out))
-        .expect_err("ΣAC > AN must abort the run like bcftools");
+    let err = run_filter(
+        Some(&path),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("ΣAC > AN must abort the run like bcftools");
     assert!(
         err.to_string().contains("Incorrect AN/AC counts"),
         "the error must name the malformed AC/AN: {err}"
@@ -753,7 +778,13 @@ Chr01\t4\tid4\tA\tG\t50\tPASS\tXI= 5\tGT\t0/1
     let out = d.join("all.bcf");
     let mut opts = options(None, &out);
     opts.output_bcf = Some(0); // -Ou
-    run_filter(Some(&path), &FilterSpec::default(), &opts).expect("invariant: runs");
+    run_filter(
+        Some(&path),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: runs");
     let records = bcftools_view(&out);
     let by_id = |id: &str| -> String {
         records
@@ -794,8 +825,13 @@ fn unsupported_fill_tags_are_rejected() {
         let mut spec = FilterSpec::default();
         spec.recompute.tags = vec![tag.to_string()];
         let out = d.join("out.vcf.gz");
-        let err = run_filter(Some(&path), &spec, &options(None, &out))
-            .expect_err("an unsupported fill-tags entry must not be a silent no-op");
+        let err = run_filter(
+            Some(&path),
+            &spec,
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect_err("an unsupported fill-tags entry must not be a silent no-op");
         let msg = err.to_string();
         assert!(
             msg.contains(tag) && msg.contains("supported"),
@@ -806,7 +842,13 @@ fn unsupported_fill_tags_are_rejected() {
     let mut spec = FilterSpec::default();
     spec.recompute.tags = vec!["ac".to_string()];
     let out = d.join("lower.vcf.gz");
-    let report = run_filter(Some(&path), &spec, &options(None, &out)).expect("lowercase AC works");
+    let report = run_filter(
+        Some(&path),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("lowercase AC works");
     assert_eq!(report.n_output_records, 3, "the lowercase spelling runs");
     let _ = std::fs::remove_dir_all(&d);
 }

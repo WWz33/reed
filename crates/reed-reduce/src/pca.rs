@@ -12,14 +12,14 @@
 //! missing-data policy and needs the per-pair counts (`grm_n`), see
 //! `Grm::pairwise`.
 
-use crate::backend::{sym_eig, sym_eig_top_k, Backend};
+use crate::backend::{Backend, sym_eig, sym_eig_top_k};
 use reed_core::linalg::Mat;
 
 // Standardization and the GRM now live in `reed-distance` (doc_v17): the
 // distance matrices and PCA must share one implementation or their numbers
 // diverge. These are re-exports so the v16 API keeps working.
 pub use reed_distance::grm::{Grm, MissingPolicy};
-pub use reed_distance::standard::{standardize, standardize_binom2, Stand, Standardized};
+pub use reed_distance::standard::{Stand, Standardized, standardize, standardize_binom2};
 
 /// Result of a PCA run.
 #[derive(Clone, Debug)]

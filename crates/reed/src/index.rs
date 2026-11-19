@@ -15,8 +15,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use reed_core::{ChunkId, ContigId};
-use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
+
+use crate::context::RunContext;
+
 use reed_engine::frame_chain::{FrameChain, SharedChain};
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::bcf::{FrameStep, frame_chunk, record_len, record_site};
@@ -316,7 +318,9 @@ impl ChunkJob for BcfIndexJob {
                     u32::try_from(tid)
                         .map_err(|_| EngineError::job("negative BCF contig index"))?,
                 ),
-                pos1: u64::try_from(pos0).unwrap_or(0) + 1,
+                pos1: reed_io::bcf::pos1_from_pos0(pos0)
+                    .map_err(EngineError::from)?
+                    .0,
                 ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
                 voff: map.voff(chunk_start, q).raw(),
             });
@@ -359,7 +363,9 @@ fn entry_at(head: &[u8], text: &[u8], voff: u64) -> Result<RecordStart, EngineEr
         tid: ContigId(
             u32::try_from(tid).map_err(|_| EngineError::job("negative BCF contig index"))?,
         ),
-        pos1: u64::try_from(pos0).unwrap_or(0) + 1,
+        pos1: reed_io::bcf::pos1_from_pos0(pos0)
+            .map_err(EngineError::from)?
+            .0,
         ref_len: u32::try_from(rlen).unwrap_or(1).max(1),
         voff,
     })
@@ -525,7 +531,7 @@ pub fn run_index(
     input: &Path,
     flavor: WriteIndex,
     output: Option<&Path>,
-    threads: usize,
+    ctx: &RunContext<'_>,
 ) -> Result<IndexOutcome, crate::error::Error> {
     if !flavor.is_some() {
         return Err(crate::error::Error::usage("no index flavor selected"));
@@ -556,8 +562,8 @@ pub fn run_index(
              (recompress plain VCF/regular gzip with bgzip)",
         ));
     }
-    let mut opened = crate::input::open(Some(input)).map_err(job)?;
-    let is_bcf = opened.bcf.is_some();
+    let opened = crate::input::open(Some(input)).map_err(job)?;
+    let is_bcf = opened.is_bcf();
     // Tabix has no BCF flavour (doc_v7 D7-15; the filter path already
     // refuses this combination). Writing a VCF-format .tbi for a BCF would
     // be an index no reader can use.
@@ -580,7 +586,7 @@ pub fn run_index(
     // line order whenever the header carries explicit `IDX=` values
     // (doc_v28 V28-02, V28-28). Text input keeps plain header order; its
     // written header carries no `IDX=`, so the two agree there.
-    let index_names: Arc<[Vec<u8>]> = if opened.bcf.is_some() {
+    let index_names: Arc<[Vec<u8>]> = if is_bcf {
         Arc::from(
             opened
                 .facts()
@@ -610,18 +616,16 @@ pub fn run_index(
         out: Arc::clone(&out),
         pending_write: Arc::clone(&pending_write),
     };
-    let budget = ThreadBudget {
-        threads: threads.max(1),
-        mem: reed_engine::budget::MemBudget::default_half_memory(),
-    };
-    let abort = reed_engine::abort::abort_for(&budget);
+    let budget = ctx.budget;
+    let abort = ctx.abort;
+    let (mut source, _facts, _meta) = opened.into_parts();
     let report = if is_bcf {
-        let chain = Arc::new(FrameChain::new(abort.signal.clone()));
+        let chain = Arc::new(FrameChain::new(abort.clone()));
         chain.publish(0, reed_engine::frame_chain::Carried::default());
         let job = BcfIndexJob {
             chain: Arc::clone(&chain),
         };
-        let report = run(opened.source.as_mut(), &job, sink, &budget, &abort)?;
+        let report = run(source.as_mut(), &job, sink, budget, abort)?;
         chain.finish();
         if chain
             .peek(report.n_chunks)
@@ -636,7 +640,7 @@ pub fn run_index(
         let job = IndexJob {
             contig_names: Arc::clone(&contig_names),
         };
-        run(opened.source.as_mut(), &job, sink, &budget, &abort)?
+        run(source.as_mut(), &job, sink, budget, abort)?
     };
     let metrics = report.metrics;
     let (indexer, index_path) = pending_write
@@ -660,7 +664,7 @@ pub fn run_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reed_engine::budget::MemBudget;
+    use reed_engine::budget::{MemBudget, ThreadBudget};
 
     /// A chunk source with a test-sized chunk target (production is 1 MiB;
     /// the fixtures here are a few KB, so seams need a tiny target).
@@ -741,13 +745,13 @@ mod tests {
             };
             let budget = ThreadBudget {
                 threads,
-                mem: MemBudget::default_half_memory(),
+                mem: MemBudget::from_bytes(64 << 20),
             };
             let abort = reed_engine::abort::abort_for(&budget);
             let job = IndexJob {
                 contig_names: Arc::clone(&contig_names),
             };
-            run(&mut source, &job, sink, &budget, &abort)
+            run(&mut source, &job, sink, &budget, &abort.signal)
                 .expect("seam-crossing records must index");
             let (indexer, index_path) = pending_write
                 .lock()

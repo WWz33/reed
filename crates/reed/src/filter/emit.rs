@@ -11,7 +11,7 @@ use reed_engine::pipeline::ChunkJob;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::line_edit::{EditPlan, edit_vcf_line};
+use reed_io::vcf::line_edit::edit_vcf_line;
 use reed_io::vcf::site::{ContigTable, SiteView};
 use reed_io::write::block_writer::{BlockWriter, IndexKey};
 
@@ -171,12 +171,13 @@ impl EmitJob {
         // no value to put back, so only user-requested removals apply
         // (doc_v12 D12-2).
         let stale_record = reed_filter::eval::edit_plan::stale_for_record(stale, auto, emit.has_gt);
-        let edit_plan = EditPlan {
+        let edit = reed_filter::eval::edit_plan::SurvivorEdit {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(&scratch.mask_bitset),
             info_remove: stale_record.as_slice(),
             info_set: &emit.infos,
         };
+        let edit_plan = edit.edit_plan();
         scratch.edit_buf.clear();
         edit_vcf_line(
             &lr,

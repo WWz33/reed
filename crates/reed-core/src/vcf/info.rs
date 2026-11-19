@@ -98,7 +98,7 @@ pub struct DuplicateInfoKey {
 ///
 /// 4096 is far above any real record and makes the worst case finite —
 /// ~8.4M short `memcmp`s per record, milliseconds, not seconds. A record past
-/// it is [`IoError::MalformedRecord`]-class malformed input, not a slow one.
+/// it is malformed input ([`InfoColumnError::TooManyTags`]), not a slow one.
 pub const MAX_INFO_TAGS: usize = 4096;
 
 /// Validates an INFO column for the record contract shared by every consumer
@@ -113,7 +113,7 @@ pub const MAX_INFO_TAGS: usize = 4096;
 /// fragments and compares each key against the keys *before* it by re-slicing
 /// `info`, so it allocates nothing.
 ///
-/// [`admit_tag`] is the shared rule; [`InfoIndex::build`] calls the same
+/// `admit_tag` is the shared rule; [`InfoIndex::build`] calls the same
 /// function, so a record the classifier accepts cannot fail the index build
 /// for a different reason (doc_v28 V28-13).
 ///
@@ -122,13 +122,13 @@ pub const MAX_INFO_TAGS: usize = 4096;
 /// a `memcmp` of short keys. A linear check would need per-worker scratch and
 /// a hash of the keys, which costs more than it saves at this k. A caller
 /// that already builds an [`InfoIndex`] gets the check for free because
-/// [`InfoIndex::build`] applies [`admit_tag`] itself;
+/// [`InfoIndex::build`] applies `admit_tag` itself;
 /// [`crate::vcf::line::classify_line`] uses this function because it has no
 /// scratch of its own.
 ///
 /// # Errors
 ///
-/// [`DuplicateInfoKey`] when a tag repeats, and [`InfoTagOverflow`] when the
+/// [`DuplicateInfoKey`] when a tag repeats, and [`InfoColumnError::TooManyTags`] when the
 /// record carries more than [`MAX_INFO_TAGS`] tags.
 pub fn validate_info(info: &[u8]) -> Result<(), InfoColumnError> {
     for (tags, (tag, _)) in info_fragments(info).enumerate() {

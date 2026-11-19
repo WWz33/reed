@@ -38,7 +38,6 @@ fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
         ..FilterSpec::default()
     };
     let opts = FilterOptions {
-        threads: 2,
         output: Some(out.to_path_buf()),
         write_index: reed::WriteIndex::None,
         compress_level: 6,
@@ -51,11 +50,16 @@ fn reed_positions(input: &Path, out: &Path, tail: TailRules) -> Vec<u64> {
         tmp_dir: None,
         output_compressed: None,
         output_bcf: None,
-        mem_bytes: None,
         no_version: false,
         no_command: false,
     };
-    run_filter(Some(input), &spec, &opts).expect("invariant: filter run");
+    run_filter(
+        Some(input),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter run");
     let text = std::fs::read_to_string(out).expect("invariant: read output");
     text.lines()
         .filter(|l| !l.starts_with('#'))
@@ -376,7 +380,6 @@ fn sample_call_rate_matches_plink2_mind() {
         ..FilterSpec::default()
     };
     let opts = FilterOptions {
-        threads: 2,
         output: Some(out.clone()),
         write_index: reed::WriteIndex::None,
         compress_level: 6,
@@ -389,11 +392,16 @@ fn sample_call_rate_matches_plink2_mind() {
         tmp_dir: None,
         output_compressed: None,
         output_bcf: None,
-        mem_bytes: None,
         no_version: false,
         no_command: false,
     };
-    run_filter(Some(&input), &spec, &opts).expect("invariant: run");
+    run_filter(
+        Some(&input),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: run");
     let text = std::fs::read_to_string(&out).expect("invariant: read");
     let columns: Vec<&str> = text
         .lines()

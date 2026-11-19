@@ -6,10 +6,10 @@
 
 use std::path::Path;
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
-    ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions, PopgenRequest,
-    Populations, SfsRequest, run_convert, run_popgen,
+    ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions, PopgenRequest, Populations,
+    SfsRequest, run_convert, run_popgen,
 };
 
 /// The phylogenetic fixture: 20 records over 8 samples, covering biallelic
@@ -153,7 +153,8 @@ fn phylo_outputs_match_vcf2phylip_reference() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    let report = run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let report =
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     assert_eq!(read(&dir.join("out.phy")), REF_PHYLIP);
     assert_eq!(read(&dir.join("out.bin.nexus")), REF_BIN_NEXUS);
     assert_eq!(read(&dir.join("out.used_sites.tsv")), REF_USED_SITES);
@@ -212,7 +213,8 @@ chr1\t4\t.\tA\tG\t.\tPASS\t.\tGT\t1/1\t0/1
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    let report = run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let report =
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let phy = read(&dir.join("out.phy"));
     assert!(
         phy.starts_with("2 2\n"),
@@ -252,7 +254,8 @@ chr1:3	A/G	chr1	3	+	NA	NA	NA	NA	NA	NA	G	T
         }],
         ..ConvertRequest::default()
     };
-    let report = run_convert(Some(&hmp), &request, &budget()).expect("convert");
+    let report =
+        run_convert(Some(&hmp), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let text = read(&out);
     // Only the good row is written; the `C` and `T` cells are not declared.
     assert_eq!(report.n_records, 1, "{text}");
@@ -287,7 +290,7 @@ fn min_samples_locus_gates_and_clamps() {
             min_samples_locus: Some(gate),
             ..ConvertRequest::default()
         };
-        run_convert(Some(&vcf), &request, &budget()).expect("convert");
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
         read(&dir.join(format!("{prefix}.phy")))
     };
     let g8 = run(8, "g8");
@@ -328,7 +331,7 @@ fn count_matrix_matches_vcftools_and_flags_half_calls() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let matrix = read(&dir.join("out.012"));
     // Rows: <original index>\t values. Sites: pos1, pos2, pos4, pos5.
     assert_eq!(
@@ -364,7 +367,8 @@ chr1\t3\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/1\t0/0\t0/0\n";
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    let report = run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    let report =
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let counters = report.counters.expect("counters");
     assert_eq!(counters.total_records, 3);
     assert_eq!(counters.malformed, 2, "the haploid 9 and the diploid 0/9");
@@ -404,7 +408,7 @@ chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1\n";
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     assert_eq!(
         read(&dir.join("out.012.pos")),
         "chr1\t100\nchr1\t200\n",
@@ -471,7 +475,7 @@ fn v25_01_convert_sfs_skips_the_same_out_of_domain_record_as_the_row_targets() {
             prefix: dir.join(tag),
             ..ConvertRequest::default()
         };
-        let report = run_convert(Some(input), &request, &budget())
+        let report = run_convert(Some(input), &request, &reed::RunContext::idle(&budget()))
             .expect("convert --phylip --sfs must keep B13-9's exit-0 policy");
         assert_eq!(report.counters.expect("counters").malformed, malformed);
         read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs")))
@@ -523,7 +527,8 @@ fn v29_02_sfs_sample_subset_ignores_the_excluded_genotypes() {
             keep_samples: keep,
             ..ConvertRequest::default()
         };
-        run_convert(Some(input), &request, &budget()).expect("convert --sfs");
+        run_convert(Some(input), &request, &reed::RunContext::idle(&budget()))
+            .expect("convert --sfs");
         read(&dir.join(format!("{tag}_sfs/dadi/all-2.sfs")))
     };
     let want = run(&subsetted, "subsetted", None);
@@ -572,7 +577,7 @@ fn v29_05_header_only_sfs_writes_the_zero_spectrum() {
             prefix: dir.join(tag),
             ..ConvertRequest::default()
         };
-        let report = run_convert(Some(input), &request, &budget())
+        let report = run_convert(Some(input), &request, &reed::RunContext::idle(&budget()))
             .expect("a requested SFS target must write its outputs");
         assert_eq!(report.n_records, 0, "{tag}: no record was read");
         assert_eq!(report.files.len(), 2, "{tag}: dadi + fastsimcoal2");
@@ -617,7 +622,8 @@ fn v29_06_multi_chunk_sfs_counts_every_record() {
         prefix: dir.join("multi"),
         ..ConvertRequest::default()
     };
-    let report = run_convert(Some(&input), &request, &budget()).expect("convert --sfs");
+    let report = run_convert(Some(&input), &request, &reed::RunContext::idle(&budget()))
+        .expect("convert --sfs");
     assert_eq!(
         report.n_records, expected,
         "every SFS-scanned record must be counted once"
@@ -670,7 +676,7 @@ fn convert_sfs_writes_an_empty_spectrum_when_no_site_is_projectable() {
             prefix: dir.join(tag),
             ..ConvertRequest::default()
         };
-        run_convert(Some(&vcf), &request, &budget())
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
             .expect("an empty spectrum must not abort the run");
         let spectrum = read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs")));
         let counts: Vec<&str> = spectrum
@@ -710,7 +716,7 @@ fn v25_02_gt_position_follows_the_format_order() {
             prefix: dir.join(name),
             ..ConvertRequest::default()
         };
-        run_convert(Some(&vcf), &request, &budget()).expect("convert");
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
         read(&dir.join(format!("{name}.012")))
     };
     let gt_first = run("gt-first", "GT:DP", &["0/0:9", "0/1:8", "1/1:7", "./.:."]);
@@ -744,7 +750,7 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tDP:GT\t30:0/0\t40:1/1\t50:.
         min_samples_locus: Some(1),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let nexus = read(&dir.join("out.bin.nexus"));
     assert!(nexus.contains("s0   0"), "{nexus}");
     assert!(nexus.contains("s1   2"), "{nexus}");
@@ -763,7 +769,7 @@ fn hapmap_layout_and_alphabet() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let hmp = read(&dir.join("out.hmp.txt"));
     let mut lines = hmp.lines();
     assert_eq!(
@@ -826,7 +832,8 @@ fn v29_04_hapmap_two_letter_half_calls_keep_a_missing_slot() {
         }],
         ..ConvertRequest::default()
     };
-    let report = run_convert(Some(&hmp), &request, &budget()).expect("hapmap -> vcf");
+    let report = run_convert(Some(&hmp), &request, &reed::RunContext::idle(&budget()))
+        .expect("hapmap -> vcf");
     assert_eq!(report.n_records, 1);
     assert_eq!(report.counters.expect("counters").malformed, 0);
     let text = read(&dir.join("out.vcf"));
@@ -874,7 +881,7 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/9\t0/9
                 prefix: dir.join(tag),
                 ..ConvertRequest::default()
             },
-            &budget(),
+            &reed::RunContext::idle(&budget()),
         )
         .expect("convert");
         let counters = report.counters.expect("row targets");
@@ -945,17 +952,13 @@ fn v29_10_library_validation_and_target_only_to_args() {
     let msa = ConvertRequest {
         targets: vec![ConvertTarget::Msa {
             reference: std::path::PathBuf::from("ref.fa"),
-            regions: vec![MsaRegion {
-                contig: "chr1".into(),
-                start1: Some(0),
-                end1: Some(10),
-            }],
+            regions: vec!["chr1:10-20".into()],
             flank: 0,
             collapse_suffix: Some(String::new()),
         }],
         ..ConvertRequest::default()
     };
-    let msa_err = msa.validate().expect_err("empty suffix / 0-based bound");
+    let msa_err = msa.validate().expect_err("an empty --collapse-suffix");
     assert_eq!(msa_err.kind(), reed::ErrorKind::Usage, "{msa_err}");
 
     let args = ConvertRequest {
@@ -999,7 +1002,7 @@ chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0/1\t0/1
             prefix: dir.join("count"),
             ..ConvertRequest::default()
         },
-        &budget(),
+        &reed::RunContext::idle(&budget()),
     )
     .expect("convert --012");
     assert_eq!(count.polyploid, 1, "the polyploid record is counted");
@@ -1024,7 +1027,7 @@ chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0/1\t0/1
             prefix: dir.join("sfs"),
             ..ConvertRequest::default()
         },
-        &budget(),
+        &reed::RunContext::idle(&budget()),
     )
     .expect("convert --sfs");
     assert_eq!(sfs.polyploid, 1, "SFS-only runs report the count too");
@@ -1060,7 +1063,7 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
         prefix: dir.join("input"),
         ..ConvertRequest::default()
     };
-    let err = run_convert(Some(&input), &request, &budget())
+    let err = run_convert(Some(&input), &request, &reed::RunContext::idle(&budget()))
         .expect_err("an output naming the input must be refused");
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
     assert!(err.to_string().contains("would overwrite"), "{err}");
@@ -1097,11 +1100,7 @@ chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1
 ",
     );
     let reference = write_fixture(&dir, "ref.fa", ">chr1\nAACCGGTTAA\n");
-    let region = MsaRegion {
-        contig: "chr1".into(),
-        start1: Some(2),
-        end1: Some(6),
-    };
+    let region = "chr1:2-6".to_string();
     let request = ConvertRequest {
         targets: vec![ConvertTarget::Msa {
             reference,
@@ -1112,7 +1111,7 @@ chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    let err = run_convert(Some(&vcf), &request, &budget())
+    let err = run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
         .expect_err("two regions writing one FASTA must be refused");
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
     assert!(err.to_string().contains("two outputs would write"), "{err}");
@@ -1120,6 +1119,56 @@ chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1
         !dir.join("out_chr1_2-6.fasta").exists(),
         "the refused run must write nothing"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v30 §4.7: R04 moved the `--region` bound checks from
+/// `ConvertRequest::validate` into `build_msa`, where they are parsed
+/// against the reference FASTA's contigs. The old `v29_10` case asserted a
+/// 0 bound at the request side; the check is still a usage error, but
+/// nothing tested it after the move. A 0 bound would otherwise become a
+/// silently empty or off-by-one FASTA.
+#[test]
+fn msa_region_bounds_are_usage_errors() {
+    let dir = fixture_dir("v30-msa-bounds");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=10>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0
+chr1\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1
+",
+    );
+    let reference = write_fixture(&dir, "ref.fa", ">chr1\nAACCGGTTAA\n");
+    let run = |region: &str| {
+        let request = ConvertRequest {
+            targets: vec![ConvertTarget::Msa {
+                reference: reference.clone(),
+                regions: vec![region.to_string()],
+                flank: 0,
+                collapse_suffix: None,
+            }],
+            prefix: dir.join(format!("out-{}", region.replace(':', "-"))),
+            ..ConvertRequest::default()
+        };
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
+            .expect_err("both bounds are usage errors")
+    };
+
+    let zero = run("chr1:0-10");
+    assert_eq!(zero.kind(), reed::ErrorKind::Usage, "{zero}");
+    assert!(zero.to_string().contains("1-based"), "{zero}");
+
+    let inverted = run("chr1:10-2");
+    assert_eq!(inverted.kind(), reed::ErrorKind::Usage, "{inverted}");
+    assert!(
+        inverted.to_string().contains("start above its end"),
+        "{inverted}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1145,7 +1194,7 @@ fn v29_03_hapmap_to_vcf_refuses_output_eq_input() {
         }],
         ..ConvertRequest::default()
     };
-    let err = run_convert(Some(&hmp), &request, &budget())
+    let err = run_convert(Some(&hmp), &request, &reed::RunContext::idle(&budget()))
         .expect_err("the VCF output must not replace the hapmap input");
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
     assert!(err.to_string().contains("would overwrite"), "{err}");
@@ -1173,7 +1222,7 @@ fn hapmap_vcf_round_trip_is_faithful_and_deterministic() {
         prefix: dir.join("hmp"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &to_hmp, &budget()).expect("to hapmap");
+    run_convert(Some(&vcf), &to_hmp, &reed::RunContext::idle(&budget())).expect("to hapmap");
     let hmp = dir.join("hmp.hmp.txt");
 
     // hapmap → VCF.
@@ -1188,8 +1237,12 @@ fn hapmap_vcf_round_trip_is_faithful_and_deterministic() {
         ..ConvertRequest::default()
     };
     let back = dir.join("back.vcf");
-    let report =
-        run_convert(Some(&hmp), &to_vcf(6, back.clone(), false), &budget()).expect("to vcf");
+    let report = run_convert(
+        Some(&hmp),
+        &to_vcf(6, back.clone(), false),
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("to vcf");
     assert_eq!(report.n_records, 4);
     assert_eq!(report.counters.expect("counters").malformed, 0);
 
@@ -1219,7 +1272,12 @@ fn hapmap_vcf_round_trip_is_faithful_and_deterministic() {
 
     // --no-version: the provenance lines go, the rest stays.
     let bare = dir.join("bare.vcf");
-    run_convert(Some(&hmp), &to_vcf(6, bare.clone(), true), &budget()).expect("no-version");
+    run_convert(
+        Some(&hmp),
+        &to_vcf(6, bare.clone(), true),
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("no-version");
     let bare_text = read(&bare);
     assert!(!bare_text.contains("##reed_"), "{bare_text}");
     assert_eq!(bare_text.lines().filter(|l| !l.starts_with('#')).count(), 4);
@@ -1230,7 +1288,12 @@ fn hapmap_vcf_round_trip_is_faithful_and_deterministic() {
         mem: MemBudget::from_bytes(256 << 20),
     };
     let wide_out = dir.join("wide.vcf");
-    run_convert(Some(&hmp), &to_vcf(6, wide_out.clone(), false), &wide).expect("threads 8");
+    run_convert(
+        Some(&hmp),
+        &to_vcf(6, wide_out.clone(), false),
+        &reed::RunContext::idle(&wide),
+    )
+    .expect("threads 8");
     assert_eq!(read(&wide_out), text, "thread count changed the output");
 
     // -Oz is BGZF (gzip magic), not plain text.
@@ -1245,7 +1308,7 @@ fn hapmap_vcf_round_trip_is_faithful_and_deterministic() {
         }],
         ..ConvertRequest::default()
     };
-    run_convert(Some(&hmp), &gz_req, &budget()).expect("bgzf");
+    run_convert(Some(&hmp), &gz_req, &reed::RunContext::idle(&budget())).expect("bgzf");
     let bytes = std::fs::read(&gz).expect("gz exists");
     assert_eq!(&bytes[..2], &[0x1f, 0x8b], "not gzip-framed");
 
@@ -1272,18 +1335,14 @@ chr1\t8\t.\tT\tC\t50\tPASS\t.\tGT\t1/1\t0/1\t0/0
     let request = ConvertRequest {
         targets: vec![ConvertTarget::Msa {
             reference: r#ref,
-            regions: vec![MsaRegion {
-                contig: "chr1".into(),
-                start1: Some(1),
-                end1: Some(10),
-            }],
+            regions: vec!["chr1:1-10".into()],
             flank: 0,
             collapse_suffix: None,
         }],
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let fasta = read(&dir.join("out_chr1_1-10.fasta"));
     assert_eq!(
         fasta,
@@ -1316,7 +1375,7 @@ fn resolve_iupac_is_deterministic() {
         };
         let mut budget = budget();
         budget.threads = threads;
-        run_convert(Some(&vcf), &request, &budget).expect("convert");
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("convert");
         read(&dir.join(format!("{prefix}.phy")))
     };
     let one = run(1, "t1");
@@ -1359,7 +1418,12 @@ fn convert_sfs_equals_stats_sfs() {
         populations: Populations::File(pops.clone()),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &convert_request, &budget()).expect("convert");
+    run_convert(
+        Some(&vcf),
+        &convert_request,
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("convert");
     let stats_request = PopgenRequest {
         kinds: Vec::new(),
         populations: Populations::File(pops),
@@ -1393,8 +1457,13 @@ fn convert_sfs_equals_stats_sfs() {
     std::fs::create_dir_all(&stats_dir).expect("invariant: dir");
     // The stats driver writes nothing itself; the writers do. Render both
     // and compare the bytes.
-    let stats_report = run_popgen(Some(&vcf), &stats_request, &budget()).expect("stats");
-    let mut stats_files = reed::sfs::write_projected_sfs(
+    let stats_report = run_popgen(
+        Some(&vcf),
+        &stats_request,
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("stats");
+    let mut stats_files = reed::frontend::sfs::write_projected_sfs(
         &stats_dir.join("out"),
         &["pop1".to_string()],
         stats_report.sfs.as_ref().expect("sfs report"),
@@ -1523,7 +1592,7 @@ fn sfs_spectra(dir: &Path, input: &Path, tag: &str) -> Vec<u8> {
         prefix: dir.join(tag),
         ..ConvertRequest::default()
     };
-    run_convert(Some(input), &request, &budget()).expect("convert --sfs");
+    run_convert(Some(input), &request, &reed::RunContext::idle(&budget())).expect("convert --sfs");
     read(&dir.join(format!("{tag}_sfs/dadi/all-4.sfs"))).into_bytes()
 }
 
@@ -1624,7 +1693,8 @@ fn sample_subset_equals_a_pre_subsetted_file() {
             keep_samples: subset,
             ..ConvertRequest::default()
         };
-        let report = run_convert(Some(path), &request, &budget()).expect("convert");
+        let report =
+            run_convert(Some(path), &request, &reed::RunContext::idle(&budget())).expect("convert");
         (read(&dir.join(format!("{prefix}.phy"))), report)
     };
     let (subset_phy, subset_report) = run(
@@ -1661,18 +1731,14 @@ chr1\t8\t.\tT\tC\t50\tPASS\t.\tGT\t1/1\t0/1\t0/0
     let request = ConvertRequest {
         targets: vec![ConvertTarget::Msa {
             reference: r#ref.clone(),
-            regions: vec![MsaRegion {
-                contig: "chr1".into(),
-                start1: Some(3),
-                end1: Some(6),
-            }],
+            regions: vec!["chr1:3-6".into()],
             flank: 2,
             collapse_suffix: Some(".".into()),
         }],
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     // Region 3-6 with flank 2 widens to the inclusive span 1-8, so the
     // record at 8 contributes too.
     let fasta = read(&dir.join("out_chr1_1-8.fasta"));
@@ -1688,21 +1754,51 @@ chr1\t8\t.\tT\tC\t50\tPASS\t.\tGT\t1/1\t0/1\t0/0
         &ConvertRequest {
             targets: vec![ConvertTarget::Msa {
                 reference: r#ref,
-                regions: vec![MsaRegion {
-                    contig: "chr1".into(),
-                    start1: None,
-                    end1: None,
-                }],
+                regions: vec!["chr1".into()],
                 flank: 0,
                 collapse_suffix: Some(".".into()),
             }],
             prefix: dir.join("dup"),
             ..ConvertRequest::default()
         },
-        &budget(),
+        &reed::RunContext::idle(&budget()),
     )
     .expect_err("collapsing onto a duplicate name must fail");
     assert_eq!(failed.kind(), reed::ErrorKind::Usage, "{failed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v30 R04: `--region` is parsed against the reference FASTA's contig
+/// names, so a contig literally named `chr1:100` is one contig rather than
+/// contig `chr1` plus position 100 (the header-less heuristic's answer).
+#[test]
+fn v30_r04_msa_region_uses_reference_contig_names() {
+    let dir = fixture_dir("v30-r04");
+    let vcf = write_fixture(
+        &dir,
+        "in.vcf",
+        "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1:100,length=10>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0
+chr1:100\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/1
+",
+    );
+    let reference = write_fixture(&dir, "ref.fa", ">chr1:100\nAACCGGTTAA\n");
+    let request = ConvertRequest {
+        targets: vec![ConvertTarget::Msa {
+            reference,
+            regions: vec!["chr1:100".into()],
+            flank: 0,
+            collapse_suffix: None,
+        }],
+        prefix: dir.join("out"),
+        ..ConvertRequest::default()
+    };
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
+    let fasta = read(&dir.join("out_chr1:100_1-10.fasta"));
+    assert_eq!(fasta, ">chr1:100:1-10_s0\nARCCGGTTAA\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1730,7 +1826,7 @@ fn msa_covers_whole_contigs_by_default() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let fasta = read(&dir.join("out_chr1.fasta"));
     assert_eq!(
         fasta,
@@ -1768,7 +1864,7 @@ chr1\t6\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert --msa");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert --msa");
     let fasta = read(&dir.join("out_chr1.fasta"));
     assert_eq!(
         fasta, ">chr1:1-10_s0\nAA-AAGAAAA\n>chr1:1-10_s1\nAAAAAAAAAA\n",
@@ -1805,7 +1901,7 @@ chr1\t4\t.\tT\tA\t50\tPASS\t.\tGT\t1/1\t1/1
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert --msa");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert --msa");
     let fasta = read(&dir.join("out_chr1.fasta"));
     assert_eq!(
         fasta, ">chr1:1-8_s0\nACTGAACGT\n>chr1:1-8_s1\nAC-GAACGT\n",
@@ -1841,7 +1937,7 @@ fn v29_01_msa_overlap_rules() {
             prefix: dir.join(tag),
             ..ConvertRequest::default()
         };
-        run_convert(Some(&vcf), &request, &budget())
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
     };
     let duplicate = run(
         "dup",
@@ -1896,7 +1992,7 @@ fn v29_01_msa_reference_mismatch_bounds_and_duplicates() {
             prefix: dir.join(tag),
             ..ConvertRequest::default()
         };
-        run_convert(Some(&vcf), &request, &budget())
+        run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
     };
     let mismatch = run("mismatch", "T", 2).expect_err("REF must match the reference");
     assert!(
@@ -1938,7 +2034,7 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t1/1
             prefix: dir.join("dup-ref"),
             ..ConvertRequest::default()
         },
-        &budget(),
+        &reed::RunContext::idle(&budget()),
     )
     .expect_err("a duplicate FASTA contig name must be refused");
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
@@ -1976,7 +2072,7 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t1/1
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert --msa");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert --msa");
     assert!(
         dir.join("out_a%2Fb.fasta").exists(),
         "the slash must be encoded into the filename"
@@ -2011,18 +2107,14 @@ fn msa_long_deletion_is_not_truncated() {
     let request = ConvertRequest {
         targets: vec![ConvertTarget::Msa {
             reference: r#ref,
-            regions: vec![MsaRegion {
-                contig: "chr1".into(),
-                start1: Some(1),
-                end1: Some(1000),
-            }],
+            regions: vec!["chr1:1-1000".into()],
             flank: 0,
             collapse_suffix: None,
         }],
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let fasta = read(&dir.join("out_chr1_1-1000.fasta"));
     let mut seqs: Vec<(String, String)> = Vec::new();
     for line in fasta.lines() {
@@ -2086,7 +2178,7 @@ fn hapmap_spills_past_the_threshold() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
 
     let mut expected = String::from(
         "rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanelLSID\tQCcode\ts0\ts1\ts2\ts3\n",
@@ -2166,7 +2258,7 @@ fn count_matrix_and_phylo_spill_past_the_threshold() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
 
     // `--012`: one row per sample, the same token repeated.
     let tokens = ["0", "1", "2", "-1"];
@@ -2272,7 +2364,7 @@ fn msa_frames_spill_past_the_threshold() {
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
 
     let letters = ["A", "R", "G", "A"]; // 0/0, 0/1, 1/1, ./.
     let mut expected = String::with_capacity(n_samples * (n_sites + 32));
@@ -2308,18 +2400,14 @@ chr1\t5\t.\tG\tT\t50\tPASS\t.\tGT\t0/0\t0/1
     let request = ConvertRequest {
         targets: vec![ConvertTarget::Msa {
             reference: r#ref,
-            regions: vec![MsaRegion {
-                contig: "chr1".into(),
-                start1: Some(1),
-                end1: Some(10),
-            }],
+            regions: vec!["chr1:1-10".into()],
             flank: 0,
             collapse_suffix: None,
         }],
         prefix: dir.join("out"),
         ..ConvertRequest::default()
     };
-    run_convert(Some(&vcf), &request, &budget()).expect("convert");
+    run_convert(Some(&vcf), &request, &reed::RunContext::idle(&budget())).expect("convert");
     let fasta = read(&dir.join("out_chr1_1-10.fasta"));
     // The CRLF/blank handling is the point: the reference is 10 bases
     // (AACCGGT + TAA, with the blank CRLF line dropped) and the two SNPs

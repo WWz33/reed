@@ -190,10 +190,10 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
                 },
                 false,
             ),
-            &budget,
+            &reed::RunContext::idle(&budget),
         )
         .expect("invariant: fixture run succeeds");
-        let tsv = reed::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+        let tsv = reed::frontend::windows::render_tsv(&report.windows, &KINDS_TEST, false);
         assert_eq!(tsv, expected, "threads = {threads}");
         assert_eq!(report.n_windows, 3);
         assert_eq!(report.n_records, 3);
@@ -241,13 +241,13 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
     let report = run_popgen(
         Some(path.as_path()),
         &request,
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 1,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect("invariant: variant-only wide run");
-    let text = reed::windows::render_tsv(&report.windows, &request.kinds, true);
+    let text = reed::frontend::windows::render_tsv(&report.windows, &request.kinds, true);
     assert!(
         text.contains("\t0.01\t0.01\t1\t0.01\n"),
         "{text}\nkind={:?} outputs={:?} accs={:?}",
@@ -276,15 +276,33 @@ fn skip_empty_drops_window_rows_only() {
             },
             true,
         ),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: fixture run succeeds");
-    let tsv = reed::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+    let tsv = reed::frontend::windows::render_tsv(&report.windows, &KINDS_TEST, false);
     let got = rows(&tsv);
     assert_eq!(got.len(), 2, "the empty middle window is skipped");
     assert_eq!(got[0][..3], ["chr1", "1", "100"]);
     assert_eq!(got[1][..3], ["chr1", "201", "300"]);
     assert_eq!(report.n_windows, 2);
+    // Coordinates alone missed the N-1 truncation; pin the site counts too.
+    // Window [1,100] holds sites 50 and 80; [201,300] holds site 250.
+    let pi_sites: Vec<u64> = report
+        .windows
+        .iter()
+        .map(|row| {
+            reed_stats::request::StatOutput::from_acc(
+                &row.accs[0],
+                &KINDS_TEST[0],
+                row.bp,
+                row.denom_bp,
+                false,
+            )
+            .n_present()
+            .expect("pi no_sites")
+        })
+        .collect();
+    assert_eq!(pi_sites, [2, 1], "skipped windows keep all their sites");
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
 }
 
@@ -299,11 +317,11 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     let report = run_popgen(
         Some(path.as_path()),
         &request(KINDS_TEST.to_vec(), levels, false),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: fixture run succeeds");
 
-    let tsv = reed::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+    let tsv = reed::frontend::windows::render_tsv(&report.windows, &KINDS_TEST, false);
     let got = rows(&tsv);
     assert_eq!(got.len(), 5, "3 window rows + contig row + genome row");
     // Window order is preserved, then the contig row, then the genome row.
@@ -370,7 +388,7 @@ chr1\t60\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t1/1
     let err = run_popgen(
         Some(path.as_path()),
         &request(KINDS_TEST.to_vec(), Levels::default(), false),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect_err("invariant: revisit is refused");
     assert!(err.to_string().contains("revisited"), "{err}");
@@ -492,10 +510,10 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
             Levels::default(),
             false,
         ),
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect_err("invariant: missing length is refused");
     assert!(err.to_string().contains("no ##contig length"), "{err}");
@@ -514,10 +532,10 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
             false,
             lengths,
         ),
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect("invariant: lengths supplement works");
 
@@ -532,10 +550,10 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
             Levels::default(),
             false,
         ),
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect("invariant: declared run");
     let kinds = vec![StatKind::Pi {
@@ -543,8 +561,8 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
         per_bp: true,
     }];
     assert_eq!(
-        reed::windows::render_tsv(&with_file.windows, &kinds, false),
-        reed::windows::render_tsv(&reference.windows, &kinds, false),
+        reed::frontend::windows::render_tsv(&with_file.windows, &kinds, false),
+        reed::frontend::windows::render_tsv(&reference.windows, &kinds, false),
         "supplemented lengths must match a header-declared run"
     );
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
@@ -575,10 +593,10 @@ chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
             Levels::default(),
             false,
         ),
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect_err("invariant: unsorted input is refused");
     assert!(err.to_string().contains("ascending"), "{err}");
@@ -602,10 +620,10 @@ chr1\t2000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
             Levels::default(),
             false,
         ),
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect_err("invariant: position beyond the contig length is refused");
     assert!(err.to_string().contains("exceeds contig"), "{err}");
@@ -644,9 +662,9 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
     let bed = dir.join("win.bed");
     std::fs::write(&bed, "chr1\t0\t5\nchr1\t5\t10\nchr1\t9\t13\n").expect("invariant: bed");
 
-    let budget = reed::budget::ThreadBudget {
+    let budget = reed::ThreadBudget {
         threads: 2,
-        mem: reed::budget::MemBudget::from_bytes(u64::MAX),
+        mem: reed::MemBudget::from_bytes(u64::MAX),
     };
     let request = reed::PopgenRequest {
         kinds: vec![reed::StatKind::Pi {
@@ -690,7 +708,8 @@ chr1\t13\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/0\t0/1\t1/1
         fstats: None,
         ld: None,
     };
-    let report = reed::run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
+    let report = reed::run_popgen(Some(&vcf), &request, &reed::RunContext::idle(&budget))
+        .expect("invariant: run");
     // Three windows in input order; rows are (pop, start1, end).
     let rows: Vec<(String, u64, u64)> = report
         .windows
@@ -767,8 +786,12 @@ fn malformed_record_under_site_filter_is_fatal() {
         threads: 4,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let err = run_popgen(Some(path.as_path()), &request, &budget)
-        .expect_err("malformed line must be fatal");
+    let err = run_popgen(
+        Some(path.as_path()),
+        &request,
+        &reed::RunContext::idle(&budget),
+    )
+    .expect_err("malformed line must be fatal");
     assert!(
         err.to_string().contains("fewer than 8 columns"),
         "got {err}"
@@ -835,7 +858,8 @@ chr1\t500\t.\tA\tT,G\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0\t0/1
         fstats: None,
         ld: None,
     };
-    let report = run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
+    let report =
+        run_popgen(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("invariant: run");
     // (start1, end, scored sites, diffs, avg) per row.
     let mut windows: Vec<(u64, u64, u64, u64, Option<f64>)> = Vec::new();
     let mut contig: Option<(u64, u64, u64, Option<f64>)> = None;
@@ -935,7 +959,8 @@ fn multiple_pbs_triples_get_their_own_files() {
         fstats: None,
         ld: None,
     };
-    let report = run_popgen(Some(&vcf), &request, &budget).expect("invariant: run");
+    let report =
+        run_popgen(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("invariant: run");
     let names = vec!["pop1".to_string(), "pop2".to_string(), "pop3".to_string()];
 
     let dir = std::env::temp_dir().join(format!("reed-stats-pbs-{}", std::process::id()));
@@ -944,8 +969,9 @@ fn multiple_pbs_triples_get_their_own_files() {
 
     // Two triples: one file each, each header naming its own groups.
     let prefix = dir.join("multi");
-    let files = reed::windows::write(&prefix, &report, &names, &kinds, layout, "test", "0")
-        .expect("invariant: write");
+    let files =
+        reed::frontend::windows::write(&prefix, &report, &names, &kinds, layout, "test", "0")
+            .expect("invariant: write");
     let base: Vec<String> = files
         .iter()
         .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
@@ -988,8 +1014,9 @@ fn multiple_pbs_triples_get_their_own_files() {
 
     // One triple: the documented single-file name, unchanged layout.
     let single = dir.join("single");
-    let files = reed::windows::write(&single, &report, &names, &kinds[..1], layout, "test", "0")
-        .expect("invariant: write");
+    let files =
+        reed::frontend::windows::write(&single, &report, &names, &kinds[..1], layout, "test", "0")
+            .expect("invariant: write");
     let base: Vec<String> = files
         .iter()
         .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
@@ -1046,10 +1073,10 @@ chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
         let report = run_popgen(
             Some(&path),
             &req,
-            &ThreadBudget {
+            &reed::RunContext::idle(&ThreadBudget {
                 threads: 2,
                 mem: MemBudget::from_bytes(u64::MAX),
-            },
+            }),
         )
         .expect("invariant: run");
         let contig = report
@@ -1096,6 +1123,142 @@ chr1\t200\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
         "large-step denominator remains declared length"
     );
     assert_eq!(large.4, 1000);
+    let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir"));
+    let _ = std::fs::remove_file(pops);
+}
+
+/// doc_v30 N-1: `--skip-empty` jumped `s` past empty windows, but the
+/// completeness guard tested the pre-jump `s`, so the window it landed in
+/// was emitted while still filling and its bins were dropped — the first
+/// nonempty window kept one site instead of all of them.
+///
+/// Two clusters far apart with a 1k window: without `--skip-empty` the
+/// second cluster's window holds 5 sites; with it the window must hold the
+/// same 5 (not 1). Also checks the property for several window/step pairs:
+/// skipping empty rows may not change any surviving row's counts.
+#[test]
+fn skip_empty_keeps_the_full_first_nonempty_window() {
+    // 1k window over 1..=3000: cluster A at 900/950/980 (all inside the
+    // first window [1,1000]) and cluster B at 2000-2800. Cluster A's window
+    // is the first the loop visits; the old bug emitted it at the first
+    // site absorbed, so it kept 1 of its 3 sites.
+    let mut text = String::from(
+        "##fileformat=VCFv4.3\n\
+         ##contig=<ID=chr1,length=100000>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n",
+    );
+    for (i, pos) in [900u32, 950, 980, 2000, 2200, 2400, 2600, 2800]
+        .into_iter()
+        .enumerate()
+    {
+        // Alternate the genotype so every site has a real pairwise diff.
+        let gt = if i % 2 == 0 { "0/1\t1/1" } else { "0/0\t0/1" };
+        let _ = writeln!(text, "chr1\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t{gt}");
+    }
+    let path = write_fixture("n1-gap.vcf.gz", &text);
+    let pops = std::env::temp_dir().join(format!("reed-n1-pops-{}", std::process::id()));
+    std::fs::write(&pops, "s0\tA\ns1\tA\n").expect("invariant: pops");
+
+    let run = |size: u64, step: u64, skip_empty: bool, threads: usize| {
+        let req = PopgenRequest {
+            kinds: vec![StatKind::Pi {
+                group: 0,
+                per_bp: false,
+            }],
+            populations: reed::Populations::File(pops.clone()),
+            grid: reed::WindowGrid::Bp { size, step },
+            levels: reed::Levels {
+                window: true,
+                contig: false,
+                genome: false,
+            },
+            window_output: None,
+            // CLI runs set this; it selects the Rows (streaming) path where
+            // the skip-empty jump happens per site (N-1).
+            compact_window_accumulators: true,
+            skip_empty,
+            ..PopgenRequest::default()
+        };
+        let report = run_popgen(
+            Some(&path),
+            &req,
+            &reed::RunContext::idle(&ThreadBudget {
+                threads,
+                mem: MemBudget::from_bytes(u64::MAX),
+            }),
+        )
+        .expect("invariant: run");
+        // (start, end, no_sites, count_diffs, count_comparisons, raw pi)
+        report
+            .windows
+            .iter()
+            .map(|row| {
+                // Compacted runs (the CLI path) carry `outputs`; `accs` is
+                // empty there. Fall back to building the output from `accs`
+                // for the non-compacted grids this test also exercises.
+                let owned;
+                let out: &reed_stats::request::StatOutput = match row.outputs.first() {
+                    Some(out) => out,
+                    None => {
+                        owned = reed_stats::request::StatOutput::from_acc(
+                            &row.accs[0],
+                            &StatKind::Pi {
+                                group: 0,
+                                per_bp: false,
+                            },
+                            row.bp,
+                            row.denom_bp,
+                            false,
+                        );
+                        &owned
+                    }
+                };
+                let (diffs, cmp, _missing) = out.pair_counts().expect("pi audit columns");
+                (
+                    row.start1,
+                    row.end,
+                    out.n_present().expect("pi no_sites"),
+                    diffs,
+                    cmp,
+                    // Empty windows (only reachable without --skip-empty)
+                    // have no value; keep them comparable as None.
+                    out.value(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // The first nonempty window must keep all 5 sites of cluster B, with
+    // identical counts to the run that does not skip empty windows.
+    let full = run(1000, 1000, false, 1);
+    let skipped = run(1000, 1000, true, 1);
+    let nonempty: Vec<_> = full.iter().filter(|r| r.2 > 0).copied().collect();
+    assert_eq!(skipped, nonempty, "skipping may only drop empty rows");
+
+    // The concrete N-1 symptom: the first surviving row's no_sites was 1.
+    assert_eq!(
+        skipped[0].2, 3,
+        "first nonempty window truncated (N-1): {skipped:?}"
+    );
+    assert!(
+        skipped.iter().all(|r| r.2 > 0),
+        "skip-empty must not emit empty rows: {skipped:?}"
+    );
+
+    // Thread count may not change the numbers.
+    for threads in [4, 56] {
+        assert_eq!(run(1000, 1000, true, threads), skipped, "threads={threads}");
+    }
+
+    // Property over several grids: skipped == full minus no_sites == 0.
+    for (size, step) in [(500, 250), (1000, 500), (2000, 1000), (3000, 1000)] {
+        let full = run(size, step, false, 2);
+        let skipped = run(size, step, true, 2);
+        let nonempty: Vec<_> = full.into_iter().filter(|r| r.2 > 0).collect();
+        assert_eq!(skipped, nonempty, "grid size={size} step={step}");
+    }
+
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir"));
     let _ = std::fs::remove_file(pops);
 }
@@ -1156,10 +1319,10 @@ chr1\t120\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
     let report = run_popgen(
         Some(&path),
         &request,
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect("invariant: run");
     let contig = report
@@ -1254,10 +1417,10 @@ fn bed_accumulators_merge_once_across_chunks_and_workers() {
         run_popgen(
             Some(&path),
             &request,
-            &ThreadBudget {
+            &reed::RunContext::idle(&ThreadBudget {
                 threads,
                 mem: MemBudget::from_bytes(u64::MAX),
-            },
+            }),
         )
         .expect("invariant: run")
     };

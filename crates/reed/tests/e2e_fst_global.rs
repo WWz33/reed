@@ -4,7 +4,7 @@
 //! 2 per population), which the parity script cross-checks on real data;
 //! here they are pinned as literals.
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     InvariantMode, Levels, PopgenRequest, Populations, StatKind, WindowLayoutOptions, run_popgen,
 };
@@ -106,7 +106,7 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
                 genome: false,
             },
         ),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     assert_eq!(report.windows.len(), 5);
@@ -132,7 +132,7 @@ fn global_fst_matches_vcftools_per_site_and_genome_wide() {
                 genome: true,
             },
         ),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     let value = report
@@ -171,7 +171,8 @@ fn hudson_has_no_global_form() {
         },
     );
     two.populations = Populations::File(pops_two_file());
-    let report = run_popgen(Some(&vcf), &two, &budget).expect("invariant: run");
+    let report =
+        run_popgen(Some(&vcf), &two, &reed::RunContext::idle(&budget)).expect("invariant: run");
     // Two populations: the global value equals the pairwise WC84 value.
     let global = report.windows[0].accs[0]
         .value(&StatKind::FstGlobal, 1)
@@ -207,7 +208,7 @@ fn hudson_has_no_global_form() {
                 },
             )
         },
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     let pairwise_value = pairwise.windows[0].accs[0]
@@ -251,7 +252,7 @@ fn global_fst_is_identical_across_thread_counts() {
                     genome: false,
                 },
             ),
-            &budget,
+            &reed::RunContext::idle(&budget),
         )
         .expect("invariant: run");
         values.push(

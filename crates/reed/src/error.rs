@@ -72,8 +72,13 @@ impl Error {
         match &*self.0 {
             ErrorInner::Usage(_)
             | ErrorInner::Core(_)
-            | ErrorInner::Spec(FilterError::Spec(_) | FilterError::Format(_))
-            | ErrorInner::Engine(EngineError::Usage(_)) => ErrorKind::Usage,
+            | ErrorInner::Spec(
+                FilterError::Spec(_) | FilterError::Format(_) | FilterError::Usage(_),
+            )
+            | ErrorInner::Engine(EngineError::Usage(_))
+            // A capability the input lacks is a command-line choice the
+            // operator can fix (doc_v30 R06), not a data failure.
+            | ErrorInner::Io(IoError::Capability { .. }) => ErrorKind::Usage,
             ErrorInner::Io(_)
             | ErrorInner::Spec(FilterError::Io(_) | FilterError::Decode { .. })
             | ErrorInner::Engine(_)
@@ -156,6 +161,20 @@ mod tests {
         );
         assert_eq!(
             Error::from(FilterError::Spec("s".into())).kind(),
+            ErrorKind::Usage
+        );
+        // doc_v30 R06: a missing input capability is fixable on the command
+        // line, so it rides the usage class with the other request errors.
+        assert_eq!(
+            Error::from(IoError::Capability {
+                needed: reed_io::Needed::Index,
+                fix: "build one",
+            })
+            .kind(),
+            ErrorKind::Usage
+        );
+        assert_eq!(
+            Error::from(FilterError::Usage("needs an index".into())).kind(),
             ErrorKind::Usage
         );
         assert_eq!(Error::from(EngineError::Aborted).kind(), ErrorKind::Runtime);

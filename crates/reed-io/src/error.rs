@@ -19,6 +19,35 @@ impl fmt::Display for Locus {
     }
 }
 
+/// A capability an input lacks but the command needs (doc_v30 R06).
+///
+/// This is a command-line problem, not a data problem: the caller chose a
+/// mode (regions, two passes) the input cannot serve. The facade maps it to
+/// its usage class (exit 2) instead of a runtime failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Needed {
+    /// Random access to the input; stdin cannot seek.
+    Seek,
+    /// A `.csi`/`.tbi` sidecar next to the input.
+    Index,
+    /// BGZF/BCF framing; plain VCF and regular gzip have no block offsets.
+    Bgzf,
+    /// A second pass over the same bytes; stdin is read once.
+    Replay,
+}
+
+impl fmt::Display for Needed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Seek => "a seekable input",
+            Self::Index => "an index (.csi or .tbi)",
+            Self::Bgzf => "BGZF/BCF framing",
+            Self::Replay => "a replayable input",
+        })
+    }
+}
+
 /// Errors from the reed-io transport layer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -29,6 +58,14 @@ pub enum IoError {
         /// What was wrong with the bytes.
         &'static str,
     ),
+    /// The input lacks a capability the command needs (doc_v30 R06).
+    #[error("unsupported input: needs {needed}; {fix}")]
+    Capability {
+        /// Which capability is missing.
+        needed: Needed,
+        /// How the operator can provide it.
+        fix: &'static str,
+    },
     /// Reading from the underlying stream failed.
     #[error("io error: {0}")]
     Io(String),

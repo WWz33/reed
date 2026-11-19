@@ -18,7 +18,7 @@
 
 use std::io::Write as _;
 
-use reed_engine::budget::ThreadBudget;
+use crate::context::RunContext;
 use reed_reduce::Mat;
 use reed_reduce::lda::{self, LdaError};
 use reed_reduce::pca::Stand;
@@ -46,10 +46,6 @@ pub struct DapcRequest {
     pub keep_samples: Option<Vec<bool>>,
     /// Skip population-file rows naming samples absent from the header.
     pub force_samples: bool,
-    /// Worker threads.
-    pub threads: Option<usize>,
-    /// Memory budget in MiB.
-    pub memory: Option<u64>,
     /// Run cross-validation instead of a single DAPC. `Some` writes
     /// `PREFIX.dapc.xval` and the PCA/LDA files for the selected `n_pca`.
     pub xval: Option<XvalRequest>,
@@ -94,8 +90,6 @@ impl Default for DapcRequest {
             prefix: "out".into(),
             keep_samples: None,
             force_samples: false,
-            threads: None,
-            memory: None,
             xval: None,
         }
     }
@@ -146,10 +140,10 @@ pub struct XvalOutcome {
 pub fn run_dapc(
     path: Option<&std::path::Path>,
     request: &DapcRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<DapcReport, crate::Error> {
-    let opened = crate::open_regions(path, &[])?;
-    run_dapc_opened(opened, request, budget)
+    let opened = crate::input::open_regions(path, &[])?;
+    run_dapc_opened(opened, request, ctx)
 }
 
 /// Runs DAPC over an already-opened input.
@@ -160,8 +154,9 @@ pub fn run_dapc(
 pub fn run_dapc_opened(
     opened: crate::OpenedInput,
     request: &DapcRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<DapcReport, crate::Error> {
+    let budget = ctx.budget;
     let stand = Stand::parse(&request.stand).map_err(crate::Error::usage)?;
     let missing = request.missing.as_str();
     if !matches!(missing, "pairwise" | "meanimpute") {
@@ -205,7 +200,7 @@ pub fn run_dapc_opened(
     )?;
 
     let keep = request.keep_samples.clone();
-    let (x, ids) = read_genotype_matrix(opened, keep.as_deref(), budget, matrix_use)?;
+    let (x, ids) = read_genotype_matrix(opened, keep.as_deref(), ctx, matrix_use)?;
     let n_samples = x.rows;
     let n_sites = x.cols;
     if n_samples < 3 {

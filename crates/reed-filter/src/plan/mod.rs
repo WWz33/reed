@@ -49,7 +49,7 @@ pub enum HeadRule {
     MaxAltAlleles(u32),
     /// The default biallelic gate: records with more than one ALT are
     /// dropped unless the spec allows multiallelic input (§11.6,
-    /// [`FilterSpec::multiallelics_allowed`]). Pushed by `compile` when
+    /// [`crate::spec::FilterSpec::multiallelics_allowed`]). Pushed by `compile` when
     /// `biallelic_gate` is set and no explicit `max_alt_alleles` covers it.
     BiallelicGate,
     /// The FILTER column must contain one of these as a `;`-separated
@@ -288,19 +288,47 @@ impl TailRule {
     }
 }
 
-/// The recomputed-tag flags (compiled from [`RecomputeSpec`](crate::spec::RecomputeSpec)).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The selected recomputed tags, in fill order (doc_v30 R13: the old five
+/// booleans were a second enumeration of the registry).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RecomputeFlags {
-    /// AC.
-    pub ac: bool,
-    /// AN.
-    pub an: bool,
-    /// NS.
-    pub ns: bool,
-    /// MAF.
-    pub maf: bool,
-    /// HWE.
-    pub hwe: bool,
+    /// Selected entries of [`reed_core::count::RECOMPUTE_TAGS`].
+    pub tags: Vec<&'static reed_core::count::RecomputeTag>,
+}
+
+impl RecomputeFlags {
+    /// Whether `name` is selected (canonical spelling).
+    #[must_use]
+    pub fn wants(&self, name: &str) -> bool {
+        self.tags.iter().any(|tag| tag.name == name)
+    }
+
+    /// Adds a tag by name; unknown names are ignored (compile validated
+    /// them already).
+    ///
+    /// The list stays in registry order regardless of the order callers
+    /// enable tags in: the driver enables AC/AN *after* compile (sample
+    /// subset), and a bare `push` would emit `MAF;AC;AN` where the fixed
+    /// order has always been `AC;AN;MAF` (doc_v30 §3.2/§4.5).
+    pub fn enable(&mut self, name: &str) {
+        if let Some(tag) = reed_core::count::RecomputeTag::find(name)
+            && !self.wants(tag.name)
+        {
+            self.tags.push(tag);
+            self.tags.sort_by_key(|tag| {
+                reed_core::count::RECOMPUTE_TAGS
+                    .iter()
+                    .position(|r| r.name == tag.name)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+    }
+
+    /// Whether no tag is selected.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tags.is_empty()
+    }
 }
 
 /// One planned integer FORMAT column: the key and its explicit fallback.
@@ -318,7 +346,7 @@ pub struct IntField {
     pub fallback: Option<Vec<u8>>,
 }
 
-impl From<&IntField> for reed_io::vcf::format_layout::IntSpec {
+impl From<&IntField> for reed_core::vcf::format_layout::IntSpec {
     fn from(field: &IntField) -> Self {
         Self::owned(field.name.clone(), field.fallback.clone())
     }
@@ -408,7 +436,7 @@ impl FilterPlan {
 
     /// Whether any stage reads the record's INFO column: typed head rules,
     /// `-i/-e` expressions (head or `--set-gts .`) and the AC/AN readers all
-    /// need the same [`InfoIndex`](reed_io::vcf::info::InfoIndex).
+    /// need the same [`InfoIndex`](reed_core::vcf::info::InfoIndex).
     ///
     /// The filter pipeline asks this once per plan: when false, the line
     /// classifier keeps its allocation-free duplicate check and no index is
@@ -946,5 +974,37 @@ mod routing_tests {
         let err =
             compile(&spec, &tags(), "", false).expect_err("an INFO-only read belongs in [site]");
         assert!(err.to_string().contains("[site]"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod recompute_flags_tests {
+    use super::*;
+
+    /// doc_v30 §3.2/§4.5: the fill order is the registry order
+    /// (AC, AN, NS, MAF, HWE), independent of the order tags are enabled
+    /// in. The driver enables AC/AN after compile (sample subset), which
+    /// used to append them behind the user's tags.
+    #[test]
+    fn enable_keeps_registry_order_regardless_of_call_order() {
+        let mut flags = RecomputeFlags::default();
+        flags.enable("MAF");
+        flags.enable("AC");
+        flags.enable("AN");
+        let names: Vec<&str> = flags.tags.iter().map(|tag| tag.name).collect();
+        assert_eq!(names, ["AC", "AN", "MAF"]);
+
+        // Re-enabling a selected tag does not duplicate or reorder.
+        flags.enable("AC");
+        let names: Vec<&str> = flags.tags.iter().map(|tag| tag.name).collect();
+        assert_eq!(names, ["AC", "AN", "MAF"]);
+
+        // All five, enabled backwards, come out in registry order.
+        let mut all = RecomputeFlags::default();
+        for name in ["HWE", "MAF", "NS", "AN", "AC"] {
+            all.enable(name);
+        }
+        let names: Vec<&str> = all.tags.iter().map(|tag| tag.name).collect();
+        assert_eq!(names, ["AC", "AN", "NS", "MAF", "HWE"]);
     }
 }

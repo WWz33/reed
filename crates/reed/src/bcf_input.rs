@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use reed_engine::abort::Abort;
+use reed_engine::abort::AbortSignal;
 use reed_engine::error::EngineError;
 use reed_engine::frame_chain::{Carried, FrameChain};
 use reed_engine::pipeline::ChunkJob;
@@ -54,6 +54,10 @@ pub struct InputJob<J: ChunkJob> {
     /// never admit.
     record_ceiling: usize,
     bcf: Option<BcfState>,
+    /// How the engine frames this input: raw BCF records or newline text.
+    /// Captured from [`InputMeta`](crate::input::InputMeta), not inferred
+    /// from an `Option` at every use (doc_v30 R07).
+    framing: RecordFraming,
     /// When set and the input is BCF, framed records go here instead of
     /// being rendered to text.
     native: Option<BcfRecordFn<J>>,
@@ -91,22 +95,29 @@ impl<J: ChunkJob> InputJob<J> {
     pub fn new(
         inner: J,
         opened: &OpenedInput,
-        abort: &Abort,
+        abort: &AbortSignal,
         budget: &reed_engine::budget::ThreadBudget,
     ) -> Self {
         let record_ceiling = reed_engine::pipeline::record_ceiling(budget);
-        let bcf = opened.bcf.as_ref().map(|dict| {
-            let chain = Arc::new(FrameChain::new(abort.signal.clone()));
-            chain.publish(0, Carried::default());
-            BcfState {
-                chain,
-                dict: Arc::clone(dict),
+        let (bcf, framing) = match opened.bcf_dict() {
+            Some(dict) => {
+                let chain = Arc::new(FrameChain::new(abort.clone()));
+                chain.publish(0, Carried::default());
+                (
+                    Some(BcfState {
+                        chain,
+                        dict: Arc::clone(dict),
+                    }),
+                    RecordFraming::Raw,
+                )
             }
-        });
+            None => (None, RecordFraming::Newline),
+        };
         Self {
             inner,
             record_ceiling,
             bcf,
+            framing,
             native: None,
         }
     }
@@ -118,7 +129,7 @@ impl<J: ChunkJob> InputJob<J> {
     pub fn with_bcf_records(
         inner: J,
         opened: &OpenedInput,
-        abort: &Abort,
+        abort: &AbortSignal,
         budget: &reed_engine::budget::ThreadBudget,
         records: BcfRecordFn<J>,
     ) -> Self {
@@ -276,11 +287,7 @@ impl<J: ChunkJob + Sync> ChunkJob for InputJob<J> {
     }
 
     fn framing(&self) -> RecordFraming {
-        if self.bcf.is_some() {
-            RecordFraming::Raw
-        } else {
-            RecordFraming::Newline
-        }
+        self.framing
     }
 
     fn run_chunk(
@@ -424,6 +431,7 @@ mod tests {
             inner: NoopJob,
             record_ceiling: ceiling,
             bcf: Some(BcfState { chain, dict }),
+            framing: RecordFraming::Raw,
             native: None,
         }
     }

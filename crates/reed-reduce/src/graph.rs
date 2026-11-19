@@ -16,7 +16,7 @@
 //! embedding (samples x components).
 
 use crate::backend::sym_eig;
-use reed_core::linalg::{dist2, Mat};
+use reed_core::linalg::{Mat, dist2};
 
 /// A dense embedding result.
 #[derive(Clone, Debug)]

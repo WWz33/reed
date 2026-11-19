@@ -1,15 +1,14 @@
 [package]
 name = "reed-filter"
-description = "Streaming hard-filter engine for reed (policy layer over reed-io transport; fidelity-preserving; see docs/spec/filter.md)."
+description = "Streaming hard-filter engine for reed (policy layer over reed-core; transport lives in reed-io; fidelity-preserving; see docs/spec/filter.md)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
 
 [dependencies]
 reed-core.workspace = true
-reed-io.workspace = true
 memchr.workspace = true
 serde.workspace = true
 serde_json.workspace = true

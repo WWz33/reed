@@ -165,6 +165,7 @@ pub fn gram_divide(w: &Mat, m: usize, par: Parallel) -> (Mat, Backend) {
     }
     #[cfg(not(feature = "faer-backend"))]
     {
+        let _ = par;
         let wt = w.transpose();
         let mut a = w.matmul(&wt);
         let scale = 1.0 / m as f64;
@@ -215,6 +216,7 @@ pub fn sym_eig(a: &Mat, par: Parallel) -> SymEigResult {
     }
     #[cfg(not(feature = "faer-backend"))]
     {
+        let _ = par;
         let e = crate::eig::sym_eig(a);
         SymEigResult {
             values: e.values,
@@ -228,7 +230,7 @@ pub fn sym_eig(a: &Mat, par: Parallel) -> SymEigResult {
 fn faer_sym_eig(a: &Mat, par: Parallel) -> (Vec<f64>, Mat) {
     use faer::dyn_stack::{GlobalPodBuffer, PodStack};
     use faer::linalg::evd::{
-        compute_hermitian_evd, compute_hermitian_evd_req, ComputeVectors, HermitianEvdParams,
+        ComputeVectors, HermitianEvdParams, compute_hermitian_evd, compute_hermitian_evd_req,
     };
     use faer::{Col, Mat as FMat};
 

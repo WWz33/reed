@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use reed::histogram::{HistKind, HistMetric};
+use reed::frontend::histogram::{HistKind, HistMetric};
 
 use crate::cli::StatsCli;
 
@@ -63,7 +63,7 @@ fn parse_hist(list: Option<&str>, tags: &reed::TagTable) -> Result<Vec<HistMetri
             // `--hist dp` is the depth column (V22-R2-4): FORMAT/DP when
             // declared, else the AD-sum fallback, matching `--summary`,
             // `--depth` and the filter's `--min-dp` (doc_v22 D22-1). The
-            // type checks live in `reed::reports::validate_report_tags`, so
+            // type checks live in `reed::frontend::reports::validate_report_tags`, so
             // the CLI and library callers share them.
             let required: Option<(&str, &str)> = match metric {
                 HistMetric::Gq => Some(("FORMAT", "GQ")),
@@ -262,8 +262,11 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         .facts()
         .header
         .clone();
-    let hist = parse_hist(args.hist.as_deref(), &reed::tag_table(&facts_header))?;
-    let request = reed::reports::StatsReportRequest {
+    let hist = parse_hist(
+        args.hist.as_deref(),
+        &reed::frontend::tag_table(&facts_header),
+    )?;
+    let request = reed::frontend::reports::StatsReportRequest {
         hist,
         freq: args.freq,
         hardy: args.hardy,
@@ -284,15 +287,17 @@ pub(crate) fn run_stats_cli(args: StatsCli) -> Result<(), reed::Error> {
         .opened
         .expect("invariant: the report mode consumes the first open");
     let reports_start = std::time::Instant::now();
-    let outcome = reed::reports::run_stats_opened(source, &request, &p.budget)?;
+    let abort = reed::abort_for(&p.budget);
+    let ctx = reed::RunContext::new(&p.budget, &abort.signal);
+    let outcome = reed::frontend::reports::run_stats_opened(source, &request, &ctx)?;
     let reports_secs = reports_start.elapsed().as_secs_f64();
     let mut files = outcome.files.clone();
     if let Some(qc) = &outcome.qc {
         let mut path = std::ffi::OsString::from(&prefix);
         path.push(".stats");
         let path = std::path::PathBuf::from(path);
-        let text = reed::summary::render_bcftools_stats(qc, &p.sample_names);
-        reed::summary::write_bcftools_stats(&path, &text)?;
+        let text = reed::frontend::summary::render_bcftools_stats(qc, &p.sample_names);
+        reed::frontend::summary::write_bcftools_stats(&path, &text)?;
         files.push(path);
     }
     if args.verbosity.shows_summary() {

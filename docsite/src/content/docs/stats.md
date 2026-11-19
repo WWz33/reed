@@ -124,7 +124,27 @@ bin_lower	bin_upper	count	percent
 5	5	70	1.400000
 ```
 
-Multiallelic sites are not split: ALT_FREQS in `.afreq` is the combined frequency of all ALT alleles (`CollapseAlt` semantics), consistent across the family.
+Multi-allelic records are skipped by the per-site reports (`--freq`, `--hardy`, `--missing`, `--depth`): each row holds one ALT and one frequency, so a collapsed value would disagree with plink2 (which writes `0.25,0.25` for `A G,T`). The skipped records are counted (`multiallelic skipped` in the run log, `StatsOutcome::n_multiallelic_skipped` in the library). The window statistics (`--pi/--dxy/--theta/…`) already skip them the same way.
+
+`--summary`'s AF section falls back to the genotypes when the input's `INFO/AC` is unusable: a missing value (`AC=.`) and a value htslib would store as missing (an integer above `i32::MAX`, or `AC > AN`) both make reed count AF from GT, while bcftools' `stats -s -` puts those records in the AF = 0 bucket.
+
+### `--summary` sections
+
+`PREFIX.stats` carries these `bcftools stats` sections:
+
+| Section | Content |
+|---|---|
+| `SN` | Summary numbers (samples, records, SNPs/MNPs/indels/others, multiallelic counts) |
+| `TSTV` | Transitions/transversions, overall and for the first ALT |
+| `SiS` | Singleton statistics |
+| `AF` | Non-reference allele-frequency bins |
+| `QUAL` | Quality bins |
+| `IDD` | Indel-length distribution |
+| `ST` | Substitution types |
+| `DP` | Depth distribution |
+| `PSC` | Per-sample counts |
+
+**Not emitted:** `PSI` (per-sample indel statistics) and `HWE` (per-site Hardy–Weinberg). Both need the per-sample / per-site pass that bcftools runs under `-s -`; reed's `--summary` shares one genotype scan with the other reports instead. Use `--hardy` for the per-site HWE table (`PREFIX.hardy`) — it runs the same exact test as `filter --hwe`. `PSI` has no equivalent; a `--het` run gives the per-sample inbreeding coefficient instead.
 
 ## HWE exact test
 

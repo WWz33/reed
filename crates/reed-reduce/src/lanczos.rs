@@ -19,7 +19,7 @@
 //! `ncv = 2k+1 < N` (flashpca therefore caps at `(N-1)/2`).
 
 use crate::backend::sym_eig;
-use reed_core::linalg::{dot, Mat};
+use reed_core::linalg::{Mat, dot};
 
 /// Configuration for the streaming path.
 #[derive(Clone, Debug)]
@@ -129,6 +129,7 @@ struct Operator<'a> {
     #[cfg(feature = "faer-backend")]
     wm: faer::Mat<f64>,
     /// Parallelism bound for the inner GEMMs (doc_v26 V26-21).
+    #[cfg(feature = "faer-backend")]
     parallel: crate::backend::Parallel,
 }
 
@@ -161,8 +162,8 @@ fn apply_a_block(op: &Operator, q: &Mat, c0: usize, b: usize, out: &mut Mat) {
 
     #[cfg(feature = "faer-backend")]
     {
-        use faer::linalg::matmul::matmul;
         use faer::Mat as FMat;
+        use faer::linalg::matmul::matmul;
         let qm = FMat::<f64>::from_fn(n, b, |i, j| q.get(i, c0 + j));
         // doc_v26 V26-21: explicit parallelism instead of the `*` operator,
         // whose impl reads faer's global setting (the ambient rayon pool).

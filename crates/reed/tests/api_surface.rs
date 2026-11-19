@@ -23,12 +23,12 @@ fn _drivers_and_reports_are_at_the_root(
     _: fn(
         Option<&std::path::Path>,
         &PopgenRequest,
-        &reed::budget::ThreadBudget,
+        &reed::ThreadBudget,
     ) -> Result<PopgenReport, reed::Error>,
     _: fn(
         Option<&std::path::Path>,
         &StatsReportRequest,
-        &reed::budget::ThreadBudget,
+        &reed::ThreadBudget,
     ) -> Result<StatsOutcome, reed::Error>,
     _: fn(
         &std::path::Path,
@@ -50,14 +50,14 @@ fn _error_is_classified_not_matched(e: &reed::Error) -> reed::ErrorKind {
 
 /// A BGZF fixture writer using only the facade's re-exported helpers.
 fn bgzf(text: &str) -> Vec<u8> {
-    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(64) {
         deflater
             .deflate_block(block, &mut out)
             .expect("invariant: block fits");
     }
-    out.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    out.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
     out
 }
 
@@ -79,10 +79,10 @@ fn fixture(name: &str) -> std::path::PathBuf {
     path
 }
 
-fn budget() -> reed::budget::ThreadBudget {
-    reed::budget::ThreadBudget {
+fn budget() -> reed::ThreadBudget {
+    reed::ThreadBudget {
         threads: 2,
-        mem: reed::budget::MemBudget::from_bytes(u64::MAX),
+        mem: reed::MemBudget::from_bytes(u64::MAX),
     }
 }
 
@@ -112,7 +112,8 @@ fn default_request_emits_window_rows() {
         },
         "the derived Default must be the window level"
     );
-    let report = run_popgen(Some(&vcf), &request, &budget()).expect("invariant: run");
+    let report = run_popgen(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
+        .expect("invariant: run");
     assert!(
         !report.windows.is_empty(),
         "a default request must emit window rows, got {}",
@@ -137,9 +138,14 @@ fn readme_library_example_compiles_and_runs() {
         },
         ..PopgenRequest::default()
     };
-    let report = run_popgen(Some(vcf.as_path()), &request, &budget()).expect("invariant: run");
+    let report = run_popgen(
+        Some(vcf.as_path()),
+        &request,
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("invariant: run");
     // The borrow survives the call: this line is the A11-2 regression.
-    let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+    let tsv = reed::frontend::windows::render_tsv(&report.windows, &request.kinds, false);
     assert!(tsv.starts_with("contig\tstart\tend"));
     assert!(tsv.lines().count() > 1, "expected data rows:\n{tsv}");
 }
@@ -233,12 +239,14 @@ fn in_memory_assignment_matches_the_file_form() {
         populations: Populations::File(pops),
         ..from_memory.clone()
     };
-    let a = run_popgen(Some(&vcf), &from_memory, &budget()).expect("invariant: memory run");
-    let b = run_popgen(Some(&vcf), &from_file, &budget()).expect("invariant: file run");
+    let a = run_popgen(Some(&vcf), &from_memory, &reed::RunContext::idle(&budget()))
+        .expect("invariant: memory run");
+    let b = run_popgen(Some(&vcf), &from_file, &reed::RunContext::idle(&budget()))
+        .expect("invariant: file run");
     let kinds = from_memory.kinds.clone();
     assert_eq!(
-        reed::windows::render_tsv(&a.windows, &kinds, false),
-        reed::windows::render_tsv(&b.windows, &kinds, false),
+        reed::frontend::windows::render_tsv(&a.windows, &kinds, false),
+        reed::frontend::windows::render_tsv(&b.windows, &kinds, false),
         "in-memory and file assignments must produce the same table"
     );
 }
@@ -253,7 +261,8 @@ fn run_reports_is_reachable_from_the_root() {
         prefix,
         ..StatsReportRequest::default()
     };
-    let outcome = run_stats(Some(&vcf), &request, &budget()).expect("invariant: reports");
+    let outcome = run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget()))
+        .expect("invariant: reports");
     assert_eq!(outcome.n_records, 2);
     assert_eq!(outcome.files.len(), 1);
 }
@@ -269,7 +278,7 @@ fn run_reports_is_reachable_from_the_root() {
 fn _header_is_opaque() {
     // `HeaderFacts` is reachable and its field has reed's type.
     let facts: reed::HeaderFacts = unreachable_header_fixture();
-    let header: &reed::header::VcfHeader = &facts.header;
+    let header: &reed::frontend::header::VcfHeader = &facts.header;
     let _ = header.n_samples();
     let _ = header.sample_names();
     let _ = header.contig_names();
@@ -278,10 +287,10 @@ fn _header_is_opaque() {
     let _ = header.format_keys();
     // The operations a command performs are on the opaque value.
     let pruned = header.with_samples_pruned(&[true]);
-    let added = pruned.with_info_definitions(&[reed::header::InfoDefinition {
+    let added = pruned.with_info_definitions(&[reed::frontend::header::InfoDefinition {
         id: "AC",
-        number: reed::header::InfoNumber::A,
-        ty: reed::header::InfoType::Integer,
+        number: reed::frontend::header::InfoNumber::A,
+        ty: reed::frontend::header::InfoType::Integer,
         description: "d",
     }]);
     let _ = added.with_pass_filter();
@@ -289,7 +298,8 @@ fn _header_is_opaque() {
     let _: Result<Vec<u8>, reed::Error> = added.to_bcf_file_header().map_err(reed::Error::from);
     // A `noodles::vcf::Header` would not satisfy these calls, and no noodles
     // path is exported: the facade's `header` module is the whole surface.
-    let _: fn(&reed::header::VcfHeader) -> reed::TagTable = reed::header::tag_table;
+    let _: fn(&reed::frontend::header::VcfHeader) -> reed::TagTable =
+        reed::frontend::header::tag_table;
 }
 
 /// A `HeaderFacts` value for the compile gate above (never called: the gate

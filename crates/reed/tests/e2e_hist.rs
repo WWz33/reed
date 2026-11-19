@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use reed::histogram::{HistKind, HistMetric, render_hist};
-use reed::reports::{StatsReportRequest, run_stats};
+use reed::frontend::histogram::{HistKind, HistMetric, render_hist};
+use reed::frontend::reports::{StatsReportRequest, run_stats};
 use reed_engine::budget::ThreadBudget;
 
 /// A VCF with GT/DP/GQ and an INFO/DP, so every histogram path has data.
@@ -65,7 +65,12 @@ fn run_hist(vcf: &Path, prefix: &Path, metrics: Vec<HistMetric>, threads: usize)
         prefix: prefix.to_path_buf(),
         ..StatsReportRequest::default()
     };
-    run_stats(Some(vcf), &request, &budget(threads)).expect("invariant: hist run");
+    run_stats(
+        Some(vcf),
+        &request,
+        &reed::RunContext::idle(&budget(threads)),
+    )
+    .expect("invariant: hist run");
 }
 
 fn read(path: &Path) -> String {
@@ -176,7 +181,7 @@ fn hist_is_deterministic_across_threads() {
 /// allele; every site in this fixture has one ALT copy, so each is an `S`.
 #[test]
 fn singletons_match_the_vcftools_layout() {
-    use reed::reports::{StatsReportRequest, run_stats};
+    use reed::frontend::reports::{StatsReportRequest, run_stats};
     let d = dir("singletons");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -186,7 +191,8 @@ fn singletons_match_the_vcftools_layout() {
         prefix: prefix.clone(),
         ..StatsReportRequest::default()
     };
-    run_stats(Some(&vcf), &request, &budget(2)).expect("invariant: singletons run");
+    run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget(2)))
+        .expect("invariant: singletons run");
     let text = read(&PathBuf::from(format!("{}.singletons", prefix.display())));
     assert!(
         text.starts_with("CHROM\tPOS\tSINGLETON/DOUBLETON\tALLELE\tINDV\n"),
@@ -203,7 +209,7 @@ fn singletons_match_the_vcftools_layout() {
 /// s1 in popB, so each group sees one sample.
 #[test]
 fn pop_stratifies_freq_missing_and_singletons() {
-    use reed::reports::{StatsReportRequest, run_stats};
+    use reed::frontend::reports::{StatsReportRequest, run_stats};
     let d = dir("pop");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -218,7 +224,8 @@ fn pop_stratifies_freq_missing_and_singletons() {
             prefix: prefix.to_path_buf(),
             ..StatsReportRequest::default()
         };
-        run_stats(Some(&vcf), &request, &budget(2)).expect("invariant: pop run");
+        run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget(2)))
+            .expect("invariant: pop run");
     };
     run(&d.join("cohort"), None);
     run(&d.join("strat"), Some(reed::Populations::File(pops)));
@@ -288,7 +295,7 @@ fn pop_stratifies_freq_missing_and_singletons() {
 /// `--force-samples`, a skip with it (the popg rule, doc_v14 02 §2.2).
 #[test]
 fn pop_unknown_samples_follow_the_force_rule() {
-    use reed::reports::{StatsReportRequest, run_stats};
+    use reed::frontend::reports::{StatsReportRequest, run_stats};
     let d = dir("popforce");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -300,7 +307,7 @@ fn pop_unknown_samples_follow_the_force_rule() {
         prefix: d.join("qc"),
         ..StatsReportRequest::default()
     };
-    let err = run_stats(Some(&vcf), &request, &budget(2))
+    let err = run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget(2)))
         .expect_err("an unknown sample without --force-samples");
     assert!(err.to_string().contains("ghost"), "{err}");
     let request = StatsReportRequest {
@@ -310,7 +317,8 @@ fn pop_unknown_samples_follow_the_force_rule() {
         prefix: d.join("qc"),
         ..StatsReportRequest::default()
     };
-    run_stats(Some(&vcf), &request, &budget(2)).expect("invariant: force run");
+    run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget(2)))
+        .expect("invariant: force run");
     let afreq = read(&PathBuf::from(format!(
         "{}.afreq.pop",
         d.join("qc").display()
@@ -330,7 +338,7 @@ fn pop_unknown_samples_follow_the_force_rule() {
 /// ordered sink merges the rendered rows in chunk order).
 #[test]
 fn pop_reports_are_deterministic_across_threads() {
-    use reed::reports::{StatsReportRequest, run_stats};
+    use reed::frontend::reports::{StatsReportRequest, run_stats};
     let d = dir("popthreads");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -345,7 +353,12 @@ fn pop_reports_are_deterministic_across_threads() {
             prefix: d.join(format!("t{threads}")),
             ..StatsReportRequest::default()
         };
-        run_stats(Some(&vcf), &request, &budget(threads)).expect("invariant: pop run");
+        run_stats(
+            Some(&vcf),
+            &request,
+            &reed::RunContext::idle(&budget(threads)),
+        )
+        .expect("invariant: pop run");
     }
     for suffix in [".afreq.pop", ".vmiss.pop", ".singletons"] {
         let a = read(&PathBuf::from(format!(
@@ -364,11 +377,11 @@ fn pop_reports_are_deterministic_across_threads() {
 /// The renderer's own contract: the TSV shape and the `#missing` line.
 #[test]
 fn render_hist_shape() {
-    let out = reed::histogram::HistOut {
+    let out = reed::frontend::histogram::HistOut {
         metric: HistMetric::Dp,
         int_bins: vec![(1, 3), (2, 1)],
         overflow: None,
-        stats: Some(reed::histogram::HistStats {
+        stats: Some(reed::frontend::histogram::HistStats {
             mean: 1.25,
             median: 1,
             p95: 2,

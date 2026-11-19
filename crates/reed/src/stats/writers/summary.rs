@@ -292,37 +292,22 @@ impl QcJob {
         }
 
         // ---- AF/SiS allele counts (INFO/AC+AN preferred, GT fallback) ----
+        // doc_v30 R02: the INFO contract lives in `reed_core::count`, so
+        // this path and the filter's `-q/-Q` reader cannot disagree about
+        // duplicate tags, length or overflow.
         let info = lr.info_text();
         if info != b"." {
-            let mut info_ac: Option<Vec<u64>> = None;
-            let mut info_an: Option<u64> = None;
-            for (tag, value) in info_fragments(info) {
-                if tag == b"AC"
-                    && let Some(v) = value
+            let mut index = reed_io::vcf::info::InfoIndex::default();
+            if index.build(info).is_ok() {
+                let ac = index.get(info, b"AC").flatten();
+                let an = index.get(info, b"AN").flatten();
+                let want = u32::try_from(n_alt).unwrap_or(u32::MAX);
+                if let reed_core::count::InfoCountsOutcome::Usable(counts) =
+                    reed_core::count::InfoCounts::from_info(ac, an, want)
                 {
-                    let vals: Option<Vec<u64>> = std::str::from_utf8(v).ok().and_then(|t| {
-                        t.split(',')
-                            .map(|x| x.parse::<u64>().ok())
-                            .collect::<Option<Vec<_>>>()
-                    });
-                    if let Some(vals) = vals
-                        && vals.len() == n_alt
-                    {
-                        info_ac = Some(vals);
-                    }
-                } else if tag == b"AN"
-                    && let Some(v) = value
-                    && let Some(an) = std::str::from_utf8(v)
-                        .ok()
-                        .and_then(|t| t.parse::<u64>().ok())
-                {
-                    info_an = Some(an);
-                }
-            }
-            if let (Some(ac), Some(an)) = (info_ac, info_an) {
-                let nac: u64 = ac.iter().sum();
-                if an >= nac {
-                    af_counts = Some((ac, an));
+                    // `per_allele[0]` is the REF count; the SiS/AF sections
+                    // index by ALT.
+                    af_counts = Some((counts.per_allele[1..].to_vec(), counts.an));
                 }
             }
         }

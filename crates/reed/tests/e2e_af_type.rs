@@ -32,11 +32,16 @@ fn keep(tag: &str, kind: AfKind, min_af: f64) -> Vec<u64> {
     spec.site_after_mask.min_af = Some(min_af);
     spec.site_after_mask.min_af_kind = Some(kind);
     let opts = FilterOptions {
-        threads: 1,
         output: Some(out.clone()),
         ..FilterOptions::default()
     };
-    run_filter(Some(&vcf), &spec, &opts).expect("invariant: filter runs");
+    run_filter(
+        Some(&vcf),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter runs");
     let text = std::fs::read_to_string(&out).expect("invariant: output");
     let positions: Vec<u64> = text
         .lines()

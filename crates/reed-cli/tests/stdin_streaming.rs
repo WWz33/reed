@@ -27,14 +27,14 @@ fn fixture() -> Vec<u8> {
             i + 1
         );
     }
-    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut out)
             .expect("invariant: block");
     }
-    out.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    out.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
     out
 }
 
@@ -42,10 +42,10 @@ fn fixture() -> Vec<u8> {
 /// the two command lines).
 fn record_lines(path: &std::path::Path) -> Vec<String> {
     let bytes = std::fs::read(path).expect("invariant: read output");
-    let mut inflater = reed::bgzf::inflate::Inflater::new();
+    let mut inflater = reed::frontend::bgzf::inflate::Inflater::new();
     let mut text = Vec::new();
     let mut rest: &[u8] = &bytes;
-    while let Some(total) = reed::bgzf::block::parse_block_size(rest) {
+    while let Some(total) = reed::frontend::bgzf::block::parse_block_size(rest) {
         inflater
             .inflate_block(&rest[..total], &mut text)
             .expect("invariant: inflate");

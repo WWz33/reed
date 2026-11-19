@@ -12,7 +12,6 @@ pub(super) use matrix::{MatrixOutput, SiteMatrix, run_matrix_pass};
 pub(super) use prune::{PruneConfig, SiteKeepSet};
 
 use matrix::{ChunkSites, MatrixMode};
-use std::path::Path;
 use std::sync::Arc;
 
 /// The pass0 mode a spec needs: the matrices are retained when the pruner
@@ -102,12 +101,15 @@ pub(super) fn survivor_words(
 /// The pass0 record-count estimate the `--mind` strategy choice gates on
 /// (§11.4: the first chunk's records/byte density, extrapolated to the
 /// file size — spec-sanctioned when no index is available).
-pub(super) fn estimate_records(input: &Path) -> Result<u64, crate::filter::FilterError> {
-    let file_len = std::fs::metadata(input)
+pub(super) fn estimate_records(
+    replay: &crate::input::ReplayableInput,
+) -> Result<u64, crate::filter::FilterError> {
+    let file_len = std::fs::metadata(replay.path())
         .map_err(crate::filter::FilterError::from)?
         .len();
-    let mut opened = crate::input::open(Some(input)).map_err(crate::filter::io_err)?;
-    let Some(chunk) = opened.source.next_chunk().map_err(crate::filter::io_err)? else {
+    let opened = replay.replay(&[]).map_err(crate::filter::io_err)?;
+    let (mut source, _facts, _meta) = opened.into_parts();
+    let Some(chunk) = source.next_chunk().map_err(crate::filter::io_err)? else {
         return Ok(0);
     };
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();

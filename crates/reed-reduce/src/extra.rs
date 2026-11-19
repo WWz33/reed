@@ -13,7 +13,7 @@
 //! natively (the E step simply skips unobserved entries).
 
 use crate::backend::sym_eig;
-use reed_core::linalg::{dist2, Mat};
+use reed_core::linalg::{Mat, dist2};
 use reed_core::rng::Rng;
 
 /// Errors from t-SNE.
@@ -41,7 +41,10 @@ impl std::fmt::Display for TsneError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PerplexityBelowOne { perplexity } => {
-                write!(f, "perplexity {perplexity} is below 1, the smallest any probability distribution can realize")
+                write!(
+                    f,
+                    "perplexity {perplexity} is below 1, the smallest any probability distribution can realize"
+                )
             }
             Self::PerplexityTooLarge { perplexity, n } => write!(
                 f,

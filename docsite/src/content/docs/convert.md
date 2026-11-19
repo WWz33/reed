@@ -43,7 +43,11 @@ Give the target and it is written; several can be combined.
     --outgroup NAME         Write this sample first in the alignment
     --min-samples-locus N   Keep a site only if at least N samples have a
                             genotype. Default 4 for phylogenetic targets;
-                            --012 and --hapmap apply the gate only when given
+                            --012 and --hapmap apply the gate only when given.
+                            The phylogenetic targets count a sample as present
+                            only when its GT text does not start with `.`
+                            (vcf2phylip's rule), so `./1` counts as missing
+                            while `0/.` counts as present
     --resolve-iupac         Resolve heterozygous sites to one base; the draw is
                             deterministic (seed 0), so runs repeat
     --write-used-sites      Also write PREFIX.used_sites.tsv listing the sites

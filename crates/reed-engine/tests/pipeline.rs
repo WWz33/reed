@@ -7,7 +7,7 @@ use std::io::Write;
 use std::time::Duration;
 
 use reed_core::ChunkId;
-use reed_engine::abort::abort;
+use reed_engine::abort::{AbortSignal, abort};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
@@ -189,7 +189,7 @@ fn output_is_invariant_across_thread_counts() {
             &CountJob,
             VecSink::default(),
             &budget(1),
-            &abort,
+            &abort.signal,
         )
         .expect("invariant: run")
     };
@@ -203,7 +203,7 @@ fn output_is_invariant_across_thread_counts() {
             &CountJob,
             VecSink::default(),
             &budget(threads),
-            &abort,
+            &abort.signal,
         )
         .expect("invariant: parallel run matches sequential");
         assert_eq!(
@@ -267,7 +267,7 @@ fn slow_first_chunk_does_not_overflow_the_reorder_window() {
         &DelayFirstJob,
         VecSink::default(),
         &budget(8),
-        &abort,
+        &abort.signal,
     )
     .expect("invariant: slow chunk must not overflow the reorder window");
     assert_eq!(report.n_chunks, n_chunks);
@@ -293,7 +293,7 @@ fn seam_records_are_counted_exactly_once() {
         &CountJob,
         VecSink::default(),
         &budget(1),
-        &abort2,
+        &abort2.signal,
     )
     .expect("invariant: sequential reference");
     let mut source = VecSource {
@@ -305,7 +305,7 @@ fn seam_records_are_counted_exactly_once() {
         &CountJob,
         VecSink::default(),
         &budget(4),
-        &abort,
+        &abort.signal,
     )
     .expect("invariant: run with seams");
     assert_eq!(
@@ -355,7 +355,14 @@ fn worker_panic_becomes_worker_panicked() {
         chunks: chunks.into_iter(),
     };
     let abort = abort();
-    let err = run(&mut source, &PanickyJob, UnitSink, &budget(3), &abort).unwrap_err();
+    let err = run(
+        &mut source,
+        &PanickyJob,
+        UnitSink,
+        &budget(3),
+        &abort.signal,
+    )
+    .unwrap_err();
     match err {
         EngineError::WorkerPanicked { chunk, message } => {
             assert_eq!(chunk.get(), 1);
@@ -395,7 +402,7 @@ fn reader_panic_becomes_reader_panicked() {
         &CountJob,
         VecSink::default(),
         &budget(3),
-        &abort,
+        &abort.signal,
     )
     .unwrap_err();
     match err {
@@ -445,7 +452,7 @@ fn external_abort_stops_the_run() {
             handle.trigger();
         });
     }
-    let result = run(&mut source, &SlowJob, UnitSink, &budget(4), &abort);
+    let result = run(&mut source, &SlowJob, UnitSink, &budget(4), &abort.signal);
     assert!(matches!(result, Err(EngineError::Aborted)));
 }
 
@@ -464,7 +471,13 @@ fn memory_budget_stops_the_run() {
         threads: 4,
         mem: MemBudget::from_bytes(64),
     };
-    let result = run(&mut source, &CountJob, VecSink::default(), &b, &abort);
+    let result = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &b,
+        &abort.signal,
+    );
     assert!(
         matches!(result, Err(EngineError::MemBudgetExceeded { .. })),
         "expected MemBudgetExceeded, got {result:?}"
@@ -486,7 +499,7 @@ fn source_errors_propagate() {
         &CountJob,
         VecSink::default(),
         &budget(3),
-        &abort,
+        &abort.signal,
     )
     .unwrap_err();
     // C5: the transport error keeps its type (doc_v2 03 §4.4), so the locus
@@ -567,7 +580,7 @@ fn partials_arrive_in_chunk_order_at_the_sink() {
             n_seams: 0,
         },
         &budget(6),
-        &abort,
+        &abort.signal,
     )
     .expect("invariant: ordered delivery");
     assert_eq!(report.sink_report, (n_chunks - 1) as u64);
@@ -592,8 +605,14 @@ fn memory_budget_bounds_in_flight_bytes() {
         chunks: chunks.into_iter(),
     };
     let abort = abort();
-    let report = run(&mut source, &CountJob, VecSink::default(), &b, &abort)
-        .expect("invariant: backpressure completes the run");
+    let report = run(
+        &mut source,
+        &CountJob,
+        VecSink::default(),
+        &b,
+        &abort.signal,
+    )
+    .expect("invariant: backpressure completes the run");
     assert!(
         report.metrics.in_flight_peak_bytes <= budget_bytes,
         "in-flight peak {} must respect the budget {budget_bytes}",
@@ -621,7 +640,7 @@ fn sequential_and_parallel_outputs_agree() {
             &CountJob,
             VecSink::default(),
             &budget(8),
-            &abort,
+            &abort.signal,
         )
         .expect("invariant: parallel run")
     };
@@ -635,7 +654,7 @@ fn sequential_and_parallel_outputs_agree() {
             &CountJob,
             VecSink::default(),
             &budget(threads),
-            &abort,
+            &abort.signal,
         )
         .expect("invariant: sequential run");
         assert_eq!(
@@ -663,7 +682,7 @@ fn stitcher_reassembles_records_across_ten_chunks() {
         &CountJob,
         VecSink::default(),
         &budget(4),
-        &abort,
+        &abort.signal,
     )
     .expect("invariant: seam-heavy run");
     assert_eq!(report.sink_report, fold_lines(&text));
@@ -717,7 +736,7 @@ fn abort_at_eight_times_the_cores_returns_without_leaking_permits() {
         });
     }
     let started = std::time::Instant::now();
-    let result = run(&mut source, &SlowJob, UnitSink, &b, &abort);
+    let result = run(&mut source, &SlowJob, UnitSink, &b, &abort.signal);
     let elapsed = started.elapsed();
     assert!(
         matches!(result, Err(EngineError::Aborted)),
@@ -776,7 +795,7 @@ fn worker_panic_returns_every_permit() {
     };
     let abort = abort();
     let started = std::time::Instant::now();
-    let err = run(&mut source, &PanickyJob, UnitSink, &b, &abort).unwrap_err();
+    let err = run(&mut source, &PanickyJob, UnitSink, &b, &abort.signal).unwrap_err();
     assert!(
         matches!(err, EngineError::WorkerPanicked { chunk, .. } if chunk.get() == 1),
         "expected WorkerPanicked on chunk 1, got {err:?}"
@@ -804,7 +823,7 @@ fn stage_metrics_split_inflate_and_job_time() {
         &CountJob,
         VecSink::default(),
         &budget(4),
-        &abort,
+        &abort.signal,
     )
     .expect("invariant: run");
     let m = &report.metrics;
@@ -914,7 +933,7 @@ fn unterminated_final_record_is_rejected() {
                 &CountJob,
                 VecSink::default(),
                 &budget(threads),
-                &abort,
+                &abort.signal,
             )
             .expect_err("an unterminated final record must fail the run");
             assert!(
@@ -941,7 +960,7 @@ fn terminated_input_delivers_every_record() {
             &CountJob,
             VecSink::default(),
             &budget(threads),
-            &abort,
+            &abort.signal,
         )
         .expect("a terminated input must succeed");
         assert_eq!(report.sink_report, fold_lines(&text), "threads={threads}");
@@ -967,7 +986,7 @@ fn reducer_sink_error_returns_instead_of_hanging() {
                 panic_at: None,
             },
             &budget(4),
-            &abort,
+            &abort.signal,
         )
         .unwrap_err();
         assert!(
@@ -997,7 +1016,7 @@ fn reducer_seam_error_returns_instead_of_hanging() {
             &FailSeamJob,
             VecSink::default(),
             &budget(4),
-            &abort,
+            &abort.signal,
         )
         .unwrap_err();
         assert!(
@@ -1030,7 +1049,7 @@ fn reducer_panic_returns_instead_of_hanging() {
                 panic_at: Some(5),
             },
             &budget(4),
-            &abort,
+            &abort.signal,
         )
         .unwrap_err();
         assert!(
@@ -1070,7 +1089,14 @@ fn reducer_finish_error_returns_instead_of_hanging() {
     };
     let abort = abort();
     let started = std::time::Instant::now();
-    let err = run(&mut source, &CountJob, FinishFailSink, &budget(4), &abort).unwrap_err();
+    let err = run(
+        &mut source,
+        &CountJob,
+        FinishFailSink,
+        &budget(4),
+        &abort.signal,
+    )
+    .unwrap_err();
     assert!(elapsed_secs(started) < 5.0, "finish error hung");
     match err {
         EngineError::Job(ref m) if m.to_string().contains("finish exploded") => {}
@@ -1094,10 +1120,33 @@ fn reducer_first_chunk_sink_error_returns() {
         &CountJob,
         FirstChunkFailSink,
         &budget(4),
-        &abort,
+        &abort.signal,
     )
     .unwrap_err();
     assert!(elapsed_secs(started) < 5.0, "HANG: first-chunk sink error");
+    assert!(matches!(err, EngineError::Job(_)), "got {err:?}");
+}
+
+/// A context with no external cancellation source (`RunContext::idle`) must
+/// still fail promptly: the engine substitutes its own channel, so the first
+/// error wakes every stage instead of being recorded on a throwaway handle.
+#[test]
+fn idle_signal_still_wakes_waiters_on_a_sink_error() {
+    let text = fixture_text(20_000);
+    let chunks = make_chunks(&text, 300);
+    let mut source = VecSource {
+        chunks: chunks.into_iter(),
+    };
+    let started = std::time::Instant::now();
+    let err = run(
+        &mut source,
+        &CountJob,
+        FirstChunkFailSink,
+        &budget(4),
+        AbortSignal::idle(),
+    )
+    .unwrap_err();
+    assert!(elapsed_secs(started) < 5.0, "HANG: idle-signal sink error");
     assert!(matches!(err, EngineError::Job(_)), "got {err:?}");
 }
 
@@ -1141,7 +1190,7 @@ fn seam_time_is_counted_on_the_parallel_path() {
         &SleepSeamJob,
         VecSink::default(),
         &budget(4),
-        &abort,
+        &abort.signal,
     )
     .expect("run");
     // ~130 seams × 1 ms ≈ 130 ms; the buggy parallel path reported < 1 ms.
@@ -1170,7 +1219,7 @@ fn in_flight_peak_is_the_estimated_footprint() {
             &CountJob,
             VecSink::default(),
             &budget(threads),
-            &abort,
+            &abort.signal,
         )
         .expect("run");
         let peak = report.metrics.in_flight_peak_bytes;

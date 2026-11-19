@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use reed::reports::{StatsReportRequest, run_stats};
+use reed::frontend::reports::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use sha2::Digest;
 use std::fmt::Write as _;
@@ -112,8 +112,12 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
             select: reed::spec::region::SiteSelector::default(),
             prefix: prefix.clone(),
         };
-        let outcome =
-            run_stats(Some(&input), &request, &budget(threads)).expect("invariant: reports run");
+        let outcome = run_stats(
+            Some(&input),
+            &request,
+            &reed::RunContext::idle(&budget(threads)),
+        )
+        .expect("invariant: reports run");
         assert_eq!(outcome.n_records, 3_000, "threads={threads}");
         let qc = outcome.qc.expect("invariant: summary requested");
         assert_eq!(qc.summary.n_records, 3_000, "threads={threads}");
@@ -123,7 +127,7 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
         for path in &outcome.files {
             hasher.update(std::fs::read(path).expect("invariant: report file"));
         }
-        hasher.update(reed::summary::render_bcftools_stats(&qc, &[]).as_bytes());
+        hasher.update(reed::frontend::summary::render_bcftools_stats(&qc, &[]).as_bytes());
         digests.push(format!("{:x}", hasher.finalize()));
     }
     let unique: std::collections::HashSet<&String> = digests.iter().collect();

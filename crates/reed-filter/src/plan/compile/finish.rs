@@ -69,16 +69,24 @@ pub(super) fn compile(
                 .map_err(|e| FilterError::Spec(e.to_string()))
         })
         .collect::<Result<_, _>>()?;
-    let wants = |tag: &str| canonical_tags.contains(&tag);
     let no_update = spec.recompute.no_update;
+    // Registry order is fill order (AC, AN, NS, MAF, HWE), independent of
+    // the order the user listed them in.
     let recompute = RecomputeFlags {
-        ac: wants("AC"),
-        an: wants("AN"),
-        ns: wants("NS"),
-        maf: wants("MAF"),
-        hwe: wants("HWE"),
+        tags: reed_core::count::RECOMPUTE_TAGS
+            .iter()
+            .filter(|tag| canonical_tags.contains(&tag.name))
+            .collect(),
     };
-    let stale_tags = spec.recompute.stale_bytes();
+    // bcftools `view -I`: keep the input's AC/AN. The default `-x` list names
+    // them because the *update* replaces them; with the update suppressed
+    // there is nothing to replace, so they must stay. An explicit
+    // `-x INFO/AC` is still the user's request and applies
+    // (`drop_stale_explicit`, doc_v30 §4.4).
+    let mut stale_tags = spec.recompute.stale_bytes();
+    if no_update && !spec.recompute.drop_stale_explicit {
+        stale_tags.retain(|t| t.as_slice() != b"AC" && t.as_slice() != b"AN");
+    }
 
     // ---- ascertainment (§11.7) + provenance (§11.8; the type lives in
     // reed-core, doc_v25 V25-08c) ----

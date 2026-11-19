@@ -15,9 +15,9 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::backend::{sym_eig, sym_eig_top_k};
-use reed_reduce::pca::{standardize_binom2, Grm};
 use reed_reduce::Mat;
+use reed_reduce::backend::{sym_eig, sym_eig_top_k};
+use reed_reduce::pca::{Grm, standardize_binom2};
 use std::time::Instant;
 
 fn read_matrix(path: &str) -> Mat {

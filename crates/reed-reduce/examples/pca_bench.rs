@@ -17,9 +17,9 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::lanczos::{lanczos_top_k, LanczosConfig};
-use reed_reduce::pca::{pca_dense, pca_dense_pairwise, pca_top_k, standardize_binom2};
 use reed_reduce::Mat;
+use reed_reduce::lanczos::{LanczosConfig, lanczos_top_k};
+use reed_reduce::pca::{pca_dense, pca_dense_pairwise, pca_top_k, standardize_binom2};
 use std::time::Instant;
 
 fn read_matrix(path: &str) -> Mat {

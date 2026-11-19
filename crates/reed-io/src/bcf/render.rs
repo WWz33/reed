@@ -63,7 +63,6 @@ pub fn render_site_part(
     // GT path and the encoder.
     let (header, mut c) = super::record::SharedHeader::parse(rec.shared)?;
     let chrom = header.chrom;
-    let pos0 = header.pos0;
     let qual_bits = header.qual;
     let n_allele = header.n_allele;
     let n_info = header.n_info;
@@ -73,20 +72,17 @@ pub fn render_site_part(
     let contig_name = dict
         .contig(chrom)
         .ok_or_else(|| malformed("BCF contig index is not in the header dictionary"))?;
-    // (doc_v20 S43, corrected in review) pos0 == -1 is htslib's telomere
-    // sentinel and renders as POS 0 (vcf.c:1649-1650); below -1 is malformed.
-    // The first version turned both into an error, rejecting BCFs bcftools
-    // writes.
-    let pos1 = if pos0 == -1 {
-        0
-    } else {
-        u64::try_from(pos0).map_err(|_| {
+    // doc_v30 R03: the telomere rule lives in `record::pos1_from_pos0`; this
+    // site only attaches the contig locus to the error.
+    let pos1 = header
+        .pos1()
+        .map_err(|_| {
             bad(
                 (contig_name, 0),
                 "BCF position is below the telomere sentinel (-1)",
             )
-        })? + 1
-    };
+        })?
+        .0;
     // The error locus stays borrowed (A6-11): the tuple's `LocusSource` impl
     // builds a `Locus` only when an error actually carries it.
     let locus = (contig_name, pos1);
@@ -193,7 +189,9 @@ pub fn render_sample_part(
     let pos0 = hc.i32().unwrap_or(-1);
     let locus = (
         dict.contig(chrom).unwrap_or(b"<bcf>"),
-        u64::try_from(pos0).unwrap_or(0) + 1,
+        // The site part has already validated the position; a malformed
+        // sentinel only makes this diagnostic number 0 (doc_v30 R03).
+        super::record::pos1_from_pos0(pos0).map_or(0, |pos1| pos1.0),
     );
     // A sites-only BCF (no FORMAT keys, no samples) has no FORMAT/sample
     // region at all: htslib renders 8 columns, so opening the FORMAT field

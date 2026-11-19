@@ -62,6 +62,12 @@ const HEADER: &str = "\
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
 ";
 
+/// `HEADER` without its `#CHROM` line, so a test can insert extra INFO
+/// declarations before the column header.
+fn header_without_chrom() -> &'static str {
+    HEADER.split_once("#CHROM").map_or(HEADER, |(head, _)| head)
+}
+
 /// 4 samples; s3 missing in 98% of records so the cohort drops it. Every
 /// funnel stage fires (QUAL, PASS, biallelic, INFO, mask, missing, MAF).
 fn fixture_text(n_records: usize) -> String {
@@ -190,7 +196,6 @@ fn options(
     out: &std::path::Path,
 ) -> FilterOptions {
     FilterOptions {
-        threads: 4,
         output: Some(out.to_path_buf()),
         write_index: reed::WriteIndex::None,
         compress_level: 6,
@@ -203,7 +208,6 @@ fn options(
         tmp_dir: None,
         output_compressed: None,
         output_bcf: None,
-        mem_bytes: None,
         no_version: false,
         no_command: false,
     }
@@ -227,6 +231,7 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
             Some(reed_filter::plan::ExecStrategy::SinglePass),
             &out_single,
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: single pass runs");
     let r2 = run_filter(
@@ -236,6 +241,7 @@ fn single_pass_and_two_pass_reparse_produce_identical_output() {
             Some(reed_filter::plan::ExecStrategy::TwoPassReparse),
             &out_two,
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: two pass runs");
 
@@ -272,7 +278,13 @@ fn output_is_deterministic_across_thread_counts() {
     let mut reference: Option<Vec<u8>> = None;
     for threads in [1_usize, 3, 8] {
         let out = dir.join(format!("out-{threads}.vcf.gz"));
-        run_filter(Some(dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
+        run_filter(
+            Some(dir_path.as_path()),
+            &spec,
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect("invariant: run");
         let bytes = std::fs::read(&out).expect("invariant: output");
         match &reference {
             None => reference = Some(bytes),
@@ -313,6 +325,7 @@ fn spec_validation_rejects_unknown_tags_and_ranges() {
         Some(dir_path.as_path()),
         &spec,
         &options(None, &dir.join("o.vcf.gz")),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect_err("invariant: unknown tag rejected");
     assert!(err.to_string().contains("NotDeclared"), "{err}");
@@ -324,6 +337,7 @@ fn spec_validation_rejects_unknown_tags_and_ranges() {
         Some(dir_path.as_path()),
         &spec,
         &options(None, &dir.join("o.vcf.gz")),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect_err("invariant: maf range rejected");
     assert!(err.to_string().contains("min_maf"), "{err}");
@@ -355,7 +369,12 @@ fn mask_default_on_missing_is_keep() {
         .expect("invariant: temp dir path")
         .to_path_buf();
     let out = dir.join("o.vcf.gz");
-    let result = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out));
+    let result = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    );
     assert!(result.is_ok(), "Pass normalizes to Keep: {result:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -369,7 +388,13 @@ fn provenance_and_ascertainment_are_written() {
         .to_path_buf();
     let spec: FilterSpec = gold_spec();
     let out = dir.join("o.vcf.gz");
-    run_filter(Some(dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
+    run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: run");
 
     let text = {
         use std::io::Read;
@@ -424,8 +449,13 @@ fn all_three_strategies_produce_identical_bytes() {
         ),
     ] {
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report = run_filter(Some(dir_path.as_path()), &spec, &options(strategy, &out))
-            .unwrap_or_else(|e| panic!("{name} failed: {e}"));
+        let report = run_filter(
+            Some(dir_path.as_path()),
+            &spec,
+            &options(strategy, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .unwrap_or_else(|e| panic!("{name} failed: {e}"));
         assert_eq!(
             report.strategy,
             strategy.expect("invariant: forced").id(),
@@ -445,6 +475,71 @@ fn all_three_strategies_produce_identical_bytes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v30 R09: `--mind`'s strategy decision reads the run's budget, not
+/// the host's half-memory default. The same input picks the sketch at
+/// 64 MiB and TwoPassReparse at 16 MiB.
+#[test]
+fn mind_strategy_reads_the_run_budget() {
+    let dir_path = write_fixture("budget", 12_000);
+    let dir = dir_path
+        .parent()
+        .expect("invariant: temp dir path")
+        .to_path_buf();
+    // 200 mask rules put the sketch at ~19.7 MB for 12k records (a rule adds
+    // one word row per site); 16 MiB cannot hold it and 64 MiB can. The
+    // masks never fire (`DP < 0`), so both runs keep the same records.
+    let rules: Vec<_> = (0..200)
+        .map(|_| reed_filter::spec::GenotypeMaskRule {
+            field: "DP".into(),
+            when: "< 0".into(),
+            on_missing: OnMissing::Keep,
+            depth: false,
+        })
+        .collect();
+    let spec = FilterSpec {
+        mind: Some(reed_filter::spec::MissingRate::parse("0.5").expect("valid")),
+        genotype: reed_filter::spec::GenotypeRules {
+            mask_if: rules,
+            set_gts: None,
+        },
+        ..FilterSpec::default()
+    };
+    let small = options(None, &dir.join("budget-small.vcf.gz"));
+    let small_budget = reed::ThreadBudget {
+        threads: 4,
+        mem: reed::MemBudget::from_bytes(16 << 20),
+    };
+    let report = run_filter(
+        Some(&dir_path),
+        &spec,
+        &small,
+        &reed::RunContext::idle(&small_budget),
+    )
+    .expect("16 MiB run");
+    assert_eq!(
+        report.strategy, "two_pass_reparse",
+        "16 MiB cannot hold the ~19.7 MB sketch, so the second pass must run"
+    );
+
+    let large = options(None, &dir.join("budget-large.vcf.gz"));
+    let large_budget = reed::ThreadBudget {
+        threads: 4,
+        mem: reed::MemBudget::from_bytes(64 << 20),
+    };
+    let report = run_filter(
+        Some(&dir_path),
+        &spec,
+        &large,
+        &reed::RunContext::idle(&large_budget),
+    )
+    .expect("64 MiB run");
+    assert_eq!(
+        report.strategy, "sketch_then_emit",
+        "64 MiB holds the sketch"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn sketch_funnel_matches_the_single_pass_funnel() {
     let dir_path = write_fixture("sketch-funnel", 6_000);
@@ -461,6 +556,7 @@ fn sketch_funnel_matches_the_single_pass_funnel() {
             Some(reed_filter::plan::ExecStrategy::SinglePass),
             &dir.join("s.vcf.gz"),
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: single pass");
     let sketch = run_filter(
@@ -470,6 +566,7 @@ fn sketch_funnel_matches_the_single_pass_funnel() {
             Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
             &dir.join("k.vcf.gz"),
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: sketch");
     assert_eq!(single.funnel, sketch.funnel, "funnel is strategy-invariant");
@@ -517,6 +614,7 @@ fn mask_attribution_is_strategy_invariant_with_overlapping_rules() {
             Some(reed_filter::plan::ExecStrategy::SinglePass),
             &dir.join("single.vcf.gz"),
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: single pass");
     let sketch = run_filter(
@@ -526,6 +624,7 @@ fn mask_attribution_is_strategy_invariant_with_overlapping_rules() {
             Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
             &dir.join("sketch.vcf.gz"),
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: sketch");
     assert!(single.n_masked_gt > 0, "the fixture must mask something");
@@ -564,7 +663,6 @@ mod write_index {
 
     fn opts(out: &std::path::Path, index: reed::WriteIndex) -> FilterOptions {
         FilterOptions {
-            threads: 2,
             output: Some(out.to_path_buf()),
             write_index: index,
             compress_level: 6,
@@ -577,7 +675,6 @@ mod write_index {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: None,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         }
@@ -594,6 +691,7 @@ mod write_index {
             Some(input.as_path()),
             &FilterSpec::default(),
             &opts(&out, reed::WriteIndex::Csi),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
         )
         .expect("invariant: filter runs");
 
@@ -637,6 +735,7 @@ mod write_index {
             Some(input.as_path()),
             &FilterSpec::default(),
             &opts(&out, reed::WriteIndex::Tbi),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
         );
         assert!(result.is_err(), "TBI must refuse coordinates ≥ 2^29");
         let _ = std::fs::remove_dir_all(&dir);
@@ -657,6 +756,7 @@ mod write_index {
             Some(input.as_path()),
             &FilterSpec::default(),
             &opts(&out, reed::WriteIndex::None),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
         );
         assert!(
             result.is_err(),
@@ -709,6 +809,7 @@ fn record_wider_than_one_block_round_trips() {
         Some(input.as_path()),
         &FilterSpec::default(),
         &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: filter runs on a record wider than one block");
 
@@ -747,10 +848,20 @@ fn plain_and_bgzf_inputs_agree() {
     let spec = FilterSpec::default();
     let out_plain = dir.join("plain.out.vcf.gz");
     let out_bgzf = dir.join("bgzf.out.vcf.gz");
-    let rp =
-        run_filter(Some(&plain), &spec, &options(None, &out_plain)).expect("invariant: plain run");
-    let rb = run_filter(Some(&bgzf_path), &spec, &options(None, &out_bgzf))
-        .expect("invariant: bgzf run");
+    let rp = run_filter(
+        Some(&plain),
+        &spec,
+        &options(None, &out_plain),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: plain run");
+    let rb = run_filter(
+        Some(&bgzf_path),
+        &spec,
+        &options(None, &out_bgzf),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: bgzf run");
     assert_eq!(rp.n_output_records, rb.n_output_records);
     assert_eq!(
         std::fs::read(&out_plain).expect("invariant: read"),
@@ -776,8 +887,13 @@ fn default_policies_reject_haploid_and_polyploid_calls() {
         let body = text.replace("\t1:30:99", &format!("\t{gt}:30:99"));
         std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
         let out = dir.join("o.vcf.gz");
-        let err = run_filter(Some(&path), &FilterSpec::default(), &options(None, &out))
-            .expect_err("the default policies must reject this input");
+        let err = run_filter(
+            Some(&path),
+            &FilterSpec::default(),
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect_err("the default policies must reject this input");
         let message = err.to_string();
         assert!(
             message.contains("haploid") || message.contains("polyploid"),
@@ -814,7 +930,13 @@ Chr01\t2\t.\tA\tG,T\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t1/2:30:99\t0/0:
         },
         ..FilterSpec::default()
     };
-    let report = run_filter(Some(&path), &spec, &options(None, &out)).expect("invariant: run");
+    let report = run_filter(
+        Some(&path),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: run");
     assert_eq!(report.n_output_records, 2);
     assert_eq!(report.policy_counters.n_haploid_as_half_call, 1);
     assert_eq!(report.policy_counters.n_multiallelic_collapsed, 1);
@@ -853,8 +975,13 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t0/9:30:99\t0/1:30
     std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
     // Text path: the scanner must refuse the record.
     let out = dir.join("text.vcf.gz");
-    let err = run_filter(Some(&path), &FilterSpec::default(), &options(None, &out))
-        .expect_err("an out-of-domain GT allele must fail the run (doc_v25 V25-01)");
+    let err = run_filter(
+        Some(&path),
+        &FilterSpec::default(),
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("an out-of-domain GT allele must fail the run (doc_v25 V25-01)");
     let msg = err.to_string();
     assert!(
         msg.contains("exceeds ALT count 1"),
@@ -865,14 +992,78 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tGT:DP:GQ\t0/9:30:99\t0/1:30
     let out_bcf = dir.join("out.bcf");
     let mut opts_bcf = options(None, &out_bcf);
     opts_bcf.output_bcf = Some(6);
-    let err = run_filter(Some(&path), &FilterSpec::default(), &opts_bcf)
-        .expect_err("the -Ob encoder must refuse the out-of-domain allele");
+    let err = run_filter(
+        Some(&path),
+        &FilterSpec::default(),
+        &opts_bcf,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("the -Ob encoder must refuse the out-of-domain allele");
     assert!(
         err.to_string().contains("exceeds ALT count 1"),
         "unexpected error: {err}"
     );
     // The writer has already opened the output when the decode fails, so a
     // partial file may remain; atomic cleanup is R13 (v26), not this round.
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v30 §3.2/§4.5: with a sample subset and `--fill-tags MAF`, the
+/// driver enables AC/AN *after* compile. The output must still carry the
+/// registry order `AC;AN;MAF`, not `MAF;AC;AN` (the pre-R13 order was
+/// fixed, and bcftools writes AC/AN before MAF too).
+#[test]
+fn subset_fill_tags_keeps_registry_order() {
+    let body = format!(
+        "{}{}",
+        header_without_chrom(),
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\n\
+         Chr01\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t1/1\n"
+    );
+    let dir = std::env::temp_dir().join(format!("reed-v30-fillorder-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
+
+    use reed_filter::spec::RecomputeSpec;
+    use reed_filter::spec::cohort::{SampleList, SampleSelect};
+    let spec = FilterSpec {
+        sample_select: Some(SampleSelect {
+            keep: Some(SampleList::Names(vec!["s0".into()])),
+            remove: None,
+        }),
+        recompute: RecomputeSpec {
+            tags: vec!["MAF".into()],
+            ..RecomputeSpec::default()
+        },
+        ..FilterSpec::default()
+    };
+    let out = dir.join("out.vcf.gz");
+    run_filter(
+        Some(&path),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: subset + fill-tags MAF");
+    let text = inflate_to_string(&out);
+    let record = text
+        .lines()
+        .find(|l| l.starts_with("Chr01\t1\t"))
+        .expect("record 1");
+    let info = record.split('\t').nth(7).expect("INFO column");
+    let ac = info.find("AC=").expect("AC present");
+    let an = info.find("AN=").expect("AN present");
+    let maf = info.find("MAF=").expect("MAF present");
+    assert!(
+        ac < an && an < maf,
+        "fill order must be AC;AN;MAF, got {info}"
+    );
+    // s0 is 0/1: AC=1, AN=2; MAF is the frequency of the second most
+    // common allele = min(1/2, 1/2) = 0.5.
+    assert!(info.contains("AC=1"), "{info}");
+    assert!(info.contains("AN=2"), "{info}");
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -891,8 +1082,13 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tDP:GT:GQ\t30:0/1:99\t30:0/0
     std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
 
     let out = dir.join("out.vcf.gz");
-    let report = run_filter(Some(&path), &FilterSpec::default(), &options(None, &out))
-        .expect("DP:GT must decode the 0/1, not the 30");
+    let report = run_filter(
+        Some(&path),
+        &FilterSpec::default(),
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("DP:GT must decode the 0/1, not the 30");
     assert_eq!(report.n_output_records, 1);
     let text = inflate_to_string(&out);
     assert!(
@@ -904,8 +1100,13 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tDP:GT:GQ\t30:0/1:99\t30:0/0
     let out_bcf = dir.join("out.bcf");
     let mut opts_bcf = options(None, &out_bcf);
     opts_bcf.output_bcf = Some(6);
-    run_filter(Some(&path), &FilterSpec::default(), &opts_bcf)
-        .expect("the -Ob encoder must find GT after DP");
+    run_filter(
+        Some(&path),
+        &FilterSpec::default(),
+        &opts_bcf,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("the -Ob encoder must find GT after DP");
     assert!(
         std::fs::metadata(&out_bcf)
             .expect("invariant: bcf written")
@@ -913,6 +1114,126 @@ Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1\tDP:GT:GQ\t30:0/1:99\t30:0/0
             > 0,
         "the BCF output must not be empty"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v30 §4.4 (V30-02): `-I/--no-update` keeps the input's AC/AN. The
+/// default stale list names AC/AN because the *update* replaces them; with
+/// the update suppressed there is nothing to replace, so they must stay.
+/// An explicit `-x INFO/AC` is still the user's request and still removes.
+#[test]
+fn no_update_keeps_input_ac_an() {
+    let body = format!(
+        "{}\
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"a\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"n\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1\ts2\ts3
+Chr01\t1\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1;AC=3;AN=4\tGT\t0/1\t1/1\t0/0\t0/0
+Chr01\t2\t.\tA\tG\t50\tPASS\tQD=10;FS=1;MQ=60;SOR=1;AC=1;AN=4\tGT\t0/1\t0/1\t0/0\t0/0
+",
+        header_without_chrom()
+    );
+    let dir = std::env::temp_dir().join(format!("reed-v30-no-update-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let path = dir.join("in.vcf.gz");
+    std::fs::write(&path, bgzf(&body, 128)).expect("invariant: write");
+
+    use reed_filter::spec::RecomputeSpec;
+    use reed_filter::spec::cohort::{SampleList, SampleSelect};
+    let subset = || SampleSelect {
+        keep: Some(SampleList::Names(vec!["s0".into(), "s1".into()])),
+        remove: None,
+    };
+
+    // 1. `-s s0,s1 -I`: the subset changed, but AC/AN must keep the input
+    //    values (AC=3, AN=4), not the recomputed ones (AC=3? see below) and
+    //    definitely not be deleted.
+    let spec = FilterSpec {
+        sample_select: Some(subset()),
+        recompute: RecomputeSpec {
+            no_update: true,
+            ..RecomputeSpec::default()
+        },
+        ..FilterSpec::default()
+    };
+    let out = dir.join("keep.vcf.gz");
+    run_filter(
+        Some(&path),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: -I run");
+    let text = inflate_to_string(&out);
+    let first = text
+        .lines()
+        .find(|l| l.starts_with("Chr01\t1\t"))
+        .expect("record 1");
+    assert!(
+        first.contains("AC=3") && first.contains("AN=4"),
+        "-I must keep the input AC/AN: {first}"
+    );
+
+    // 2. `-s s0,s1 -I -x ''` is equivalent for AC/AN (the empty -x list
+    //    drops nothing).
+    let spec_empty_x = FilterSpec {
+        sample_select: Some(subset()),
+        recompute: RecomputeSpec {
+            no_update: true,
+            drop_stale: Vec::new(),
+            drop_stale_explicit: true,
+            ..RecomputeSpec::default()
+        },
+        ..FilterSpec::default()
+    };
+    let out2 = dir.join("keep-empty-x.vcf.gz");
+    run_filter(
+        Some(&path),
+        &spec_empty_x,
+        &options(None, &out2),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: -I -x '' run");
+    let text2 = inflate_to_string(&out2);
+    let first2 = text2
+        .lines()
+        .find(|l| l.starts_with("Chr01\t1\t"))
+        .expect("record 1");
+    assert!(
+        first2.contains("AC=3") && first2.contains("AN=4"),
+        "{first2}"
+    );
+    assert_eq!(
+        first, first2,
+        "-I and -I -x '' must agree on the AC/AN record"
+    );
+
+    // 3. The update (no -I) recomputes AC/AN from the subset GT.
+    let spec_update = FilterSpec {
+        sample_select: Some(SampleSelect {
+            keep: Some(SampleList::Names(vec!["s0".into()])),
+            remove: None,
+        }),
+        ..FilterSpec::default()
+    };
+    let out3 = dir.join("update.vcf.gz");
+    run_filter(
+        Some(&path),
+        &spec_update,
+        &options(None, &out3),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: update run");
+    let text3 = inflate_to_string(&out3);
+    let first3 = text3
+        .lines()
+        .find(|l| l.starts_with("Chr01\t1\t"))
+        .expect("record 1");
+    assert!(
+        first3.contains("AN=2") && first3.contains("AC=1"),
+        "the default update must recount over s0 alone (0/1 → AC=1, AN=2): {first3}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -929,8 +1250,13 @@ fn exclude_types_and_allele_bounds_are_mirrors() {
 
     let run = |spec: &FilterSpec, name: &str| {
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report = run_filter(Some(dir_path.as_path()), spec, &options(None, &out))
-            .expect("invariant: run");
+        let report = run_filter(
+            Some(dir_path.as_path()),
+            spec,
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect("invariant: run");
         let text = {
             use std::io::Read;
             let mut reader = noodles::bgzf::io::Reader::new(
@@ -1040,8 +1366,13 @@ fn set_gts_masks_from_format_expressions() {
             ..FilterSpec::default()
         };
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
-            .expect("invariant: run");
+        let report = run_filter(
+            Some(dir_path.as_path()),
+            &spec,
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect("invariant: run");
         let text = {
             use std::io::Read;
             let mut reader = noodles::bgzf::io::Reader::new(
@@ -1097,8 +1428,13 @@ fn format_expressions_need_set_gts() {
         },
         ..FilterSpec::default()
     };
-    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
-        .expect_err("FMT/ without --set-gts must fail");
+    let err = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("FMT/ without --set-gts must fail");
     assert!(err.to_string().contains("--set-gts"), "{err}");
 
     let spec = FilterSpec {
@@ -1112,8 +1448,13 @@ fn format_expressions_need_set_gts() {
         },
         ..FilterSpec::default()
     };
-    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
-        .expect_err("subscripts are not supported yet");
+    let err = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("subscripts are not supported yet");
     assert!(err.to_string().contains("subscripts"), "{err}");
 
     // doc_v20 review of S58: `INFO/AC` spelled with the prefix is the same
@@ -1131,8 +1472,13 @@ fn format_expressions_need_set_gts() {
         },
         ..FilterSpec::default()
     };
-    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
-        .expect_err("INFO/AC in a --set-gts mask expression must be rejected");
+    let err = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("INFO/AC in a --set-gts mask expression must be rejected");
     assert!(
         err.to_string().contains("genotype-derived"),
         "the error must name the genotype-derived field: {err}"
@@ -1196,6 +1542,7 @@ fn mind_counts_post_mask_over_head_survivors() {
             Some(&path),
             &spec_with("0.5"),
             &options(Some(strategy), &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
         )
         .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(report.n_samples_out, 3, "{name}: s3 dropped, s0/s1/s2 kept");
@@ -1235,6 +1582,7 @@ fn mind_counts_post_mask_over_head_survivors() {
             Some(&path),
             &spec_with("0.499999999"),
             &options(Some(strategy), &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
         )
         .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(
@@ -1265,8 +1613,13 @@ fn static_subset_and_mind_combine() {
         ..FilterSpec::default()
     };
     let out = dir.join("o.vcf.gz");
-    let report =
-        run_filter(Some(dir_path.as_path()), &spec, &options(None, &out)).expect("invariant: run");
+    let report = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: run");
     assert_eq!(report.n_samples_in, 4);
     assert_eq!(
         report.n_samples_out, 1,
@@ -1300,6 +1653,7 @@ fn default_biallelic_gate_drops_multiallelic_records() {
         Some(path.as_path()),
         &FilterSpec::default(),
         &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: run");
     assert_eq!(
@@ -1323,8 +1677,13 @@ fn default_biallelic_gate_drops_multiallelic_records() {
         ..FilterSpec::default()
     };
     let out = dir.join("allowed.vcf.gz");
-    let report =
-        run_filter(Some(path.as_path()), &allowed, &options(None, &out)).expect("invariant: run");
+    let report = run_filter(
+        Some(path.as_path()),
+        &allowed,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: run");
     assert_eq!(
         report.n_output_records, 2,
         "allow lets both records through"
@@ -1360,8 +1719,13 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
         ..FilterSpec::default()
     };
     let out = dir.join("err.vcf.gz");
-    let err = run_filter(Some(dir_path.as_path()), &spec, &options(None, &out))
-        .expect_err("multiallelic input + AC update must fail until R7");
+    let err = run_filter(
+        Some(dir_path.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("multiallelic input + AC update must fail until R7");
     assert!(
         err.to_string().contains("R7"),
         "an actionable message: {err}"
@@ -1374,8 +1738,13 @@ fn ac_update_with_allowed_multiallelics_is_rejected() {
         ..spec
     };
     let out = dir.join("ok.vcf.gz");
-    let report = run_filter(Some(dir_path.as_path()), &gated, &options(None, &out))
-        .expect("invariant: gated run");
+    let report = run_filter(
+        Some(dir_path.as_path()),
+        &gated,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: gated run");
     assert!(report.n_output_records > 0);
     assert_eq!(report.n_samples_out, 3);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1423,8 +1792,13 @@ fn mind_counts_ignore_tail_rules() {
     };
     for (name, geno) in [("plain", false), ("tail", true)] {
         let out = dir.join(format!("{name}.vcf.gz"));
-        let report = run_filter(Some(&path), &spec_with(geno), &options(None, &out))
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let report = run_filter(
+            Some(&path),
+            &spec_with(geno),
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
         let rule = report.sample_rule.as_ref().expect("sample rule reported");
         assert_eq!(rule.n_dropped, 1, "{name}: only s2 crosses 0.5");
         assert_eq!(report.n_samples_out, 3, "{name}");
@@ -1487,8 +1861,13 @@ fn genotype_class_rules_filter_every_call_shape() {
                 ..FilterSpec::default()
             };
             let out = dir.join("out.vcf.gz");
-            let report = run_filter(Some(&path), &spec, &options(Some(strategy), &out))
-                .unwrap_or_else(|e| panic!("{strategy:?} {rules:?}: {e}"));
+            let report = run_filter(
+                Some(&path),
+                &spec,
+                &options(Some(strategy), &out),
+                &reed::RunContext::idle(&reed::ThreadBudget::default()),
+            )
+            .unwrap_or_else(|e| panic!("{strategy:?} {rules:?}: {e}"));
             let kept_pos: Vec<String> = inflate_to_string(&out)
                 .lines()
                 .filter(|l| !l.starts_with('#'))
@@ -1552,8 +1931,13 @@ fn genotype_class_rules_skip_gt_less_records() {
                 ..FilterSpec::default()
             };
             let out = dir.join("out.vcf.gz");
-            let report = run_filter(Some(&path), &spec, &options(Some(strategy), &out))
-                .unwrap_or_else(|e| panic!("{strategy:?} {rule:?}: {e}"));
+            let report = run_filter(
+                Some(&path),
+                &spec,
+                &options(Some(strategy), &out),
+                &reed::RunContext::idle(&reed::ThreadBudget::default()),
+            )
+            .unwrap_or_else(|e| panic!("{strategy:?} {rule:?}: {e}"));
             let kept_pos: Vec<u64> = inflate_to_string(&out)
                 .lines()
                 .filter(|l| !l.starts_with('#'))
@@ -1594,7 +1978,13 @@ fn mask_masks_a_float_declared_format_field() {
         },
         ..FilterSpec::default()
     };
-    run_filter(Some(input.as_path()), &spec, &options(None, &out)).expect("invariant: runs");
+    run_filter(
+        Some(input.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: runs");
     let text = inflate_to_string(&out);
     let record = text
         .lines()
@@ -1642,7 +2032,13 @@ fn min_af_recomputes_after_a_mask_changes_the_cohort() {
         },
         ..FilterSpec::default()
     };
-    run_filter(Some(input.as_path()), &spec, &options(None, &out)).expect("invariant: runs");
+    run_filter(
+        Some(input.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: runs");
     let text = inflate_to_string(&out);
     let records: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
     assert!(
@@ -1678,7 +2074,6 @@ fn s42_filter_write_index_extends_symbolic_deletions_to_end() {
         Some(input.as_path()),
         &FilterSpec::default(),
         &FilterOptions {
-            threads: 2,
             output: Some(out.clone()),
             write_index: reed::WriteIndex::Csi,
             compress_level: 6,
@@ -1691,10 +2086,10 @@ fn s42_filter_write_index_extends_symbolic_deletions_to_end() {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: None,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         },
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: filter runs");
 
@@ -1767,7 +2162,13 @@ chr1\t20\t.\tA\tT\t50\tPASS\t.\tGT:PL:AD\t1/1:.:0,50\t0/0:.:30,0\t0/1:.:5,6
         ..FilterSpec::default()
     };
     let out = dir.join("o.vcf.gz");
-    run_filter(Some(input.as_path()), &spec, &options(None, &out)).expect("invariant: run");
+    run_filter(
+        Some(input.as_path()),
+        &spec,
+        &options(None, &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: run");
     let text = inflate_to_string(&out);
     let records: Vec<&str> = text
         .lines()
@@ -1839,18 +2240,27 @@ fn sketch_budget_covers_the_sum_of_every_resident_contig() {
         Some(path.as_path()),
         &spec,
         &options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     );
     assert!(control.is_ok(), "control run: {control:?}");
 
     // One contig's matrix is small; the sum of six is not. Pick a budget
     // between the two: the run must stop with MemBudgetExceeded instead of
     // admitting all six.
-    let mut opts = options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &out);
+    let opts = options(Some(reed_filter::plan::ExecStrategy::SketchThenEmit), &out);
     // 4 samples × 40 sites × 4 words/site × 8 B ≈ 5 KiB per contig; 16 KiB
     // admits two or three, not six.
-    opts.mem_bytes = Some(16 * 1024);
-    let err = run_filter(Some(path.as_path()), &spec, &opts)
-        .expect_err("six resident contig matrices must exceed a 16 KiB budget");
+    let tight = reed::ThreadBudget {
+        threads: 2,
+        mem: reed::MemBudget::from_bytes(16 * 1024),
+    };
+    let err = run_filter(
+        Some(path.as_path()),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&tight),
+    )
+    .expect_err("six resident contig matrices must exceed a 16 KiB budget");
     let text = err.to_string();
     eprintln!("V23-10 budget error: {text}");
     assert!(
@@ -1875,7 +2285,12 @@ fn v25_03_filter_rejects_blank_record_lines() {
         std::fs::write(&input, format!("{HEADER}{record}{blank}{record}"))
             .expect("invariant: fixture");
         let out = dir.join(format!("{tag}.out.vcf"));
-        let result = run_filter(Some(&input), &FilterSpec::default(), &options(None, &out));
+        let result = run_filter(
+            Some(&input),
+            &FilterSpec::default(),
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        );
         let Err(err) = result else {
             panic!("{tag}: a blank record line must fail the run");
         };
@@ -1978,8 +2393,13 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
         let mut outputs = Vec::new();
         for &(strategy_tag, strategy) in strategies {
             let out = dir.join(format!("{tag}-{strategy_tag}.vcf"));
-            run_filter(Some(input.as_path()), spec, &options(Some(strategy), &out))
-                .unwrap_or_else(|e| panic!("{tag}/{strategy_tag}: {e}"));
+            run_filter(
+                Some(input.as_path()),
+                spec,
+                &options(Some(strategy), &out),
+                &reed::RunContext::idle(&reed::ThreadBudget::default()),
+            )
+            .unwrap_or_else(|e| panic!("{tag}/{strategy_tag}: {e}"));
             outputs.push((
                 strategy_tag,
                 std::fs::read(&out).expect("invariant: output"),
@@ -2010,6 +2430,7 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
             Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
             &sketch_info,
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("an INFO-only expression is a head rule the sketch can run");
     let bare_spec = FilterSpec {
@@ -2026,6 +2447,7 @@ Chr01\t4\t.\tA\tG\t50\tPASS\tAC=2;AN=6;AF=0.333;MAF=0.333;MAC=2\tGT:DP\t0/1:2\t0
             Some(reed_filter::plan::ExecStrategy::SketchThenEmit),
             &dir.join("bare-sketch.vcf"),
         ),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     ) else {
         panic!("the sketch must refuse a record-reading tail expression");
     };
@@ -2075,8 +2497,13 @@ fn missing_dp_masks_in_the_expression_context_but_not_by_default_in_mask_if() {
         ..FilterSpec::default()
     };
     let expr_out = dir.join("expr.vcf");
-    run_filter(Some(&input), &expr_spec, &options(None, &expr_out))
-        .expect("invariant: expression run");
+    run_filter(
+        Some(&input),
+        &expr_spec,
+        &options(None, &expr_out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: expression run");
 
     // The same predicate as a `mask_if` field rule: the default `keep`
     // leaves the missing DP alone; only DP=4 fires.
@@ -2093,7 +2520,13 @@ fn missing_dp_masks_in_the_expression_context_but_not_by_default_in_mask_if() {
         ..FilterSpec::default()
     };
     let mask_out = dir.join("mask.vcf");
-    run_filter(Some(&input), &mask_spec, &options(None, &mask_out)).expect("invariant: mask run");
+    run_filter(
+        Some(&input),
+        &mask_spec,
+        &options(None, &mask_out),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: mask run");
 
     let gts = |path: &std::path::Path| -> Vec<String> {
         let text = std::fs::read_to_string(path).expect("invariant: read");
@@ -2166,8 +2599,13 @@ fn info_spelling_reads_the_pre_subset_info_like_bcftools() {
     };
     let run = |text: &str, subset: bool, tag: &str| -> String {
         let out = dir.join(format!("{tag}.vcf"));
-        run_filter(Some(&input), &spec(text, subset), &options(None, &out))
-            .unwrap_or_else(|e| panic!("{tag}: {e}"));
+        run_filter(
+            Some(&input),
+            &spec(text, subset),
+            &options(None, &out),
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .unwrap_or_else(|e| panic!("{tag}: {e}"));
         std::fs::read_to_string(&out).expect("invariant: output")
     };
     let bare_subset = run("AC>2", true, "bare-subset");
@@ -2213,7 +2651,6 @@ fn truncated_bcf_keeps_the_previous_filter_output() {
     let output = dir.join("out.vcf.gz");
     std::fs::write(&output, b"previous complete output").expect("invariant: old output");
     let opts = FilterOptions {
-        threads: 1,
         output: Some(output.clone()),
         write_index: reed::WriteIndex::None,
         output_compressed: Some(true),
@@ -2221,8 +2658,13 @@ fn truncated_bcf_keeps_the_previous_filter_output() {
         no_command: true,
         ..FilterOptions::default()
     };
-    let err = run_filter(Some(&input), &FilterSpec::default(), &opts)
-        .expect_err("a truncated BCF must be reported");
+    let err = run_filter(
+        Some(&input),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("a truncated BCF must be reported");
     assert!(err.to_string().contains("truncated"), "{err}");
     assert_eq!(
         std::fs::read(&output).expect("invariant: old output still exists"),

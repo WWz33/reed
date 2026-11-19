@@ -11,15 +11,27 @@ reed = { path = "crates/reed" }
 
 The stability promise covers the crate root only; crates below `crates/` are internal implementation whose types and signatures may change. Errors are `reed::Error`, classified by `Error::kind()`, with the message read through `Display`/`source()`.
 
+## Stability
+
+The root items and `run_*` entry points follow semver (0.x: breaking changes need a minor bump); `#[doc(hidden)] reed::frontend` and every crate under `crates/` are internal. See `docs/spec/api-contract.md`.
+
 ## Entry points
 
-The crate root exports six entry points, one per subcommand:
+The crate root exports one `run_*` per subcommand (`_opened` variants take an
+already-opened `OpenedInput` and are listed in `ci/api/reed.txt`):
 
-```rust
-run_filter, run_popgen, run_stats, run_rename, run_index, run_convert
-```
+| Entry point | Request | Report |
+|---|---|---|
+| `run_filter` | `FilterSpec` | `FilterReport` |
+| `run_popgen` | `PopgenRequest` | `PopgenReport` |
+| `run_stats` | `StatsReportRequest` | `StatsOutcome` |
+| `run_rename` | `RenameSpec` | `RenameReport` |
+| `run_index` | `WriteIndex` (argument) | `IndexOutcome` |
+| `run_convert` | `ConvertRequest` | `ConvertReport` |
+| `run_pca` | `PcaRequest` | `PcaReport` |
+| `run_dapc` | `DapcRequest` | `DapcReport` |
 
-The signature pattern is uniform: `fn run_*(input: Option<&Path>, request: &XxxRequest, budget: &ThreadBudget) -> Result<XxxReport>`. `ThreadBudget` (`reed::budget`) holds the thread count and memory budget; `Default` means "all cores + half of physical memory", the same as the CLI defaults.
+The signature pattern is uniform: `fn run_*(input: Option<&Path>, request: &XxxRequest, ctx: &RunContext<'_>) -> Result<XxxReport>`. `RunContext` (`reed::RunContext`) borrows the run's `ThreadBudget` and `AbortSignal`; build one with `RunContext::new(&budget, &abort.signal)` from an `Abort` (`reed::abort_for(&budget)`), or `RunContext::idle(&budget)` when the caller has no cancellation source. `ThreadBudget::default()` means "all cores + half of physical memory", the same as the CLI defaults. The same names are available as `use reed::prelude::*;`; the prelude only re-exports root items (the `run_*` entry points, requests, reports, errors, budgets and `RunContext`).
 
 ## Population statistics
 
@@ -31,9 +43,10 @@ let request = PopgenRequest {
     populations: Populations::File("pops.txt".into()),
     ..PopgenRequest::default()
 };
-let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request,
-                              &reed::budget::ThreadBudget::default())?;
-let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+let budget = reed::ThreadBudget::default();
+let ctx = reed::RunContext::idle(&budget);
+let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request, &ctx)?;
+let tsv = reed::render_tsv(&report.windows, &request.kinds, false);
 ```
 
 The population mapping does not have to touch disk:
@@ -64,8 +77,9 @@ let request = ConvertRequest {
     prefix: "matrices".into(),
     ..ConvertRequest::default()
 };
-let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request,
-                               &reed::budget::ThreadBudget::default())?;
+let budget = reed::ThreadBudget::default();
+let ctx = reed::RunContext::idle(&budget);
+let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request, &ctx)?;
 ```
 
 ## Requests and reports
@@ -79,7 +93,7 @@ let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request,
 | `ConvertRequest` | `ConvertReport` |
 | (no request structure for index) | `IndexOutcome` |
 
-The writer modules are usable directly: `reed::windows` (window TSV), `reed::reports`, `reed::histogram`, `reed::sfs`, `reed::fstats`, `reed::ld`, `reed::summary`.
+`render_tsv` renders a windowed-statistics report; the remaining writer modules are front-end-only (behind `#[doc(hidden)] reed::frontend`, not part of the stability promise).
 
 ## Round-trip rendering
 

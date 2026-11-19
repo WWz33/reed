@@ -17,7 +17,7 @@
 //! Both are computed from a `Grm`, so the missing-data policy chosen when the
 //! GRM was built (mean impute vs pairwise) propagates to every method here.
 
-use crate::graph::{diffusion_map, laplacian_eigenmaps, pcoa, Embedding, Kernel};
+use crate::graph::{Embedding, Kernel, diffusion_map, laplacian_eigenmaps, pcoa};
 use crate::pca::Grm;
 use reed_core::linalg::Mat;
 
@@ -304,7 +304,7 @@ pub fn grm_kernel(grm: &Grm, k: usize, kind: Kernel) -> Embedding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pca::{standardize_binom2, Grm};
+    use crate::pca::{Grm, standardize_binom2};
 
     fn geno() -> Mat {
         let mut state = 0x9E3779B97F4A7C15u64;

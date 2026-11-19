@@ -26,6 +26,18 @@
 //! Not here (yet): minimum spanning networks and distance-threshold
 //! clustering (`docs/rounds/v17b` §3).
 
+//! # Examples
+//!
+//! ```
+//! use reed_core::linalg::Mat;
+//! use reed_graph::{to_newick, upgma};
+//! let d = Mat::from_fn(3, 3, |i, j| {
+//!     if i == j { 0.0 } else { [0.0, 1.0, 2.0][i] + [0.0, 1.0, 2.0][j] }
+//! });
+//! let tree = upgma(&d).expect("three taxa");
+//! assert!(to_newick(&tree, 6).expect("newick").ends_with(';'));
+//! ```
+//!
 #![allow(clippy::needless_range_loop)]
 // Node ids are bounded by the sample count, which is far below u32::MAX.
 #![allow(clippy::cast_possible_truncation)]

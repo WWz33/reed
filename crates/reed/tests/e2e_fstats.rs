@@ -3,7 +3,7 @@
 //! 3-population fixture; the parity script cross-checks them on real data
 //! (`gold/popgen/run_allel_fstats.sh`).
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     FStatTest, FStatsRequest, InvariantMode, Levels, PopgenRequest, Populations,
     WindowLayoutOptions, run_popgen,
@@ -99,7 +99,12 @@ fn fstats_match_scikit_allel() {
             d: 2,
         },
     ];
-    let report = run_popgen(Some(&vcf), &request(tests, 1), &budget).expect("invariant: run");
+    let report = run_popgen(
+        Some(&vcf),
+        &request(tests, 1),
+        &reed::RunContext::idle(&budget),
+    )
+    .expect("invariant: run");
     let fstats = report.fstats.expect("invariant: f-stats requested");
     assert_eq!(fstats.rows.len(), 4);
 
@@ -159,7 +164,7 @@ fn fstats_are_identical_across_thread_counts() {
                 ],
                 1,
             ),
-            &budget,
+            &reed::RunContext::idle(&budget),
         )
         .expect("invariant: run");
         let rows = report.fstats.expect("invariant: f-stats").rows;
@@ -200,7 +205,7 @@ fn f4_ratio_divides_the_two_f4_estimates() {
             }],
             1,
         ),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     let rows = ratio.fstats.expect("invariant: f-stats").rows;
@@ -225,7 +230,7 @@ fn f4_ratio_divides_the_two_f4_estimates() {
             ],
             1,
         ),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     let sums = parts.fstats.expect("invariant: f-stats").rows;
@@ -258,13 +263,18 @@ fn genome_wide_fstats_need_no_lengths_and_keep_empty_rows() {
         mem: MemBudget::from_bytes(u64::MAX),
     };
     let tests = vec![FStatTest::F2 { a: 0, b: 1 }];
-    let report = run_popgen(Some(&vcf), &request(tests.clone(), 1), &budget)
-        .expect("invariant: no-length run");
+    let report = run_popgen(
+        Some(&vcf),
+        &request(tests.clone(), 1),
+        &reed::RunContext::idle(&budget),
+    )
+    .expect("invariant: no-length run");
     assert_eq!(report.fstats.expect("invariant: fstats").rows.len(), 1);
 
     let mut empty = request(tests, 1);
     empty.select.sites = vec![("chr2".to_string(), Some(1), Some(1))];
-    let report = run_popgen(Some(&vcf), &empty, &budget).expect("invariant: empty run");
+    let report = run_popgen(Some(&vcf), &empty, &reed::RunContext::idle(&budget))
+        .expect("invariant: empty run");
     let fstats = report.fstats.expect("invariant: empty report is present");
     assert_eq!(fstats.rows.len(), 1);
     assert_eq!(fstats.rows[0].estimate, 0.0, "an empty f2 is a zero sum");
@@ -273,7 +283,7 @@ fn genome_wide_fstats_need_no_lengths_and_keep_empty_rows() {
         "no jackknife blocks means no SE"
     );
     assert_eq!(fstats.rows[0].n_sites, 0);
-    let text = reed::fstats::write_fstats(
+    let text = reed::frontend::fstats::write_fstats(
         &dir.join("out"),
         &["A".into(), "B".into(), "C".into()],
         &fstats,

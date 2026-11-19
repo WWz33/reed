@@ -76,7 +76,6 @@ fn allocations_for(dir: &std::path::Path, tag: &str, n_records: usize) -> usize 
     write_fixture(&input, n_records);
     let spec = FilterSpec::default();
     let opts = FilterOptions {
-        threads: 1,
         output: Some(output),
         no_version: true,
         no_command: true,
@@ -85,7 +84,13 @@ fn allocations_for(dir: &std::path::Path, tag: &str, n_records: usize) -> usize 
     // Warm the allocator's own state once per path so the first run's lazy
     // initialisation does not count as per-record work.
     let before = ALLOCATIONS.load(Ordering::Relaxed);
-    run_filter(Some(&input), &spec, &opts).expect("invariant: filter runs");
+    run_filter(
+        Some(&input),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter runs");
     ALLOCATIONS.load(Ordering::Relaxed) - before
 }
 

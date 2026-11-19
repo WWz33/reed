@@ -89,7 +89,16 @@ fn query(index_path: &Path, vcf: &Path, contig: &str) -> Vec<String> {
 #[test]
 fn csi_index_resolves_queries() {
     let (dir, vcf) = write_fixture("csi", &rows());
-    let outcome = run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
+    let outcome = run_index(
+        &vcf,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: index builds");
     assert_eq!(outcome.n_records, 5);
     assert_eq!(outcome.path, dir.join("in.vcf.gz.csi"));
 
@@ -117,15 +126,22 @@ fn bcf_dictionary_tid_is_mapped_to_the_csi_header_order() {
     )
     .expect("invariant: fixture copy");
     let index = dir.join("idx.bcf.csi");
-    let outcome =
-        run_index(&vcf, WriteIndex::Csi, Some(&index), 4).expect("invariant: BCF index builds");
+    let outcome = run_index(
+        &vcf,
+        WriteIndex::Csi,
+        Some(&index),
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: BCF index builds");
     assert_eq!(outcome.n_records, 4);
 
     // Read through Reed's region source: a raw binary chunk split works,
     // unlike the text `noodles::csi::io::Query` helper above.
     let output = dir.join("chr1.vcf");
     let opts = FilterOptions {
-        threads: 1,
         output: Some(output.clone()),
         write_index: WriteIndex::None,
         output_compressed: Some(false),
@@ -138,7 +154,13 @@ fn bcf_dictionary_tid_is_mapped_to_the_csi_header_order() {
         }],
         ..FilterOptions::default()
     };
-    run_filter(Some(&vcf), &FilterSpec::default(), &opts).expect("region read");
+    run_filter(
+        Some(&vcf),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("region read");
     let text = std::fs::read_to_string(&output).expect("invariant: output VCF");
     let records: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
     assert_eq!(records.len(), 2, "{records:?}");
@@ -153,7 +175,16 @@ fn bcf_dictionary_tid_is_mapped_to_the_csi_header_order() {
 #[test]
 fn tbi_is_written_and_refuses_wide_coordinates() {
     let (dir, vcf) = write_fixture("tbi", &rows());
-    let outcome = run_index(&vcf, WriteIndex::Tbi, None, 4).expect("invariant: tbi builds");
+    let outcome = run_index(
+        &vcf,
+        WriteIndex::Tbi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: tbi builds");
     assert!(outcome.path.to_string_lossy().ends_with(".tbi"));
     // The TBI has its own magic: read it with the tabix reader.
     let index = noodles::tabix::fs::read(&outcome.path).expect("invariant: tbi reads");
@@ -164,7 +195,16 @@ fn tbi_is_written_and_refuses_wide_coordinates() {
     let mut wide = String::from(HEADER);
     wide.push_str("chr1\t600000000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     let (dir2, vcf2) = write_fixture("tbi-wide", &wide);
-    let err = run_index(&vcf2, WriteIndex::Tbi, None, 4).expect_err("invariant: TBI refuses 6e8");
+    let err = run_index(
+        &vcf2,
+        WriteIndex::Tbi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect_err("invariant: TBI refuses 6e8");
     assert!(err.to_string().contains("TBI coordinates"), "{err}");
     let _ = std::fs::remove_dir_all(&dir2);
 }
@@ -175,7 +215,16 @@ fn unsorted_input_is_refused() {
     text.push_str("chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     text.push_str("chr1\t50\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     let (dir, vcf) = write_fixture("unsorted", &text);
-    let err = run_index(&vcf, WriteIndex::Csi, None, 4).expect_err("invariant: unsorted refused");
+    let err = run_index(
+        &vcf,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect_err("invariant: unsorted refused");
     assert!(err.to_string().contains("ascending"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -187,8 +236,26 @@ fn index_bytes_are_thread_count_independent() {
     let (dir, vcf) = write_fixture("indexthreads", &rows());
     let a = dir.join("a.csi");
     let b = dir.join("b.csi");
-    run_index(&vcf, WriteIndex::Csi, Some(&a), 1).expect("invariant: one thread");
-    run_index(&vcf, WriteIndex::Csi, Some(&b), 4).expect("invariant: four threads");
+    run_index(
+        &vcf,
+        WriteIndex::Csi,
+        Some(&a),
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 1,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: one thread");
+    run_index(
+        &vcf,
+        WriteIndex::Csi,
+        Some(&b),
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: four threads");
     assert_eq!(
         std::fs::read(&a).expect("invariant: a"),
         std::fs::read(&b).expect("invariant: b")
@@ -203,24 +270,30 @@ fn index_bytes_are_thread_count_independent() {
 #[test]
 fn open_regions_consumes_its_own_index() {
     let (dir, vcf) = write_fixture("open-regions", &rows());
-    let outcome = run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
+    let outcome = run_index(
+        &vcf,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: index builds");
 
-    let mut opened = reed::open_regions(
+    let opened = reed::frontend::open_regions(
         Some(&vcf),
-        &[reed::chunk::region::Region {
+        &[reed::frontend::chunk::region::Region {
             contig: "chr1".into(),
             start1: Some(50),
             end1: Some(300),
         }],
     )
     .expect("invariant: open with the built index");
+    let (mut source, _facts, _meta) = opened.into_parts();
     let mut inflater = reed_io::bgzf::inflate::Inflater::new();
     let mut text = String::new();
-    while let Some(chunk) = opened
-        .source_mut()
-        .next_chunk()
-        .expect("invariant: chunk read")
-    {
+    while let Some(chunk) = source.next_chunk().expect("invariant: chunk read") {
         let bytes = chunk.compressed.as_slice();
         let mut rest = bytes;
         while let Some(total) = reed_io::bgzf::block::parse_block_size(rest) {
@@ -282,7 +355,16 @@ fn s42_region_query_finds_spanning_symbolic_del() {
     text.push_str("chr1\t100\t.\tA\t<DEL>\t50\tPASS\tEND=30000\tGT\t0/1\n");
     text.push_str("chr1\t20000\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n");
     let (dir, vcf) = write_fixture("s42-del", &text);
-    let outcome = run_index(&vcf, WriteIndex::Csi, None, 4).expect("invariant: index builds");
+    let outcome = run_index(
+        &vcf,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("invariant: index builds");
     assert_eq!(outcome.n_records, 2);
 
     // The records a chr1:20000-20000 region query covers.
@@ -335,17 +417,44 @@ fn plain_and_gzip_inputs_are_refused() {
 
     let plain = dir.join("in.vcf");
     std::fs::write(&plain, rows()).expect("invariant: write plain");
-    let err = run_index(&plain, WriteIndex::Csi, None, 4).expect_err("plain VCF must be refused");
+    let err = run_index(
+        &plain,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect_err("plain VCF must be refused");
     assert!(err.to_string().contains("BGZF"), "{err}");
 
     let gz = dir.join("in.vcf.gz");
     std::fs::write(&gz, gzip(&rows())).expect("invariant: write gzip");
-    let err = run_index(&gz, WriteIndex::Csi, None, 4).expect_err("regular gzip must be refused");
+    let err = run_index(
+        &gz,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect_err("regular gzip must be refused");
     assert!(err.to_string().contains("BGZF"), "{err}");
 
     // Control: the BGZF form still indexes.
     let (dir2, bgzf_path) = write_fixture("plain-control", &rows());
-    run_index(&bgzf_path, WriteIndex::Csi, None, 4).expect("BGZF still indexes");
+    run_index(
+        &bgzf_path,
+        WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("BGZF still indexes");
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dir2);
@@ -356,11 +465,29 @@ fn plain_and_gzip_inputs_are_refused() {
 #[test]
 fn bcf_input_refuses_tbi() {
     let bcf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../reed-io/tests/fixtures/bcf/fix.bcf");
-    let err = run_index(&bcf, WriteIndex::Tbi, None, 4).expect_err("BCF + TBI must be refused");
+    let err = run_index(
+        &bcf,
+        WriteIndex::Tbi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect_err("BCF + TBI must be refused");
     assert!(err.to_string().contains("CSI"), "{err}");
     // CSI still works on the same BCF.
     let out = std::env::temp_dir().join(format!("reed-bcf-csi-{}.csi", std::process::id()));
-    run_index(&bcf, WriteIndex::Csi, Some(&out), 4).expect("BCF + CSI must work");
+    run_index(
+        &bcf,
+        WriteIndex::Csi,
+        Some(&out),
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 4,
+            ..Default::default()
+        }),
+    )
+    .expect("BCF + CSI must work");
     let _ = std::fs::remove_file(&out);
 }
 
@@ -378,8 +505,16 @@ fn truncated_bcf_errors_without_panicking() {
         let cut = bytes.len() * frac / 100;
         let out = dir.join(format!("in{frac}.bcf"));
         std::fs::write(&out, &bytes[..cut]).expect("invariant: write");
-        let _ = run_index(&out, WriteIndex::Csi, None, 4)
-            .expect_err("a truncated BCF must be reported, not panic");
+        let _ = run_index(
+            &out,
+            WriteIndex::Csi,
+            None,
+            &reed::RunContext::idle(&reed::ThreadBudget {
+                threads: 4,
+                ..Default::default()
+            }),
+        )
+        .expect_err("a truncated BCF must be reported, not panic");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -393,8 +528,16 @@ fn truncated_bcf_keeps_the_previous_index() {
     let input = support::truncated_bcf(&dir, "truncated.bcf");
     let index = dir.join("truncated.bcf.csi");
     std::fs::write(&index, b"previous complete index").expect("invariant: old index");
-    let err = run_index(&input, WriteIndex::Csi, Some(&index), 1)
-        .expect_err("a truncated BCF must be reported");
+    let err = run_index(
+        &input,
+        WriteIndex::Csi,
+        Some(&index),
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 1,
+            ..Default::default()
+        }),
+    )
+    .expect_err("a truncated BCF must be reported");
     assert!(err.to_string().contains("truncated"), "{err}");
     assert_eq!(
         std::fs::read(&index).expect("invariant: old index still exists"),

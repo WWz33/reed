@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::cli::FilterCli;
 use crate::units::input_path;
-use reed::budget::ThreadBudget;
+use reed::ThreadBudget;
 
 /// Translates the shared site/threshold flags (`SiteFilterArgs`) into the
 /// typed spec — the same flags serve `reed filter` and `reed stats`
@@ -154,7 +154,7 @@ pub(crate) fn site_spec(
         .map(|t| (t, true))
         .chain(cli.exclude.iter().map(|t| (t, false)))
     {
-        let expr = reed::expr::parse(text)
+        let expr = reed::frontend::expr::parse(text)
             .map_err(|e| format!("{} {text:?}: {e}", if include { "-i" } else { "-e" }))?;
         let genotype_derived = expr.references_genotypes();
         match (include, genotype_derived) {
@@ -376,14 +376,16 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     let strategy = strategy
         .as_deref()
         .map(|s| match s {
-            "single_pass" => Ok(reed::plan::ExecStrategy::SinglePass),
-            "two_pass_reparse" => Ok(reed::plan::ExecStrategy::TwoPassReparse),
-            "sketch_then_emit" => Ok(reed::plan::ExecStrategy::SketchThenEmit),
+            "single_pass" => Ok(reed::frontend::plan::ExecStrategy::SinglePass),
+            "two_pass_reparse" => Ok(reed::frontend::plan::ExecStrategy::TwoPassReparse),
+            "sketch_then_emit" => Ok(reed::frontend::plan::ExecStrategy::SketchThenEmit),
             other => Err(reed::Error::usage(format!("unknown strategy {other:?}"))),
         })
         .transpose()?;
     let command_line = crate::params::command_line();
     let budget = ThreadBudget::from_cli(*threads, *memory);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
     // -O v|z|b|u[level]: explicit output type, `-o` names the file (the
     // extension is only inferred when -O is absent).
     let mut output_bcf = None;
@@ -455,7 +457,6 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         }
     }
     let opts = reed::FilterOptions {
-        threads: budget.threads,
         output,
         write_index: reed::WriteIndex::parse(write_index.as_deref())?,
         compress_level,
@@ -468,12 +469,11 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
         tmp_dir: cli.tmp_dir.as_ref().map(PathBuf::from),
         output_compressed,
         output_bcf,
-        mem_bytes: memory.map(reed::budget::MemMiB::bytes),
         no_version: *no_version,
         no_command: cli.no_command,
     };
     tracing::debug!(threads = budget.threads, strategy = ?strategy, "reed filter starting");
-    let report = reed::run_filter(input_file.as_deref(), &spec, &opts)?;
+    let report = reed::run_filter(input_file.as_deref(), &spec, &opts, &ctx)?;
     if verbosity.shows_summary() {
         eprint_report(&report);
     }
@@ -491,7 +491,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
 
 /// The human summary (`--verbosity 1`): one line plus the funnel table
 /// (doc_v4 03 §3.3). Moved out of the driver so the library never prints.
-fn eprint_report(report: &reed::funnel::FilterReport) {
+fn eprint_report(report: &reed::frontend::funnel::FilterReport) {
     eprintln!(
         "reed filter: {} -> {} records ({} of {} samples), strategy {}, {:.1}s",
         report.n_input_records,

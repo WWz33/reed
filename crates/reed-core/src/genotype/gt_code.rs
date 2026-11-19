@@ -227,6 +227,20 @@ impl GtCode {
     }
 }
 
+/// Whether raw VCF genotype text has at least one called allele slot.
+///
+/// A slot is missing only when its token is `.`, so the half-calls `./1` and
+/// `0/.` both count and `.`/`./.` do not (doc_v30 R01). This is the
+/// text-level rule behind [`GtCode::is_called_any`], for parsers that hold
+/// tokens before a code exists. Malformed tokens stay on the "present" side
+/// on purpose: they are a malformed record, not missing data.
+#[must_use]
+pub fn has_called_allele(gt_text: &[u8]) -> bool {
+    gt_text
+        .split(|&b| b == b'/' || b == b'|')
+        .any(|token| token != b".")
+}
+
 /// One genotype with exactly one called slot (haploid-as-half-call included).
 fn half_call(
     called_slot: usize,
@@ -306,6 +320,35 @@ mod tests {
         assert!(masked.is_haploid());
         assert!(!masked.phased());
         assert_eq!(masked.state(), GtCode::MISSING.state());
+    }
+
+    #[test]
+    fn called_allele_rule_handles_half_calls() {
+        // doc_v30 R01: the half-call rule is symmetric; the old prefix test
+        // made `./1` absent and `0/.` present.
+        for present in [
+            &b"0/0"[..],
+            b"0/1",
+            b"./1",
+            b"1/.",
+            b"0|.",
+            b"1",
+            b"x/x",
+            b"3/3",
+        ] {
+            assert!(
+                has_called_allele(present),
+                "{} has a called allele",
+                String::from_utf8_lossy(present)
+            );
+        }
+        for missing in [&b"."[..], b"./.", b".|."] {
+            assert!(
+                !has_called_allele(missing),
+                "{} is fully missing",
+                String::from_utf8_lossy(missing)
+            );
+        }
     }
 
     fn policies() -> GenotypePolicies {

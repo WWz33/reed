@@ -14,6 +14,15 @@
 // Count-to-float conversions are the domain here: every estimator turns
 // exact integer tallies into f64 once per site or once per window. The
 // results are covered by the 1e-12 oracle-parity gate, not by exactness.
+//!
+//! # Examples
+//!
+//! ```
+//! use reed_stats::request::StatKind;
+//! let kind = StatKind::Pi { group: 0, per_bp: false };
+//! assert!(matches!(kind, StatKind::Pi { .. }));
+//! ```
+//!
 #![allow(clippy::cast_precision_loss)]
 
 pub mod dxy;

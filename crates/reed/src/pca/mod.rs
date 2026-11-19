@@ -17,6 +17,7 @@ use std::io::Write as _;
 
 use reed_engine::budget::ThreadBudget;
 
+use crate::context::RunContext;
 use crate::genotype::{CollectSink, GenotypeBlock, PcaJob, collect_via_engine};
 use reed_reduce::pca::{Stand, pca_dense_pairwise_with_par, pca_dense_with_par};
 use reed_reduce::{Mat, StreamConfig, lanczos_top_k};
@@ -144,11 +145,12 @@ pub(crate) fn matrix_use(solver: &str, missing: &str) -> MatrixUse {
 ///
 /// Engine and I/O failures.
 pub fn read_genotype_matrix(
-    mut opened: crate::OpenedInput,
+    opened: crate::OpenedInput,
     keep: Option<&[bool]>,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
     matrix_use: MatrixUse,
 ) -> Result<(Mat, Vec<String>), crate::Error> {
+    let budget = ctx.budget;
     let sample_names = opened.facts().sample_names.clone();
     if sample_names.is_empty() {
         return Err(crate::Error::usage(
@@ -166,19 +168,23 @@ pub fn read_genotype_matrix(
     }
     // doc_v28 V28-15: a BCF input feeds the framed records straight to the
     // dosage reader; text input stays on the rendered-text path.
-    let native_bcf = opened.bcf.is_some();
+    let native_bcf = opened.is_bcf();
     let job = PcaJob {
         n_samples,
         keep: keep.as_slice().to_vec(),
         allow_multiallelic: false,
         bcf_input: native_bcf.then(|| {
             opened
-                .bcf
-                .clone()
+                .bcf_dict()
+                .cloned()
                 .expect("invariant: a BCF input carries its dictionary")
         }),
+        // PI_HAT's `nn` counts every biallelic site, monomorphic ones
+        // included, like plink (doc_v30 §4.3, N-2). Only the bare matrix
+        // consumer (`distance`) asks for that; PCA's degenerate columns are
+        // zero and cannot contribute.
+        keep_monomorphic: matches!(matrix_use, MatrixUse::Plain),
     };
-    let abort = reed_engine::abort::abort_for(budget);
     // doc_v20 review of S76: cap the collection itself, not just the final
     // matrix, so a 120 GB run refuses while scanning instead of after.
     let n_kept_hint = keep.iter().filter(|&&k| k).count();
@@ -189,7 +195,7 @@ pub fn read_genotype_matrix(
         n_samples: n_kept_hint,
         exceeded: std::sync::Arc::clone(&exceeded),
     };
-    let collected = collect_via_engine(&mut opened, job, sink, budget, &abort);
+    let collected = collect_via_engine(opened, job, sink, budget, ctx.abort);
     if exceeded.load(std::sync::atomic::Ordering::Acquire) {
         // doc_v20 review of S76: the cap fires during collection, so this
         // is the actionable refusal (usage class), not the engine's abort.
@@ -254,10 +260,6 @@ pub struct PcaRequest {
     pub prefix: String,
     /// Optional sample keep mask (header order); `None` keeps every sample.
     pub keep_samples: Option<Vec<bool>>,
-    /// Worker threads.
-    pub threads: Option<usize>,
-    /// Memory budget in MiB.
-    pub memory: Option<u64>,
 }
 
 impl Default for PcaRequest {
@@ -269,8 +271,6 @@ impl Default for PcaRequest {
             solver: "auto".into(),
             prefix: "out".into(),
             keep_samples: None,
-            threads: None,
-            memory: None,
         }
     }
 }
@@ -304,10 +304,10 @@ pub struct PcaReport {
 pub fn run_pca(
     path: Option<&std::path::Path>,
     request: &PcaRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<PcaReport, crate::Error> {
-    let opened = crate::open_regions(path, &[])?;
-    run_pca_opened(opened, request, budget)
+    let opened = crate::input::open_regions(path, &[])?;
+    run_pca_opened(opened, request, ctx)
 }
 
 /// Runs PCA over an already-opened input (the CLI opens once so stdin streams).
@@ -318,8 +318,9 @@ pub fn run_pca(
 pub fn run_pca_opened(
     opened: crate::OpenedInput,
     request: &PcaRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<PcaReport, crate::Error> {
+    let budget = ctx.budget;
     if request.pcs == 0 {
         return Err(crate::Error::usage("--pcs must be at least 1"));
     }
@@ -370,7 +371,7 @@ pub fn run_pca_opened(
     let matrix_use = matrix_use(chosen_solver(solver, n_kept, None, budget), missing);
     let sample_names = opened.facts().sample_names.clone();
     let (x, _kept_names) =
-        read_genotype_matrix(opened, request.keep_samples.as_deref(), budget, matrix_use)?;
+        read_genotype_matrix(opened, request.keep_samples.as_deref(), ctx, matrix_use)?;
     // The reader above validated the mask's length against the header, so
     // the per-sample indexing here is in-bounds by construction.
     let n_samples = sample_names.len();
@@ -757,7 +758,7 @@ mod tests {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let Err(e) = run_pca(Some(&input), &request, &budget) else {
+        let Err(e) = run_pca(Some(&input), &request, &crate::RunContext::idle(&budget)) else {
             panic!("an out-of-domain GT allele must fail the run (doc_v25 V25-01)")
         };
         assert_eq!(e.kind(), crate::ErrorKind::Runtime, "{e}");
@@ -802,7 +803,8 @@ mod tests {
                 threads: 2,
                 mem: MemBudget::from_bytes(u64::MAX),
             };
-            run_pca(Some(&input), &request, &budget).expect("invariant: pca");
+            run_pca(Some(&input), &request, &crate::RunContext::idle(&budget))
+                .expect("invariant: pca");
             std::fs::read(dir.join(format!("{name}.eigenvec"))).expect("invariant: eigenvec")
         };
         let gt_first = make(
@@ -845,7 +847,7 @@ mod tests {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        match run_pca(Some(&input), &request, &budget) {
+        match run_pca(Some(&input), &request, &crate::RunContext::idle(&budget)) {
             Ok(report) => panic!(
                 "stream + pairwise must be refused, not silently mean-imputed \
                  (doc_v20 R10); got Ok with solver {}",
@@ -884,7 +886,7 @@ mod tests {
             threads: 2,
             mem: MemBudget::from_bytes(60_000),
         };
-        match run_pca(Some(&input), &request, &budget) {
+        match run_pca(Some(&input), &request, &crate::RunContext::idle(&budget)) {
             Ok(report) => panic!(
                 "auto-forced stream + pairwise must be refused (doc_v20 R10); \
                  got Ok with solver {}",
@@ -922,7 +924,7 @@ mod tests {
             threads: 2,
             mem: MemBudget::from_bytes(48_000),
         };
-        match run_pca(Some(&input), &request, &budget) {
+        match run_pca(Some(&input), &request, &crate::RunContext::idle(&budget)) {
             Ok(report) => panic!(
                 "a dosage matrix over the memory budget must be a usage \
                  error, not a silent allocation (doc_v20 S76); got Ok with \
@@ -1051,7 +1053,7 @@ mod tests {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_pca(Some(&input), &request, &budget)
+        let report = run_pca(Some(&input), &request, &crate::RunContext::idle(&budget))
             .expect("invariant: a comfortable budget succeeds (doc_v20 S76)");
         assert_eq!(report.n_samples, 8);
         assert_eq!(report.n_sites, 60);
@@ -1078,7 +1080,8 @@ mod tests {
             threads: 2,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let report = run_pca(Some(&input), &request, &budget).expect("stream pca");
+        let report =
+            run_pca(Some(&input), &request, &crate::RunContext::idle(&budget)).expect("stream pca");
         assert_eq!(report.solver, "stream");
         let residual = report
             .stream_max_residual

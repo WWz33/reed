@@ -16,7 +16,7 @@
 //! `umap/umap_.py:1478` find_ab_params.
 
 use crate::backend::sym_eig;
-use reed_core::linalg::{dist2, Mat};
+use reed_core::linalg::{Mat, dist2};
 
 const SMOOTH_K_TOLERANCE: f64 = 1e-5;
 const MIN_K_DIST_SCALE: f64 = 1e-3;

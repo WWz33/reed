@@ -110,15 +110,24 @@ fn request() -> PopgenRequest {
 /// `stats` over the BCF fixture equals the same run over the VCF.gz fixture.
 #[test]
 fn stats_output_is_identical_across_formats() {
-    let bcf = run_popgen(Some(&fixture("fix.bcf")), &request(), &budget()).expect("invariant: bcf");
-    let vcf =
-        run_popgen(Some(&fixture("fix.vcf.gz")), &request(), &budget()).expect("invariant: vcf.gz");
+    let bcf = run_popgen(
+        Some(&fixture("fix.bcf")),
+        &request(),
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("invariant: bcf");
+    let vcf = run_popgen(
+        Some(&fixture("fix.vcf.gz")),
+        &request(),
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("invariant: vcf.gz");
     // The request uses `InvariantMode::VariantOnly`, so the flat table is
     // rendered with the variant-only denominators (as the old sink did).
     let kinds = reed::window_kinds(2, true, true, true, false, None, None);
     assert_eq!(
-        reed::windows::render_tsv(&bcf.windows, &kinds, true),
-        reed::windows::render_tsv(&vcf.windows, &kinds, true)
+        reed::frontend::windows::render_tsv(&bcf.windows, &kinds, true),
+        reed::frontend::windows::render_tsv(&vcf.windows, &kinds, true)
     );
     assert_eq!(bcf.n_records, vcf.n_records);
 }
@@ -129,7 +138,7 @@ fn reports_are_identical_across_formats() {
     let dir = dir("reports");
     let bcf_prefix = dir.join("b");
     let vcf_prefix = dir.join("v");
-    let request = |prefix: &Path| reed::reports::StatsReportRequest {
+    let request = |prefix: &Path| reed::frontend::reports::StatsReportRequest {
         freq: true,
         hardy: true,
         het: true,
@@ -143,12 +152,16 @@ fn reports_are_identical_across_formats() {
         select: reed::spec::region::SiteSelector::default(),
         prefix: prefix.to_path_buf(),
     };
-    reed::reports::run_stats(Some(&fixture("fix.bcf")), &request(&bcf_prefix), &budget())
-        .expect("invariant: bcf reports");
-    reed::reports::run_stats(
+    reed::frontend::reports::run_stats(
+        Some(&fixture("fix.bcf")),
+        &request(&bcf_prefix),
+        &reed::RunContext::idle(&budget()),
+    )
+    .expect("invariant: bcf reports");
+    reed::frontend::reports::run_stats(
         Some(&fixture("fix.vcf.gz")),
         &request(&vcf_prefix),
-        &budget(),
+        &reed::RunContext::idle(&budget()),
     )
     .expect("invariant: vcf reports");
     for suffix in [
@@ -190,7 +203,6 @@ fn bcf_output_round_trips_to_the_same_records() {
     };
     let run = |input: &Path, out: &Path, bcf: Option<u8>| {
         let opts = FilterOptions {
-            threads: 2,
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -203,11 +215,15 @@ fn bcf_output_round_trips_to_the_same_records() {
             tmp_dir: None,
             output_compressed: if bcf.is_none() { Some(true) } else { None },
             output_bcf: bcf,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         };
-        run_filter(Some(input), &spec, &opts)
+        run_filter(
+            Some(input),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
     };
     let text_out = dir.join("text.vcf.gz");
     let bcf_out = dir.join("data.bcf");
@@ -257,7 +273,6 @@ fn pass_is_declared_even_when_the_input_lacks_it() {
 
     let out = dir.join("out.bcf");
     let opts = FilterOptions {
-        threads: 2,
         output: Some(out.clone()),
         write_index: reed::WriteIndex::None,
         compress_level: 6,
@@ -267,8 +282,13 @@ fn pass_is_declared_even_when_the_input_lacks_it() {
         no_command: true,
         ..FilterOptions::default()
     };
-    run_filter(Some(&input), &FilterSpec::default(), &opts)
-        .expect("a PASS record must encode even when the input lacks the declaration");
+    run_filter(
+        Some(&input),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("a PASS record must encode even when the input lacks the declaration");
 
     // The written BCF header declares PASS, and its dictionary resolves the
     // record's FILTER index to PASS (index 0, as htslib assumes).
@@ -344,8 +364,11 @@ fn bcf_output_is_thread_count_independent() {
         ..FilterSpec::default()
     };
     let run = |threads: usize, out: &Path| {
-        let opts = FilterOptions {
+        let budget = reed::ThreadBudget {
             threads,
+            ..reed::ThreadBudget::default()
+        };
+        let opts = FilterOptions {
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -358,11 +381,15 @@ fn bcf_output_is_thread_count_independent() {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: Some(1),
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         };
-        run_filter(Some(&fixture("fix.bcf")), &spec, &opts)
+        run_filter(
+            Some(&fixture("fix.bcf")),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&budget),
+        )
     };
     let mut reference: Option<Vec<u8>> = None;
     for threads in [1_usize, 2, 3, 7, 56] {
@@ -402,7 +429,6 @@ fn af_bounds_match_bcftools_on_the_fixture() {
         };
         let out = dir.join("o.vcf.gz");
         let opts = FilterOptions {
-            threads: 2,
             output: Some(out.clone()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -415,11 +441,16 @@ fn af_bounds_match_bcftools_on_the_fixture() {
             tmp_dir: None,
             output_compressed: Some(true),
             output_bcf: None,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         };
-        run_filter(Some(&fixture("fix.vcf.gz")), &spec, &opts).expect("invariant: run");
+        run_filter(
+            Some(&fixture("fix.vcf.gz")),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect("invariant: run");
         inflate_bgzf(&std::fs::read(&out).expect("invariant: output"))
             .lines()
             .filter(|l| !l.starts_with('#'))
@@ -458,7 +489,6 @@ fn chain_framing_is_boundary_independent() {
     };
     let run = |input: &Path, out: &Path| {
         let opts = FilterOptions {
-            threads: 2,
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -471,11 +501,16 @@ fn chain_framing_is_boundary_independent() {
             tmp_dir: None,
             output_compressed: Some(true),
             output_bcf: None,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         };
-        run_filter(Some(input), &spec, &opts).expect("invariant: run");
+        run_filter(
+            Some(input),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
+        .expect("invariant: run");
         let text = inflate_bgzf(&std::fs::read(out).expect("invariant: output"));
         text.lines()
             .filter(|l| !l.starts_with('#'))
@@ -520,7 +555,6 @@ fn filter_output_is_identical_across_formats() {
     };
     let run = |input: &Path, out: &Path| {
         let opts = FilterOptions {
-            threads: 4,
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -533,11 +567,15 @@ fn filter_output_is_identical_across_formats() {
             tmp_dir: None,
             output_compressed: Some(true),
             output_bcf: None,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         };
-        run_filter(Some(input), &spec, &opts)
+        run_filter(
+            Some(input),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
     };
     let bcf_out = dir.join("b.vcf.gz");
     let vcf_out = dir.join("v.vcf.gz");
@@ -595,7 +633,6 @@ fn vcf44_phasing_and_negative_zero_survive_the_round_trip() {
     };
     let run = |input: &Path, out: &Path, bcf: Option<u8>| {
         let opts = FilterOptions {
-            threads: 2,
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -608,11 +645,15 @@ fn vcf44_phasing_and_negative_zero_survive_the_round_trip() {
             tmp_dir: None,
             output_compressed: bcf.is_none().then_some(true),
             output_bcf: bcf,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         };
-        run_filter(Some(input), &spec, &opts)
+        run_filter(
+            Some(input),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
     };
     let text_out = dir.join("text.vcf.gz");
     let bcf_out = dir.join("out.bcf");
@@ -652,7 +693,6 @@ fn sketch_path_rejects_bcf_output() {
         ..FilterSpec::default()
     };
     let opts = FilterOptions {
-        threads: 4,
         output: Some(dir.join("x.bcf")),
         write_index: reed::WriteIndex::None,
         compress_level: 1,
@@ -665,12 +705,16 @@ fn sketch_path_rejects_bcf_output() {
         tmp_dir: None,
         output_compressed: None,
         output_bcf: Some(6),
-        mem_bytes: None,
         no_version: false,
         no_command: false,
     };
-    let err = run_filter(Some(&fixture("fix.vcf.gz")), &spec, &opts)
-        .expect_err("sketch + BCF output must be refused");
+    let err = run_filter(
+        Some(&fixture("fix.vcf.gz")),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect_err("sketch + BCF output must be refused");
     let msg = format!("{err}");
     assert!(
         msg.contains("BCF output requires the streaming path"),
@@ -694,7 +738,6 @@ fn bcf_header_at_a_block_boundary_decodes() {
     let spec = FilterSpec::default();
     let run = |name: &str, out: &Path| {
         let opts = FilterOptions {
-            threads: 1,
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -707,11 +750,15 @@ fn bcf_header_at_a_block_boundary_decodes() {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: None,
-            mem_bytes: None,
             no_version: true,
             no_command: true,
         };
-        run_filter(Some(&fixture(name)), &spec, &opts)
+        run_filter(
+            Some(&fixture(name)),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
     };
     let boundary_out = dir.join("boundary.vcf.gz");
     run("boundary.bcf", &boundary_out).expect("boundary header must decode (doc_v15 D15-3)");
@@ -741,7 +788,6 @@ fn bcf_contig_idx_wins_over_line_order() {
     let spec = FilterSpec::default();
     let run = |name: &str, out: &Path| {
         let opts = FilterOptions {
-            threads: 1,
             output: Some(out.to_path_buf()),
             write_index: reed::WriteIndex::None,
             compress_level: 1,
@@ -754,11 +800,15 @@ fn bcf_contig_idx_wins_over_line_order() {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: None,
-            mem_bytes: None,
             no_version: true,
             no_command: true,
         };
-        run_filter(Some(&fixture(name)), &spec, &opts)
+        run_filter(
+            Some(&fixture(name)),
+            &spec,
+            &opts,
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
+        )
     };
     let swapped = dir.join("swapped.vcf.gz");
     run("idx.bcf", &swapped).expect("idx.bcf decodes");
@@ -800,7 +850,6 @@ fn bcf_output_preserves_explicit_contig_idx() {
     .expect("invariant: input");
     let output = dir.join("out.bcf");
     let opts = FilterOptions {
-        threads: 1,
         output: Some(output.clone()),
         write_index: reed::WriteIndex::Csi,
         output_bcf: Some(1),
@@ -808,7 +857,13 @@ fn bcf_output_preserves_explicit_contig_idx() {
         no_command: true,
         ..FilterOptions::default()
     };
-    run_filter(Some(&input), &FilterSpec::default(), &opts).expect("filter runs");
+    run_filter(
+        Some(&input),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("filter runs");
     let rendered = render_via_reed(&output);
     let chroms: Vec<&str> = rendered
         .lines()
@@ -821,7 +876,6 @@ fn bcf_output_preserves_explicit_contig_idx() {
     // through it must not see a record from the other contig.
     let region_out = dir.join("region.vcf");
     let region_opts = FilterOptions {
-        threads: 1,
         output: Some(region_out.clone()),
         write_index: reed::WriteIndex::None,
         output_compressed: Some(false),
@@ -834,7 +888,13 @@ fn bcf_output_preserves_explicit_contig_idx() {
         }],
         ..FilterOptions::default()
     };
-    run_filter(Some(&output), &FilterSpec::default(), &region_opts).expect("region read");
+    run_filter(
+        Some(&output),
+        &FilterSpec::default(),
+        &region_opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("region read");
     let region_text = std::fs::read_to_string(&region_out).expect("invariant: region output");
     let region_records: Vec<&str> = region_text
         .lines()
@@ -858,16 +918,16 @@ fn m1_genotype_matrix_is_format_independent() {
     let bcf = fixture("fix.bcf");
     let budget = budget();
     let (from_vcf, ids_vcf) = reed::read_genotype_matrix(
-        reed::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"),
+        reed::frontend::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"),
         None,
-        &budget,
+        &reed::RunContext::idle(&budget),
         reed::MatrixUse::Plain,
     )
     .expect("VCF input");
     let (from_bcf, ids_bcf) = reed::read_genotype_matrix(
-        reed::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"),
+        reed::frontend::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"),
         None,
-        &budget,
+        &reed::RunContext::idle(&budget),
         reed::MatrixUse::Plain,
     )
     .expect("BCF input must parse like VCF (doc_v21 M1)");
@@ -904,7 +964,6 @@ fn bcf_dp_mask_falls_back_to_ad() {
         .expect("invariant: fixture");
 
     let opts = |out: &Path, bcf: Option<u8>| FilterOptions {
-        threads: 2,
         output: Some(out.to_path_buf()),
         write_index: reed::WriteIndex::None,
         compress_level: 1,
@@ -917,14 +976,18 @@ fn bcf_dp_mask_falls_back_to_ad() {
         tmp_dir: None,
         output_compressed: if bcf.is_none() { Some(true) } else { None },
         output_bcf: bcf,
-        mem_bytes: None,
         no_version: false,
         no_command: false,
     };
     // Encode the fixture as BCF with a no-op spec.
     let bcf = dir.join("in.bcf");
-    run_filter(Some(&vcf), &FilterSpec::default(), &opts(&bcf, Some(6)))
-        .expect("invariant: BCF encode");
+    run_filter(
+        Some(&vcf),
+        &FilterSpec::default(),
+        &opts(&bcf, Some(6)),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: BCF encode");
     // Mask the BCF input by the AD depth.
     let spec = FilterSpec {
         genotype: GenotypeRules {
@@ -939,7 +1002,13 @@ fn bcf_dp_mask_falls_back_to_ad() {
         ..FilterSpec::default()
     };
     let out = dir.join("masked.vcf.gz");
-    run_filter(Some(&bcf), &spec, &opts(&out, None)).expect("invariant: mask");
+    run_filter(
+        Some(&bcf),
+        &spec,
+        &opts(&out, None),
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: mask");
     let text = inflate_bgzf(&std::fs::read(&out).expect("invariant: output"));
     let records: Vec<&str> = text
         .lines()
@@ -985,7 +1054,6 @@ fn bcf_index_reference_table_follows_the_record_tid_space() {
     .expect("invariant: input");
     let output = dir.join("out.bcf");
     let opts = FilterOptions {
-        threads: 1,
         output: Some(output.clone()),
         write_index: reed::WriteIndex::Csi,
         output_bcf: Some(1),
@@ -993,7 +1061,13 @@ fn bcf_index_reference_table_follows_the_record_tid_space() {
         no_command: true,
         ..FilterOptions::default()
     };
-    run_filter(Some(&input), &FilterSpec::default(), &opts).expect("filter runs");
+    run_filter(
+        Some(&input),
+        &FilterSpec::default(),
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("filter runs");
 
     let index = reed_io::chunk::region::FileIndex::open(&output.with_extension("bcf.csi"))
         .expect("invariant: csi written");
@@ -1016,8 +1090,16 @@ fn index_accepts_descending_record_tids_like_htslib() {
     let dir = dir("descending-tids");
     let input = dir.join("idx.bcf");
     std::fs::copy(fixture("idx.bcf"), &input).expect("invariant: fixture copy");
-    reed::run_index(&input, reed::WriteIndex::Csi, None, 1)
-        .expect("descending tids are indexable, as in htslib");
+    reed::run_index(
+        &input,
+        reed::WriteIndex::Csi,
+        None,
+        &reed::RunContext::idle(&reed::ThreadBudget {
+            threads: 1,
+            ..Default::default()
+        }),
+    )
+    .expect("descending tids are indexable, as in htslib");
 
     let index = reed_io::chunk::region::FileIndex::open(&dir.join("idx.bcf.csi"))
         .expect("invariant: csi written");

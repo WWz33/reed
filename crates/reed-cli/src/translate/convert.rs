@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use reed::budget::ThreadBudget;
+use reed::ThreadBudget;
 use reed::{
-    ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats, PhyloOptions, Populations, run_convert,
+    ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions, Populations, run_convert,
     run_convert_opened,
 };
 
@@ -29,21 +29,6 @@ fn default_prefix(path: &Path) -> Option<PathBuf> {
         }
     }
     (!stem.is_empty()).then(|| PathBuf::from(stem))
-}
-
-/// Parses one `--msa` region spelling (`CHR`, `CHR:B-E`, `CHR:B-`, `CHR:-E`).
-///
-/// # Errors
-///
-/// A malformed region spelling.
-fn parse_msa_region(text: &str) -> Result<MsaRegion, reed::Error> {
-    let parsed = reed::spec::Region::parse(text)
-        .map_err(|e| reed::Error::usage(format!("invalid --region {text:?}: {e}")))?;
-    Ok(MsaRegion {
-        contig: parsed.contig,
-        start1: parsed.start,
-        end1: parsed.end,
-    })
 }
 
 /// Parses one `-O` spelling for `--vcf`: `v` (plain text) or `z[LEVEL]`
@@ -138,10 +123,12 @@ fn run_vcf_cli(args: ConvertCli) -> Result<(), reed::Error> {
     };
 
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
 
     let input_file = crate::units::input_path(&args.input);
     let run_start = std::time::Instant::now();
-    let report = run_convert(input_file.as_deref().map(Path::new), &request, &budget)?;
+    let report = run_convert(input_file.as_deref().map(Path::new), &request, &ctx)?;
     let run_secs = run_start.elapsed().as_secs_f64();
 
     if args.verbosity.shows_summary() {
@@ -294,7 +281,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         guarded.push((Path::new(populations), "populations file"));
     }
     super::common::refuse_sidecar_alias(&log_path, &guarded)?;
-    let mut opened = Some(reed::open_regions(input_file.as_deref(), &[])?);
+    let mut opened = Some(reed::frontend::open_regions(input_file.as_deref(), &[])?);
     let facts = opened.as_ref().expect("invariant: just opened").facts();
     let sample_names: Vec<String> = facts.sample_names.clone();
     let keep_samples = super::common::parse_sample_keep(&args.sample_args, &sample_names)
@@ -344,13 +331,11 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
         targets.push(ConvertTarget::Hapmap);
     }
     if args.msa {
-        let mut regions = Vec::with_capacity(args.region.len());
-        for text in &args.region {
-            regions.push(parse_msa_region(text)?);
-        }
         targets.push(ConvertTarget::Msa {
             reference: PathBuf::from(args.reference.as_deref().expect("invariant: checked above")),
-            regions,
+            // Parsed against the reference FASTA contigs by the driver
+            // (doc_v30 R04); the CLI has no header at this point.
+            regions: args.region.clone(),
             flank: args.flank,
             collapse_suffix: args.collapse_suffix.clone(),
         });
@@ -366,10 +351,12 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
     };
 
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
 
     let source = opened.take().expect("invariant: convert reads once");
     let run_start = std::time::Instant::now();
-    let report = run_convert_opened(source, &request, &budget)?;
+    let report = run_convert_opened(source, &request, &ctx)?;
     let run_secs = run_start.elapsed().as_secs_f64();
 
     // ---- The run log (v13 §5.2) ------------------------------------------
@@ -410,7 +397,7 @@ pub(crate) fn run_convert_cli(args: ConvertCli) -> Result<(), reed::Error> {
              msa    reference-driven alignment (vcf2msa semantics, no external aligner)\n  \
              sfs    Marth 2004; Gutenkunst 2009\n",
         );
-        reed::write_atomic(&log_path, log)?;
+        reed::frontend::write_atomic(&log_path, log)?;
         files.push(log_path);
     }
     if args.verbosity.shows_summary() {

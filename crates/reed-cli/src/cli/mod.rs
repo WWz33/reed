@@ -242,10 +242,10 @@ pub(crate) struct PcaCli {
     pub samples: filter_flags::SampleArgs,
     /// Worker threads (default: available parallelism)
     #[arg(long, value_name = "INT")]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -275,7 +275,7 @@ pub(crate) struct DistanceCli {
     /// per-pair called count (plink's meanimpute)
     #[arg(long)]
     pub mean_impute: bool,
-    /// For pihat: skip the [0,1] clipping (plink --genome unbounded)
+    /// For pihat: skip the \[0,1\] clipping (plink --genome unbounded)
     #[arg(long)]
     pub unbounded: bool,
     /// For pihat: snap to a possible configuration when PI_HAT^2 < Z2
@@ -311,7 +311,7 @@ pub(crate) struct DistanceCli {
         requires = "bootstrap"
     )]
     pub bootstrap_cutoff: f64,
-    /// Output prefix: writes PREFIX.<suffix>
+    /// Output prefix: writes `PREFIX.<suffix>`
     #[arg(short = 'o', long = "out", value_name = "PREFIX")]
     pub output: Option<String>,
     /// Sample subsets (same spelling as `reed filter -s/-S/--keep/--remove`)
@@ -319,10 +319,10 @@ pub(crate) struct DistanceCli {
     pub samples: filter_flags::SampleArgs,
     /// Worker threads (default: available parallelism)
     #[arg(long, value_name = "INT")]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -409,10 +409,10 @@ pub(crate) struct FilterCli {
     pub strategy: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Directory for temporary files (the stdin spill of multi-pass runs)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
@@ -448,7 +448,7 @@ pub(crate) struct IndexCli {
     pub force: bool,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -515,7 +515,7 @@ pub(crate) struct StatsCli {
     #[arg(long)]
     pub summary: bool,
     /// Histograms: comma-separated built-ins (qual, dp, dp-site, gq, idl,
-    /// af) and INFO/<TAG> or FMT/<TAG> requests; each writes PREFIX.<m>.hist
+    /// af) and `INFO/<TAG>` or `FMT/<TAG>` requests; each writes `PREFIX.<m>.hist`
     #[arg(long, value_name = "LIST")]
     pub hist: Option<String>,
     /// Per-allele singletons and private doubletons (PREFIX.singletons, the
@@ -536,14 +536,14 @@ pub(crate) struct StatsCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// Directory for temporary files (accepted for compatibility; single-pass
     /// report runs never spill — doc_v15 D15-23)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -781,10 +781,10 @@ pub(crate) struct PopgCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -857,7 +857,7 @@ pub(crate) struct ConvertCli {
     #[arg(long)]
     pub hapmap: bool,
     /// Reference-driven whole-site MSA (vcf2msa semantics):
-    /// PREFIX_<contig>.fasta per contig or region
+    /// `PREFIX_<contig>.fasta` per contig or region
     #[arg(long)]
     pub msa: bool,
     /// Reference genome FASTA (required by --msa; must match the VCF)
@@ -900,10 +900,10 @@ pub(crate) struct ConvertCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -923,7 +923,7 @@ pub(crate) struct RenameCli {
     /// Replace the whole header (must keep the same samples)
     #[arg(short = 'h', long, value_name = "FILE")]
     pub header: Option<String>,
-    /// Set `##contig` lengths from a `.fai` (name<TAB>length)
+    /// Set `##contig` lengths from a `.fai` (`name<TAB>length`)
     #[arg(short = 'f', long, value_name = "FILE")]
     pub fai: Option<String>,
     /// Append a `##key=value` header line; repeatable
@@ -997,10 +997,10 @@ pub(crate) struct RenameCli {
     pub help: Option<bool>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::budget::Threads>,
+    pub threads: Option<reed::frontend::budget::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::budget::MemMiB>,
+    pub memory: Option<reed::frontend::budget::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -1042,6 +1042,32 @@ mod tests {
                 names.iter().any(|n| n == name),
                 "group lists unknown command {name}"
             );
+        }
+    }
+
+    /// doc_v30 R13: `--fill-tags` help used to be one of six hand-written
+    /// enumerations of the supported tags. The registry is authoritative, so
+    /// every row it names must appear in the help; a tag missing here means
+    /// the help and the accepted set have drifted apart.
+    #[test]
+    fn fill_tags_help_names_every_registry_tag() {
+        use clap::CommandFactory as _;
+        let root = Cli::command();
+        let filter = root
+            .get_subcommands()
+            .find(|c| c.get_name() == "filter")
+            .expect("filter subcommand");
+        let arg = filter
+            .get_arguments()
+            .find(|a| a.get_id() == "fill_tags")
+            .expect("--fill-tags");
+        let help = arg
+            .get_long_help()
+            .or_else(|| arg.get_help())
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        for tag in reed::spec::recompute::supported_fill_tags() {
+            assert!(help.contains(tag), "--fill-tags help omits {tag}:\n{help}");
         }
     }
 

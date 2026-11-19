@@ -22,7 +22,8 @@ use reed_core::count::SiteGroupCounts;
 use reed_core::genotype::{GenotypePolicies, PlaneBlock, PolicyCounters};
 use reed_core::math::hwe::HweCache;
 use reed_core::sample::SampleMask;
-use reed_engine::budget::ThreadBudget;
+
+use crate::context::RunContext;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::vcf::genotype_scan::{GenotypeScanner, INT_MISSING, ScanOutput};
@@ -204,6 +205,11 @@ pub struct StatsOutcome {
     pub hist: Vec<crate::stats::writers::histogram::HistOut>,
     /// The engine's stage metrics (doc_v4 03 A4-5).
     pub metrics: reed_engine::metrics::StageMetrics,
+    /// Multi-allelic records the per-site reports skipped (`--freq`,
+    /// `--hardy`, `--missing`, `--depth`): those rows hold one ALT and one
+    /// frequency, so a multi-allelic record cannot be represented (doc_v30
+    /// §4.7, V30-03). Surfaces in the run log's `multiallelic skipped` line.
+    pub n_multiallelic_skipped: u64,
 }
 
 /// The reports that need per-site rows, and the fields each needs.
@@ -285,6 +291,13 @@ struct ReportPartial {
     /// Per sample: `(Σ DP, sites with a called genotype and a DP)` (`--depth`).
     depth_sums: Vec<(f64, u64)>,
     n_records: u64,
+    /// Records with `n_alt > 1` skipped by the per-site reports (`--freq`,
+    /// `--hardy`, `--missing`, `--depth`). Those rows are `Number=A`-shaped
+    /// or single-allele-shaped and cannot represent a multi-allelic site, so
+    /// the reports skip it instead of writing one collapsed value (doc_v30
+    /// §4.7, V30-03; the same policy `site_prefix` applies to the window
+    /// accumulators). Counted into the run log.
+    multiallelic_skipped: u64,
 }
 
 /// The scan job: one record → rendered rows + per-sample updates (+ the QC
@@ -822,6 +835,15 @@ impl ReportJob {
         let chrom = site.contig_name;
         let reference = site.reference;
         let alt = site.alts;
+        // A multi-allelic record cannot be represented in these single-value
+        // rows; skip it and count it for the run log (doc_v30 §4.7, V30-03).
+        // Every per-site report below writes one ALT (and `--freq` one
+        // frequency), so writing a collapsed value would silently disagree
+        // with plink2's `0.25,0.25` for `A G,T`.
+        if alt != b"." && alt.contains(&b',') {
+            partial.multiallelic_skipped += 1;
+            return;
+        }
         let an = counts.n_called_alleles(
             u32::try_from(self.n_samples).expect("invariant: sample count < u32::MAX"),
         );
@@ -1000,6 +1022,8 @@ struct ReportSink {
     depth_sums: Vec<(f64, u64)>,
     individual: IndividualFAcc,
     n_records: u64,
+    /// Multi-allelic records the per-site reports skipped (doc_v30 §4.7).
+    multiallelic_skipped: u64,
     /// The `--summary` accumulator (`None` unless it shares the pass).
     qc: Option<QcReportAcc>,
     /// The merged `--hist` accumulators.
@@ -1053,6 +1077,7 @@ fn stage_report_file(
 impl OrderedSink<ReportPartial> for ReportSink {
     fn accept(&mut self, _id: ChunkId, partial: &mut ReportPartial) -> Result<(), EngineError> {
         self.n_records += partial.n_records;
+        self.multiallelic_skipped += partial.multiallelic_skipped;
         let append = |writer: &mut Option<AtomicSink>, bytes: &[u8]| {
             if let Some(w) = writer {
                 w.write_all(bytes).map_err(EngineError::Io)?;
@@ -1206,6 +1231,7 @@ impl OrderedSink<ReportPartial> for ReportSink {
             // The engine metrics come from the run, not the sink; the
             // driver fills this after `run` returns.
             metrics: reed_engine::metrics::StageMetrics::default(),
+            n_multiallelic_skipped: self.multiallelic_skipped,
         });
         Ok(n_records)
     }
@@ -1320,10 +1346,10 @@ fn trim_trailing_zeros(s: &str) -> String {
 pub fn run_stats(
     input: Option<&Path>,
     request: &StatsReportRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<StatsOutcome, crate::error::Error> {
     let opened = crate::input::open(input).map_err(EngineError::from)?;
-    run_stats_opened(opened, request, budget)
+    run_stats_opened(opened, request, ctx)
 }
 
 /// Runs the requested reports over an already-opened input (the CLI opens
@@ -1335,12 +1361,13 @@ pub fn run_stats(
 pub fn run_stats_opened(
     opened: crate::input::OpenedInput,
     request: &StatsReportRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<StatsOutcome, crate::error::Error> {
-    let n_samples = opened.facts.n_samples();
+    let budget = ctx.budget;
+    let n_samples = opened.facts().n_samples();
     // Header types are a request property, checked before the first record
     // (V22-R2-6): a Float depth/GQ tag used to decode as all-missing.
-    validate_report_tags(request, &reed_io::header::tag_table(&opened.facts.header))?;
+    validate_report_tags(request, &reed_io::header::tag_table(&opened.facts().header))?;
     // `--pop` (doc_v14 02 §2.2): resolve the assignment against the header
     // before the run; `None` keeps the whole-cohort behavior. An empty group
     // set (every row skipped) is a usage error — the stratified files would
@@ -1350,7 +1377,7 @@ pub fn run_stats_opened(
             let (slots, names) = resolve_groups(
                 populations,
                 request.force_samples,
-                &opened.facts.sample_names,
+                &opened.facts().sample_names,
                 None,
             )?;
             if names.is_empty() {
@@ -1368,7 +1395,7 @@ pub fn run_stats_opened(
         n_samples,
         plan,
         hist: request.hist.clone(),
-        sample_names: opened.facts.sample_names.clone(),
+        sample_names: opened.facts().sample_names.clone(),
         groups,
         // The one stats decode policy (doc_v25 V25-07): the report job used
         // to hand-copy it, so a policy change had to touch two files.
@@ -1436,11 +1463,9 @@ pub fn run_stats_opened(
     if let Some(w) = &mut vmiss_pop {
         writeln!(w, "#CHROM\tID\tPOP\tMISSING_CT\tOBS_CT\tF_MISS").map_err(EngineError::Io)?;
     }
-    let abort = reed_engine::abort::abort_for(budget);
-    let job = crate::bcf_input::InputJob::new(job, &opened, &abort, budget);
-    let crate::input::OpenedInput {
-        mut source, facts, ..
-    } = opened;
+    let abort = ctx.abort;
+    let job = crate::bcf_input::InputJob::new(job, &opened, abort, budget);
+    let (mut source, facts, _meta) = opened.into_parts();
     let pending_reports: Arc<Mutex<Vec<(PathBuf, reed_io::write::atomic::AtomicFile)>>> =
         Arc::new(Mutex::new(Vec::new()));
     let sink = ReportSink {
@@ -1459,6 +1484,7 @@ pub fn run_stats_opened(
         depth_sums: vec![(0.0, 0); n_samples],
         individual: IndividualFAcc::new(n_samples),
         n_records: 0,
+        multiallelic_skipped: 0,
         qc: (request.summary
             || crate::stats::writers::histogram::HistMetric::any_needs_qc(&request.hist))
         .then(|| {
@@ -1472,7 +1498,7 @@ pub fn run_stats_opened(
         out: Arc::new(Mutex::new(None)),
     };
     let out = Arc::clone(&sink.out);
-    let report = run(source.as_mut(), &job, sink, budget, &abort)?;
+    let report = run(source.as_mut(), &job, sink, budget, abort)?;
     job.finish(report.n_chunks, true)?;
     // Publish only after the BCF tail check: a failed run leaves every
     // previous report file byte-identical (doc_v28 V28-06).

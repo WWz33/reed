@@ -46,7 +46,13 @@ fn run(spec: &RenameSpec, input: &Path, output: &Path, threads: usize) -> reed::
         no_command: false,
         write_index: None,
     };
-    run_rename(Some(input), spec, &out, &budget(threads)).expect("invariant: rename run")
+    run_rename(
+        Some(input),
+        spec,
+        &out,
+        &reed::RunContext::idle(&budget(threads)),
+    )
+    .expect("invariant: rename run")
 }
 
 fn read(path: &Path) -> String {
@@ -219,7 +225,13 @@ fn validation_rejects_bad_input() {
         },
     ];
     for spec in &bad {
-        let err = run_rename(Some(&input), spec, &out, &budget(1)).expect_err("must be refused");
+        let err = run_rename(
+            Some(&input),
+            spec,
+            &out,
+            &reed::RunContext::idle(&budget(1)),
+        )
+        .expect_err("must be refused");
         assert_eq!(err.kind(), reed::ErrorKind::Usage, "{spec:?}");
     }
     let _ = std::fs::remove_dir_all(&d);
@@ -298,7 +310,13 @@ fn write_index_produces_a_sidecar() {
         no_command: false,
         write_index: Some(reed::WriteIndex::Csi),
     };
-    let report = run_rename(Some(&input), &spec, &out_cfg, &budget(1)).expect("rename -W");
+    let report = run_rename(
+        Some(&input),
+        &spec,
+        &out_cfg,
+        &reed::RunContext::idle(&budget(1)),
+    )
+    .expect("rename -W");
     assert_eq!(report.files, vec![out.clone()]);
     let mut csi = out.as_os_str().to_os_string();
     csi.push(".csi");
@@ -434,7 +452,13 @@ fn dedup_batches_keep_order_index_and_bytes() {
             no_command: false,
             write_index: Some(reed::WriteIndex::Csi),
         };
-        let report = run_rename(Some(&input), &spec, &io, &budget(threads)).expect("rename -W");
+        let report = run_rename(
+            Some(&input),
+            &spec,
+            &io,
+            &reed::RunContext::idle(&budget(threads)),
+        )
+        .expect("rename -W");
         assert_eq!(report.n_records, 80_000);
         assert_eq!(report.n_dup_ids, 80_000 - 7, "every repeat past the first");
         outputs.push(out);
@@ -528,7 +552,13 @@ fn dedup_single_batch_matches_the_plain_run() {
             no_command: false,
             write_index: Some(reed::WriteIndex::Csi),
         };
-        run_rename(Some(&input), &spec, &io, &budget(threads)).expect("rename -W");
+        run_rename(
+            Some(&input),
+            &spec,
+            &io,
+            &reed::RunContext::idle(&budget(threads)),
+        )
+        .expect("rename -W");
         let got: Vec<String> = inflate(&out)
             .lines()
             .map(str::to_owned)
@@ -662,7 +692,13 @@ fn contig_less_input_is_accepted_without_an_index() {
     };
     // The replacement header declares c1, so the index is buildable here;
     // the run must succeed and the sidecar must exist.
-    run_rename(Some(&input), &spec, &io, &budget(2)).expect("invariant: index run");
+    run_rename(
+        Some(&input),
+        &spec,
+        &io,
+        &reed::RunContext::idle(&budget(2)),
+    )
+    .expect("invariant: index run");
     assert!(
         out.with_extension("vcf.csi").exists(),
         "the sidecar is written"
@@ -721,7 +757,7 @@ fn update_name_validates_its_keys() {
             no_command: false,
             write_index: None,
         },
-        &budget(1),
+        &reed::RunContext::idle(&budget(1)),
     )
     .expect_err("an unknown --update-name key must fail");
     assert_eq!(err.kind(), reed::ErrorKind::Usage);
@@ -758,7 +794,7 @@ fn r11_set_id_conflicts_with_update_name() {
             no_command: false,
             write_index: None,
         },
-        &budget(1),
+        &reed::RunContext::idle(&budget(1)),
     )
     .expect_err("--set-id must refuse --update-name instead of dropping it");
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
@@ -796,7 +832,7 @@ fn r11_set_missing_var_ids_keeps_update_name_reachable() {
             no_command: false,
             write_index: None,
         },
-        &budget(1),
+        &reed::RunContext::idle(&budget(1)),
     )
     .expect("the combination fills dots and renames named IDs");
     let text = read(&out);
@@ -823,7 +859,7 @@ fn r11_set_missing_var_ids_keeps_update_name_reachable() {
             no_command: false,
             write_index: None,
         },
-        &budget(1),
+        &reed::RunContext::idle(&budget(1)),
     )
     .expect_err("the typo check must stay armed");
     assert_eq!(err.kind(), reed::ErrorKind::Usage);

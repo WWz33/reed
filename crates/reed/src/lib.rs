@@ -39,10 +39,14 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let budget = reed::ThreadBudget::default();
+//! let abort = reed::abort_for(&budget);
+//! let ctx = reed::RunContext::new(&budget, &abort.signal);
 //! let report = reed::run_filter(
 //!     Some(std::path::Path::new("in.vcf.gz")),
 //!     &reed::spec::FilterSpec::default(),
 //!     &reed::FilterOptions::default(),
+//!     &ctx,
 //! )?;
 //! let _ = report;
 //! # Ok(())
@@ -60,20 +64,30 @@
 //!     populations: Populations::All,
 //!     ..PopgenRequest::default()
 //! };
+//! let budget = reed::ThreadBudget::default();
+//! let abort = reed::abort_for(&budget);
+//! let ctx = reed::RunContext::new(&budget, &abort.signal);
 //! let report = reed::run_popgen(
 //!     Some(std::path::Path::new("in.vcf.gz")),
 //!     &request,
-//!     &reed::budget::ThreadBudget::default(),
+//!     &ctx,
 //! )?;
-//! let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+//! let tsv = reed::render_tsv(&report.windows, &request.kinds, false);
 //! let _ = tsv;
 //! # Ok(())
 //! # }
 //! ```
 
+//! # Stability
+//!
+//! The stability promise covers the root items and the `run_*` entry points
+//! (`docs/spec/api-contract.md`). The `frontend` module is `#[doc(hidden)]`
+//! and excluded from semver.
+
 #![allow(unreachable_pub)]
 
 mod bcf_input;
+mod context;
 mod convert;
 mod error;
 mod filter;
@@ -89,13 +103,20 @@ mod dapc;
 mod genotype;
 mod pca;
 
+/// The curated one-line import set (`use reed::prelude::*;`).
+pub mod prelude;
+
+/// The per-run budget and abort signal every driver takes (doc_v30 P2 §2).
+pub use crate::context::RunContext;
 pub use crate::dapc::{
     DapcReport, DapcRequest, XvalOutcome, XvalRequest, run_dapc, run_dapc_opened,
 };
 pub use crate::error::{Error, ErrorKind};
 pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
 pub use crate::index::{IndexOutcome, run_index};
-pub use crate::input::OpenedInput;
+pub use crate::input::{
+    Framing, InputCapability, InputMeta, OpenedInput, ReplayableInput, SeekableInput, StreamedInput,
+};
 pub use crate::pca::{
     MatrixUse, PcaReport, PcaRequest, read_genotype_matrix, run_pca, run_pca_opened,
 };
@@ -108,11 +129,13 @@ pub use crate::stats::{
 };
 /// Dense row-major matrix, shared with `reed-reduce` and `reed-graph`.
 pub use reed_core::linalg::Mat;
+pub use reed_engine::abort::{Abort, AbortHandle, AbortSignal, abort_for};
+pub use reed_engine::budget::{MemBudget, ThreadBudget};
 // The convert command's request surface (doc_v13 §8): the typed targets, the
 // driver entry points and their reports.
 pub use crate::convert::{
-    ConvertCounters, ConvertReport, ConvertRequest, ConvertTarget, MsaRegion, PhyloFormats,
-    PhyloOptions, run_convert, run_convert_opened,
+    ConvertCounters, ConvertReport, ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions,
+    run_convert, run_convert_opened,
 };
 // The rename command's request surface (doc_v14 §4): the typed spec, the
 // output target and the driver.
@@ -127,50 +150,67 @@ pub use crate::stats::writers::reports::{
     StatsOutcome, StatsReportRequest, run_stats, run_stats_opened, validate_report_tags,
 };
 pub use reed_filter::funnel::FilterReport;
+/// The filter request types that appear in `run_filter`'s signature and in
+/// the typed request structs (doc_v30 P3: every signature type is nameable).
+pub use reed_filter::spec::FilterSpec;
+pub use reed_filter::spec::region::SiteSelector;
 // The accumulator and report types that appear in the facade's public
 // signatures (doc_v7 D7-22: they were `pub` in private modules but never
 // re-exported, so a library caller could not name them).
-pub use reed_stats::request::StatAcc;
+pub use reed_stats::request::{StatAcc, StatOutput};
 pub use reed_stats::summary::report::QcReportAcc;
+// Budgets and errors the drivers take or return (doc_v30 P3 nameability).
+pub use reed_engine::error::EngineError;
+pub use reed_engine::metrics::StageMetrics;
+// Input-side types in public methods: `format()`, `replay(&[Region])` and
+// `into_parts` return them, so they must be nameable (api-contract §2).
+pub use reed_io::bcf::BcfDict;
+pub use reed_io::chunk::ChunkSource;
+pub use reed_io::chunk::region::Region;
+pub use reed_io::error::IoError;
+pub use reed_io::format::Format;
 
-// The output writers (08 §6.2 `reed::writers`): window layout, per-site reports
-// and the bcftools-stats summary renderer.
-pub use crate::stats::writers::{fstats, histogram, ld, reports, sfs, summary, windows};
-
-// The request sub-modules the CLI builds against (08 §6.2): `spec`, `expr`,
-// `plan`, `funnel`.
-pub use reed_filter::{expr, funnel, plan, spec};
-
-// Input opening (the binary's one-shot opens); hidden from the docs.
-#[doc(hidden)]
-pub use crate::input::open_regions;
-/// An output file that appears only when complete (doc_v26 V26-08). Exposed
-/// because the front end writes a few report files itself; every command
-/// output goes through the same primitive.
-pub use reed_io::write::atomic::write_atomic;
-
-/// The atomic-output type itself, for a front-end writer that needs a handle
-/// before it knows whether the file will be published (doc_v26 V26-08).
-pub use reed_io::write::atomic as atomic_file;
+// The request vocabulary (doc_v30 P3): `FilterSpec` and the rule types a
+// caller builds. The build-time plan (`plan`), expression parser (`expr`)
+// and funnel internals are not part of the designed API and live in
+// `frontend` below.
+/// The documented consumer of a windowed-statistics report. The other
+/// writer modules are front-end-only (`frontend`); this renderer is what the
+/// report's public example uses.
+pub use crate::stats::writers::windows::render_tsv;
+pub use reed_filter::spec;
 
 // Front-end re-exports (08 §6.2): the parallel budgets, the region type and
-// the BGZF chunk helpers the front end and its integration tests seek with
-// (`bgzf` writes the test fixtures; `chunk` is the seek/region API).
 pub use reed_core::coord::{Interval0, Pos0};
 pub use reed_core::grid::{ContigRegions, WindowGrid};
 /// The header's declared tag table (doc_v14 §3.3: `--hist` resolves its
 /// `INFO/`/`FMT/` requests against it before the first record).
 pub use reed_core::tag_table::{TagNumber, TagTable, TagType};
-pub use reed_engine::budget;
-pub use reed_engine::metrics;
-/// Builds the tag table from an opened input's header.
-pub use reed_io::header::tag_table;
 /// The VCF header as an opaque value (doc_v26 V26-10): the operations a
 /// downstream user needs, without a third-party type in the surface.
-pub use reed_io::header::{self as header, HeaderFacts, VcfHeader};
-// The facade's boundary (doc_v25 V25-08): the CLI depends on `reed` only;
-// distance/reduce/graph are reachable through the facade's re-exports.
-pub use reed_distance as distance;
-pub use reed_graph as graph;
-pub use reed_io::{bgzf, chunk};
-pub use reed_reduce as reduce;
+pub use reed_io::header::{HeaderFacts, VcfHeader};
+
+/// The in-repo front end's escape hatch (doc_v30 P3): everything `reed-cli`
+/// and the integration tests need that is not part of the designed library
+/// API — the output writers, the build-time plan, the expression parser, the
+/// distance/graph/reduce crates, BGZF fixture helpers, the one-shot input
+/// openers and the atomic-output primitives.
+///
+/// `#[doc(hidden)]`: not part of the documented surface and not covered by
+/// the semver promise (ADR `api-contract` §2). External callers should use
+/// the `run_*` entry points and the request/report types at the root.
+#[doc(hidden)]
+pub mod frontend {
+    pub use crate::input::{PendingInput, open_regions};
+    pub use crate::stats::writers::{fstats, histogram, ld, reports, sfs, summary, windows};
+    pub use reed_distance as distance;
+    pub use reed_engine::{budget, metrics};
+    pub use reed_filter::{expr, funnel, plan};
+    pub use reed_graph as graph;
+    pub use reed_io::header;
+    pub use reed_io::header::tag_table;
+    pub use reed_io::write::atomic as atomic_file;
+    pub use reed_io::write::atomic::write_atomic;
+    pub use reed_io::{bgzf, chunk};
+    pub use reed_reduce as reduce;
+}

@@ -10,13 +10,21 @@
 //! |---|---|---|
 //! | [`allele_ct_distance`] | plink `--distance` | `.dist` |
 //! | [`ibs`] / [`one_minus_ibs`] | plink `--distance ibs` / `1-ibs` | `.mibs` / `.mdist` |
-//! | [`grm`] / [`covariance`] | plink2 `--make-rel [cov]`, GCTA | `.rel` |
+//! | [`mod@grm`] | plink2 `--make-rel [cov]`, GCTA | `.rel` |
 //! | [`king`] | plink2 `--make-king` | `.king` |
 //! | [`pi_hat`] | plink `--genome` | `.genome` |
 //! | [`phi`] | vcftools `--relatedness2` | `.relatedness2` |
 //! | [`ajk`] | vcftools `--relatedness` | `.relatedness` |
 //! | [`discordance`] | bcftools `gtcheck` | `.gtcheck` |
 
+//! # Examples
+//!
+//! ```
+//! use reed_distance::MatrixFormat;
+//! let format = MatrixFormat::Square;
+//! assert!(matches!(format, MatrixFormat::Square));
+//! ```
+//!
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
@@ -37,9 +45,9 @@ pub mod standard;
 
 pub use grm::{Grm, MissingPolicy};
 pub use matrices::{
-    ajk, allele_ct_distance, discordance, grm, ibs, king, one_minus_ibs, phi, pi_hat, AjkOptions,
-    DiscordanceMode, DiscordanceOptions, KingCounts, MatrixKind, MatrixResult, PiHatOptions,
-    PiHatResult,
+    AjkOptions, DiscordanceMode, DiscordanceOptions, KingCounts, MatrixKind, MatrixResult,
+    PiHatOptions, PiHatResult, ajk, allele_ct_distance, discordance, genome_columns, grm, ibs,
+    king, one_minus_ibs, phi, pi_hat,
 };
-pub use output::{write_ids_to, write_matrix, write_matrix_to, MatrixFormat};
-pub use standard::{standardize, standardize_binom2, Stand, Standardized};
+pub use output::{MatrixFormat, write_ids_to, write_matrix, write_matrix_to};
+pub use standard::{Stand, Standardized, standardize, standardize_binom2};

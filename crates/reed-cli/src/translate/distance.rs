@@ -2,15 +2,15 @@
 
 use std::io::Write as _;
 
-use reed::budget::ThreadBudget;
-use reed::distance::matrices::{
+use reed::ThreadBudget;
+use reed::frontend::distance::matrices::{
     AjkOptions, DiscordanceMode, DiscordanceOptions, DistanceOptions, MatrixKind, MatrixResult,
-    MissingPolicy, PiHatOptions, ajk, allele_ct_distance, discordance, grm, ibs, king,
-    one_minus_ibs, phi, pi_hat,
+    MissingPolicy, PiHatOptions, PiHatResult, ajk, allele_ct_distance, discordance, genome_columns,
+    grm, ibs, king, one_minus_ibs, phi, pi_hat,
 };
-use reed::distance::output::is_matrix_kind;
-use reed::distance::{MatrixFormat, Stand, standardize};
-use reed::graph;
+use reed::frontend::distance::output::is_matrix_kind;
+use reed::frontend::distance::{MatrixFormat, Stand, standardize};
+use reed::frontend::graph;
 
 use crate::cli::DistanceCli;
 
@@ -19,8 +19,8 @@ use crate::cli::DistanceCli;
 /// the command line can fix is usage; a matrix the data made unusable
 /// (NaN/asymmetric distances, non-finite branches, too-deep trees) is
 /// runtime, so a retry loop does not spin on exit 2.
-fn graph_error(e: reed::graph::error::GraphError) -> reed::Error {
-    use reed::graph::error::GraphError as G;
+fn graph_error(e: reed::frontend::graph::error::GraphError) -> reed::Error {
+    use reed::frontend::graph::error::GraphError as G;
     match e {
         G::NotSquare { .. } | G::TooFewTaxa { .. } => reed::Error::usage(e.to_string()),
         _ => reed::Error::foreign(e),
@@ -81,7 +81,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     super::common::require_output_prefix(prefix, "reed distance")?;
 
     let path = crate::units::input_path(&args.input);
-    let opened = reed::open_regions(path.as_deref(), &[])?;
+    let opened = reed::frontend::open_regions(path.as_deref(), &[])?;
     let sample_names = opened.facts().sample_names.clone();
     if sample_names.is_empty() {
         return Err(reed::Error::usage(
@@ -92,6 +92,8 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         .map_err(reed::Error::usage)?;
 
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
 
     // doc_v20 S37: R13's reed-distance estimators join whatever rayon pool
     // is ambient, so `--threads` takes effect only through a scoped pool
@@ -105,7 +107,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         .map_err(|e| reed::Error::usage(format!("--threads {}: {e}", budget.threads)))?;
 
     let (x, ids) =
-        reed::read_genotype_matrix(opened, keep.as_deref(), &budget, reed::MatrixUse::Plain)?;
+        reed::read_genotype_matrix(opened, keep.as_deref(), &ctx, reed::MatrixUse::Plain)?;
     if x.rows == 0 || x.cols == 0 {
         return Err(reed::Error::usage("no biallelic sites with a diploid GT"));
     }
@@ -279,7 +281,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         }
 
         let nwk = graph::to_newick(&tree, args.digits).map_err(graph_error)?;
-        reed::write_atomic(std::path::Path::new(&format!("{prefix}.nwk")), nwk)
+        reed::frontend::write_atomic(std::path::Path::new(&format!("{prefix}.nwk")), nwk)
             .map_err(reed::Error::from)?;
         if args.verbosity.shows_summary() {
             eprintln!(
@@ -299,9 +301,10 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     let id_path = std::path::PathBuf::from(format!("{prefix}.{suffix}.id"));
     // doc_v28 V28-23: reed-io's AtomicWriter owns create→flush→close; both
     // files are finished before either is published.
-    let mut matrix_out = reed::atomic_file::AtomicWriter::with_capacity(&out_path, 1 << 16)?;
+    let mut matrix_out =
+        reed::frontend::atomic_file::AtomicWriter::with_capacity(&out_path, 1 << 16)?;
     let mut id_out = if is_matrix_kind(kind) {
-        Some(reed::atomic_file::AtomicWriter::with_capacity(
+        Some(reed::frontend::atomic_file::AtomicWriter::with_capacity(
             &id_path,
             1 << 16,
         )?)
@@ -309,12 +312,13 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         None
     };
     if is_matrix_kind(kind) {
-        reed::distance::output::write_matrix_to(&mut matrix_out, &result, format)
+        reed::frontend::distance::output::write_matrix_to(&mut matrix_out, &result, format)
             .map_err(reed::Error::from)?;
         matrix_out.flush().map_err(reed::Error::from)?;
         let matrix_out = matrix_out.finish()?;
         if let Some(mut id_out) = id_out.take() {
-            reed::distance::output::write_ids_to(&mut id_out, &ids).map_err(reed::Error::from)?;
+            reed::frontend::distance::output::write_ids_to(&mut id_out, &ids)
+                .map_err(reed::Error::from)?;
             id_out.flush().map_err(reed::Error::from)?;
             let id_out = id_out.finish()?;
             matrix_out.commit()?;
@@ -336,6 +340,14 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
         );
     }
     Ok(())
+}
+
+/// Writes `NA` for a missing `.genome` column value, or the formatted number.
+fn write_na_or<W: std::io::Write>(f: &mut W, value: Option<String>) -> Result<(), reed::Error> {
+    match value {
+        Some(text) => f.write_all(text.as_bytes()).map_err(reed::Error::from),
+        None => f.write_all(b"NA").map_err(reed::Error::from),
+    }
 }
 
 /// Writes the per-pair table formats (`.genome`, `.relatedness2`,
@@ -425,12 +437,34 @@ fn write_table_to<W: std::io::Write>(f: &mut W, m: &MatrixResult) -> Result<(), 
                     let z0 = aux.map_or(f64::NAN, |a| a.z0[i * n + j]);
                     let z1 = aux.map_or(f64::NAN, |a| a.z1[i * n + j]);
                     let z2 = aux.map_or(f64::NAN, |a| a.z2[i * n + j]);
-                    writeln!(
+                    // DST used to be a hard zero, so any downstream filter on it
+                    // silently kept nothing (doc_v30 N-3). It now follows
+                    // plink's formula; PPC/RATIO stay NA (see
+                    // `genome_columns` for why they are not reproducible).
+                    let cols = aux.map(|a| {
+                        genome_columns(&PiHatResult {
+                            z0: a.z0[i * n + j],
+                            z1: a.z1[i * n + j],
+                            z2: a.z2[i * n + j],
+                            pi_hat: m.values[i * n + j],
+                            n_valid: a.n_valid[i * n + j],
+                            ibs1: a.n_ibs1[i * n + j],
+                            ibs0: a.n_ibs0[i * n + j],
+                        })
+                    });
+                    let (dst, ppc, ratio) = cols.unwrap_or((None, None, None));
+                    write!(
                         f,
-                        "{f1}\t{i1}\t{f2}\t{i2}\tOT\tNA\t{z0:.4}\t{z1:.4}\t{z2:.4}\t{:.4}\t-9\t0\t0\t0",
+                        "{f1}\t{i1}\t{f2}\t{i2}\tOT\tNA\t{z0:.4}\t{z1:.4}\t{z2:.4}\t{:.4}\t-9\t",
                         m.values[i * n + j]
                     )
                     .map_err(reed::Error::from)?;
+                    write_na_or(f, dst.map(|v| format!("{v:.6}")))?;
+                    write!(f, "\t").map_err(reed::Error::from)?;
+                    write_na_or(f, ppc.map(|v| format!("{v:.4}")))?;
+                    write!(f, "\t").map_err(reed::Error::from)?;
+                    write_na_or(f, ratio.map(|v| format!("{v:.4}")))?;
+                    writeln!(f).map_err(reed::Error::from)?;
                 }
             }
         }
@@ -443,7 +477,7 @@ fn write_table_to<W: std::io::Write>(f: &mut W, m: &MatrixResult) -> Result<(), 
 mod tests {
     use super::*;
     use reed::ErrorKind;
-    use reed::graph::error::GraphError;
+    use reed::frontend::graph::error::GraphError;
 
     /// doc_v25 V25-08: the exit class is decided by the shape of the failure,
     /// not by the crate that produced it. A NaN/asymmetric distance or an

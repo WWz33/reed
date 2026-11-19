@@ -22,7 +22,7 @@ use reed_core::ChunkId;
 use reed_io::chunk::framing::RecordFraming;
 use reed_io::chunk::{ChunkBytes, ChunkSource, inflate_chunk};
 
-use crate::abort::{Abort, AbortSignal, FirstError};
+use crate::abort::{AbortSignal, FirstError};
 use crate::budget::{BytePermits, ThreadBudget};
 use crate::error::EngineError;
 use crate::metrics::StageMetrics;
@@ -272,7 +272,7 @@ pub fn run<J, S>(
     job: &J,
     sink: S,
     budget: &ThreadBudget,
-    abort: &Abort,
+    abort: &AbortSignal,
 ) -> Result<RunReport, EngineError>
 where
     J: ChunkJob + 'static,
@@ -281,9 +281,24 @@ where
     let started = Instant::now();
     // Caller and engine share one channel: an internal error triggers the
     // caller's handle, an external trigger aborts the stages — no watcher.
-    let first = Arc::new(FirstError::new(abort.handle.clone()));
+    // A signal without a trigger handle (RunContext::idle) cannot be woken
+    // from inside, so give this run its own channel instead of recording
+    // the first error against a throwaway handle: `FirstError` must still
+    // wake every stage blocked on `abort`.
+    let local;
+    let abort = if abort.trigger_handle().is_some() {
+        abort
+    } else {
+        local = crate::abort::abort_channel_for(budget.threads).1;
+        &local
+    };
+    let trigger = abort
+        .trigger_handle()
+        .cloned()
+        .expect("invariant: the substituted abort signal has a trigger handle");
+    let first = Arc::new(FirstError::new(trigger));
     let outcome = if budget.is_sequential() {
-        run_sequential(source, job, sink, budget, &abort.signal)
+        run_sequential(source, job, sink, budget, abort)
     } else {
         run_parallel(source, job, sink, budget, &first, abort)
     };
@@ -356,13 +371,13 @@ fn run_parallel<J, S>(
     sink: S,
     budget: &ThreadBudget,
     first: &Arc<FirstError>,
-    abort: &Abort,
+    abort: &AbortSignal,
 ) -> Result<(u64, u64, StageMetrics), EngineError>
 where
     J: ChunkJob + 'static,
     S: OrderedSink<J::Partial> + 'static,
 {
-    let signal = &abort.signal;
+    let signal = abort;
     let n_workers = budget.workers();
     let tickets = budget.tickets();
     let (chunk_tx, chunk_rx) = bounded::<InFlightChunk>(tickets);
@@ -371,7 +386,9 @@ where
     // their estimated footprint; the reader blocks while the pool is empty.
     let permits = Arc::new(BytePermits::new(budget.mem.bytes));
     // The abort handle wakes these waiters directly (no polling, §7.5).
-    abort.handle.register(&permits);
+    if let Some(handle) = abort.trigger_handle() {
+        handle.register(&permits);
+    }
     // Real tickets (03 §4.1, fixes 01-review D1): the reader acquires one
     // permit *before* cutting a chunk, and the reducer returns it only after
     // the chunk is delivered in order. The number of chunks cut but not yet

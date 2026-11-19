@@ -62,12 +62,12 @@ check "compile() is split into section modules (doc_v25 08 ④)" \
 
 # doc_v25 08 ③: convert's spill blobs live in their own module.
 check "convert spill types live in convert/spill.rs (doc_v25 08 ③)" \
-    bash -c 'test -e crates/reed/src/convert/spill.rs && ! grep -q "enum RowsBlob" crates/reed/src/convert/job.rs'
+    bash -c 'grep -q "enum RowsBlob" crates/reed/src/convert/spill.rs && ! grep -rq "enum RowsBlob" crates/reed/src/convert/job'
 
 # V25-09: every on-disk spill goes through the exclusive TempSpill; no
 # private name builder may grow back.
 check "spills use the shared TempSpill (doc_v25 V25-09)" \
-    bash -c 'grep -q "TempSpill::create" crates/reed/src/input.rs && grep -q "TempSpill::create" crates/reed/src/convert/job.rs && ! grep -rq "fn spill_path()" crates/reed/src --include=*.rs'
+    bash -c 'grep -q "TempSpill::create" crates/reed/src/input.rs && grep -q "TempSpill::create" crates/reed/src/convert/job/mod.rs && ! grep -rq "fn spill_path()" crates/reed/src --include=*.rs'
 
 # V25-08: the CLI depends on the facade only; distance/reduce/graph are
 # reachable through reed's re-exports.
@@ -87,5 +87,107 @@ check "no short-keep default remains (doc_v25 V25-07b)" \
 # canonical field table.
 check "the ghost haploid-as-missing trigger is gone (doc_v25 V25-07c)" \
     bash -c '! grep -rq "n_haploid_as_missing\|TRIG_HAPLOID_MISSING" crates --include=*.rs'
+
+# doc_v30 R12: the filter layer is L3 over reed-core. Record-text semantics
+# (`LineRef`, `InfoIndex`, INFO fragments, the POS/QUAL grammar) live in L0,
+# and the `reed-filter -> reed-io` edge must not grow back.
+check "reed-filter depends on reed-core only, not reed-io (doc_v30 R12)" \
+    bash -c '! grep -q "^reed-io" crates/reed-filter/Cargo.toml && ! grep -rq "reed_io" crates/reed-filter/src --include=*.rs'
+
+check "record-text semantics live in reed-core (doc_v30 R12)" \
+    bash -c 'grep -q "pub struct LineRef" crates/reed-core/src/vcf/line.rs && grep -q "pub struct InfoIndex" crates/reed-core/src/vcf/info.rs && test ! -e crates/reed-io/src/vcf/line.rs && test ! -e crates/reed-io/src/vcf/info.rs && test ! -e crates/reed-io/src/vcf/line_edit.rs && test ! -e crates/reed-io/src/vcf/format_layout.rs'
+
+# doc_v30 R05–R07: input capabilities are types, the source has one way
+# out, and BCF is asked of `InputMeta` instead of probing an `Option`.
+check "input capabilities are typed, not path probes (doc_v30 R05-R07)" \
+    bash -c 'grep -q "pub enum InputCapability" crates/reed/src/input.rs && grep -q "pub struct ReplayableInput" crates/reed/src/input.rs && grep -q "pub struct SeekableInput" crates/reed/src/input.rs && grep -q "pub struct InputMeta" crates/reed/src/input.rs && ! grep -rq "source_mut()" crates --include=*.rs'
+
+check "BCF capability comes from InputMeta, not an Option probe (doc_v30 R07)" \
+    bash -c '! grep -rq "bcf\.is_some()" crates --include=*.rs'
+
+# doc_v30 P2 §2: one run context carries the budget and the abort signal into
+# every driver. The per-driver `run_budget` constructor is gone, so a stage
+# cannot derive a second budget (and `FilterOptions` cannot carry one).
+check "the run context owns budget and abort (doc_v30 P2 §2)" \
+    bash -c 'test -e crates/reed/src/context.rs &&
+        grep -q "pub struct RunContext" crates/reed/src/context.rs &&
+        test ! -e crates/reed/src/run_budget.rs &&
+        ! grep -rq "run_budget::for_run" crates/reed/src --include=*.rs &&
+        [ "$(grep -rn "fn for_run" crates/reed/src --include=*.rs | wc -l)" -eq 0 ]'
+
+check "every run driver takes the run context (doc_v30 P2 §2)" \
+    bash -c 'grep -q "ctx: &RunContext" crates/reed/src/filter/mod.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/stats/driver.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/stats/writers/reports.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/convert/job/mod.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/rename/mod.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/pca/mod.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/dapc/mod.rs &&
+        grep -q "ctx: &RunContext" crates/reed/src/index.rs'
+
+check "FilterOptions carries no second budget source (doc_v30 P2 §2)" \
+    bash -c '! grep -q "pub mem_bytes" crates/reed/src/filter/mod.rs &&
+        ! grep -q "pub threads" crates/reed/src/filter/mod.rs'
+
+# doc_v30 R13: one `--fill-tags` registry. Each tag's name/type/number/
+# description/compute lives in reed-core; the filter spec, the fill loop and
+# the `##INFO` renderer derive from it. The CLI help is checked against the
+# same registry by `fill_tags_help_names_every_registry_tag`.
+check "the --fill-tags registry is defined once (doc_v30 R13)" \
+    bash -c '[ "$(grep -rn "pub const RECOMPUTE_TAGS" crates --include=*.rs | wc -l)" -eq 1 ] &&
+        grep -q "pub const RECOMPUTE_TAGS" crates/reed-core/src/count/recompute.rs &&
+        grep -q "RECOMPUTE_TAGS.iter()" crates/reed-filter/src/spec/recompute.rs'
+
+check "the INFO recompute definitions come from the registry (doc_v30 R13)" \
+    bash -c 'grep -q "tag.name" crates/reed/src/filter/mod.rs &&
+        ! grep -q "id: \"AC\"" crates/reed/src/filter/mod.rs &&
+        ! grep -rEq "recompute\.(ac|an|ns|maf|hwe)\b" crates --include=*.rs'
+
+# doc_v30 R14: the survivor's edit is a pure value with one constructor.
+# The three emit paths (single pass, sketch emit, filtered passthrough) used
+# to spell `EditPlan { .. }` themselves; a fourth must go through the value.
+check "EditPlan is assembled only through SurvivorEdit (doc_v30 R14)" \
+    bash -c 'grep -q "pub struct SurvivorEdit" crates/reed-filter/src/eval/edit_plan.rs &&
+        [ "$(grep -rn "EditPlan {" crates/reed/src --include=*.rs | wc -l)" -eq 0 ]'
+
+# doc_v30 P3: the facade is curated. Requests, reports, errors and the
+# `run_*` entry points are public; the build-time plan, writers, distance/
+# graph/reduce aliases and the fixture/open primitives live behind the one
+# hidden `frontend` module (`#[doc(hidden)]` is allowed only there).
+check "the prelude only re-exports facade items (doc_v30 P3)" \
+    bash -c 'grep -q "pub use crate::{" crates/reed/src/prelude.rs &&
+        ! grep -q "pub use reed_" crates/reed/src/prelude.rs'
+
+check "front-end-only API lives behind the hidden frontend module (doc_v30 P3)" \
+    bash -c '[ "$(grep -c "^#\[doc(hidden)\]" crates/reed/src/lib.rs)" -eq 1 ] &&
+        grep -q "^pub mod prelude" crates/reed/src/lib.rs &&
+        grep -q "^pub mod frontend" crates/reed/src/lib.rs &&
+        ! grep -q "^pub use reed_filter::{expr" crates/reed/src/lib.rs &&
+        ! grep -q "^pub use reed_distance as distance" crates/reed/src/lib.rs &&
+        ! grep -q "^pub use reed_graph as graph" crates/reed/src/lib.rs &&
+        ! grep -q "^pub use reed_reduce as reduce" crates/reed/src/lib.rs &&
+        ! grep -q "^pub use crate::stats::writers::{" crates/reed/src/lib.rs'
+
+# doc_v30 P4: the convert job is a directory module (types/sink, the job
+# impl, the MSA helpers) and no source file grows past the audit ceiling.
+check "convert job is split into job/{mod,convert_job,msa}.rs (doc_v30 P4)" \
+    bash -c 'test -e crates/reed/src/convert/job/mod.rs &&
+        test -e crates/reed/src/convert/job/convert_job.rs &&
+        test -e crates/reed/src/convert/job/msa.rs &&
+        test ! -e crates/reed/src/convert/job.rs'
+
+check "no source file exceeds 2000 lines (doc_v30 P4)" \
+    bash -c '[ "$(find crates -path "*/src/*" -name "*.rs" -exec wc -l {} + | awk "\$1 > 2000 && \$2 != \"total\"" | wc -l)" -eq 0 ]'
+
+# doc_v30 R10: spills share AtomicFile's live table (so a sweep can never
+# delete a spill that is still being written) and the spill subsystem sweeps
+# its directory once at startup, removing only provably orphaned names.
+check "spills register in the shared live table (doc_v30 R10)" \
+    bash -c 'grep -q "pub fn register_live_temp" crates/reed-io/src/write/atomic.rs &&
+        grep -q "register_live_temp(&path)" crates/reed/src/spill.rs &&
+        grep -q "unregister_live_temp" crates/reed/src/spill.rs &&
+        grep -q "fn sweep_stale_spills" crates/reed/src/spill.rs &&
+        grep -q "fn a_live_spill_survives_the_sweep" crates/reed/src/spill.rs &&
+        grep -q "fn a_dead_owners_spill_is_swept" crates/reed/src/spill.rs'
 
 exit "$fail"

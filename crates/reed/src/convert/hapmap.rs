@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use reed_core::ChunkId;
 use reed_core::iupac;
-use reed_engine::budget::ThreadBudget;
+
+use crate::context::RunContext;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::chunk::{CHUNK_TARGET_COMPRESSED, ChunkBytes, ChunkPayload, ChunkSource};
@@ -500,8 +501,9 @@ pub(crate) struct VcfOutput {
 pub(crate) fn run_hapmap_to_vcf(
     input: Option<&Path>,
     output: &VcfOutput,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<ConvertReport, crate::Error> {
+    let budget = ctx.budget;
     // Open the input; gzip (including BGZF) is inflated serially like
     // `PlainChunkSource::open_gzip`.
     let mut reader: Box<dyn BufRead + Send> = match input {
@@ -626,9 +628,9 @@ pub(crate) fn run_hapmap_to_vcf(
         n_malformed: 0,
         counters: Arc::clone(&counters),
     };
-    let abort = reed_engine::abort::abort_for(budget);
+    let abort = ctx.abort;
     let mut source = source;
-    let report = run(&mut source, &job, sink, budget, &abort)?;
+    let report = run(&mut source, &job, sink, budget, abort)?;
     let (n_records, n_malformed) = counters
         .lock()
         .expect("invariant: hapmap slot not poisoned")

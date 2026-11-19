@@ -26,8 +26,8 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::pca::{pca_dense_pairwise_with, pca_dense_with, standardize, Grm, Stand};
-use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
+use reed_reduce::pca::{Grm, Stand, pca_dense_pairwise_with, pca_dense_with, standardize};
+use reed_reduce::{Mat, StreamConfig, lanczos_top_k};
 use std::time::Instant;
 
 fn read_matrix(path: &str) -> Mat {

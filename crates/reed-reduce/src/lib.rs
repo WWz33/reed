@@ -26,6 +26,13 @@
 //! `useless_vec` are allowed for the same reason: the `#[cfg]`-selected
 //! backend branches need explicit returns to type-check identically in both
 //! configurations.
+//!
+//! # Examples
+//!
+//! ```
+//! assert_eq!(reed_reduce::LLE_MAX_SAMPLES, 5_000);
+//! ```
+//!
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::needless_return)]
 #![allow(clippy::needless_borrow)]
@@ -55,31 +62,31 @@ pub mod umap;
 pub mod xval;
 
 pub use backend::{
-    gram_divide, sym_eig, sym_eig_top_k, Backend, Parallel, SymEigResult, COMPILED_BACKEND,
+    Backend, COMPILED_BACKEND, Parallel, SymEigResult, gram_divide, sym_eig, sym_eig_top_k,
 };
 pub use eig::SymEig;
 pub use extra::{
-    lle, lle_from_sq_distances, nmf, ppca, try_lle, try_lle_from_sq_distances, tsne,
-    tsne_from_sq_distances, LleError, TsneConfig, TsneError, LLE_MAX_SAMPLES,
+    LLE_MAX_SAMPLES, LleError, TsneConfig, TsneError, lle, lle_from_sq_distances, nmf, ppca,
+    try_lle, try_lle_from_sq_distances, tsne, tsne_from_sq_distances,
 };
 pub use graph::{
-    diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pairwise_distances, pcoa,
-    Embedding, Kernel,
+    Embedding, Kernel, diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps,
+    pairwise_distances, pcoa,
 };
 pub use grm_reduce::{
     grm_diffusion, grm_distances, grm_isomap, grm_kernel, grm_kernel_pca, grm_knn_weights,
     grm_laplacian, grm_lle, grm_pcoa, grm_similarity, grm_tsne, grm_umap,
 };
-pub use lanczos::{lanczos_top_k, LanczosConfig, PartialEig, StreamConfig, StreamEig};
-pub use lda::{fit as fit_lda, Lda, LdaError, LdaProjection};
+pub use lanczos::{LanczosConfig, PartialEig, StreamConfig, StreamEig, lanczos_top_k};
+pub use lda::{Lda, LdaError, LdaProjection, fit as fit_lda};
 pub use pca::{
-    pca_dense, pca_dense_pairwise, pca_dense_pairwise_with, pca_dense_pairwise_with_par,
-    pca_dense_with, pca_dense_with_par, pca_top_k, pca_top_k_with, pca_top_k_with_par, standardize,
-    standardize_binom2, Grm, Pca, Stand, Standardized,
+    Grm, Pca, Stand, Standardized, pca_dense, pca_dense_pairwise, pca_dense_pairwise_with,
+    pca_dense_pairwise_with_par, pca_dense_with, pca_dense_with_par, pca_top_k, pca_top_k_with,
+    pca_top_k_with_par, standardize, standardize_binom2,
 };
 pub use reed_core::linalg::Mat;
 pub use umap::{
-    fuzzy_simplicial_set, fuzzy_simplicial_set_from_distances, umap, umap_from_distances,
-    UmapConfig,
+    UmapConfig, fuzzy_simplicial_set, fuzzy_simplicial_set_from_distances, umap,
+    umap_from_distances,
 };
-pub use xval::{candidate_counts, XvalConfig, XvalError, XvalReport, XvalResult};
+pub use xval::{XvalConfig, XvalError, XvalReport, XvalResult, candidate_counts};

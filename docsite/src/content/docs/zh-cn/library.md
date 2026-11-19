@@ -11,15 +11,27 @@ reed = { path = "crates/reed" }
 
 稳定性承诺只在 crate 根；`crates/` 下层的 crate 是内部实现，类型与签名随时可能变。错误用 `reed::Error` 表示，`Error::kind()` 分类，`Display`/`source()` 读消息。
 
+## 稳定性
+
+根模块条目与 `run_*` 入口遵循 semver（0.x：破坏性变更走 minor）；`#[doc(hidden)] reed::frontend` 与 `crates/` 下的其余 crate 均为内部实现。见 `docs/spec/api-contract.md`。
+
 ## 入口函数
 
-crate 根导出六个入口，各自对应一个子命令：
+crate 根每个子命令导出一个 `run_*`（`_opened` 变体接收已打开的 `OpenedInput`，
+完整清单见 `ci/api/reed.txt`）：
 
-```rust
-run_filter, run_popgen, run_stats, run_rename, run_index, run_convert
-```
+| 入口 | 请求 | 报告 |
+|---|---|---|
+| `run_filter` | `FilterSpec` | `FilterReport` |
+| `run_popgen` | `PopgenRequest` | `PopgenReport` |
+| `run_stats` | `StatsReportRequest` | `StatsOutcome` |
+| `run_rename` | `RenameSpec` | `RenameReport` |
+| `run_index` | `WriteIndex`（参数） | `IndexOutcome` |
+| `run_convert` | `ConvertRequest` | `ConvertReport` |
+| `run_pca` | `PcaRequest` | `PcaReport` |
+| `run_dapc` | `DapcRequest` | `DapcReport` |
 
-签名模式统一：`fn run_*(input: Option<&Path>, request: &XxxRequest, budget: &ThreadBudget) -> Result<XxxReport>`。`ThreadBudget`（`reed::budget`）给线程数与内存预算，`Default` 即"全部核 + 物理内存一半"，与 CLI 缺省一致。
+签名模式统一：`fn run_*(input: Option<&Path>, request: &XxxRequest, ctx: &RunContext<'_>) -> Result<XxxReport>`。`RunContext`（`reed::RunContext`）借用本次运行的 `ThreadBudget` 与 `AbortSignal`：有取消源时用 `RunContext::new(&budget, &abort.signal)`（`Abort` 来自 `reed::abort_for(&budget)`），没有时用 `RunContext::idle(&budget)`。`ThreadBudget::default()` 即"全部核 + 物理内存一半"，与 CLI 缺省一致。这些名字也可用 `use reed::prelude::*;` 一次导入；prelude 只再导出根项（`run_*` 入口、请求、报告、错误、预算与 `RunContext`）。
 
 ## 群体统计
 
@@ -31,9 +43,10 @@ let request = PopgenRequest {
     populations: Populations::File("pops.txt".into()),
     ..PopgenRequest::default()
 };
-let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request,
-                              &reed::budget::ThreadBudget::default())?;
-let tsv = reed::windows::render_tsv(&report.windows, &request.kinds, false);
+let budget = reed::ThreadBudget::default();
+let ctx = reed::RunContext::idle(&budget);
+let report = reed::run_popgen(Some("in.vcf.gz".as_ref()), &request, &ctx)?;
+let tsv = reed::render_tsv(&report.windows, &request.kinds, false);
 ```
 
 群体映射可以不落盘：
@@ -64,8 +77,9 @@ let request = ConvertRequest {
     prefix: "matrices".into(),
     ..ConvertRequest::default()
 };
-let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request,
-                               &reed::budget::ThreadBudget::default())?;
+let budget = reed::ThreadBudget::default();
+let ctx = reed::RunContext::idle(&budget);
+let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request, &ctx)?;
 ```
 
 ## 请求与报告
@@ -79,7 +93,7 @@ let report = reed::run_convert(Some("in.vcf.gz".as_ref()), &request,
 | `ConvertRequest` | `ConvertReport` |
 | （index 无请求结构） | `IndexOutcome` |
 
-写出模块也直接可用：`reed::windows`（窗口 TSV）、`reed::reports`、`reed::histogram`、`reed::sfs`、`reed::fstats`、`reed::ld`、`reed::summary`。
+`render_tsv` 渲染窗口统计报告；其余写出模块只属于前端（位于 `#[doc(hidden)] reed::frontend`，不在稳定性承诺内）。
 
 ## 往返渲染
 

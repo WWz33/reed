@@ -1,5 +1,6 @@
 //! Recompute specification (§11.1 `[recompute]`, semantics §11.6).
 
+use reed_core::count::{RECOMPUTE_TAGS, RecomputeTag};
 use serde::{Deserialize, Serialize};
 
 /// Which INFO tags are recomputed after masking, and which stale tags are
@@ -55,9 +56,12 @@ fn default_drop_stale() -> Vec<String> {
 
 /// The `--fill-tags` tags this build implements, in canonical spelling
 /// (bcftools `+fill-tags` matches case-insensitively, `strcasecmp`,
-/// plugins/fill-tags.c:505-537). AF and F_MISSING are in bcftools' set and
-/// in `cli.md`'s prose but are not implemented here (doc_v12 N10).
-pub const SUPPORTED_FILL_TAGS: [&str; 5] = ["AC", "AN", "NS", "MAF", "HWE"];
+/// plugins/fill-tags.c:505-537). Derived from the registry in
+/// [`reed_core::count::RECOMPUTE_TAGS`] (doc_v30 R13): adding a tag is one
+/// row there, not another list here.
+pub fn supported_fill_tags() -> impl Iterator<Item = &'static str> {
+    RECOMPUTE_TAGS.iter().map(|tag| tag.name)
+}
 
 /// Normalises one `--fill-tags` entry to its canonical spelling, or reports
 /// it as unsupported. bcftools refuses the unknown ones with
@@ -69,17 +73,13 @@ pub const SUPPORTED_FILL_TAGS: [&str; 5] = ["AC", "AN", "NS", "MAF", "HWE"];
 ///
 /// A message naming the tag and listing the supported set.
 pub fn canonical_fill_tag(tag: &str) -> Result<&'static str, String> {
-    let tag = tag.trim();
-    SUPPORTED_FILL_TAGS
-        .iter()
-        .find(|t| t.eq_ignore_ascii_case(tag))
-        .copied()
-        .ok_or_else(|| {
-            format!(
-                "unsupported --fill-tags tag {tag:?}; supported: {}",
-                SUPPORTED_FILL_TAGS.join(", ")
-            )
-        })
+    RecomputeTag::canonical(tag).ok_or_else(|| {
+        format!(
+            "unsupported --fill-tags tag {:?}; supported: {}",
+            tag.trim(),
+            supported_fill_tags().collect::<Vec<_>>().join(", ")
+        )
+    })
 }
 
 impl RecomputeSpec {
@@ -87,10 +87,7 @@ impl RecomputeSpec {
     #[must_use]
     pub fn all() -> Self {
         Self {
-            tags: ["AC", "AN", "NS", "MAF", "HWE"]
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
+            tags: supported_fill_tags().map(ToString::to_string).collect(),
             drop_stale: default_drop_stale(),
             drop_stale_explicit: false,
             no_update: false,

@@ -174,6 +174,18 @@ impl ContigMatrix {
         self.pos0.len()
     }
 
+    /// Estimated resident bytes: the packed genotype words plus the
+    /// positions and block table (doc_v30 R09's LD byte accounting).
+    #[must_use]
+    pub fn size_bytes(&self) -> u64 {
+        let words: usize = self.blocks.iter().map(Vec::len).sum();
+        let bytes = words
+            .saturating_mul(std::mem::size_of::<u64>())
+            .saturating_add(self.pos0.len().saturating_mul(std::mem::size_of::<u64>()))
+            .saturating_add(self.base.len().saturating_mul(std::mem::size_of::<usize>()));
+        u64::try_from(bytes).unwrap_or(u64::MAX)
+    }
+
     /// The contig name bytes.
     #[must_use]
     pub fn contig(&self) -> &[u8] {

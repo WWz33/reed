@@ -29,6 +29,9 @@
 #   6. hapmap ↔ VCF round trip (v13 §3.12): VCF → hapmap → VCF reproduces
 #      the records on the lossless domain (biallelic diploid SNPs, no
 #      missing), and TASSEL 5 reads reed's VCF back.
+#   7. half-call site gate (doc_v30 §4.6(a)): `gold/fixtures/half.vcf` at
+#      `-m/--min-samples-locus 4`; vcf2phylip drops every site whose GT text
+#      starts with `.`, and reed's phylo output must be byte-equal.
 set -euo pipefail
 
 DATA="${1:-}"
@@ -225,7 +228,25 @@ else
     note "TASSEL not available; VCF read-back gate skipped"
 fi
 
-# ------------------------------------------------------------ 7. full data --
+# ------------------------------------------------- 7. half-call site gate --
+# doc_v30 §4.6(a): the phylo `--min-samples-locus` gate follows vcf2phylip,
+# which treats any GT text starting with `.` as missing. reed's count-family
+# gate (`has_called_allele`) counts `./1` as present, so the two disagree on
+# half calls; this fixture is exactly that boundary. vcf2phylip keeps only
+# pos 20 (its four `0/.` samples start with `0`), reed must match byte for
+# byte at `-m 4`.
+note "half-call site gate: vcf2phylip -m 4 vs reed --min-samples-locus 4"
+HALF_VCF="$GOLD_DIR/fixtures/half.vcf"
+HREF="$SCRATCH/half_ref"
+HGOT="$SCRATCH/half_got"
+rm -rf "$HREF" "$HGOT" && mkdir -p "$HREF" "$HGOT"
+$PYTHON "$VCF2PHYLIP" -i "$HALF_VCF" -m 4 --output-folder "$HREF" \
+    >"$SCRATCH/half_ref.log" 2>&1
+"$REED" convert "$HALF_VCF" --phylip --min-samples-locus 4 -o "$HGOT/out" \
+    --verbosity 0
+check "half/phy" "$HGOT/out.phy" "$HREF/half.min4.phy"
+
+# ------------------------------------------------------------ 8. full data --
 if [[ -n "$DATA" ]]; then
     [[ -f "$DATA" ]] || { echo "input not found: $DATA" >&2; exit 1; }
     note "full-data phylo parity: $DATA"

@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use reed::budget::{MemBudget, ThreadBudget};
+use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     InvariantMode, LdRequest, Levels, PopgenRequest, Populations, WindowLayoutOptions, run_popgen,
 };
@@ -99,7 +99,7 @@ fn pairwise_r2_matches_plink2() {
             pairs: true,
             pairs_path: None,
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     let ld = report.ld.expect("invariant: LD requested");
@@ -147,11 +147,16 @@ fn filter_indep_pairwise_keeps_the_plink2_set() {
         r2: 0.5,
     });
     let opts = reed::FilterOptions {
-        threads: 2,
         output: Some(out.clone()),
         ..reed::FilterOptions::default()
     };
-    let report = reed::run_filter(Some(&vcf), &spec, &opts).expect("invariant: filter runs");
+    let report = reed::run_filter(
+        Some(&vcf),
+        &spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter runs");
     assert_eq!(report.ld_prune, Some((6, 3)), "6 survivors, 3 pruned");
     let text = std::fs::read_to_string(&out).expect("invariant: output");
     let positions: Vec<u64> = text
@@ -195,11 +200,16 @@ fn prune_positions(
     out: &std::path::Path,
 ) -> Vec<u64> {
     let opts = reed::FilterOptions {
-        threads: 2,
         output: Some(out.to_path_buf()),
         ..reed::FilterOptions::default()
     };
-    reed::run_filter(Some(vcf), spec, &opts).expect("invariant: filter runs");
+    reed::run_filter(
+        Some(vcf),
+        spec,
+        &opts,
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
+    )
+    .expect("invariant: filter runs");
     std::fs::read_to_string(out)
         .expect("invariant: output")
         .lines()
@@ -301,7 +311,7 @@ fn ld_is_identical_across_thread_counts() {
                 pairs: true,
                 pairs_path: None,
             }),
-            &budget,
+            &reed::RunContext::idle(&budget),
         )
         .expect("invariant: run");
         let ld = report.ld.expect("invariant: LD requested");
@@ -335,7 +345,8 @@ fn ld_decay_carries_per_population_curves() {
     });
     // Two populations of three samples each.
     req.populations = Populations::File(pops_two_file(dir.as_path()));
-    let report = run_popgen(Some(&vcf), &req, &budget).expect("invariant: run");
+    let report =
+        run_popgen(Some(&vcf), &req, &reed::RunContext::idle(&budget)).expect("invariant: run");
     let ld = report.ld.expect("invariant: LD requested");
 
     assert_eq!(ld.group_decay.len(), 2, "one curve per population");
@@ -402,10 +413,10 @@ fn pruner_sees_only_post_tail_sites() {
             Some(&vcf),
             spec,
             &reed::FilterOptions {
-                threads: 2,
                 output: Some(out.to_path_buf()),
                 ..reed::FilterOptions::default()
             },
+            &reed::RunContext::idle(&reed::ThreadBudget::default()),
         )
         .expect("invariant: filter runs")
     };
@@ -480,10 +491,10 @@ fn mind_and_indep_pairwise_combine() {
         Some(&vcf),
         &spec,
         &reed::FilterOptions {
-            threads: 2,
             output: Some(out.clone()),
             ..reed::FilterOptions::default()
         },
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: filter runs");
     assert_eq!(report.n_samples_out, 9, "s0 dropped by --mind");
@@ -541,15 +552,19 @@ fn ld_cohort_excludes_removed_samples() {
 
     let mut kept = request(ld());
     kept.keep_samples = Some(vec![true, true, true, true, false, false]);
-    let a = run_popgen(Some(&full), &kept, &budget)
+    let a = run_popgen(Some(&full), &kept, &reed::RunContext::idle(&budget))
         .expect("invariant: run")
         .ld
         .expect("invariant: LD requested");
 
-    let b = run_popgen(Some(&four), &request(ld()), &budget)
-        .expect("invariant: run")
-        .ld
-        .expect("invariant: LD requested");
+    let b = run_popgen(
+        Some(&four),
+        &request(ld()),
+        &reed::RunContext::idle(&budget),
+    )
+    .expect("invariant: run")
+    .ld
+    .expect("invariant: LD requested");
 
     assert_eq!(
         a.decay, b.decay,
@@ -587,8 +602,11 @@ fn prune_multi_contig_is_thread_count_independent() {
     let vcf = dir.join("multi.vcf");
     std::fs::write(&vcf, text).expect("invariant: write");
     let run = |threads: usize, out: &std::path::Path| -> Vec<(String, u64)> {
-        let opts = reed::FilterOptions {
+        let budget = reed::ThreadBudget {
             threads,
+            ..reed::ThreadBudget::default()
+        };
+        let opts = reed::FilterOptions {
             output: Some(out.to_path_buf()),
             ..reed::FilterOptions::default()
         };
@@ -599,7 +617,8 @@ fn prune_multi_contig_is_thread_count_independent() {
             step: 1,
             r2: 0.5,
         });
-        reed::run_filter(Some(&vcf), &spec, &opts).expect("invariant: filter runs");
+        reed::run_filter(Some(&vcf), &spec, &opts, &reed::RunContext::idle(&budget))
+            .expect("invariant: filter runs");
         std::fs::read_to_string(out)
             .expect("invariant: output")
             .lines()
@@ -672,7 +691,7 @@ fn ld_sink_caps_in_flight_decay_jobs() {
                 pairs: true,
                 pairs_path: None,
             }),
-            &budget,
+            &reed::RunContext::idle(&budget),
         )
         .expect("invariant: run");
         let ld = report.ld.expect("invariant: LD requested");
@@ -709,7 +728,7 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
             pairs: true,
             pairs_path: None,
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run")
     .ld
@@ -726,7 +745,7 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
             pairs: true,
             pairs_path: Some(prefix.with_extension("ld")),
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run")
     .ld
@@ -741,7 +760,7 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
     // compare with what the sink streamed.
     let mut expected = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
     for (contig, a, b, r2) in &accumulated.pairs {
-        reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+        reed::frontend::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     let got = std::fs::read_to_string(prefix.with_extension("ld")).expect("invariant: .ld written");
     assert_eq!(
@@ -753,7 +772,8 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
     let decay_prefix = dir.join("decay_only");
     let mut report = accumulated.clone();
     report.pairs.clear();
-    let files = reed::ld::write_ld(&decay_prefix, &report, &[], false).expect("invariant: write");
+    let files =
+        reed::frontend::ld::write_ld(&decay_prefix, &report, &[], false).expect("invariant: write");
     assert!(
         files.iter().all(|p| !p.to_string_lossy().ends_with(".ld")),
         "-.ld must not be written when the rows were streamed: {files:?}"
@@ -789,12 +809,12 @@ fn streamed_pairs_file_is_header_only_without_pairs() {
             pairs: true,
             pairs_path: Some(path.clone()),
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run");
     assert_eq!(
         std::fs::read_to_string(&path).expect("invariant: pair table"),
-        String::from_utf8_lossy(reed::ld::PAIRS_HEADER),
+        String::from_utf8_lossy(reed::frontend::ld::PAIRS_HEADER),
         "no pair means a valid header-only .ld, never a stale previous table"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -831,7 +851,7 @@ chr2\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1
             pairs: true,
             pairs_path: None,
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run")
     .ld
@@ -852,7 +872,7 @@ chr2\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1
             pairs: true,
             pairs_path: Some(path.clone()),
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: run")
     .ld
@@ -860,7 +880,7 @@ chr2\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1
     assert_eq!(streamed.pairs.len(), 0, "streamed rows stay out of memory");
     let mut expected = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
     for (contig, a, b, r2) in &accumulated.pairs {
-        reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+        reed::frontend::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     assert_eq!(
         std::fs::read_to_string(&path).expect("the later contig creates the file"),
@@ -908,7 +928,6 @@ fn failed_run_leaves_the_previous_ld_untouched() {
         Some(&vcf),
         &reed::spec::FilterSpec::default(),
         &reed::FilterOptions {
-            threads: 1,
             output: Some(good.clone()),
             write_index: reed::WriteIndex::None,
             compress_level: 6,
@@ -921,17 +940,17 @@ fn failed_run_leaves_the_previous_ld_untouched() {
             tmp_dir: None,
             output_compressed: Some(true),
             output_bcf: Some(6),
-            mem_bytes: None,
             no_version: true,
             no_command: true,
         },
+        &reed::RunContext::idle(&reed::ThreadBudget::default()),
     )
     .expect("invariant: build the BCF fixture");
 
     let mut raw = Vec::new();
     {
         let bytes = std::fs::read(&good).expect("invariant: read bcf");
-        let mut inflater = reed::bgzf::inflate::Inflater::new();
+        let mut inflater = reed::frontend::bgzf::inflate::Inflater::new();
         let mut pos = 0;
         while pos + 18 <= bytes.len() {
             // `inflate_block` wants exactly one member: slice by BSIZE.
@@ -940,7 +959,7 @@ fn failed_run_leaves_the_previous_ld_untouched() {
                 break;
             }
             let block = &bytes[pos..pos + bsize];
-            if reed::bgzf::block::is_eof_block(block) {
+            if reed::frontend::bgzf::block::is_eof_block(block) {
                 break;
             }
             inflater
@@ -951,12 +970,12 @@ fn failed_run_leaves_the_previous_ld_untouched() {
     }
     assert!(raw.len() > 32, "the BCF payload must be non-trivial");
 
-    let mut deflater = reed::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
     let mut truncated = Vec::new();
     deflater
         .deflate_block(&raw[..raw.len() - 8], &mut truncated)
         .expect("invariant: deflate");
-    truncated.extend_from_slice(&reed::bgzf::block::EOF_BLOCK);
+    truncated.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
     let cut = dir.join("cut.bcf");
     std::fs::write(&cut, &truncated).expect("invariant: write cut bcf");
 
@@ -973,22 +992,30 @@ fn failed_run_leaves_the_previous_ld_untouched() {
         pairs_path,
     };
 
-    let accumulated = run_popgen(Some(&good), &request(ld(None)), &budget)
-        .expect("invariant: clean run")
-        .ld
-        .expect("invariant: ld requested");
+    let accumulated = run_popgen(
+        Some(&good),
+        &request(ld(None)),
+        &reed::RunContext::idle(&budget),
+    )
+    .expect("invariant: clean run")
+    .ld
+    .expect("invariant: ld requested");
     assert!(
         !accumulated.pairs.is_empty(),
         "the fixture must yield one pair"
     );
-    let mut expected = String::from_utf8_lossy(reed::ld::PAIRS_HEADER).into_owned();
+    let mut expected = String::from_utf8_lossy(reed::frontend::ld::PAIRS_HEADER).into_owned();
     for (contig, a, b, r2) in &accumulated.pairs {
-        reed::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+        reed::frontend::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     std::fs::write(&pairs_path, &expected).expect("invariant: seed the old .ld");
 
-    let err = run_popgen(Some(&cut), &request(ld(Some(pairs_path.clone()))), &budget)
-        .expect_err("invariant: the truncated BCF must fail");
+    let err = run_popgen(
+        Some(&cut),
+        &request(ld(Some(pairs_path.clone()))),
+        &reed::RunContext::idle(&budget),
+    )
+    .expect_err("invariant: the truncated BCF must fail");
     assert!(
         err.to_string().contains("inside a record"),
         "unexpected error: {err}"
@@ -1036,7 +1063,7 @@ fn genome_wide_ld_does_not_require_contig_lengths() {
             pairs: true,
             pairs_path: None,
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: no-length LD run");
     assert_ne!(report.ld.expect("invariant: LD report").pairs.len(), 0);
@@ -1072,12 +1099,12 @@ fn an_empty_ld_run_publishes_header_only_pairs_and_zero_decay() {
             pairs: true,
             pairs_path: Some(path.clone()),
         }),
-        &budget,
+        &reed::RunContext::idle(&budget),
     )
     .expect("invariant: empty LD run");
     assert_eq!(
         std::fs::read_to_string(&path).expect("invariant: pair table"),
-        String::from_utf8_lossy(reed::ld::PAIRS_HEADER)
+        String::from_utf8_lossy(reed::frontend::ld::PAIRS_HEADER)
     );
     assert_eq!(report.pairs_path, Some(path));
     let ld = report.ld.expect("invariant: LD report");
@@ -1087,7 +1114,7 @@ fn an_empty_ld_run_publishes_header_only_pairs_and_zero_decay() {
             .iter()
             .all(|&(_, _, n, mean)| n == 0 && mean.is_none())
     );
-    let files = reed::ld::write_ld(&dir.join("out"), &ld, &["all".into()], false)
+    let files = reed::frontend::ld::write_ld(&dir.join("out"), &ld, &["all".into()], false)
         .expect("invariant: decay writer");
     assert!(files.iter().any(|p| p.ends_with("out.ld.decay")));
     assert!(
@@ -1140,10 +1167,10 @@ fn ld_error_cancels_workers_and_leaves_no_auxiliary_threads() {
             pairs: true,
             pairs_path: None,
         }),
-        &ThreadBudget {
+        &reed::RunContext::idle(&ThreadBudget {
             threads: 8,
             mem: MemBudget::from_bytes(u64::MAX),
-        },
+        }),
     )
     .expect_err("the out-of-range record must fail");
     assert!(err.to_string().contains("exceeds contig"), "{err}");

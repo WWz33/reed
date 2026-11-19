@@ -773,11 +773,7 @@ mod tests {
         let n = 12;
         let a = Mat::from_fn(n, n, |i, j| {
             let v = ((i * 17 + j * 31) % 11) as f64 - 5.0;
-            if i == j {
-                v + 20.0
-            } else {
-                v * 0.3
-            }
+            if i == j { v + 20.0 } else { v * 0.3 }
         });
         let mut a = a;
         for i in 0..n {

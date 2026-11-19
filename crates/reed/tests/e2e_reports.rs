@@ -3,7 +3,7 @@
 
 use std::io::Write;
 
-use reed::reports::{StatsReportRequest, run_stats};
+use reed::frontend::reports::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
 mod support;
@@ -76,7 +76,8 @@ fn reports_match_hand_computed_values() {
         threads: 2,
         mem: MemBudget::default_half_memory(),
     };
-    let outcome = run_stats(Some(&vcf), &request, &budget).expect("invariant: reports run");
+    let outcome = run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget))
+        .expect("invariant: reports run");
     assert_eq!(outcome.n_records, 3);
     assert_eq!(
         outcome.files.len(),
@@ -200,10 +201,11 @@ fn summary_idd_qual_psc_match_bcftools() {
         threads: 2,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let outcome = run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
+    let outcome =
+        run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("invariant: run");
     let qc = outcome.qc.expect("invariant: summary requested");
     let names = vec!["S1".to_string(), "S2".to_string()];
-    let text = reed::summary::render_bcftools_stats(&qc, &names);
+    let text = reed::frontend::summary::render_bcftools_stats(&qc, &names);
     for line in [
         "QUAL\t0\t.\t0\t0\t0\t2",
         "QUAL\t0\t30.0\t1\t0\t1\t0",
@@ -259,10 +261,11 @@ fn summary_depth_falls_back_to_ad() {
         threads: 2,
         mem: MemBudget::from_bytes(u64::MAX),
     };
-    let outcome = run_stats(Some(&vcf), &request, &budget).expect("invariant: run");
+    let outcome =
+        run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("invariant: run");
     let qc = outcome.qc.expect("invariant: summary requested");
     let names = vec!["s0".to_string(), "s1".to_string()];
-    let text = reed::summary::render_bcftools_stats(&qc, &names);
+    let text = reed::frontend::summary::render_bcftools_stats(&qc, &names);
     for line in [
         // AD sums: s0 30, 20, then no fallback (FORMAT has DP, value
         // missing) and 0 (dropped: bcftools counts only dp > 0); s1 30, 25,
@@ -288,6 +291,65 @@ fn summary_depth_falls_back_to_ad() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// doc_v30 R02: `--summary` reads INFO/AC+AN through the same
+/// `reed_core::count::InfoCounts` as the filter, with a checked sum. The
+/// old hand-written path summed with `Iterator::sum`, which panicked in
+/// debug (and wrapped in release) on `AC=18446744073709551615,1`; it now
+/// reads as unusable INFO and falls back to the genotype counts — the same
+/// output as a record with no INFO at all.
+#[test]
+fn summary_uses_the_shared_ac_an_reader() {
+    const HEADER: &str = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=10>
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"ac\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"an\">
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+";
+    let run = |name: &str, info: &str| -> String {
+        let dir = std::env::temp_dir().join(format!("reed-reports-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let vcf = dir.join("in.vcf.gz");
+        let text = format!("{HEADER}chr1\t1\t.\tA\tG,T\t50\tPASS\t{info}\tGT\t0/1\t0/2\n");
+        let mut file = std::fs::File::create(&vcf).expect("invariant: fixture file");
+        file.write_all(&bgzf(&text)).expect("invariant: write");
+        drop(file);
+        let request = StatsReportRequest {
+            summary: true,
+            prefix: dir.join("out"),
+            ..StatsReportRequest::default()
+        };
+        let budget = ThreadBudget {
+            threads: 2,
+            mem: MemBudget::from_bytes(u64::MAX),
+        };
+        let outcome = run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget))
+            .expect("invariant: run");
+        let qc = outcome.qc.expect("invariant: summary requested");
+        let rendered = reed::frontend::summary::render_bcftools_stats(
+            &qc,
+            &["s0".to_string(), "s1".to_string()],
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        rendered
+    };
+    let overflow = run("r02-overflow", "AC=18446744073709551615,1;AN=4");
+    let absent = run("r02-absent", ".");
+    assert_eq!(
+        overflow, absent,
+        "unusable INFO must fall back to the genotype counts"
+    );
+    // A usable AC list takes the INFO path and therefore lands in a
+    // different AF bin than the GT fallback (which reads AC=1 per ALT).
+    let usable = run("r02-usable", "AC=2,2;AN=8");
+    assert_ne!(
+        usable, overflow,
+        "valid INFO must be used instead of the genotype counts"
+    );
+}
+
 /// doc_v28 V28-06: reports are staged to temporaries and published only
 /// after the BCF tail check. A truncated input leaves the previous `.afreq`
 /// byte-identical.
@@ -309,13 +371,64 @@ fn truncated_bcf_keeps_the_previous_report() {
         threads: 1,
         mem: MemBudget::default_half_memory(),
     };
-    let err =
-        run_stats(Some(&input), &request, &budget).expect_err("a truncated BCF must be reported");
+    let err = run_stats(Some(&input), &request, &reed::RunContext::idle(&budget))
+        .expect_err("a truncated BCF must be reported");
     assert!(err.to_string().contains("truncated"), "{err}");
     assert_eq!(
         std::fs::read(&report).expect("invariant: old report still exists"),
         b"previous complete report",
         "a failed run must not publish a partial report"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc_v30 §4.7 (V30-03): the per-site reports hold one ALT and one
+/// frequency, so a multi-allelic record cannot be represented. They skip it
+/// and count it instead of writing one collapsed value (plink2 writes
+/// `0.25,0.25` for `A G,T`; reed used to write the single `0.5`).
+#[test]
+fn multiallelic_records_are_skipped_and_counted() {
+    let dir = std::env::temp_dir().join(format!("reed-reports-multi-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let body = "\
+##fileformat=VCFv4.2
+##contig=<ID=chr1,length=100>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\ts1
+chr1\t10\t.\tA\tG,T\t50\tPASS\t.\tGT\t0/1\t0/2
+chr1\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0
+chr1\t30\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/1
+";
+    let vcf = dir.join("in.vcf.gz");
+    std::fs::write(&vcf, bgzf(body)).expect("invariant: write");
+    let prefix = dir.join("out");
+    let request = StatsReportRequest {
+        freq: true,
+        hardy: true,
+        prefix: prefix.clone(),
+        ..StatsReportRequest::default()
+    };
+    let budget = ThreadBudget {
+        threads: 2,
+        mem: MemBudget::default_half_memory(),
+    };
+    let outcome = run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget))
+        .expect("invariant: reports run");
+    assert_eq!(
+        outcome.n_multiallelic_skipped, 1,
+        "the multi-allelic record must be counted"
+    );
+
+    let afreq = lines(&dir.join("out.afreq"));
+    assert_eq!(afreq.len(), 3, "header + two biallelic rows: {afreq:?}");
+    for row in &afreq[1..] {
+        assert!(
+            !row[3].contains(','),
+            "no multi-allelic ALT may reach .afreq: {row:?}"
+        );
+    }
+    let hardy = lines(&dir.join("out.hardy"));
+    assert_eq!(hardy.len(), 3, "header + two biallelic rows: {hardy:?}");
+
     let _ = std::fs::remove_dir_all(&dir);
 }

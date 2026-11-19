@@ -6,8 +6,12 @@
 //! issue A4). The legacy VCF-tag view (`SiteCounts` in the old
 //! `estimators::site_counts`) becomes a derived view in reed-filter.
 
+pub mod info_counts;
+pub mod recompute;
 pub mod site_counts;
 
+pub use info_counts::{InfoCounts, InfoCountsOutcome};
+pub use recompute::{InfoTagNumber, InfoTagType, RECOMPUTE_TAGS, RecomputeTag};
 pub use site_counts::SiteCounts;
 
 /// Genotype and allele tallies for one group at one site (24 bytes).

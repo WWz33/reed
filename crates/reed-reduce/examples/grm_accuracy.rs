@@ -26,11 +26,11 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::extra::{lle_from_sq_distances, tsne_from_sq_distances, TsneConfig};
-use reed_reduce::graph::{kernel_pca, laplacian_eigenmaps, pairwise_distances, pcoa, Kernel};
-use reed_reduce::pca::{pca_dense, standardize, Grm, Stand};
-use reed_reduce::umap::{umap_from_distances, UmapConfig};
-use reed_reduce::{grm_distances, Mat};
+use reed_reduce::extra::{TsneConfig, lle_from_sq_distances, tsne_from_sq_distances};
+use reed_reduce::graph::{Kernel, kernel_pca, laplacian_eigenmaps, pairwise_distances, pcoa};
+use reed_reduce::pca::{Grm, Stand, pca_dense, standardize};
+use reed_reduce::umap::{UmapConfig, umap_from_distances};
+use reed_reduce::{Mat, grm_distances};
 use std::time::Instant;
 
 /// Allele-frequency spectrum to draw the ancestral frequencies from.

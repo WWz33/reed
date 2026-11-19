@@ -84,7 +84,9 @@ Standardization uses `--stand binom2` (`√(2p(1−p))`) or `--stand binom` (`�
 | `ajk` (alias `relatedness`) | Only sites with frequencies strictly inside (0,1): `A_ij = mean (a−2p)(b−2p)/(2p(1−p))`; the diagonal adds a `x² − (1+2p)x + 2p²` term to the same numerator | `PREFIX.relatedness` |
 | `discordance` (alias `gtcheck`) | Genotype error model `e = 10^(−E/10)` (`--error-probability` default 40); per site, `cost(a,G)+cost(b,G)` is minimized over every possible true genotype and summed; `--mismatch-count` counts mismatches directly | `PREFIX.gtcheck` |
 
-Matrix outputs (dist, mibs, mdist, rel, king) carry a `PREFIX.<suffix>.id` sidecar (two sample-name columns). Table outputs (genome, relatedness2, relatedness, gtcheck) follow their own table layouts; the DST/PPC/RATIO columns of `.genome` are placeholder 0.
+Matrix outputs (dist, mibs, mdist, rel, king) carry a `PREFIX.<suffix>.id` sidecar (two sample-name columns). Table outputs (genome, relatedness2, relatedness, gtcheck) follow their own table layouts.
+
+`.genome`'s `DST` column is plink's IBS distance, `1 − (IBS1 + 2·IBS0)/(2·nn)`, and matches plink 1.9 to every printed digit. `PPC` and `RATIO` are written as `NA`: plink derives them from `HOMHOM`/`HETHET` counters that accumulate over its last genotype window only, not over all sites (on a 3,000-site fixture plink prints `HOMHOM=0 HETHET=2` for every pair), so they are a property of plink's internal blocking and cannot be reproduced from whole-site counts. Use `PI_HAT` or `DST` to rank pairs.
 
 ## Output layout
 
@@ -167,12 +169,12 @@ s1	s2	12	26	37	31	-0.588235294
 s1	s3	6	29	37	30	-0.776119403
 ```
 
-`kin.genome` (`--type pihat`, strictly lower triangle; DST/PPC/RATIO are placeholder columns):
+`kin.genome` (`--type pihat`, strictly lower triangle; `DST` is plink's IBS distance, `PPC`/`RATIO` are `NA` — see above):
 
 ```
 FID1	IID1	FID2	IID2	RT	EZ	Z0	Z1	Z2	PI_HAT	PHE	DST	PPC	RATIO
-s2	s2	s1	s1	OT	NA	1.0000	0.0000	0.0000	0.0000	-9	0	0	0
-s3	s3	s1	s1	OT	NA	1.0000	0.0000	0.0000	0.0000	-9	0	0	0
+s2	s2	s1	s1	OT	NA	0.0000	1.0000	0.0000	0.5000	-9	0.750000	NA	NA
+s3	s3	s1	s1	OT	NA	0.0000	1.0000	0.0000	0.5000	-9	0.625000	NA	NA
 ```
 
 `tree.nwk`, with bootstrap support at internal nodes:

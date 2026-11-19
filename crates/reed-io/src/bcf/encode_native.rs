@@ -256,7 +256,10 @@ impl NativeEncoder {
                 reason: "position exceeds the BCF i32 range".to_string(),
             });
         }
-        let pos0 = i32::try_from(site.pos1.saturating_sub(1)).unwrap_or(i32::MAX);
+        // doc_v30 R03: the inverse sentinel rule (`POS 0` → `pos0 = -1`) has
+        // one owner, so a text→BCF pass keeps the telomere.
+        let pos0 = super::record::pos0_from_pos1(site.pos1)
+            .expect("invariant: the i32 range was checked above");
         // (doc_v20 S42) rlen: the REF length, except that a symbolic ALT
         // with INFO/END extends to END − POS + 1 (htslib's r_len), so
         // regional queries find spanning deletions in reed-written BCFs.
@@ -780,20 +783,16 @@ impl NativeEncoder {
             .get(contig)
             .copied()
             .ok_or_else(|| Self::undeclared("contig", contig))?;
-        // (doc_v20 S43, corrected in review) pos0 == -1 is htslib's telomere
-        // sentinel (`v->pos == UINT32_MAX` -> POS 0, "e.g. MT:0",
-        // vcf.c:1649-1650) and must copy through; only values below -1 are
-        // malformed. The first version rejected -1 and broke BCF->BCF passes
-        // on files bcftools itself writes.
-        if pos0 < -1 {
-            return Err(IoError::MalformedRecord {
-                locus: Locus {
-                    contig_name: String::from_utf8_lossy(contig).into_owned(),
-                    pos1: 0,
-                },
-                reason: "BCF position is below the telomere sentinel (-1)".to_string(),
-            });
-        }
+        // doc_v30 R03: the telomere rule lives in `record::pos1_from_pos0`;
+        // a legal BCF→BCF copy keeps the original signed pos0 (telomere
+        // included), so the value is validated but not rewritten.
+        super::record::pos1_from_pos0(pos0).map_err(|_| IoError::MalformedRecord {
+            locus: Locus {
+                contig_name: String::from_utf8_lossy(contig).into_owned(),
+                pos1: 0,
+            },
+            reason: "BCF position is below the telomere sentinel (-1)".to_string(),
+        })?;
         {
             let s = &mut self.shared;
             s.extend_from_slice(&out_contig.to_le_bytes());

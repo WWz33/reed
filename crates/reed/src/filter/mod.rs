@@ -23,6 +23,8 @@ use std::time::Instant;
 use reed_core::ChunkId;
 use reed_core::sample::SampleMask;
 use reed_engine::budget::ThreadBudget;
+
+use crate::context::RunContext;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{OrderedSink, run};
 use reed_filter::FilterError;
@@ -54,8 +56,6 @@ pub use reed_io::write::index::WriteIndex;
 /// Run options.
 #[derive(Clone, Debug)]
 pub struct FilterOptions {
-    /// Worker threads (clamped to ≥ 1).
-    pub threads: usize,
     /// Output path; `None` = stdout (plain VCF).
     pub output: Option<PathBuf>,
     /// Write a `.csi` (default) or `.tbi` index next to the output.
@@ -90,8 +90,6 @@ pub struct FilterOptions {
     pub output_compressed: Option<bool>,
     /// BCF output (`-Ob` = level 6, `-Ou` = level 0).
     pub output_bcf: Option<u8>,
-    /// In-flight memory budget in bytes (`--memory`); `None` = half of RAM.
-    pub mem_bytes: Option<u64>,
     /// Suppress the `##reed_*` provenance lines (`--no-version`).
     pub no_version: bool,
     /// Suppress only the `##reed_command` line (`--no-command`): the recorded
@@ -107,7 +105,6 @@ impl Default for FilterOptions {
     /// silently disabling compression for library callers).
     fn default() -> Self {
         Self {
-            threads: 0,
             output: None,
             write_index: WriteIndex::default(),
             compress_level: 6,
@@ -120,7 +117,6 @@ impl Default for FilterOptions {
             tmp_dir: None,
             output_compressed: None,
             output_bcf: None,
-            mem_bytes: None,
             no_version: false,
             no_command: false,
         }
@@ -128,20 +124,26 @@ impl Default for FilterOptions {
 }
 
 /// Pass1's source: the still-unconsumed first open (single-pass runs), else
-/// a fresh open of the replay path (a file, or the stdin spill).
+/// a fresh stream from the input's replay capability.
 fn open_pass1(
     first: &mut Option<crate::input::OpenedInput>,
-    replay_path: Option<&Path>,
+    capability: &crate::input::InputCapability,
     regions: &[reed_io::chunk::region::Region],
 ) -> Result<crate::input::OpenedInput, FilterError> {
     match first.take() {
         Some(opened) => Ok(opened),
-        None => crate::input::open_regions(replay_path, regions).map_err(io_err),
+        None => capability.replay(regions).map_err(io_err),
     }
 }
 
 fn io_err(e: reed_io::error::IoError) -> FilterError {
-    FilterError::Io(std::io::Error::other(e.to_string()))
+    // A missing capability is a command-line problem (doc_v30 R06); the
+    // facade's `Error::kind` maps `FilterError::Usage` to exit 2.
+    if matches!(e, reed_io::error::IoError::Capability { .. }) {
+        FilterError::Usage(e.to_string())
+    } else {
+        FilterError::Io(std::io::Error::other(e.to_string()))
+    }
 }
 
 /// Maps a transport error inside a chunk job.
@@ -202,14 +204,14 @@ fn commit_pending(slot: &Arc<Mutex<Option<PendingOrderedOutput>>>) -> Result<(),
                 "filter sink finished without a pending output",
             ))
         })?;
-    pending.commit().map_err(FilterError::from)
+    pending.commit().map_err(io_err)
 }
 
 /// The per-run inputs every pass1 stream shares (the strategy supplies the
 /// job and the sink).
 struct Pass1Context<'a> {
     budget: &'a ThreadBudget,
-    abort: &'a reed_engine::abort::Abort,
+    abort: &'a reed_engine::abort::AbortSignal,
     seek_regions: &'a [reed_io::chunk::region::Region],
 }
 
@@ -217,7 +219,7 @@ struct Pass1Context<'a> {
 /// report — the tail the sketch and streaming strategies used to spell out
 /// twice (header write excluded: the caller owns the sink).
 fn drive_pass1<J>(
-    opened: &mut crate::input::OpenedInput,
+    opened: crate::input::OpenedInput,
     job: crate::bcf_input::InputJob<J>,
     sink: OutputSink,
     ctx: Pass1Context<'_>,
@@ -228,7 +230,8 @@ where
     J: reed_engine::pipeline::ChunkJob<Partial = FilterPartial> + Sync + 'static,
 {
     let started = Instant::now();
-    let report = run(opened.source.as_mut(), &job, sink, ctx.budget, ctx.abort).map_err(ferr)?;
+    let (mut source, _facts, _meta) = opened.into_parts();
+    let report = run(source.as_mut(), &job, sink, ctx.budget, ctx.abort).map_err(ferr)?;
     timing_phases.push(("pass1", started.elapsed().as_secs_f64()));
     timing_engine.merge(&report.metrics);
     job.finish(report.n_chunks, ctx.seek_regions.is_empty())
@@ -245,6 +248,7 @@ pub fn run_filter(
     input: Option<&Path>,
     spec: &FilterSpec,
     opts: &FilterOptions,
+    ctx: &RunContext<'_>,
 ) -> Result<FilterReport, crate::error::Error> {
     let t0 = Instant::now();
     // `--timing` phases (03 O10): open, pass0, pass1 + the engine metrics.
@@ -258,7 +262,9 @@ pub fn run_filter(
     // Indexed regions come from the spec (`-r/-R`) or, for library callers,
     // from `FilterOptions.regions`. The spec is the CLI spelling and is
     // resolved here against the header's contig vocabulary, so both the
-    // predicate and the seek list come from one parse (doc_v24 V24-04).
+    // predicate and the seek list come from one parse (doc_v24 V24-04). The
+    // pending probe hands its single open to the source below, so a `-r` run
+    // opens the input once (doc_v30 R05/R06).
     if !spec.targets.indexed.is_empty() && !opts.regions.is_empty() {
         return Err(crate::error::Error::usage(
             "indexed regions were given both in the spec and in FilterOptions.regions: give one source",
@@ -269,47 +275,60 @@ pub fn run_filter(
             "regions need a seekable file, not stdin",
         ));
     }
+    let mut pending: Option<crate::input::PendingInput> = None;
     let seek_regions: Vec<reed_io::chunk::region::Region> = if spec.targets.indexed.is_empty() {
         opts.regions.clone()
     } else {
         let path = input.expect("invariant: stdin was rejected above");
-        // Read the header once before seeking; the region grammar needs the
-        // contig vocabulary (`HLA-A*01:01` is a name, not `contig:pos`).
-        let probe = crate::input::open(Some(path)).map_err(io_err)?;
+        // Read the header through the same handle the source will use; the
+        // region grammar needs the contig vocabulary (`HLA-A*01:01` is a
+        // name, not `contig:pos`).
+        let probe = crate::input::PendingInput::open(path).map_err(io_err)?;
         let contigs = probe.facts().contig_names.clone();
-        drop(probe);
-        reed_filter::spec::region::parse_regions_strict(&spec.targets.indexed, &contigs)?
-            .into_iter()
-            .map(|(contig, start1, end1)| reed_io::chunk::region::Region {
-                contig,
-                start1,
-                end1,
-            })
-            .collect()
+        let regions =
+            reed_filter::spec::region::parse_regions_strict(&spec.targets.indexed, &contigs)?
+                .into_iter()
+                .map(|(contig, start1, end1)| reed_io::chunk::region::Region {
+                    contig,
+                    start1,
+                    end1,
+                })
+                .collect();
+        pending = Some(probe);
+        regions
     };
     // ---- input: stdin streams straight into the single-pass pipeline;
-    // multi-pass runs (`--mind`, and `--indep-pairwise` whose prune pass0 also
-    // consumes the stream) spill it once and delete the spill on every exit
-    // path (03-performance.md O5). The first open doubles as pass0's source
-    // when nothing consumes it before pass1. ----
-    let _spill: Option<crate::input::StdinSpill>;
-    let mut replay_path: Option<PathBuf> = input.map(Path::to_path_buf);
+    // shapes that read the bytes twice ask the input for a replay capability
+    // (a file, or stdin spilled once) instead of remembering a path
+    // (doc_v30 R05). The first open doubles as pass0's source when nothing
+    // consumes it before pass1. ----
+    let needs_multi_pass = spec.mind.is_some() || spec.ld_prune.is_some();
     let mut first: Option<crate::input::OpenedInput>;
-    match input {
-        Some(p) => {
-            first = Some(crate::input::open_regions(Some(p), &seek_regions).map_err(io_err)?);
-            _spill = None;
-        }
-        None if spec.mind.is_some() || spec.ld_prune.is_some() => {
-            let guard = crate::input::StdinSpill::new(opts.tmp_dir.as_deref()).map_err(io_err)?;
-            let path = guard.path().to_path_buf();
-            first = Some(crate::input::open_regions(Some(&path), &seek_regions).map_err(io_err)?);
-            replay_path = Some(path);
-            _spill = Some(guard);
-        }
-        None => {
-            first = Some(crate::input::open(None).map_err(io_err)?);
-            _spill = None;
+    let capability: crate::input::InputCapability;
+    if let Some(probe) = pending.take() {
+        let mut opened = probe.into_opened(&seek_regions).map_err(io_err)?;
+        capability = opened.take_capability();
+        first = Some(opened);
+    } else {
+        match input {
+            Some(p) => {
+                let mut opened =
+                    crate::input::open_regions(Some(p), &seek_regions).map_err(io_err)?;
+                capability = opened.take_capability();
+                first = Some(opened);
+            }
+            None if needs_multi_pass => {
+                capability = crate::input::InputCapability::Replayable(
+                    crate::input::ReplayableInput::from_stdin(opts.tmp_dir.as_deref())
+                        .map_err(io_err)?,
+                );
+                first = Some(capability.replay(&seek_regions).map_err(io_err)?);
+            }
+            None => {
+                let mut opened = crate::input::open(None).map_err(io_err)?;
+                capability = opened.take_capability();
+                first = Some(opened);
+            }
         }
     }
     timing_phases.push(("open", t0.elapsed().as_secs_f64()));
@@ -318,8 +337,10 @@ pub fn run_filter(
         .expect("invariant: the input was just opened")
         .facts()
         .clone();
-    let is_bcf = first.as_ref().is_some_and(|opened| opened.bcf.is_some());
-    let input_bcf = first.as_ref().and_then(|opened| opened.bcf.clone());
+    let is_bcf = first
+        .as_ref()
+        .is_some_and(crate::input::OpenedInput::is_bcf);
+    let input_bcf = first.as_ref().and_then(|opened| opened.bcf_dict().cloned());
     let header = facts.header.clone();
     let n_samples_in = header.sample_names().len();
     let tags = reed_io::header::tag_table(&header);
@@ -342,35 +363,50 @@ pub fn run_filter(
             tags.format(&String::from_utf8_lossy(field))
                 .is_some_and(|def| def.number == reed_core::tag_table::TagNumber::Count(1))
         });
-    let strategy = match opts.strategy {
+    // The run's one budget (doc_v30 R09): the strategy choice, pass0, the
+    // prune pool and the pipeline all read `ctx.budget`; nothing re-derives
+    // a memory ceiling from the host.
+    let budget = ctx.budget;
+    let chosen = match opts.strategy {
         Some(forced) => forced,
-        // The sketch path's record-count estimate is line-based; BCF input
-        // takes the two-pass path (doc_v3 02-bcf.md B1).
-        None if is_bcf => ExecStrategy::TwoPassReparse,
-        None => match &spec.mind {
-            Some(_) if replay_path.is_some() => {
-                // §11.4: the matrix path when the upper-bounded matrix fits
-                // the memory budget (records extrapolated from the first
-                // chunk's records/byte density).
-                let estimated =
-                    estimate_records(replay_path.as_deref().expect("invariant: guarded above"))?;
-                let chosen = reed_filter::plan::strategy::choose_for_mind(
-                    estimated,
-                    n_samples_in,
-                    plan.mask.len(),
-                    reed_engine::budget::MemBudget::default_half_memory().bytes,
-                );
-                // The mid stage has no record bytes, so a tail rule that
-                // reads them cannot run there (doc_v12 D12-1). Two-pass
-                // re-parses the survivors, so it evaluates them correctly.
-                if chosen == ExecStrategy::SketchThenEmit && plan.tail_reads_record() {
-                    ExecStrategy::TwoPassReparse
-                } else {
-                    chosen
+        None => {
+            let chosen = match &spec.mind {
+                Some(_) => {
+                    // `needs_multi_pass` spilled stdin or the input is a
+                    // file, so the estimate always has a replay capability.
+                    let replay = capability
+                        .replayable()
+                        .expect("invariant: --mind has a replay capability");
+                    // §11.4: the matrix path when the upper-bounded matrix fits
+                    // the memory budget (records extrapolated from the first
+                    // chunk's records/byte density).
+                    let estimated = estimate_records(replay)?;
+                    let chosen = reed_filter::plan::strategy::choose_for_mind(
+                        estimated,
+                        n_samples_in,
+                        plan.mask.len(),
+                        budget.mem.bytes,
+                    );
+                    // The mid stage has no record bytes, so a tail rule that
+                    // reads them cannot run there (doc_v12 D12-1). Two-pass
+                    // re-parses the survivors, so it evaluates them correctly.
+                    if chosen == ExecStrategy::SketchThenEmit && plan.tail_reads_record() {
+                        ExecStrategy::TwoPassReparse
+                    } else {
+                        chosen
+                    }
                 }
+                None => plan.strategy,
+            };
+            // The sketch path's record-count estimate is line-based; a BCF
+            // input needs a second pass to count framed records
+            // (doc_v3 02-bcf.md B1).
+            if is_bcf && chosen == ExecStrategy::SketchThenEmit {
+                ExecStrategy::TwoPassReparse
+            } else {
+                chosen
             }
-            _ => plan.strategy,
-        },
+        }
     };
     // The matrix shape (pass0 matrices → mid stage → emit pass1) also
     // covers `--mind` + `--indep-pairwise`: the pruner needs the planes and
@@ -380,6 +416,16 @@ pub fn run_filter(
     // other shape for that combination, so it is refused rather than
     // evaluated blind (doc_v12 D12-1).
     let mind_ld_prune = spec.mind.is_some() && spec.ld_prune.is_some();
+    // Every shape except a single streaming pass reads the input again
+    // (pass0 + pass1, or the sketch's two streams). A one-shot input cannot
+    // serve that: say so instead of silently running one pass (doc_v30 R05).
+    if (chosen != ExecStrategy::SinglePass || mind_ld_prune) && !capability.can_replay() {
+        return Err(crate::error::Error::usage(
+            "this filter shape reads the input more than once, but stdin is \
+             read once; write the stream to a file and pass that path",
+        ));
+    }
+    let strategy = chosen;
     if mind_ld_prune && plan.tail_reads_record() {
         return Err(crate::error::Error::usage(
             "--mind with --indep-pairwise cannot be combined with a tail -i/-e \
@@ -442,18 +488,6 @@ pub fn run_filter(
     let pass0_start = Instant::now();
     let mind_requested = spec.mind.is_some();
     let indep_requested = spec.ld_prune.is_some();
-    let budget_bytes = opts
-        .mem_bytes
-        .unwrap_or_else(|| reed_engine::budget::MemBudget::default_half_memory().bytes);
-    // Constructed once here; the pass0/mid/prune stages and the pipeline
-    // runs below all take their parallelism from it (doc_v8 D8-1).
-    let budget = ThreadBudget {
-        threads: opts.threads.max(1),
-        mem: opts.mem_bytes.map_or_else(
-            reed_engine::budget::MemBudget::default_half_memory,
-            reed_engine::budget::MemBudget::from_bytes,
-        ),
-    };
     let static_keep: Arc<[bool]> = Arc::from(keep_vec.clone());
     let mut matrix: Option<MatrixOutput> = if mind_requested || indep_requested || sketch_shape {
         let opened = first
@@ -469,7 +503,7 @@ pub fn run_filter(
             (!mind_requested).then_some(n_static_out as u64),
             static_keep,
             config,
-            budget_bytes,
+            ctx,
             opts,
             native_bcf,
         )?;
@@ -518,8 +552,8 @@ pub fn run_filter(
         plan.info_trusted = false;
     }
     if subset && !plan.no_update {
-        plan.recompute.ac = true;
-        plan.recompute.an = true;
+        plan.recompute.enable("AC");
+        plan.recompute.enable("AN");
         for tag in ["AC", "AN"] {
             // An explicit `-x` listing the tag is the user's request: the
             // removal stays unconditional (doc_v12 D12-2). Under the default
@@ -540,7 +574,7 @@ pub fn run_filter(
     // counts, which are biallelic-valid only (doc_v3 R7 defers the per-ALT
     // counting). Fail here rather than write a single value where the header
     // declares Number=A (§11.6, review item A7).
-    if (plan.recompute.ac || plan.recompute.maf || plan.recompute.hwe)
+    if (plan.recompute.wants("AC") || plan.recompute.wants("MAF") || plan.recompute.wants("HWE"))
         && spec.multiallelics_allowed()
     {
         return Err(crate::error::Error::usage(
@@ -575,7 +609,7 @@ pub fn run_filter(
             &plan,
             n_samples_out,
             &mut funnel,
-            &budget,
+            budget,
         );
         timing_phases.push(("mid", mid_start.elapsed().as_secs_f64()));
         sketch_out = Some((funnel, map));
@@ -611,7 +645,7 @@ pub fn run_filter(
                 ),
                 n_samples_in,
                 &pass0::keep_words_of(&keep),
-                &budget,
+                budget,
             )
         } else {
             m.prune.clone().expect("invariant: the streaming prune ran")
@@ -807,16 +841,16 @@ pub fn run_filter(
         );
         // Header first (as BGZF block(s) on the compressed path).
         sink.out.write_header(&header_bytes).map_err(io_err)?;
-        let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
-        let abort = reed_engine::abort::abort_for(&budget);
-        let job = crate::bcf_input::InputJob::new(job, &opened, &abort, &budget);
+        let opened = open_pass1(&mut first, &capability, &seek_regions)?;
+        let abort = ctx.abort;
+        let job = crate::bcf_input::InputJob::new(job, &opened, abort, budget);
         timing_chunks = drive_pass1(
-            &mut opened,
+            opened,
             job,
             sink,
             Pass1Context {
-                budget: &budget,
-                abort: &abort,
+                budget,
+                abort,
                 seek_regions: &seek_regions,
             },
             &mut timing_phases,
@@ -864,28 +898,28 @@ pub fn run_filter(
             Arc::clone(&pending_output),
         );
         sink.out.write_header(&header_bytes).map_err(io_err)?;
-        let mut opened = open_pass1(&mut first, replay_path.as_deref(), &seek_regions)?;
-        let abort = reed_engine::abort::abort_for(&budget);
+        let opened = open_pass1(&mut first, &capability, &seek_regions)?;
+        let abort = ctx.abort;
         // doc_v4 O-4: BCF input with a native-eligible plan decodes the
         // records directly; everything else renders text as before.
         let job = if native_bcf {
             crate::bcf_input::InputJob::with_bcf_records(
                 job,
                 &opened,
-                &abort,
-                &budget,
+                abort,
+                budget,
                 FilterJob::run_bcf_records,
             )
         } else {
-            crate::bcf_input::InputJob::new(job, &opened, &abort, &budget)
+            crate::bcf_input::InputJob::new(job, &opened, abort, budget)
         };
         timing_chunks = drive_pass1(
-            &mut opened,
+            opened,
             job,
             sink,
             Pass1Context {
-                budget: &budget,
-                abort: &abort,
+                budget,
+                abort,
                 seek_regions: &seek_regions,
             },
             &mut timing_phases,
@@ -902,7 +936,7 @@ pub fn run_filter(
     let funnel_stages = report::funnel_stages(&head_ids, &tail_ids, &funnel);
     let masked_by_rule = report::masked_by_rule(&mask_ids, &funnel);
     let timing = reed_filter::funnel::TimingReport {
-        threads: opts.threads.max(1),
+        threads: budget.threads.max(1),
         phases: timing_phases
             .iter()
             .map(|(name, secs)| ((*name).to_string(), *secs))
@@ -1023,55 +1057,29 @@ fn keep_list_from_names(
 }
 
 /// The INFO definitions a recompute needs, as format-layer data (doc_v26
-/// V26-10: the header mutation itself lives in `reed-io`).
-///
-/// Canonical Numbers: AC and HWE are `A` (one value per ALT).
+/// V26-10: the header mutation itself lives in `reed-io`). The type,
+/// Number and description come from the tag registry (doc_v30 R13).
 fn recompute_definitions(
     recompute: &reed_filter::plan::RecomputeFlags,
 ) -> Vec<reed_io::header::InfoDefinition> {
+    use reed_core::count::{InfoTagNumber, InfoTagType};
     use reed_io::header::{InfoDefinition, InfoNumber, InfoType};
-    let mut defs = Vec::new();
-    if recompute.ac {
-        defs.push(InfoDefinition {
-            id: "AC",
-            number: InfoNumber::A,
-            ty: InfoType::Integer,
-            description: "Allele count in genotypes",
-        });
-    }
-    if recompute.an {
-        defs.push(InfoDefinition {
-            id: "AN",
-            number: InfoNumber::Fixed(1),
-            ty: InfoType::Integer,
-            description: "Total number of alleles in called genotypes",
-        });
-    }
-    if recompute.ns {
-        defs.push(InfoDefinition {
-            id: "NS",
-            number: InfoNumber::Fixed(1),
-            ty: InfoType::Integer,
-            description: "Number of samples with data",
-        });
-    }
-    if recompute.maf {
-        defs.push(InfoDefinition {
-            id: "MAF",
-            number: InfoNumber::Fixed(1),
-            ty: InfoType::Float,
-            description: "Frequency of the second most common allele",
-        });
-    }
-    if recompute.hwe {
-        defs.push(InfoDefinition {
-            id: "HWE",
-            number: InfoNumber::A,
-            ty: InfoType::Float,
-            description: "HWE test (PMID:15789306); 1=good, 0=bad",
-        });
-    }
-    defs
+    recompute
+        .tags
+        .iter()
+        .map(|tag| InfoDefinition {
+            id: tag.name,
+            number: match tag.number {
+                InfoTagNumber::A => InfoNumber::A,
+                InfoTagNumber::One => InfoNumber::Fixed(1),
+            },
+            ty: match tag.ty {
+                InfoTagType::Integer => InfoType::Integer,
+                InfoTagType::Float => InfoType::Float,
+            },
+            description: tag.description,
+        })
+        .collect()
 }
 
 /// The ordered output sink: [`OrderedOutput`] plus the funnel counters the

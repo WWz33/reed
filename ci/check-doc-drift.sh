@@ -84,8 +84,11 @@ check "the front end never compiles plans or assigns groups (doc_v5 08 §6.2)" \
     bash -c '! grep -rqE "assign_groups|plan::compile" crates/reed-cli/src --include=*.rs'
 check "the backend never prints to stdout/stderr (doc_v5 08 §6.4.2)" \
     bash -c '! grep -rqE "eprintln!|println!" crates/reed/src crates/reed-core/src crates/reed-io/src crates/reed-engine/src crates/reed-stats/src crates/reed-filter/src --include=*.rs'
-check "the facade has no pub mod (doc_v5 08 §6.4.3)" \
-    bash -c '[ "$(grep -c "^pub mod" crates/reed/src/lib.rs)" -eq 0 ]'
+check "the facade's modules are the prelude and the hidden frontend (doc_v5 08 §6.4.3, doc_v30 P3)" \
+    bash -c '[ "$(grep -c "^pub mod" crates/reed/src/lib.rs)" -eq 2 ] &&
+        grep -q "^pub mod prelude" crates/reed/src/lib.rs &&
+        grep -q "^pub mod frontend" crates/reed/src/lib.rs &&
+        grep -B1 "^pub mod frontend" crates/reed/src/lib.rs | grep -q "^#\[doc(hidden)\]"'
 
 # doc_v5 08 §4 L-1: the README describes v0.3, not the v0.2 API.
 check "the README has no v0.2 API examples (doc_v5 08 §4 L-1)" \
@@ -332,7 +335,8 @@ check "record counts are checked before packing (doc_v12 D12-9)" \
 
 # N9: ALT counting is one rule; -M 1 is representable.
 check "ALT counting is one rule (doc_v12 D12-10)" \
-    bash -c 'grep -q "pub fn count_alts" crates/reed-io/src/vcf/site.rs &&
+    bash -c 'grep -q "pub fn count_alts" crates/reed-core/src/site.rs &&
+        ! grep -q "pub fn count_alts" crates/reed-io/src/vcf/site.rs &&
         grep -q "max_alt_alleles: Option<u32>" crates/reed-filter/src/spec/mod.rs'
 
 # N10: --fill-tags validates its list.
@@ -350,11 +354,12 @@ check "AC/AN INFO reading is one implementation (doc_v12 D12-13)" \
 
 # N13: one INFO number grammar.
 check "INFO number parsing is one grammar (doc_v12 D12-14)" \
-    bash -c 'grep -q "pub fn parse_info_number" crates/reed-io/src/vcf/info.rs'
+    bash -c 'grep -q "pub fn parse_info_number" crates/reed-core/src/vcf/info.rs &&
+        ! grep -q "pub fn parse_info_number" crates/reed-io/src/vcf/info.rs 2>/dev/null'
 
 # N14: the dead re-parse is gone.
 check "edit_vcf_line does not re-parse its LineRef (doc_v12 D12-15)" \
-    bash -c '! grep -q "LineRef::parse(line.line)" crates/reed-io/src/vcf/line_edit.rs'
+    bash -c '! grep -q "LineRef::parse(line.line)" crates/reed-core/src/vcf/line_edit.rs'
 
 # Guard 15: the deliberate divergences are registered in the CLI spec.
 check "the deliberate htslib divergences are registered (doc_v12 2.5-B)" \
@@ -449,7 +454,7 @@ check "convert has no --mind (doc_v13 guard 5)" \
 # Guard 7: the resolve draw is deterministic and tested.
 check "resolve-iupac determinism is tested (doc_v13 guard 7)" \
     bash -c 'grep -q "fn resolve_iupac_is_deterministic" crates/reed/tests/e2e_convert.rs &&
-        grep -q "fn resolve_pick" crates/reed/src/convert/job.rs'
+        grep -q "fn resolve_pick" crates/reed/src/convert/job/msa.rs'
 
 # Guard 8: the facade exports the convert surface at the root.
 check "run_convert is at the facade root (doc_v13 guard 8)" \
@@ -489,7 +494,7 @@ check "the hapmap alphabet convergence is tested (doc_v13 B13-10)" \
 # Guard 16: --vcf exists, is exclusive with VCF-input targets, and the target
 # is exported at the facade root (D13-8).
 check "the --vcf target is gated and exported (doc_v13 guard 16)" \
-    bash -c 'grep -q "cannot mix --vcf" crates/reed/src/convert/job.rs &&
+    bash -c 'grep -q "cannot mix --vcf" crates/reed/src/convert/job/mod.rs &&
         grep -q "ConvertTarget::Vcf" crates/reed/src/convert/mod.rs &&
         grep -q "to_vcf: bool" crates/reed-cli/src/cli/mod.rs &&
         grep -q "fn run_vcf_cli" crates/reed-cli/src/translate/convert.rs'
