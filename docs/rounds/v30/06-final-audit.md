@@ -279,7 +279,7 @@ workflow。脚本只检查提交同步，不验证开发门是否通过；main �
 | ID | 2026-11-23 结果 | 证据 |
 |---|---|---|
 | P1-4 | 历史表格保留，索引统一到 `STATUS.md` §15–§16 与本文件 §11 | 本文件 §11 |
-| P1-5 | **已完成**：`DistanceRequest/DistanceReport/run_distance/run_distance_opened`；CLI 只做 flag 翻译 | `crates/reed/src/distance.rs`；`reed-cli/src/translate/distance.rs` 仅 ~120 行 |
+| P1-5 | **已完成**：`DistanceRequest/DistanceReport/run_distance/run_distance_opened`；CLI 只做 flag 翻译；库级 bootstrap 回归 | `crates/reed/src/distance.rs`；`api_surface.rs::run_distance_bootstrap_is_usable_from_the_library` |
 | P1-6 | **已完成**：`Stand/MissingPolicy/PcaSolver/XvalResultMode` 等 facade 枚举，CLI 边界 `FromStr` | `crates/reed/src/options.rs`；`PcaRequest`/`DapcRequest` 字段改类型 |
 | P1-7 | **已完成**：支持 crate 采用 0.5.x lockstep 稳定面；9 个 crate 的 API 快照与 semver 门 | `api-contract.md` §2/§5/§6；`api-release-amendment.md` Amendment 2；`ci/api/*.txt` |
 | P1-8 | **已完成**：`frontend` 改为逐项导出，删除 `reed_distance/graph/reduce` 等整 crate 别名；结构门检查缩进别名 | `crates/reed/src/lib.rs`；`ci/check-structure.sh` |
@@ -288,7 +288,7 @@ workflow。脚本只检查提交同步，不验证开发门是否通过；main �
 | P2-3 | **已完成**：feature 门按 workspace 自动发现（`cargo hack --each-feature --workspace`） | `ci/check-features.sh` |
 | P2-4 | **已文档化**：`.genome` 明确为部分兼容（`Z0/Z1/Z2/PI_HAT/DST`；`PPC/RATIO=NA`，`RT/EZ/PHE` 占位） | `docsite/.../distance.md`；`api-contract.md` §7 |
 | P2-5 | **已文档化**：`--summary` 的 PSI/HWE 边界与替代路径 | `docsite/.../stats.md`；`api-contract.md` §7 |
-| P2-6 | **已完成**：实现 mid-p HWE（`HweMode::MidP` → `p_mid`），不再拒绝 | `reed-core/math/hwe.rs` 既有 `p_mid`；`reed-filter` tail/compile |
+| P2-6 | **已完成**：实现 mid-p HWE（`HweMode::MidP` → `p_mid`），不再拒绝；CLI 端到端回归 | `reed-core/math/hwe.rs` 既有 `p_mid`；`reed-filter` tail/compile；`cli_contract.rs::hwe_midp_is_applied_by_the_cli` |
 | P2-7 | **已文档化**：site-count windows 仍拒绝，文档明说 | `docsite/.../popg.md`；`api-contract.md` §7 |
 | IO | **已完成**：`PendingInput` 保留首次扫描构造的 source，无 region 时不再重复 inflate/parse header | `crates/reed/src/input.rs` |
 | noodles | **保持**：内部 IO 后端 + 差分 oracle，分阶段替换（未在本批重写） | 本文件 §6 |
@@ -304,6 +304,15 @@ main 是否纳入 docsite、`.genome` 是否追求完整 PLINK 列、summary 是
 产品边界保留并在文档中明确。
 
 验证（本机，`dev` 工作树）：
+
+回归覆盖新增：
+
+- `crates/reed/tests/api_surface.rs::run_distance_bootstrap_is_usable_from_the_library`：
+  直接用 facade 跑 UPGMA + bootstrap，校验 `DistanceReport.bootstrap_support`、
+  `.nwk` 写出和固定 seed 的可复现性（不是只测 CLI）。
+- `crates/reed-cli/tests/cli_contract.rs::hwe_midp_is_applied_by_the_cli`：
+  同一输入 exact p=1.0、mid-p≈0.6533，在 `--hwe 0.8` 下 exact 保留、`midp` 丢弃；
+  非法第二 token 仍退出 2。
 
 ```text
 cargo fmt --all

@@ -3453,3 +3453,92 @@ fn variant_only_empty_windows_are_zero_not_na() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// doc_v30 P2-6: `--hwe P midp` must be a working CLI path, not only a
+/// library detail. With 6 `0/0` and 4 `0/1` genotypes over 10 samples the
+/// exact p is 1.0 while the mid-p value is ~0.6533; a threshold of 0.8
+/// therefore keeps the site under `exact` and drops it under `midp`.
+#[test]
+fn hwe_midp_is_applied_by_the_cli() {
+    let dir = temp_dir("hwe-midp");
+    let mut text = String::from(
+        "##fileformat=VCFv4.2\n##contig=<ID=Chr01,length=100000>\n\
+         ##FILTER=<ID=PASS,Description=\"All filters passed\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT",
+    );
+    for i in 0..10 {
+        write!(text, "\ts{i}").expect("invariant: writing to a String");
+    }
+    text.push_str("\nChr01\t1\t.\tA\tG\t50\tPASS\t.\tGT");
+    for _ in 0..6 {
+        text.push_str("\t0/0");
+    }
+    for _ in 0..4 {
+        text.push_str("\t0/1");
+    }
+    text.push('\n');
+    let input = dir.join("in.vcf");
+    std::fs::write(&input, text).expect("invariant: fixture");
+
+    let exact = dir.join("exact.vcf");
+    let exact_out = run(&[
+        "filter",
+        input.to_str().expect("invariant: utf8"),
+        "--hwe",
+        "0.8",
+        "-Ov",
+        "-o",
+        exact.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        exact_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exact_out.stderr)
+    );
+    let exact_text = std::fs::read_to_string(&exact).expect("invariant: exact output");
+    assert_eq!(
+        exact_text.lines().filter(|l| !l.starts_with('#')).count(),
+        1,
+        "the exact test must keep the site: {exact_text}"
+    );
+
+    let midp = dir.join("midp.vcf");
+    let midp_out = run(&[
+        "filter",
+        input.to_str().expect("invariant: utf8"),
+        "--hwe",
+        "0.8",
+        "midp",
+        "-Ov",
+        "-o",
+        midp.to_str().expect("invariant: utf8"),
+    ]);
+    assert!(
+        midp_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&midp_out.stderr)
+    );
+    let midp_text = std::fs::read_to_string(&midp).expect("invariant: midp output");
+    assert_eq!(
+        midp_text.lines().filter(|l| !l.starts_with('#')).count(),
+        0,
+        "mid-p 0.6533 is below 0.8, so the site must be dropped: {midp_text}"
+    );
+
+    // The second token is still validated: anything but `midp` is usage.
+    let bad = run(&[
+        "filter",
+        input.to_str().expect("invariant: utf8"),
+        "--hwe",
+        "0.8",
+        "bogus",
+        "-Ov",
+        "-o",
+        dir.join("bad.vcf").to_str().expect("invariant: utf8"),
+    ]);
+    assert_eq!(bad.status.code(), Some(2), "{bad:?}");
+    let err = String::from_utf8_lossy(&bad.stderr);
+    assert!(err.contains("invalid --hwe mode"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

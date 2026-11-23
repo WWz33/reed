@@ -657,7 +657,7 @@ bash gold/popgen/run_convert_parity.sh      PASS（含新的 half-call 门）
 
 | 项 | 结果 |
 |---|---|
-| P1-5 `run_distance` | facade 新增 `DistanceRequest`/`DistanceReport`/`run_distance`/`run_distance_opened`，CLI 只翻译 flag |
+| P1-5 `run_distance` | facade 新增 `DistanceRequest`/`DistanceReport`/`run_distance`/`run_distance_opened`，CLI 只翻译 flag；库级 bootstrap 测试 |
 | P1-6 typed 选项 | `Stand`/`MissingPolicy`/`PcaSolver`/`XvalResultMode`/`DistanceKind`/`DistanceFormat`/`TreeMethod` |
 | P1-7 支持 crate 稳定面 | 0.5.x lockstep；`ci/api/<crate>.txt` 9 份 + 逐 crate semver 门；ADR Amendment 2 |
 | P1-8 frontend 别名 | 改为逐项导出，无整 crate/模块别名；结构门覆盖缩进 `pub use` |
@@ -666,7 +666,7 @@ bash gold/popgen/run_convert_parity.sh      PASS（含新的 half-call 门）
 | P2-3 feature 门 | `cargo hack --each-feature check --workspace` + workspace 空 feature 集 |
 | P2-4 `.genome` | 文档明确部分兼容（`PPC/RATIO=NA`，`RT/EZ/PHE` 占位） |
 | P2-5 summary | 文档明确不输出 `PSI`/`HWE` 及替代命令 |
-| P2-6 `--hwe midp` | 已实现 mid-p（复用 `HweCache::p_mid`），CLI spec 同步 |
+| P2-6 `--hwe midp` | 已实现 mid-p（复用 `HweCache::p_mid`），CLI spec 同步；CLI 端到端回归 |
 | P2-7 site-count windows | 仍拒绝，popg 文档明确 |
 | IO header 重复解析 | `PendingInput` 复用首次扫描构造的 source |
 

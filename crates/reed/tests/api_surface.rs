@@ -6,6 +6,7 @@
 //! fixtures), so a name that disappears from the facade fails the build here
 //! instead of only failing downstream users.
 
+use std::fmt::Write as _;
 use std::io::Write;
 
 use reed::{
@@ -295,6 +296,91 @@ fn run_filter_opened_drives_an_opened_input() {
     let err = reed::run_filter_opened(opened, &spec, &opts, &ctx)
         .expect_err("a region spec cannot be applied by the opened entry");
     assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+}
+
+/// P1-5: the bootstrap path lives in the facade, not only in the CLI. Drive
+/// `run_distance` directly and check the report carries the support vector,
+/// that the same seed reproduces it, and that the `.nwk` file was written.
+#[test]
+fn run_distance_bootstrap_is_usable_from_the_library() {
+    let mut text = String::from(
+        "##fileformat=VCFv4.3
+##contig=<ID=chr1,length=100000>
+\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"g\">
+\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT",
+    );
+    for i in 0..5 {
+        write!(text, "\ts{i}").expect("invariant: writing to a String");
+    }
+    text.push('\n');
+    // 12 variable sites; a cyclic 0/0,0/1,1/1 pattern keeps every pair
+    // informative and every resample non-degenerate.
+    for site in 0..12_u32 {
+        write!(text, "chr1\t{}\t.\tA\tG\t50\tPASS\t.\tGT", site + 1)
+            .expect("invariant: writing to a String");
+        for sample in 0..5_u32 {
+            let gt = match (site + sample) % 3 {
+                0 => "0/0",
+                1 => "0/1",
+                _ => "1/1",
+            };
+            text.push('\t');
+            text.push_str(gt);
+        }
+        text.push('\n');
+    }
+    let dir = std::env::temp_dir().join(format!("reed-api-boot-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+    let vcf = dir.join("boot.vcf.gz");
+    std::fs::write(&vcf, bgzf(&text)).expect("invariant: fixture");
+
+    let run = |prefix: &str| {
+        let request = reed::DistanceRequest {
+            kind: reed::DistanceKind::OneMinusIbs,
+            tree: Some(reed::TreeMethod::Upgma),
+            bootstrap: Some(8),
+            bootstrap_seed: 7,
+            prefix: prefix.to_string(),
+            ..reed::DistanceRequest::default()
+        };
+        let budget = budget();
+        let ctx = reed::RunContext::idle(&budget);
+        reed::run_distance(Some(&vcf), &request, &ctx).expect("invariant: bootstrapped tree")
+    };
+    let first = run(&dir.join("a").to_string_lossy());
+    assert_eq!(first.n_samples, 5);
+    assert_eq!(first.n_sites, 12);
+    let support = first
+        .bootstrap_support
+        .as_ref()
+        .expect("bootstrap must populate the report");
+    assert!(!support.is_empty(), "the tree has internal nodes");
+    assert!(
+        support
+            .iter()
+            .all(|v| v.is_nan() || (0.0..=100.0).contains(v)),
+        "support must be a percentage: {support:?}"
+    );
+    let nwk = first
+        .files
+        .iter()
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("nwk"))
+        .expect("the tree run writes PREFIX.nwk");
+    let newick = std::fs::read_to_string(nwk).expect("invariant: newick");
+    assert!(
+        newick.contains('(') && newick.trim_end().ends_with(';'),
+        "{newick}"
+    );
+
+    // The same seed must reproduce the support vector exactly (the bootstrap
+    // sub-streams are seeded from `bootstrap_seed`).
+    let second = run(&dir.join("b").to_string_lossy());
+    assert_eq!(
+        first.bootstrap_support, second.bootstrap_support,
+        "the bootstrap must be reproducible for a fixed seed"
+    );
 }
 
 // ---- doc_v26 V26-10: no third-party header type in the facade surface ----
