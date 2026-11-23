@@ -20,7 +20,8 @@
 pub mod lexer;
 pub mod parser;
 
-use reed_io::vcf::info::info_fragments;
+use reed_core::vcf::fixed::{QualValue, parse_qual};
+use reed_core::vcf::info::info_fragments;
 
 use crate::semantics::{MissingCtx, MissingSides};
 
@@ -71,7 +72,7 @@ pub struct SiteValues<'a> {
     pub info_trusted: bool,
     /// This record's INFO fragment index (A6-18): set by callers that built
     /// one for the record — `None` falls back to a per-tag scan.
-    pub info_index: Option<&'a reed_io::vcf::info::InfoIndex>,
+    pub info_index: Option<&'a reed_core::vcf::info::InfoIndex>,
     /// Genotype-derived counts (`None` before the mask stage).
     pub gt: Option<GtCounts>,
     /// The current sample's `FORMAT` values, present when the caller
@@ -96,7 +97,7 @@ impl<'a> SiteValues<'a> {
     /// genotypes pass false (doc_v20 S58; see [`Self::info_trusted`]).
     #[must_use]
     pub fn from_line(
-        line: &'a reed_io::vcf::line::LineRef<'a>,
+        line: &'a reed_core::vcf::line::LineRef<'a>,
         pos1: u64,
         gt: Option<GtCounts>,
         info_trusted: bool,
@@ -116,10 +117,10 @@ impl<'a> SiteValues<'a> {
             VariantClass::Ref => "ref",
             VariantClass::Other | _ => "other",
         };
-        let qual = reed_io::vcf::fixed::parse_qual(line.qual_text(), (line.chrom(), pos1))
-            .ok()
-            .flatten()
-            .map(f64::from);
+        let qual = match parse_qual(line.qual_text()) {
+            QualValue::Value(value) => Some(f64::from(value)),
+            QualValue::Missing | QualValue::Malformed => None,
+        };
         Self {
             qual,
             filter: line.filter_text(),
@@ -127,7 +128,7 @@ impl<'a> SiteValues<'a> {
             chrom: line.chrom(),
             pos: pos1,
             variant_type,
-            n_alt: reed_io::vcf::site::count_alts(alts),
+            n_alt: reed_core::site::count_alts(alts),
             n_samples: line.n_sample_cols() as u64,
             info: line.info_text(),
             info_trusted,
@@ -462,7 +463,7 @@ fn info_or_gt<'a>(
 fn info_value<'a>(
     info: &'a [u8],
     tag: &[u8],
-    index: Option<&reed_io::vcf::info::InfoIndex>,
+    index: Option<&reed_core::vcf::info::InfoIndex>,
 ) -> Option<Val<'a>> {
     let fragment = match index {
         Some(index) => index.get(info, tag),
@@ -654,12 +655,12 @@ fn parse_element(part: &[u8], declared: Option<reed_core::tag_table::TagType>) -
         return Val::Missing;
     }
     let parsed = match declared {
-        Some(TagType::Integer) => reed_io::vcf::info::parse_info_number(part, false),
-        Some(TagType::Float) => reed_io::vcf::info::parse_info_number(part, true),
+        Some(TagType::Integer) => reed_core::vcf::info::parse_info_number(part, false),
+        Some(TagType::Float) => reed_core::vcf::info::parse_info_number(part, true),
         // Undeclared or string-typed: try both grammars (a flag never
         // reaches here), then keep the text.
-        _ => reed_io::vcf::info::parse_info_number(part, false)
-            .or_else(|| reed_io::vcf::info::parse_info_number(part, true)),
+        _ => reed_core::vcf::info::parse_info_number(part, false)
+            .or_else(|| reed_core::vcf::info::parse_info_number(part, true)),
     };
     match parsed {
         Some(n) => Val::Num(n),
@@ -997,7 +998,7 @@ mod tests {
         // Full cohort: AC=80, AN=160, MAF=0.5. The kept subset: 3 of 100
         // called alleles are ALT → AF=MAF=0.03, MAC=3.
         let text = b"chr1\t100\t.\tA\tG\t50.0\tPASS\tAC=80;AN=160;MAF=0.5;DP=40\tGT\t0/0\t0/0";
-        let line = reed_io::vcf::line::LineRef::parse(text).expect("invariant: 10 columns");
+        let line = reed_core::vcf::line::LineRef::parse(text).expect("invariant: 10 columns");
         let gt = GtCounts {
             ac: 3,
             an: 100,

@@ -3,6 +3,13 @@
 //!
 //! Usage: `cargo run --release --example crosscheck`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::map_unwrap_or,
+    clippy::uninlined_format_args,
+    clippy::unreadable_literal,
+    clippy::cloned_instead_of_copied
+)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
@@ -16,13 +23,13 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::extra::{lle, nmf, ppca, tsne, TsneConfig};
+use reed_reduce::Mat;
+use reed_reduce::extra::{TsneConfig, lle, nmf, ppca, tsne};
 use reed_reduce::graph::{
-    diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa, Kernel,
+    Kernel, diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa,
 };
 use reed_reduce::pca::pca_dense;
-use reed_reduce::umap::{find_ab_params, fuzzy_simplicial_set, umap, UmapConfig};
-use reed_reduce::Mat;
+use reed_reduce::umap::{UmapConfig, find_ab_params, fuzzy_simplicial_set, umap};
 
 /// Genotype-like fixture: 3 populations with different allele frequencies on
 /// 400 SNPs. This is the shape the PCA path is actually designed for.

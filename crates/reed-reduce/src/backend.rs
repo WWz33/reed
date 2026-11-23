@@ -67,11 +67,15 @@ impl Parallel {
 /// assert that the fast path was actually taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
+    /// The `faer` implementation (default feature).
     Faer,
+    /// The dependency-free fallback.
     Fallback,
 }
 
 impl Backend {
+    /// The backend's name (`faer` or `fallback`).
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Backend::Faer => "faer",
@@ -89,9 +93,11 @@ pub const COMPILED_BACKEND: Backend = if cfg!(feature = "faer-backend") {
 
 /// Symmetric eigendecomposition, eigenvalues ascending.
 pub struct SymEigResult {
+    /// Eigenvalues, ascending.
     pub values: Vec<f64>,
     /// Eigenvectors as columns (n x n).
     pub vectors: Mat,
+    /// Which implementation served the call.
     pub backend: Backend,
 }
 
@@ -165,6 +171,7 @@ pub fn gram_divide(w: &Mat, m: usize, par: Parallel) -> (Mat, Backend) {
     }
     #[cfg(not(feature = "faer-backend"))]
     {
+        let _ = par;
         let wt = w.transpose();
         let mut a = w.matmul(&wt);
         let scale = 1.0 / m as f64;
@@ -215,6 +222,7 @@ pub fn sym_eig(a: &Mat, par: Parallel) -> SymEigResult {
     }
     #[cfg(not(feature = "faer-backend"))]
     {
+        let _ = par;
         let e = crate::eig::sym_eig(a);
         SymEigResult {
             values: e.values,
@@ -228,7 +236,7 @@ pub fn sym_eig(a: &Mat, par: Parallel) -> SymEigResult {
 fn faer_sym_eig(a: &Mat, par: Parallel) -> (Vec<f64>, Mat) {
     use faer::dyn_stack::{GlobalPodBuffer, PodStack};
     use faer::linalg::evd::{
-        compute_hermitian_evd, compute_hermitian_evd_req, ComputeVectors, HermitianEvdParams,
+        ComputeVectors, HermitianEvdParams, compute_hermitian_evd, compute_hermitian_evd_req,
     };
     use faer::{Col, Mat as FMat};
 

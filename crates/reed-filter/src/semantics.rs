@@ -84,15 +84,12 @@ impl From<Op> for CmpOp {
     }
 }
 
-/// Per-allele AC counts with REF filled in, plus AN (`None` = no usable
-/// INFO).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InfoAfCounts {
-    /// REF first, then one count per ALT: `n_alt + 1` entries.
-    pub per_allele: Vec<u64>,
-    /// INFO/AN (always > 0 when `Some`).
-    pub an: u64,
-}
+/// Per-allele AC counts with REF filled in, plus AN (doc_v30 R02: the type
+/// now lives in `reed-core`, so `stats` and the filter cannot drift).
+pub use reed_core::count::InfoCounts as InfoAfCounts;
+
+/// What [`info_af_outcome`] found, keeping the malformed cases apart.
+pub use reed_core::count::InfoCountsOutcome as InfoAfOutcome;
 
 /// Reads INFO/AC and INFO/AN under htslib's `bcf_calc_ac` contract
 /// (vcfutils.c:56-64), shared by `-q/-Q`, the AF/AC built-ins and `--maf`:
@@ -122,49 +119,11 @@ pub fn info_af(info: &[u8], n_alt: u32) -> Option<InfoAfCounts> {
     }
 }
 
-/// What [`info_af_outcome`] found, keeping the malformed cases apart.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum InfoAfOutcome {
-    /// AC and AN are present and consistent.
-    Usable(InfoAfCounts),
-    /// AC or AN is absent (or AN is 0): the caller falls back to the
-    /// genotype counts, which is what bcftools does when no INFO value
-    /// carries the cohort.
-    Absent,
-    /// AC is present with the wrong number of values. htslib warns once and
-    /// `-q/-Q` drops the record; reed keeps D12-13's genotype fallback
-    /// (recorded divergence — the expression path does fall back in
-    /// bcftools too).
-    AcLength {
-        /// Values AC carried.
-        got: usize,
-        /// ALT alleles the record declares.
-        want: u32,
-    },
-    /// ΣAC > AN. htslib prints `[E::bcf_calc_ac] Incorrect AN/AC counts`
-    /// and aborts the run (exit 1); the typed `-q/-Q` path must too.
-    AcExceedsAn {
-        /// Sum of the AC values.
-        alt_sum: u64,
-        /// INFO/AN.
-        an: u64,
-    },
-    /// The AC values sum past `u64::MAX` (doc_v26 V26-02). The old
-    /// `alts.iter().sum()` wrapped in release builds and *panicked* in
-    /// debug, so a record like `AC=18446744073709551615,1` was either a
-    /// crash or a silently wrong allele frequency. It is a malformed INFO
-    /// value, never usable counts.
-    AcOverflow {
-        /// Values AC carried.
-        got: usize,
-    },
-}
-
 /// The distinguishing reader; the warning-once side effect for an AC
 /// length mismatch lives here so every caller shares it.
 #[must_use]
 pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
-    use reed_io::vcf::info::InfoIndex;
+    use reed_core::vcf::info::InfoIndex;
 
     // doc_v26 V26-04: one lookup convention for every INFO reader. The
     // expression/head path reads through `InfoIndex` (first match, like
@@ -191,83 +150,23 @@ pub fn info_af_outcome(info: &[u8], n_alt: u32) -> InfoAfOutcome {
 ///
 /// A failed (empty) index yields [`InfoAfOutcome::Absent`], the same
 /// conservative answer as a rebuild failure.
+///
+/// The AC/AN validation itself is `reed_core::count::InfoCounts::from_info`
+/// (doc_v30 R02); this function only supplies the two INFO values and the
+/// warn-once side effect.
 #[must_use]
 pub fn info_af_indexed(
-    index: &reed_io::vcf::info::InfoIndex,
+    index: &reed_core::vcf::info::InfoIndex,
     info: &[u8],
     n_alt: u32,
 ) -> InfoAfOutcome {
-    let mut ac: Option<Vec<u64>> = None;
-    let mut an: Option<u64> = None;
-    for tag in [&b"AC"[..], &b"AN"[..]] {
-        let Some(Some(value)) = index.get(info, tag) else {
-            continue;
-        };
-        if tag == b"AC" {
-            let Ok(text) = std::str::from_utf8(value) else {
-                return InfoAfOutcome::Absent;
-            };
-            // doc_v26 V26-02: a value list that cannot even match the
-            // record's ALT count is rejected before it is materialised, so a
-            // multi-megabyte AC field cannot force a proportional allocation.
-            // Count first, then parse only when the length is plausible.
-            let mut count = 0_usize;
-            for part in text.split(',') {
-                if count > n_alt as usize {
-                    warn_ac_length_once(count, n_alt);
-                    return InfoAfOutcome::AcLength {
-                        got: count,
-                        want: n_alt,
-                    };
-                }
-                // `.` and any non-integer read as no INFO, not as a length
-                // mismatch (bcftools' missing-value path).
-                if part.parse::<u64>().is_err() {
-                    return InfoAfOutcome::Absent;
-                }
-                count += 1;
-            }
-            let mut counts = Vec::with_capacity(count);
-            for part in text.split(',') {
-                let Ok(count_value) = part.parse::<u64>() else {
-                    return InfoAfOutcome::Absent;
-                };
-                counts.push(count_value);
-            }
-            ac = Some(counts);
-        } else {
-            an = std::str::from_utf8(value)
-                .ok()
-                .and_then(|t| t.parse::<u64>().ok());
-        }
+    let ac = index.get(info, b"AC").flatten();
+    let an = index.get(info, b"AN").flatten();
+    let outcome = reed_core::count::InfoCounts::from_info(ac, an, n_alt);
+    if let InfoAfOutcome::AcLength { got, want } = outcome {
+        warn_ac_length_once(got, want);
     }
-    let (alts, an) = match (ac, an) {
-        (Some(ac), Some(an)) if an > 0 => (ac, an),
-        _ => return InfoAfOutcome::Absent,
-    };
-    if alts.len() != n_alt as usize {
-        warn_ac_length_once(alts.len(), n_alt);
-        return InfoAfOutcome::AcLength {
-            got: alts.len(),
-            want: n_alt,
-        };
-    }
-    // doc_v26 V26-02: checked accumulation. A wrapped sum could pass the
-    // `> an` test below and produce a wrong AF instead of an error.
-    let mut alt_sum: u64 = 0;
-    for &count in &alts {
-        let Some(next) = alt_sum.checked_add(count) else {
-            return InfoAfOutcome::AcOverflow { got: alts.len() };
-        };
-        alt_sum = next;
-    }
-    if alt_sum > an {
-        return InfoAfOutcome::AcExceedsAn { alt_sum, an };
-    }
-    let mut per_allele = Vec::with_capacity(alts.len() + 1);
-    per_allele.push(an - alt_sum);
-    per_allele.extend(alts);
-    InfoAfOutcome::Usable(InfoAfCounts { per_allele, an })
+    outcome
 }
 
 /// htslib warns once per run about a mismatched AC vector and then stays

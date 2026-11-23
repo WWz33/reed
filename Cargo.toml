@@ -7,22 +7,23 @@ members = ["crates/*"]
 exclude = ["crates/graphify-out"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/WWz33/reed"
 
 [workspace.dependencies]
 # Internal crates (L0..L5), lockstep versioned.
-reed-core = { path = "crates/reed-core", version = "0.4.0" }
-reed-io = { path = "crates/reed-io", version = "0.4.0" }
-reed-engine = { path = "crates/reed-engine", version = "0.4.0" }
-reed-stats = { path = "crates/reed-stats", version = "0.4.0" }
-reed-filter = { path = "crates/reed-filter", version = "0.4.0" }
-reed-graph = { path = "crates/reed-graph" }
-reed-distance = { path = "crates/reed-distance" }
-reed-reduce = { path = "crates/reed-reduce" }
-reed = { path = "crates/reed", version = "0.4.0" }
+reed-core = { path = "crates/reed-core", version = "0.5.0" }
+reed-io = { path = "crates/reed-io", version = "0.5.0" }
+reed-engine = { path = "crates/reed-engine", version = "0.5.0" }
+reed-stats = { path = "crates/reed-stats", version = "0.5.0" }
+reed-filter = { path = "crates/reed-filter", version = "0.5.0" }
+reed-graph = { path = "crates/reed-graph", version = "0.5.0" }
+reed-distance = { path = "crates/reed-distance", version = "0.5.0" }
+reed-reduce = { path = "crates/reed-reduce", version = "0.5.0" }
+reed = { path = "crates/reed", version = "0.5.0" }
 
 # Transport / engine.
 noodles = { version = "0.119", features = ["bcf", "bgzf", "core", "csi", "tabix", "vcf"] }

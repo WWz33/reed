@@ -52,12 +52,16 @@ pub fn eval_tail(
                 let minor = counts.ac.min(counts.an.saturating_sub(counts.ac));
                 minor <= u64::from(*mac)
             }
-            // Cached exact test (A6-16); the degenerate sentinel stays 1.0.
-            TailRule::MinHweP(p) => {
-                counts
+            // Cached exact/mid-p test (A6-16); the degenerate sentinel
+            // stays 1.0.
+            TailRule::MinHweP(p, mode) => {
+                let value = counts
                     .hwe_test_input()
-                    .map_or(1.0, |(n, mac, het)| hwe.p_exact(n, mac, het))
-                    >= *p
+                    .map_or(1.0, |(n, mac, het)| match mode {
+                        crate::spec::HweMode::Exact => hwe.p_exact(n, mac, het),
+                        crate::spec::HweMode::MidP => hwe.p_mid(n, mac, het),
+                    });
+                value >= *p
             }
             // bcftools `-g/--genotype`: `miss` counts `./.` **and** the
             // half-calls (bcftools `bcf_gt_type` UNKN); `hom` counts both
@@ -228,6 +232,32 @@ mod tests {
             ..v
         };
         assert_eq!(af_of(&usable, &c, crate::spec::AfKind::Nref), Some(0.5));
+    }
+
+    /// doc_v30 P2-6: `--hwe P midp` uses the mid-p adjustment, not the
+    /// exact value. Pick a threshold strictly between the two; the exact
+    /// rule passes and the mid-p rule fails.
+    #[test]
+    fn hwe_midp_uses_the_adjusted_value() {
+        use crate::spec::HweMode;
+        let c = counts(4, 20, 6, 4, 0);
+        let v = values(&c);
+        let (n, mac, het) = c.hwe_test_input().expect("invariant: testable site");
+        let mut cache = HweCache::new();
+        let exact = cache.p_exact(n, mac, het);
+        let mid = cache.p_mid(n, mac, het);
+        assert!(
+            mid < exact,
+            "mid-p must be strictly smaller: {mid} vs {exact}"
+        );
+        let threshold = f64::midpoint(exact, mid);
+        let run = |mode: HweMode| {
+            let rule = TailRule::MinHweP(threshold, mode);
+            let mut hits = vec![0_u64; 1];
+            eval_tail(&v, &c, 10, &[rule], &mut hits, &mut HweCache::new())
+        };
+        assert!(run(HweMode::Exact), "exact p {exact} is above {threshold}");
+        assert!(!run(HweMode::MidP), "mid-p {mid} is below {threshold}");
     }
 
     #[test]

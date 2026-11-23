@@ -91,10 +91,18 @@ pub struct AuxCounts {
     pub n_opposite_hom: Vec<u64>,
     /// Marginal heterozygous count per individual (vcftools `N_Aa`).
     pub n_het: Vec<u64>,
-    /// plink `--genome` Z0/Z1/Z2 per pair (row-major n*n).
+    /// plink `--genome` Z0 per pair (row-major n*n).
     pub z0: Vec<f64>,
+    /// plink `--genome` Z1 per pair.
     pub z1: Vec<f64>,
+    /// plink `--genome` Z2 per pair.
     pub z2: Vec<f64>,
+    /// Jointly called sites per pair (`nn` in plink's `.genome`). Feeds DST.
+    pub n_valid: Vec<u64>,
+    /// One-IBS site counts per pair (plink's `IBS1`).
+    pub n_ibs1: Vec<u64>,
+    /// Zero-IBS site counts per pair (plink's `IBS0`).
+    pub n_ibs0: Vec<u64>,
 }
 
 impl MatrixResult {
@@ -332,11 +340,7 @@ pub fn grm(st: &Standardized, missing: MissingPolicy, variance_standardize: bool
                         MissingPolicy::MeanImpute => m as f64,
                         MissingPolicy::Pairwise => both as f64,
                     };
-                    if denom > 0.0 {
-                        acc / denom
-                    } else {
-                        0.0
-                    }
+                    if denom > 0.0 { acc / denom } else { 0.0 }
                 })
                 .collect()
         })
@@ -436,7 +440,7 @@ pub fn king(st: &Standardized) -> (MatrixResult, Vec<KingCounts>) {
 /// Options for the PI_HAT estimator.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PiHatOptions {
-    /// Skip the [0,1] clipping (plink `unbounded`).
+    /// Skip the \[0,1\] clipping (plink `unbounded`).
     pub unbounded: bool,
     /// Snap to a theoretically possible configuration when
     /// `PI_HAT² < Z2` (plink `nudge`).
@@ -483,12 +487,12 @@ pub fn pi_hat(st: &Standardized, opts: &PiHatOptions) -> (MatrixResult, Vec<PiHa
         }
     }
 
-    // Expected IBS counts given IBD state, averaged over sites (plink
-    // 1.9/plink_calc.c:4848-4868). For a site with allele frequency p:
-    //   E[IBS=0 | IBD=0] = 2 p²(1-p)²
-    //   E[IBS=0 | IBD=2] = 0
-    // and the coefficients are the sums over sites, later normalized.
-    let (e00, e01, e02, e11, e12) = expected_ibs_coefficients(st);
+    // Expected IBS counts given IBD state, from the allele frequencies with
+    // plink's finite-sample corrections (plink_calc.c:4848-4867, doc_v30
+    // §4.3). `None` means no site qualified: plink cannot produce a Z
+    // triplet on such input, so the rows stay NaN rather than a 1.0
+    // sentinel that reads like a real estimate.
+    let coeffs = expected_ibs_coefficients(st);
 
     // One triangle row of (PI_HAT, triplet) per task (doc_v20 R13).
     let rows: Vec<Vec<(f64, PiHatResult)>> = (0..n)
@@ -515,13 +519,16 @@ pub fn pi_hat(st: &Standardized, opts: &PiHatOptions) -> (MatrixResult, Vec<PiHa
                     }
                     let nn = n_valid as f64;
                     let oo = nn - ibs1 as f64 - ibs0 as f64;
-                    let (mut z0, mut z1, mut z2) = if nn > 0.0 {
-                        let z0 = ibs0 as f64 / (e00 * nn);
-                        let z1 = (ibs1 as f64 - z0 * e01 * nn) / (e11 * nn);
-                        let z2 = (oo - nn * (z0 * e02 + z1 * e12)) / nn;
-                        (z0, z1, z2)
-                    } else {
-                        (0.0, 0.0, 0.0)
+                    let (mut z0, mut z1, mut z2) = match coeffs {
+                        Some([e00, e01, e02, e11, e12]) if nn > 0.0 => {
+                            let z0 = ibs0 as f64 / (e00 * nn);
+                            let z1 = (ibs1 as f64 - z0 * e01 * nn) / (e11 * nn);
+                            let z2 = (oo - nn * (z0 * e02 + z1 * e12)) / nn;
+                            (z0, z1, z2)
+                        }
+                        // No qualifying site, or no jointly called site: the
+                        // triple is undefined. plink prints NA.
+                        _ => (f64::NAN, f64::NAN, f64::NAN),
                     };
                     if !opts.unbounded {
                         (z0, z1, z2) = clip_ibd(z0, z1, z2);
@@ -559,36 +566,95 @@ pub fn pi_hat(st: &Standardized, opts: &PiHatOptions) -> (MatrixResult, Vec<PiHa
         z0: results.iter().map(|r| r.z0).collect(),
         z1: results.iter().map(|r| r.z1).collect(),
         z2: results.iter().map(|r| r.z2).collect(),
+        n_valid: results.iter().map(|r| r.n_valid).collect(),
+        n_ibs1: results.iter().map(|r| r.ibs1).collect(),
+        n_ibs0: results.iter().map(|r| r.ibs0).collect(),
         ..AuxCounts::default()
     };
     out.aux = Some(aux);
     (out, results)
 }
 
-/// plink's `e00,e01,e02,e11,e12`: expected IBS counts per IBD state,
-/// accumulated per site and normalized by the site count.
-fn expected_ibs_coefficients(st: &Standardized) -> (f64, f64, f64, f64, f64) {
-    let m = st.n_sites as f64;
-    let mut e00 = 0.0;
-    let mut e01 = 0.0;
-    let mut e02 = 0.0;
-    let mut e11 = 0.0;
-    let mut e12 = 0.0;
-    for &p in &st.freq {
+/// plink 1.9 `--genome`'s expected IBS coefficients `e00,e01,e02,e11,e12`
+/// (`plink_calc.c:4848-4867`, including the PLINK 1.07 finite-sample
+/// corrections), averaged over the sites plink counts in `ibd_prect`.
+///
+/// A site contributes only when `num_alleles > 3` and `0 < p < 1`, where
+/// `num_alleles` is that site's own called-allele count (`2 * called`), and
+/// the divisor is the number of contributing sites — not `n_sites`. The
+/// infinite-sample limit is not enough: it leaves an 8e-4 PI_HAT difference
+/// on every pair (doc_v30 04-recheck §2.1).
+///
+/// Returns `None` when no site qualifies: plink cannot produce a Z triplet
+/// there, and a 1.0 sentinel would silently look like a real estimate.
+fn expected_ibs_coefficients(st: &Standardized) -> Option<[f64; 5]> {
+    let n = st.n_samples();
+    let mut e = [0.0_f64; 5];
+    let mut used = 0_u64;
+    // Per-site called-allele counts: plink's `num_alleles`, one value per
+    // site (missing calls differ per site, so a single global count is
+    // wrong).
+    let mut called_per_site = vec![0_u32; st.n_sites];
+    for i in 0..n {
+        for (s, slot) in called_per_site.iter_mut().enumerate() {
+            if st.is_called(i, s) {
+                *slot += 1;
+            }
+        }
+    }
+    for (s, &p) in st.freq.iter().enumerate() {
         let q = 1.0 - p;
-        // Expected number of zero-IBS alleles for each IBD state.
-        e00 += 2.0 * p * p * q * q;
-        e01 += 0.0;
-        e02 += 0.0;
-        // Expected one-IBS alleles.
-        e11 += 2.0 * p * q * (p * p + q * q);
-        e12 += 2.0 * p * q;
+        let na = 2.0 * f64::from(called_per_site[s]);
+        if !(na > 3.0 && p > 0.0 && q > 0.0) {
+            continue;
+        }
+        let f2 = na * na / ((na - 1.0) * (na - 2.0));
+        let f3 = f2 * na / (na - 3.0);
+        let (x, y) = (p * na, q * na);
+        let (x1, y1) = ((x - 1.0) / x, (y - 1.0) / y);
+        let (x2, y2) = (x1 * (x - 2.0) / x, y1 * (y - 2.0) / y);
+        e[0] += 2.0 * p * p * q * q * x1 * y1 * f3;
+        e[1] += 4.0 * p * q * f3 * (p * p * x2 + q * q * y2);
+        e[2] += f3
+            * (q.powi(4) * y2 * (y - 3.0) / y
+                + p.powi(4) * x2 * (x - 3.0) / x
+                + 4.0 * p * p * q * q * x1 * y1);
+        e[3] += 2.0 * p * q * f2 * (p * x1 + q * y1);
+        e[4] += f2 * (p.powi(3) * x2 + q.powi(3) * y2 + p * p * q * x1 + p * q * q * y1);
+        used += 1;
     }
-    if m > 0.0 {
-        (e00 / m, e01 / m, e02 / m, e11 / m, e12 / m)
+    if used == 0 {
+        return None;
+    }
+    let used = used as f64;
+    Some(e.map(|v| v / used))
+}
+
+/// The `DST`, `PPC` and `RATIO` columns of plink's `.genome` row
+/// (`plink_calc.c:4450-4463`, doc_v30 N-3).
+///
+/// `DST = 1 - (IBS1 + 2*IBS0) / (2*nn)` is computed exactly and matches
+/// plink to every printed digit (verified on all 60,378 pairs of the
+/// reference fixture, largest difference 0).
+///
+/// `PPC` and `RATIO` are **not** computed. plink derives them from
+/// `HOMHOM`/`HETHET`, which are counters accumulated over the *last*
+/// genotype window only (`g_marker_window`, a fixed-size block buffer at
+/// `plink_calc.c:756`), not over all sites: on the reference fixture plink
+/// prints `HOMHOM=0 HETHET=2` for every pair regardless of 3,000 sites and
+/// thousands of IBS2 calls. Those two numbers are therefore a property of
+/// plink's internal blocking, not of the data, and cannot be reproduced
+/// from whole-site counts. They return `None`, which the writer renders as
+/// `NA` (plink's own missing-value spelling) rather than a fabricated
+/// number or the old hard-coded `0`.
+pub fn genome_columns(r: &PiHatResult) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let nn = r.n_valid as f64;
+    let dst = if nn > 0.0 {
+        Some(1.0 - (r.ibs1 as f64 + 2.0 * r.ibs0 as f64) / (2.0 * nn))
     } else {
-        (1.0, 1.0, 1.0, 1.0, 1.0)
-    }
+        None
+    };
+    (dst, None, None)
 }
 
 /// plink's clipping of the IBD triplet (`1.9/plink_calc.c:4386-4416`).
@@ -643,7 +709,7 @@ pub fn phi(st: &Standardized) -> (MatrixResult, AuxCounts) {
     let n_het: Vec<u64> = (0..n)
         .map(|i| (0..m).filter(|&s| dose[i * m + s] == 1).count() as u64)
         .collect();
-    aux.n_het = n_het.clone();
+    aux.n_het.clone_from(&n_het);
 
     // One full row of (phi, hethet, opposite) per task (doc_v20 R13); phi
     // walks the complete ordered matrix, so no mirror writes are needed.
@@ -782,6 +848,7 @@ pub enum DiscordanceMode {
 /// Options for the discordance estimator.
 #[derive(Clone, Copy, Debug)]
 pub struct DiscordanceOptions {
+    /// Which gtcheck score to report.
     pub mode: DiscordanceMode,
     /// Phred-scaled genotyping error probability (bcftools `-E`, default 40).
     pub error_probability: u32,
@@ -1106,11 +1173,7 @@ mod tests {
         // inflating it; the two matrices are bit-identical.
         let with_ref = Mat::from_fn(6, 5, |i, j| {
             let v = with_alt.get(i, j);
-            if j == 1 {
-                0.0
-            } else {
-                v
-            }
+            if j == 1 { 0.0 } else { v }
         });
         let a = grm(
             &standardize_binom2(&with_alt),
@@ -1214,6 +1277,132 @@ mod tests {
                 assert!((0.0..=1.0).contains(&v), "PI_HAT {v} out of range");
             }
         }
+    }
+
+    /// doc_v30 V30-01/§4.3: the coefficients are plink's finite-sample
+    /// versions, not the infinite-sample limit and not zeros for
+    /// `e01`/`e02`. The old code returned `e01 = e02 = 0` and a halved
+    /// `e11`, which collapsed almost every pair to `Z1 = 1, PI_HAT = 0.5`.
+    #[test]
+    fn expected_ibs_coefficients_match_the_plink_finite_sample_formulas() {
+        let st = standardize_binom2(&fixture());
+        let coeffs = expected_ibs_coefficients(&st).expect("sites qualify");
+        let [e00, e01, e02, e11, e12] = coeffs;
+
+        // Recompute independently, per site, straight from the formulas in
+        // plink_calc.c:4860-4866 (the reference, not a copy of the code).
+        let n = st.n_samples();
+        let (mut r00, mut r01, mut r02, mut r11, mut r12) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        let mut used = 0.0;
+        for s in 0..st.n_sites {
+            let called = (0..n).filter(|&i| st.is_called(i, s)).count();
+            let na = 2.0 * called as f64;
+            let p = st.freq[s];
+            let q = 1.0 - p;
+            if !(na > 3.0 && p > 0.0 && q > 0.0) {
+                continue;
+            }
+            let f2 = na * na / ((na - 1.0) * (na - 2.0));
+            let f3 = f2 * na / (na - 3.0);
+            let (x, y) = (p * na, q * na);
+            let (x1, y1) = ((x - 1.0) / x, (y - 1.0) / y);
+            let (x2, y2) = (x1 * (x - 2.0) / x, y1 * (y - 2.0) / y);
+            r00 += 2.0 * p * p * q * q * x1 * y1 * f3;
+            r01 += 4.0 * p * q * f3 * (p * p * x2 + q * q * y2);
+            r02 += f3
+                * (q.powi(4) * y2 * (y - 3.0) / y
+                    + p.powi(4) * x2 * (x - 3.0) / x
+                    + 4.0 * p * p * q * q * x1 * y1);
+            r11 += 2.0 * p * q * f2 * (p * x1 + q * y1);
+            r12 += f2 * (p.powi(3) * x2 + q.powi(3) * y2 + p * p * q * x1 + p * q * q * y1);
+            used += 1.0;
+        }
+        assert!(used > 0.0, "the fixture must have qualifying sites");
+        for (got, want, name) in [
+            (e00, r00 / used, "e00"),
+            (e01, r01 / used, "e01"),
+            (e02, r02 / used, "e02"),
+            (e11, r11 / used, "e11"),
+            (e12, r12 / used, "e12"),
+        ] {
+            assert!(
+                (got - want).abs() < 1e-12,
+                "{name}: got {got}, plink formula {want}"
+            );
+        }
+
+        // The regressions this pins: e01 and e02 are not zero, and e11 is
+        // the full `2pq·f2·(p·x1 + q·y1)`, not half of it.
+        assert!(e01 > 0.0, "e01 must not be zero (was the bug)");
+        assert!(e02 > 0.0, "e02 must not be zero (was the bug)");
+        assert!(e11 > 0.0 && e12 > 0.0);
+
+        // An input where no site qualifies yields no triplet, not 1.0.
+        let mono = Mat::from_fn(4, 2, |_, _| 0.0);
+        let st_mono = standardize_binom2(&mono);
+        assert!(
+            expected_ibs_coefficients(&st_mono).is_none(),
+            "all-monomorphic input has no plink coefficients"
+        );
+    }
+
+    /// doc_v30 N-2: a monomorphic site is IBS2 for every pair and belongs
+    /// in `nn`. Both pairs must keep the same denominator; the old code
+    /// dropped those sites before the counter saw them.
+    #[test]
+    fn pi_hat_counts_monomorphic_sites_in_nn() {
+        // 4 samples x 4 sites: two varying, two all-REF.
+        let x = Mat::from_fn(4, 4, |i, j| {
+            let table = [
+                [0.0, 1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [1.0, 2.0, 0.0, 0.0],
+            ];
+            table[i][j]
+        });
+        let st = standardize_binom2(&x);
+        let (_, res) = pi_hat(&st, &PiHatOptions::default());
+        // The varying sites (2) plus the monomorphic ones (2) are all
+        // jointly called, so nn = 4 for every pair.
+        for i in 0..4 {
+            for j in 0..4 {
+                assert_eq!(
+                    res[i * 4 + j].n_valid,
+                    4,
+                    "nn must include monomorphic sites at ({i},{j})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn genome_dst_is_plinks_ibs_distance_and_ppc_ratio_are_na() {
+        // doc_v30 N-3: the three columns used to be hard zeros. DST now
+        // follows plink's formula; PPC/RATIO stay NA because plink's inputs
+        // are last-window counters, not whole-site statistics.
+        let r = PiHatResult {
+            z0: 0.1,
+            z1: 0.5,
+            z2: 0.4,
+            pi_hat: 0.65,
+            n_valid: 100,
+            ibs1: 40,
+            ibs0: 6,
+        };
+        let (dst, ppc, ratio) = genome_columns(&r);
+        // 1 - (40 + 2*6)/(2*100) = 1 - 0.26 = 0.74
+        let dst = dst.expect("DST defined");
+        assert!((dst - 0.74).abs() < 1e-12, "DST {dst}");
+        assert!(ppc.is_none(), "PPC must be NA, not a fabricated number");
+        assert!(ratio.is_none(), "RATIO must be NA");
+
+        // No jointly called site: DST is undefined too.
+        let empty = PiHatResult {
+            n_valid: 0,
+            ..PiHatResult::default()
+        };
+        assert!(genome_columns(&empty).0.is_none());
     }
 
     #[test]

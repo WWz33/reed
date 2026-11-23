@@ -113,6 +113,8 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         args.threads,
         args.memory,
     )?;
+    let abort = reed::abort_for(&budget);
+    let run_ctx = reed::RunContext::new(&budget, &abort.signal);
 
     // Windowed statistics need the populations file; a bare `--sfs` (no
     // windowed statistic) treats every sample as one population.
@@ -169,7 +171,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             .take()
             .expect("invariant: the windowed mode reads once");
         let run_start = std::time::Instant::now();
-        let report = run_popgen_opened(source, &request, &budget)?;
+        let report = run_popgen_opened(source, &request, &run_ctx)?;
         let run_secs = run_start.elapsed().as_secs_f64();
         let prefix = args
             .out
@@ -184,7 +186,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             files.push(path.clone());
         }
         if let Some(ld_report) = &report.ld {
-            files.extend(reed::ld::write_ld(
+            files.extend(reed::frontend::write_ld(
                 Path::new(&prefix),
                 ld_report,
                 &group_names,
@@ -192,14 +194,14 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             )?);
         }
         if let Some(fstats_report) = &report.fstats {
-            files.extend(reed::fstats::write_fstats(
+            files.extend(reed::frontend::write_fstats(
                 Path::new(&prefix),
                 &group_names,
                 fstats_report,
             )?);
         }
         if let Some(sfs_report) = &report.sfs {
-            files.extend(reed::sfs::write_projected_sfs(
+            files.extend(reed::frontend::write_projected_sfs(
                 Path::new(&prefix),
                 &group_names,
                 sfs_report,
@@ -208,7 +210,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         }
         // A bare `--sfs` has no window rows to write.
         if !kinds.is_empty() && report.window_files.is_empty() {
-            files.extend(reed::windows::write(
+            files.extend(reed::frontend::write_windows(
                 Path::new(&prefix),
                 &report,
                 &group_names,
@@ -224,7 +226,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         if report.window_files.is_empty() {
             // SFS/f-statistics/LD-only routes have no window-output session,
             // but they still own a run log (doc_v27 V27-26).
-            let path = reed::windows::write_popg_log(
+            let path = reed::frontend::write_popg_log(
                 Path::new(&prefix),
                 &report,
                 &kinds,
@@ -306,7 +308,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         .take()
         .expect("invariant: the windowed mode reads once");
     let run_start = std::time::Instant::now();
-    let report = run_popgen_opened(source, &request, &budget)?;
+    let report = run_popgen_opened(source, &request, &run_ctx)?;
     let run_secs = run_start.elapsed().as_secs_f64();
     if args.verbosity.shows_summary() {
         eprintln!(
@@ -326,13 +328,15 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         eprintln!("n_windows\t{}", report.n_windows);
         print_engine_metrics(&report.metrics);
     }
-    let text = reed::windows::render_tsv(
+    let text = reed::render_tsv(
         &report.windows,
         &kinds,
         layout.invariant == reed::InvariantMode::VariantOnly,
     );
     match args.out.as_deref() {
-        Some(path) if path != "-" => reed::write_atomic(std::path::Path::new(path), text)?,
+        Some(path) if path != "-" => {
+            reed::frontend::write_atomic(std::path::Path::new(path), text)?;
+        }
         // `-o -` and no `-o` both stream to stdout; write_all turns a closed
         // pipe into a normal error instead of a panic (doc_v15 D15-14/D15-39).
         _ => std::io::stdout().write_all(text.as_bytes())?,
@@ -389,7 +393,7 @@ fn parse_pbs_triples(
 /// The shared, already-parsed pieces a windowed request needs (the caller
 /// resolved them from the region/sample/site flags before this point).
 pub(crate) struct WindowedContext {
-    pub regions: Vec<reed::chunk::region::Region>,
+    pub regions: Vec<reed::Region>,
     pub select: reed::spec::region::SiteSelector,
     pub keep_samples: Option<Vec<bool>>,
     pub site: Option<reed::spec::FilterSpec>,

@@ -16,12 +16,14 @@
 //! embedding (samples x components).
 
 use crate::backend::sym_eig;
-use reed_core::linalg::{dist2, Mat};
+use reed_core::linalg::{Mat, dist2};
 
 /// A dense embedding result.
 #[derive(Clone, Debug)]
 pub struct Embedding {
+    /// `n_samples x n_components` coordinates.
     pub coords: Mat,
+    /// Retained eigenvalues, descending.
     pub values: Vec<f64>,
 }
 
@@ -148,6 +150,7 @@ pub fn kernel_scale(value: f64) -> f64 {
     value.max(0.0).sqrt()
 }
 
+/// Double-centres a square kernel matrix in place.
 pub fn centre_kernel(k: &mut Mat) {
     let n = k.rows;
     let mut row_mean = vec![0.0f64; n];
@@ -163,10 +166,14 @@ pub fn centre_kernel(k: &mut Mat) {
     }
 }
 
+/// The kernel a kernel-PCA run uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kernel {
+    /// Linear kernel.
     Linear,
+    /// Gaussian radial-basis kernel.
     Rbf,
+    /// Identity-by-state kernel.
     Ibs,
 }
 

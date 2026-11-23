@@ -56,10 +56,17 @@ impl AbortHandle {
 }
 
 /// The receiving side, held by the engine.
+///
+/// Since doc_v30 P2 the signal carries its own trigger handle (when the
+/// channel was built by [`abort_channel_for`]), so a driver that receives
+/// only a `&AbortSignal` can still record an internal first error and wake
+/// every waiter. Signals built by [`AbortSignal::idle`] have no handle: they
+/// never abort, which is what a caller without cancellation wants.
 #[derive(Clone, Debug)]
 pub struct AbortSignal {
     rx: Receiver<()>,
     flag: Arc<AtomicBool>,
+    handle: Option<AbortHandle>,
 }
 
 impl AbortSignal {
@@ -68,6 +75,39 @@ impl AbortSignal {
     #[must_use]
     pub fn is_aborted(&self) -> bool {
         self.flag.load(Ordering::Acquire)
+    }
+
+    /// The trigger side, when this signal came from a real channel.
+    #[must_use]
+    pub const fn trigger_handle(&self) -> Option<&AbortHandle> {
+        self.handle.as_ref()
+    }
+
+    /// A signal that never aborts, for a caller with no cancellation source
+    /// (tests, one-shot library calls). The channel's sender is kept alive
+    /// for the process lifetime so waiters block instead of seeing `closed`.
+    /// The pipeline substitutes its own channel for such a signal, so an
+    /// internal first error still wakes every waiter.
+    #[must_use]
+    pub fn idle() -> &'static Self {
+        struct Idle {
+            _tx: Sender<()>,
+            signal: AbortSignal,
+        }
+        static IDLE: std::sync::OnceLock<Idle> = std::sync::OnceLock::new();
+        &IDLE
+            .get_or_init(|| {
+                let (tx, rx) = crossbeam_channel::bounded::<()>(1);
+                Idle {
+                    _tx: tx,
+                    signal: AbortSignal {
+                        rx,
+                        flag: Arc::new(AtomicBool::new(false)),
+                        handle: None,
+                    },
+                }
+            })
+            .signal
     }
 
     /// Waits for abort, racing `other` — returns true if abort won.
@@ -98,13 +138,18 @@ pub fn abort_channel_for(threads: usize) -> (AbortHandle, AbortSignal) {
     // abort wake-ups). The CLI caps `--threads` well below this anyway.
     let (tx, rx) = crossbeam_channel::bounded::<()>(threads.saturating_add(4));
     let flag = Arc::new(AtomicBool::new(false));
+    let handle = AbortHandle {
+        tx,
+        flag: Arc::clone(&flag),
+        permits: Arc::new(Mutex::new(Vec::new())),
+    };
     (
-        AbortHandle {
-            tx,
-            flag: Arc::clone(&flag),
-            permits: Arc::new(Mutex::new(Vec::new())),
+        handle.clone(),
+        AbortSignal {
+            rx,
+            flag,
+            handle: Some(handle),
         },
-        AbortSignal { rx, flag },
     )
 }
 

@@ -870,12 +870,8 @@ impl StatsJob {
                 header.chrom
             ))
         })?;
-        let Some(pos1) = u64::try_from(header.pos0)
-            .ok()
-            .and_then(|p| p.checked_add(1))
-        else {
-            return Err(EngineError::job("BCF POS is negative"));
-        };
+        // doc_v30 R03: one telomere rule for every BCF consumer (-1 → POS 0).
+        let pos1 = header.pos1().map_err(EngineError::from)?.0;
         let n_alt = u32::try_from(header.n_allele.saturating_sub(1)).unwrap_or(u32::MAX);
         let Some(pos0) = self.site_prefix(contig, pos1, n_alt, n_alt == 0, current, partial)?
         else {

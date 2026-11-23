@@ -12,7 +12,7 @@ pub mod header;
 pub mod vcf;
 pub mod write;
 
-pub use error::{IoError, Locus};
+pub use error::{IoError, Locus, Needed};
 
 /// The total byte length of a BGZF block from its 18-byte header, when the
 /// header is present in `bytes`.

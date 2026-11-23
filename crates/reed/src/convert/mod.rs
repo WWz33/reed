@@ -47,10 +47,12 @@ pub enum ConvertTarget {
     Hapmap,
     /// The reference-driven whole-site MSA (vcf2msa semantics, v13 §3.10).
     Msa {
-        /// The reference genome FASTA (`--reference`).
+        /// The `--reference` FASTA (`--reference`).
         reference: PathBuf,
-        /// The output regions (empty = every reference contig).
-        regions: Vec<MsaRegion>,
+        /// The raw `--region` spellings, parsed against the reference
+        /// FASTA's contig names when the reference is loaded (doc_v30 R04;
+        /// empty = every reference contig).
+        regions: Vec<String>,
         /// Bases added to both sides of each region (`--flank`).
         flank: u64,
         /// Collapse sample names at the first occurrence of this string
@@ -102,17 +104,6 @@ pub struct PhyloOptions {
     pub resolve_iupac: bool,
     /// `--write-used-sites`: write `PREFIX.used_sites.tsv`.
     pub write_used_sites: bool,
-}
-
-/// One `--msa` output region (1-based inclusive bounds; `None` = open end).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MsaRegion {
-    /// Contig name (must be in the reference FASTA).
-    pub contig: String,
-    /// Inclusive 1-based lower bound (`None` = contig start).
-    pub start1: Option<u64>,
-    /// Inclusive 1-based upper bound (`None` = contig end).
-    pub end1: Option<u64>,
 }
 
 /// One conversion run: the targets, the sample subset and the output prefix.
@@ -239,23 +230,12 @@ impl ConvertRequest {
                     if collapse_suffix.as_deref() == Some("") {
                         return Err(Error::usage("--collapse-suffix must not be empty"));
                     }
+                    // The bounds are checked against the reference contig
+                    // names when the FASTA is loaded (doc_v30 R04); here only
+                    // the spelling can be checked header-independently.
                     for region in regions {
-                        if region.contig.is_empty() {
+                        if region.trim().is_empty() {
                             return Err(Error::usage("--region needs a contig name"));
-                        }
-                        if region.start1 == Some(0) || region.end1 == Some(0) {
-                            return Err(Error::usage(format!(
-                                "--region {} uses a 0 bound; positions are 1-based",
-                                region.contig
-                            )));
-                        }
-                        if let (Some(start), Some(end)) = (region.start1, region.end1)
-                            && start > end
-                        {
-                            return Err(Error::usage(format!(
-                                "--region {}:{start}-{end} has a start above its end",
-                                region.contig
-                            )));
                         }
                     }
                 }
@@ -386,22 +366,8 @@ impl ConvertRequest {
                         .ok_or_else(|| crate::Error::usage("reference path is not UTF-8"))?;
                     args.push(path.into());
                     for region in regions {
-                        use std::fmt::Write as _;
-                        let mut spelling = region.contig.clone();
-                        match (region.start1, region.end1) {
-                            (Some(s), Some(e)) => {
-                                let _ = write!(spelling, ":{s}-{e}");
-                            }
-                            (Some(s), None) => {
-                                let _ = write!(spelling, ":{s}-");
-                            }
-                            (None, Some(e)) => {
-                                let _ = write!(spelling, ":-{e}");
-                            }
-                            (None, None) => {}
-                        }
                         args.push("--region".into());
-                        args.push(spelling);
+                        args.push(region.clone());
                     }
                     if *flank > 0 {
                         args.push("--flank".into());

@@ -1378,7 +1378,7 @@ checksum = "03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430"
 
 [[package]]
 name = "reed"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bstr",
  "flate2",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "reed-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "clap",
  "rayon",
@@ -1413,9 +1413,10 @@ dependencies = [
 
 [[package]]
 name = "reed-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bitflags",
+ "memchr",
  "proptest",
  "reed-oracle",
  "serde",
@@ -1427,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "reed-distance"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "rayon",
  "reed-core",
@@ -1435,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "reed-engine"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "crossbeam-channel",
  "rayon",
@@ -1447,11 +1448,10 @@ dependencies = [
 
 [[package]]
 name = "reed-filter"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "memchr",
  "reed-core",
- "reed-io",
  "serde",
  "serde_json",
  "sha2",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "reed-graph"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "reed-core",
  "thiserror 2.0.21",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "reed-io"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bitflags",
  "bstr",
@@ -1491,7 +1491,7 @@ version = "0.2.0"
 
 [[package]]
 name = "reed-reduce"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "faer",
  "rayon",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "reed-stats"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proptest",
  "reed-core",

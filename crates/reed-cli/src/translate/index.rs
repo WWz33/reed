@@ -53,15 +53,17 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
         )));
     }
     // The one available-parallelism fallback lives in ThreadBudget.
-    let threads = reed::budget::ThreadBudget::from_cli(threads, None).threads;
+    let budget = reed::ThreadBudget::from_cli(threads, None);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
     tracing::debug!(
         flavor = flavor.suffix(),
-        threads,
+        threads = budget.threads,
         input,
         "reed index starting"
     );
     let started = std::time::Instant::now();
-    let outcome = run_index(Path::new(&input), flavor, out, threads)?;
+    let outcome = run_index(Path::new(&input), flavor, out, &ctx)?;
     if verbosity.shows_summary() {
         eprintln!(
             "reed index: {} records -> {} in {:.1}s",
@@ -73,7 +75,7 @@ pub(crate) fn run_index_cli(args: IndexCli) -> Result<(), reed::Error> {
     if verbosity.shows_timing() {
         eprintln!("# reed index timing");
         eprintln!("flavor\t{}", flavor.suffix());
-        eprintln!("threads\t{threads}");
+        eprintln!("threads\t{}", budget.threads);
         eprintln!("n_records_in\t{}", outcome.n_records);
         eprintln!("total_ms\t{:.3}", started.elapsed().as_secs_f64() * 1e3);
         super::common::print_engine_metrics(&outcome.metrics);

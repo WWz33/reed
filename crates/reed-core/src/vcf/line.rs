@@ -650,8 +650,8 @@ pub fn classify_line_with_index<'a>(
     if let Err(err) = lr.validate_sample_cols(n_samples) {
         return RecordClass::Malformed(MalformedLine::SampleColumns(err));
     }
-    match super::fixed::parse_pos1(lr.pos_text(), lr.chrom()) {
-        Ok(pos1) if pos1 > 0 => RecordClass::Record(lr),
+    match super::fixed::parse_pos1_number(lr.pos_text()) {
+        Some(pos1) if pos1 > 0 => RecordClass::Record(lr),
         _ => RecordClass::Malformed(MalformedLine::Position),
     }
 }

@@ -437,7 +437,8 @@ impl NativeScratch {
         let contig = dict
             .contig(header.chrom)
             .ok_or_else(|| EngineError::job("BCF contig index is not in the dictionary"))?;
-        let pos1 = u64::try_from(header.pos0).unwrap_or(0) + 1;
+        // doc_v30 R03: the telomere sentinel is decoded in one place.
+        let pos1 = header.pos1().map_err(EngineError::from)?.0;
         self.counters = PolicyCounters::default();
         // One descriptor walk serves the GT lookup and the typed columns
         // (doc_v28 V28-16).

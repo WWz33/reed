@@ -23,6 +23,7 @@ pub mod rng;
 pub mod sample;
 pub mod site;
 pub mod tag_table;
+pub mod vcf;
 
 pub use bitset::Bitset;
 pub use coord::{Interval0, Interval1, Pos0, Pos1};

@@ -1,0 +1,637 @@
+pub mod reed_distance
+pub mod reed_distance::grm
+pub enum reed_distance::grm::MissingPolicy
+pub reed_distance::grm::MissingPolicy::MeanImpute
+pub reed_distance::grm::MissingPolicy::Pairwise
+impl core::clone::Clone for reed_distance::grm::MissingPolicy
+pub fn reed_distance::grm::MissingPolicy::clone(&self) -> reed_distance::grm::MissingPolicy
+impl core::cmp::Eq for reed_distance::grm::MissingPolicy
+impl core::cmp::PartialEq for reed_distance::grm::MissingPolicy
+pub fn reed_distance::grm::MissingPolicy::eq(&self, &reed_distance::grm::MissingPolicy) -> bool
+impl core::fmt::Debug for reed_distance::grm::MissingPolicy
+pub fn reed_distance::grm::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::grm::MissingPolicy
+impl core::marker::StructuralPartialEq for reed_distance::grm::MissingPolicy
+impl core::marker::Freeze for reed_distance::grm::MissingPolicy
+impl core::marker::Send for reed_distance::grm::MissingPolicy
+impl core::marker::Sync for reed_distance::grm::MissingPolicy
+impl core::marker::Unpin for reed_distance::grm::MissingPolicy
+impl core::marker::UnsafeUnpin for reed_distance::grm::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::grm::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::grm::MissingPolicy
+pub struct reed_distance::grm::Grm
+pub reed_distance::grm::Grm::a: reed_core::linalg::Mat
+pub reed_distance::grm::Grm::m: usize
+pub reed_distance::grm::Grm::n_pairs: core::option::Option<reed_core::linalg::Mat>
+impl reed_distance::grm::Grm
+pub fn reed_distance::grm::Grm::from_standardized(&reed_distance::standard::Standardized, reed_distance::grm::MissingPolicy) -> Self
+pub fn reed_distance::grm::Grm::mean_impute(&reed_core::linalg::Mat) -> Self
+pub fn reed_distance::grm::Grm::pairwise(&reed_core::linalg::Mat) -> Self
+pub fn reed_distance::grm::Grm::pairwise_with(&reed_core::linalg::Mat, reed_distance::standard::Stand) -> Self
+impl core::clone::Clone for reed_distance::grm::Grm
+pub fn reed_distance::grm::Grm::clone(&self) -> reed_distance::grm::Grm
+impl core::fmt::Debug for reed_distance::grm::Grm
+pub fn reed_distance::grm::Grm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::grm::Grm
+impl core::marker::Send for reed_distance::grm::Grm
+impl core::marker::Sync for reed_distance::grm::Grm
+impl core::marker::Unpin for reed_distance::grm::Grm
+impl core::marker::UnsafeUnpin for reed_distance::grm::Grm
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::grm::Grm
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::grm::Grm
+pub mod reed_distance::matrices
+pub enum reed_distance::matrices::DiscordanceMode
+pub reed_distance::matrices::DiscordanceMode::Count
+pub reed_distance::matrices::DiscordanceMode::Probability
+impl core::clone::Clone for reed_distance::matrices::DiscordanceMode
+pub fn reed_distance::matrices::DiscordanceMode::clone(&self) -> reed_distance::matrices::DiscordanceMode
+impl core::cmp::Eq for reed_distance::matrices::DiscordanceMode
+impl core::cmp::PartialEq for reed_distance::matrices::DiscordanceMode
+pub fn reed_distance::matrices::DiscordanceMode::eq(&self, &reed_distance::matrices::DiscordanceMode) -> bool
+impl core::fmt::Debug for reed_distance::matrices::DiscordanceMode
+pub fn reed_distance::matrices::DiscordanceMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::DiscordanceMode
+impl core::marker::StructuralPartialEq for reed_distance::matrices::DiscordanceMode
+impl core::marker::Freeze for reed_distance::matrices::DiscordanceMode
+impl core::marker::Send for reed_distance::matrices::DiscordanceMode
+impl core::marker::Sync for reed_distance::matrices::DiscordanceMode
+impl core::marker::Unpin for reed_distance::matrices::DiscordanceMode
+impl core::marker::UnsafeUnpin for reed_distance::matrices::DiscordanceMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::DiscordanceMode
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::DiscordanceMode
+pub enum reed_distance::matrices::MatrixKind
+pub reed_distance::matrices::MatrixKind::Ajk
+pub reed_distance::matrices::MatrixKind::AlleleCountDistance
+pub reed_distance::matrices::MatrixKind::Covariance
+pub reed_distance::matrices::MatrixKind::Discordance
+pub reed_distance::matrices::MatrixKind::Grm
+pub reed_distance::matrices::MatrixKind::Ibs
+pub reed_distance::matrices::MatrixKind::King
+pub reed_distance::matrices::MatrixKind::OneMinusIbs
+pub reed_distance::matrices::MatrixKind::Phi
+pub reed_distance::matrices::MatrixKind::PiHat
+impl reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::suffix(self) -> &'static str
+impl core::clone::Clone for reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::clone(&self) -> reed_distance::matrices::MatrixKind
+impl core::cmp::Eq for reed_distance::matrices::MatrixKind
+impl core::cmp::PartialEq for reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::eq(&self, &reed_distance::matrices::MatrixKind) -> bool
+impl core::fmt::Debug for reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::MatrixKind
+impl core::marker::StructuralPartialEq for reed_distance::matrices::MatrixKind
+impl core::marker::Freeze for reed_distance::matrices::MatrixKind
+impl core::marker::Send for reed_distance::matrices::MatrixKind
+impl core::marker::Sync for reed_distance::matrices::MatrixKind
+impl core::marker::Unpin for reed_distance::matrices::MatrixKind
+impl core::marker::UnsafeUnpin for reed_distance::matrices::MatrixKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::MatrixKind
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::MatrixKind
+pub enum reed_distance::matrices::MissingPolicy
+pub reed_distance::matrices::MissingPolicy::MeanImpute
+pub reed_distance::matrices::MissingPolicy::Pairwise
+impl core::clone::Clone for reed_distance::matrices::MissingPolicy
+pub fn reed_distance::matrices::MissingPolicy::clone(&self) -> reed_distance::matrices::MissingPolicy
+impl core::cmp::Eq for reed_distance::matrices::MissingPolicy
+impl core::cmp::PartialEq for reed_distance::matrices::MissingPolicy
+pub fn reed_distance::matrices::MissingPolicy::eq(&self, &reed_distance::matrices::MissingPolicy) -> bool
+impl core::fmt::Debug for reed_distance::matrices::MissingPolicy
+pub fn reed_distance::matrices::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::MissingPolicy
+impl core::marker::StructuralPartialEq for reed_distance::matrices::MissingPolicy
+impl core::marker::Freeze for reed_distance::matrices::MissingPolicy
+impl core::marker::Send for reed_distance::matrices::MissingPolicy
+impl core::marker::Sync for reed_distance::matrices::MissingPolicy
+impl core::marker::Unpin for reed_distance::matrices::MissingPolicy
+impl core::marker::UnsafeUnpin for reed_distance::matrices::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::MissingPolicy
+pub struct reed_distance::matrices::AjkOptions
+pub reed_distance::matrices::AjkOptions::diagonal: bool
+impl core::clone::Clone for reed_distance::matrices::AjkOptions
+pub fn reed_distance::matrices::AjkOptions::clone(&self) -> reed_distance::matrices::AjkOptions
+impl core::default::Default for reed_distance::matrices::AjkOptions
+pub fn reed_distance::matrices::AjkOptions::default() -> reed_distance::matrices::AjkOptions
+impl core::fmt::Debug for reed_distance::matrices::AjkOptions
+pub fn reed_distance::matrices::AjkOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::AjkOptions
+impl core::marker::Freeze for reed_distance::matrices::AjkOptions
+impl core::marker::Send for reed_distance::matrices::AjkOptions
+impl core::marker::Sync for reed_distance::matrices::AjkOptions
+impl core::marker::Unpin for reed_distance::matrices::AjkOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::AjkOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::AjkOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::AjkOptions
+pub struct reed_distance::matrices::AuxCounts
+pub reed_distance::matrices::AuxCounts::n_compared: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_het: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_hethet: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_ibs0: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_ibs1: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_matching: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_opposite_hom: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::n_valid: alloc::vec::Vec<u64>
+pub reed_distance::matrices::AuxCounts::z0: alloc::vec::Vec<f64>
+pub reed_distance::matrices::AuxCounts::z1: alloc::vec::Vec<f64>
+pub reed_distance::matrices::AuxCounts::z2: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_distance::matrices::AuxCounts
+pub fn reed_distance::matrices::AuxCounts::clone(&self) -> reed_distance::matrices::AuxCounts
+impl core::default::Default for reed_distance::matrices::AuxCounts
+pub fn reed_distance::matrices::AuxCounts::default() -> reed_distance::matrices::AuxCounts
+impl core::fmt::Debug for reed_distance::matrices::AuxCounts
+pub fn reed_distance::matrices::AuxCounts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::matrices::AuxCounts
+impl core::marker::Send for reed_distance::matrices::AuxCounts
+impl core::marker::Sync for reed_distance::matrices::AuxCounts
+impl core::marker::Unpin for reed_distance::matrices::AuxCounts
+impl core::marker::UnsafeUnpin for reed_distance::matrices::AuxCounts
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::AuxCounts
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::AuxCounts
+pub struct reed_distance::matrices::DiscordanceOptions
+pub reed_distance::matrices::DiscordanceOptions::error_probability: u32
+pub reed_distance::matrices::DiscordanceOptions::mode: reed_distance::matrices::DiscordanceMode
+impl core::clone::Clone for reed_distance::matrices::DiscordanceOptions
+pub fn reed_distance::matrices::DiscordanceOptions::clone(&self) -> reed_distance::matrices::DiscordanceOptions
+impl core::default::Default for reed_distance::matrices::DiscordanceOptions
+pub fn reed_distance::matrices::DiscordanceOptions::default() -> Self
+impl core::fmt::Debug for reed_distance::matrices::DiscordanceOptions
+pub fn reed_distance::matrices::DiscordanceOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Freeze for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Send for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Sync for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Unpin for reed_distance::matrices::DiscordanceOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::DiscordanceOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::DiscordanceOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::DiscordanceOptions
+pub struct reed_distance::matrices::DistanceOptions
+pub reed_distance::matrices::DistanceOptions::hwe_missing_correction: bool
+impl core::clone::Clone for reed_distance::matrices::DistanceOptions
+pub fn reed_distance::matrices::DistanceOptions::clone(&self) -> reed_distance::matrices::DistanceOptions
+impl core::default::Default for reed_distance::matrices::DistanceOptions
+pub fn reed_distance::matrices::DistanceOptions::default() -> Self
+impl core::fmt::Debug for reed_distance::matrices::DistanceOptions
+pub fn reed_distance::matrices::DistanceOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::DistanceOptions
+impl core::marker::Freeze for reed_distance::matrices::DistanceOptions
+impl core::marker::Send for reed_distance::matrices::DistanceOptions
+impl core::marker::Sync for reed_distance::matrices::DistanceOptions
+impl core::marker::Unpin for reed_distance::matrices::DistanceOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::DistanceOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::DistanceOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::DistanceOptions
+pub struct reed_distance::matrices::KingCounts
+pub reed_distance::matrices::KingCounts::het1hom2: u64
+pub reed_distance::matrices::KingCounts::het2hom1: u64
+pub reed_distance::matrices::KingCounts::hethet: u64
+pub reed_distance::matrices::KingCounts::ibs0: u64
+impl reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::kinship(&self) -> f64
+impl core::clone::Clone for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::clone(&self) -> reed_distance::matrices::KingCounts
+impl core::cmp::Eq for reed_distance::matrices::KingCounts
+impl core::cmp::PartialEq for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::eq(&self, &reed_distance::matrices::KingCounts) -> bool
+impl core::default::Default for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::default() -> reed_distance::matrices::KingCounts
+impl core::fmt::Debug for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::KingCounts
+impl core::marker::StructuralPartialEq for reed_distance::matrices::KingCounts
+impl core::marker::Freeze for reed_distance::matrices::KingCounts
+impl core::marker::Send for reed_distance::matrices::KingCounts
+impl core::marker::Sync for reed_distance::matrices::KingCounts
+impl core::marker::Unpin for reed_distance::matrices::KingCounts
+impl core::marker::UnsafeUnpin for reed_distance::matrices::KingCounts
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::KingCounts
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::KingCounts
+pub struct reed_distance::matrices::MatrixResult
+pub reed_distance::matrices::MatrixResult::aux: core::option::Option<reed_distance::matrices::AuxCounts>
+pub reed_distance::matrices::MatrixResult::ids: alloc::vec::Vec<alloc::string::String>
+pub reed_distance::matrices::MatrixResult::kind: reed_distance::matrices::MatrixKind
+pub reed_distance::matrices::MatrixResult::n: usize
+pub reed_distance::matrices::MatrixResult::values: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::MatrixResult::clone(&self) -> reed_distance::matrices::MatrixResult
+impl core::fmt::Debug for reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::MatrixResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::matrices::MatrixResult
+impl core::marker::Send for reed_distance::matrices::MatrixResult
+impl core::marker::Sync for reed_distance::matrices::MatrixResult
+impl core::marker::Unpin for reed_distance::matrices::MatrixResult
+impl core::marker::UnsafeUnpin for reed_distance::matrices::MatrixResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::MatrixResult
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::MatrixResult
+pub struct reed_distance::matrices::PiHatOptions
+pub reed_distance::matrices::PiHatOptions::nudge: bool
+pub reed_distance::matrices::PiHatOptions::unbounded: bool
+impl core::clone::Clone for reed_distance::matrices::PiHatOptions
+pub fn reed_distance::matrices::PiHatOptions::clone(&self) -> reed_distance::matrices::PiHatOptions
+impl core::default::Default for reed_distance::matrices::PiHatOptions
+pub fn reed_distance::matrices::PiHatOptions::default() -> reed_distance::matrices::PiHatOptions
+impl core::fmt::Debug for reed_distance::matrices::PiHatOptions
+pub fn reed_distance::matrices::PiHatOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::PiHatOptions
+impl core::marker::Freeze for reed_distance::matrices::PiHatOptions
+impl core::marker::Send for reed_distance::matrices::PiHatOptions
+impl core::marker::Sync for reed_distance::matrices::PiHatOptions
+impl core::marker::Unpin for reed_distance::matrices::PiHatOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::PiHatOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::PiHatOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::PiHatOptions
+pub struct reed_distance::matrices::PiHatResult
+pub reed_distance::matrices::PiHatResult::ibs0: u64
+pub reed_distance::matrices::PiHatResult::ibs1: u64
+pub reed_distance::matrices::PiHatResult::n_valid: u64
+pub reed_distance::matrices::PiHatResult::pi_hat: f64
+pub reed_distance::matrices::PiHatResult::z0: f64
+pub reed_distance::matrices::PiHatResult::z1: f64
+pub reed_distance::matrices::PiHatResult::z2: f64
+impl core::clone::Clone for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::PiHatResult::clone(&self) -> reed_distance::matrices::PiHatResult
+impl core::default::Default for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::PiHatResult::default() -> reed_distance::matrices::PiHatResult
+impl core::fmt::Debug for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::PiHatResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::PiHatResult
+impl core::marker::Freeze for reed_distance::matrices::PiHatResult
+impl core::marker::Send for reed_distance::matrices::PiHatResult
+impl core::marker::Sync for reed_distance::matrices::PiHatResult
+impl core::marker::Unpin for reed_distance::matrices::PiHatResult
+impl core::marker::UnsafeUnpin for reed_distance::matrices::PiHatResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::PiHatResult
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::ajk(&reed_distance::standard::Standardized, &reed_distance::matrices::AjkOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::allele_ct_distance(&reed_distance::standard::Standardized, &reed_distance::matrices::DistanceOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::discordance(&reed_distance::standard::Standardized, &reed_distance::matrices::DiscordanceOptions) -> (reed_distance::matrices::MatrixResult, reed_distance::matrices::AuxCounts)
+pub fn reed_distance::matrices::genome_columns(&reed_distance::matrices::PiHatResult) -> (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>)
+pub fn reed_distance::matrices::grm(&reed_distance::standard::Standardized, reed_distance::matrices::MissingPolicy, bool) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::ibs(&reed_distance::standard::Standardized, &reed_distance::matrices::DistanceOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::king(&reed_distance::standard::Standardized) -> (reed_distance::matrices::MatrixResult, alloc::vec::Vec<reed_distance::matrices::KingCounts>)
+pub fn reed_distance::matrices::one_minus_ibs(&reed_distance::standard::Standardized, &reed_distance::matrices::DistanceOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::phi(&reed_distance::standard::Standardized) -> (reed_distance::matrices::MatrixResult, reed_distance::matrices::AuxCounts)
+pub fn reed_distance::matrices::pi_hat(&reed_distance::standard::Standardized, &reed_distance::matrices::PiHatOptions) -> (reed_distance::matrices::MatrixResult, alloc::vec::Vec<reed_distance::matrices::PiHatResult>)
+pub mod reed_distance::output
+pub enum reed_distance::output::MatrixFormat
+pub reed_distance::output::MatrixFormat::Bin
+pub reed_distance::output::MatrixFormat::Square
+pub reed_distance::output::MatrixFormat::Square0
+pub reed_distance::output::MatrixFormat::Triangle
+impl reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::name(self) -> &'static str
+pub fn reed_distance::output::MatrixFormat::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::clone(&self) -> reed_distance::output::MatrixFormat
+impl core::cmp::Eq for reed_distance::output::MatrixFormat
+impl core::cmp::PartialEq for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::eq(&self, &reed_distance::output::MatrixFormat) -> bool
+impl core::fmt::Debug for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::output::MatrixFormat
+impl core::marker::StructuralPartialEq for reed_distance::output::MatrixFormat
+impl core::marker::Freeze for reed_distance::output::MatrixFormat
+impl core::marker::Send for reed_distance::output::MatrixFormat
+impl core::marker::Sync for reed_distance::output::MatrixFormat
+impl core::marker::Unpin for reed_distance::output::MatrixFormat
+impl core::marker::UnsafeUnpin for reed_distance::output::MatrixFormat
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::output::MatrixFormat
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::is_matrix_kind(reed_distance::matrices::MatrixKind) -> bool
+pub fn reed_distance::output::write_ids(&std::path::Path, &[alloc::string::String]) -> std::io::error::Result<()>
+pub fn reed_distance::output::write_ids_to<W: std::io::Write>(&mut W, &[alloc::string::String]) -> std::io::error::Result<()>
+pub fn reed_distance::output::write_matrix(&std::path::Path, &reed_distance::matrices::MatrixResult, reed_distance::output::MatrixFormat) -> std::io::error::Result<()>
+pub fn reed_distance::output::write_matrix_to<W: std::io::Write>(&mut W, &reed_distance::matrices::MatrixResult, reed_distance::output::MatrixFormat) -> std::io::error::Result<()>
+pub mod reed_distance::standard
+pub enum reed_distance::standard::Stand
+pub reed_distance::standard::Stand::Binom
+pub reed_distance::standard::Stand::Binom2
+impl reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::name(self) -> &'static str
+pub fn reed_distance::standard::Stand::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::clone(&self) -> reed_distance::standard::Stand
+impl core::cmp::Eq for reed_distance::standard::Stand
+impl core::cmp::PartialEq for reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::eq(&self, &reed_distance::standard::Stand) -> bool
+impl core::fmt::Debug for reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::standard::Stand
+impl core::marker::StructuralPartialEq for reed_distance::standard::Stand
+impl core::marker::Freeze for reed_distance::standard::Stand
+impl core::marker::Send for reed_distance::standard::Stand
+impl core::marker::Sync for reed_distance::standard::Stand
+impl core::marker::Unpin for reed_distance::standard::Stand
+impl core::marker::UnsafeUnpin for reed_distance::standard::Stand
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::standard::Stand
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::standard::Stand
+pub struct reed_distance::standard::Standardized
+pub reed_distance::standard::Standardized::called: alloc::vec::Vec<bool>
+pub reed_distance::standard::Standardized::freq: alloc::vec::Vec<f64>
+pub reed_distance::standard::Standardized::mean: alloc::vec::Vec<f64>
+pub reed_distance::standard::Standardized::n_sites: usize
+pub reed_distance::standard::Standardized::sd: alloc::vec::Vec<f64>
+pub reed_distance::standard::Standardized::w: reed_core::linalg::Mat
+impl reed_distance::standard::Standardized
+pub fn reed_distance::standard::Standardized::called_both(&self, usize, usize) -> usize
+pub fn reed_distance::standard::Standardized::called_count(&self, usize) -> usize
+pub fn reed_distance::standard::Standardized::is_called(&self, usize, usize) -> bool
+pub fn reed_distance::standard::Standardized::n_samples(&self) -> usize
+impl core::clone::Clone for reed_distance::standard::Standardized
+pub fn reed_distance::standard::Standardized::clone(&self) -> reed_distance::standard::Standardized
+impl core::fmt::Debug for reed_distance::standard::Standardized
+pub fn reed_distance::standard::Standardized::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::standard::Standardized
+impl core::marker::Send for reed_distance::standard::Standardized
+impl core::marker::Sync for reed_distance::standard::Standardized
+impl core::marker::Unpin for reed_distance::standard::Standardized
+impl core::marker::UnsafeUnpin for reed_distance::standard::Standardized
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::standard::Standardized
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::standard::Standardized
+pub fn reed_distance::standard::standardize(&reed_core::linalg::Mat, reed_distance::standard::Stand) -> reed_distance::standard::Standardized
+pub fn reed_distance::standard::standardize_binom2(&reed_core::linalg::Mat) -> reed_distance::standard::Standardized
+pub enum reed_distance::DiscordanceMode
+pub reed_distance::DiscordanceMode::Count
+pub reed_distance::DiscordanceMode::Probability
+impl core::clone::Clone for reed_distance::matrices::DiscordanceMode
+pub fn reed_distance::matrices::DiscordanceMode::clone(&self) -> reed_distance::matrices::DiscordanceMode
+impl core::cmp::Eq for reed_distance::matrices::DiscordanceMode
+impl core::cmp::PartialEq for reed_distance::matrices::DiscordanceMode
+pub fn reed_distance::matrices::DiscordanceMode::eq(&self, &reed_distance::matrices::DiscordanceMode) -> bool
+impl core::fmt::Debug for reed_distance::matrices::DiscordanceMode
+pub fn reed_distance::matrices::DiscordanceMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::DiscordanceMode
+impl core::marker::StructuralPartialEq for reed_distance::matrices::DiscordanceMode
+impl core::marker::Freeze for reed_distance::matrices::DiscordanceMode
+impl core::marker::Send for reed_distance::matrices::DiscordanceMode
+impl core::marker::Sync for reed_distance::matrices::DiscordanceMode
+impl core::marker::Unpin for reed_distance::matrices::DiscordanceMode
+impl core::marker::UnsafeUnpin for reed_distance::matrices::DiscordanceMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::DiscordanceMode
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::DiscordanceMode
+pub enum reed_distance::MatrixFormat
+pub reed_distance::MatrixFormat::Bin
+pub reed_distance::MatrixFormat::Square
+pub reed_distance::MatrixFormat::Square0
+pub reed_distance::MatrixFormat::Triangle
+impl reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::name(self) -> &'static str
+pub fn reed_distance::output::MatrixFormat::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::clone(&self) -> reed_distance::output::MatrixFormat
+impl core::cmp::Eq for reed_distance::output::MatrixFormat
+impl core::cmp::PartialEq for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::eq(&self, &reed_distance::output::MatrixFormat) -> bool
+impl core::fmt::Debug for reed_distance::output::MatrixFormat
+pub fn reed_distance::output::MatrixFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::output::MatrixFormat
+impl core::marker::StructuralPartialEq for reed_distance::output::MatrixFormat
+impl core::marker::Freeze for reed_distance::output::MatrixFormat
+impl core::marker::Send for reed_distance::output::MatrixFormat
+impl core::marker::Sync for reed_distance::output::MatrixFormat
+impl core::marker::Unpin for reed_distance::output::MatrixFormat
+impl core::marker::UnsafeUnpin for reed_distance::output::MatrixFormat
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::output::MatrixFormat
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::output::MatrixFormat
+pub enum reed_distance::MatrixKind
+pub reed_distance::MatrixKind::Ajk
+pub reed_distance::MatrixKind::AlleleCountDistance
+pub reed_distance::MatrixKind::Covariance
+pub reed_distance::MatrixKind::Discordance
+pub reed_distance::MatrixKind::Grm
+pub reed_distance::MatrixKind::Ibs
+pub reed_distance::MatrixKind::King
+pub reed_distance::MatrixKind::OneMinusIbs
+pub reed_distance::MatrixKind::Phi
+pub reed_distance::MatrixKind::PiHat
+impl reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::suffix(self) -> &'static str
+impl core::clone::Clone for reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::clone(&self) -> reed_distance::matrices::MatrixKind
+impl core::cmp::Eq for reed_distance::matrices::MatrixKind
+impl core::cmp::PartialEq for reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::eq(&self, &reed_distance::matrices::MatrixKind) -> bool
+impl core::fmt::Debug for reed_distance::matrices::MatrixKind
+pub fn reed_distance::matrices::MatrixKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::MatrixKind
+impl core::marker::StructuralPartialEq for reed_distance::matrices::MatrixKind
+impl core::marker::Freeze for reed_distance::matrices::MatrixKind
+impl core::marker::Send for reed_distance::matrices::MatrixKind
+impl core::marker::Sync for reed_distance::matrices::MatrixKind
+impl core::marker::Unpin for reed_distance::matrices::MatrixKind
+impl core::marker::UnsafeUnpin for reed_distance::matrices::MatrixKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::MatrixKind
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::MatrixKind
+pub enum reed_distance::MissingPolicy
+pub reed_distance::MissingPolicy::MeanImpute
+pub reed_distance::MissingPolicy::Pairwise
+impl core::clone::Clone for reed_distance::grm::MissingPolicy
+pub fn reed_distance::grm::MissingPolicy::clone(&self) -> reed_distance::grm::MissingPolicy
+impl core::cmp::Eq for reed_distance::grm::MissingPolicy
+impl core::cmp::PartialEq for reed_distance::grm::MissingPolicy
+pub fn reed_distance::grm::MissingPolicy::eq(&self, &reed_distance::grm::MissingPolicy) -> bool
+impl core::fmt::Debug for reed_distance::grm::MissingPolicy
+pub fn reed_distance::grm::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::grm::MissingPolicy
+impl core::marker::StructuralPartialEq for reed_distance::grm::MissingPolicy
+impl core::marker::Freeze for reed_distance::grm::MissingPolicy
+impl core::marker::Send for reed_distance::grm::MissingPolicy
+impl core::marker::Sync for reed_distance::grm::MissingPolicy
+impl core::marker::Unpin for reed_distance::grm::MissingPolicy
+impl core::marker::UnsafeUnpin for reed_distance::grm::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::grm::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::grm::MissingPolicy
+pub enum reed_distance::Stand
+pub reed_distance::Stand::Binom
+pub reed_distance::Stand::Binom2
+impl reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::name(self) -> &'static str
+pub fn reed_distance::standard::Stand::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::clone(&self) -> reed_distance::standard::Stand
+impl core::cmp::Eq for reed_distance::standard::Stand
+impl core::cmp::PartialEq for reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::eq(&self, &reed_distance::standard::Stand) -> bool
+impl core::fmt::Debug for reed_distance::standard::Stand
+pub fn reed_distance::standard::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::standard::Stand
+impl core::marker::StructuralPartialEq for reed_distance::standard::Stand
+impl core::marker::Freeze for reed_distance::standard::Stand
+impl core::marker::Send for reed_distance::standard::Stand
+impl core::marker::Sync for reed_distance::standard::Stand
+impl core::marker::Unpin for reed_distance::standard::Stand
+impl core::marker::UnsafeUnpin for reed_distance::standard::Stand
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::standard::Stand
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::standard::Stand
+pub struct reed_distance::AjkOptions
+pub reed_distance::AjkOptions::diagonal: bool
+impl core::clone::Clone for reed_distance::matrices::AjkOptions
+pub fn reed_distance::matrices::AjkOptions::clone(&self) -> reed_distance::matrices::AjkOptions
+impl core::default::Default for reed_distance::matrices::AjkOptions
+pub fn reed_distance::matrices::AjkOptions::default() -> reed_distance::matrices::AjkOptions
+impl core::fmt::Debug for reed_distance::matrices::AjkOptions
+pub fn reed_distance::matrices::AjkOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::AjkOptions
+impl core::marker::Freeze for reed_distance::matrices::AjkOptions
+impl core::marker::Send for reed_distance::matrices::AjkOptions
+impl core::marker::Sync for reed_distance::matrices::AjkOptions
+impl core::marker::Unpin for reed_distance::matrices::AjkOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::AjkOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::AjkOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::AjkOptions
+pub struct reed_distance::DiscordanceOptions
+pub reed_distance::DiscordanceOptions::error_probability: u32
+pub reed_distance::DiscordanceOptions::mode: reed_distance::matrices::DiscordanceMode
+impl core::clone::Clone for reed_distance::matrices::DiscordanceOptions
+pub fn reed_distance::matrices::DiscordanceOptions::clone(&self) -> reed_distance::matrices::DiscordanceOptions
+impl core::default::Default for reed_distance::matrices::DiscordanceOptions
+pub fn reed_distance::matrices::DiscordanceOptions::default() -> Self
+impl core::fmt::Debug for reed_distance::matrices::DiscordanceOptions
+pub fn reed_distance::matrices::DiscordanceOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Freeze for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Send for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Sync for reed_distance::matrices::DiscordanceOptions
+impl core::marker::Unpin for reed_distance::matrices::DiscordanceOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::DiscordanceOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::DiscordanceOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::DiscordanceOptions
+pub struct reed_distance::Grm
+pub reed_distance::Grm::a: reed_core::linalg::Mat
+pub reed_distance::Grm::m: usize
+pub reed_distance::Grm::n_pairs: core::option::Option<reed_core::linalg::Mat>
+impl reed_distance::grm::Grm
+pub fn reed_distance::grm::Grm::from_standardized(&reed_distance::standard::Standardized, reed_distance::grm::MissingPolicy) -> Self
+pub fn reed_distance::grm::Grm::mean_impute(&reed_core::linalg::Mat) -> Self
+pub fn reed_distance::grm::Grm::pairwise(&reed_core::linalg::Mat) -> Self
+pub fn reed_distance::grm::Grm::pairwise_with(&reed_core::linalg::Mat, reed_distance::standard::Stand) -> Self
+impl core::clone::Clone for reed_distance::grm::Grm
+pub fn reed_distance::grm::Grm::clone(&self) -> reed_distance::grm::Grm
+impl core::fmt::Debug for reed_distance::grm::Grm
+pub fn reed_distance::grm::Grm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::grm::Grm
+impl core::marker::Send for reed_distance::grm::Grm
+impl core::marker::Sync for reed_distance::grm::Grm
+impl core::marker::Unpin for reed_distance::grm::Grm
+impl core::marker::UnsafeUnpin for reed_distance::grm::Grm
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::grm::Grm
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::grm::Grm
+pub struct reed_distance::KingCounts
+pub reed_distance::KingCounts::het1hom2: u64
+pub reed_distance::KingCounts::het2hom1: u64
+pub reed_distance::KingCounts::hethet: u64
+pub reed_distance::KingCounts::ibs0: u64
+impl reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::kinship(&self) -> f64
+impl core::clone::Clone for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::clone(&self) -> reed_distance::matrices::KingCounts
+impl core::cmp::Eq for reed_distance::matrices::KingCounts
+impl core::cmp::PartialEq for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::eq(&self, &reed_distance::matrices::KingCounts) -> bool
+impl core::default::Default for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::default() -> reed_distance::matrices::KingCounts
+impl core::fmt::Debug for reed_distance::matrices::KingCounts
+pub fn reed_distance::matrices::KingCounts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::KingCounts
+impl core::marker::StructuralPartialEq for reed_distance::matrices::KingCounts
+impl core::marker::Freeze for reed_distance::matrices::KingCounts
+impl core::marker::Send for reed_distance::matrices::KingCounts
+impl core::marker::Sync for reed_distance::matrices::KingCounts
+impl core::marker::Unpin for reed_distance::matrices::KingCounts
+impl core::marker::UnsafeUnpin for reed_distance::matrices::KingCounts
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::KingCounts
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::KingCounts
+pub struct reed_distance::MatrixResult
+pub reed_distance::MatrixResult::aux: core::option::Option<reed_distance::matrices::AuxCounts>
+pub reed_distance::MatrixResult::ids: alloc::vec::Vec<alloc::string::String>
+pub reed_distance::MatrixResult::kind: reed_distance::matrices::MatrixKind
+pub reed_distance::MatrixResult::n: usize
+pub reed_distance::MatrixResult::values: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::MatrixResult::clone(&self) -> reed_distance::matrices::MatrixResult
+impl core::fmt::Debug for reed_distance::matrices::MatrixResult
+pub fn reed_distance::matrices::MatrixResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::matrices::MatrixResult
+impl core::marker::Send for reed_distance::matrices::MatrixResult
+impl core::marker::Sync for reed_distance::matrices::MatrixResult
+impl core::marker::Unpin for reed_distance::matrices::MatrixResult
+impl core::marker::UnsafeUnpin for reed_distance::matrices::MatrixResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::MatrixResult
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::MatrixResult
+pub struct reed_distance::PiHatOptions
+pub reed_distance::PiHatOptions::nudge: bool
+pub reed_distance::PiHatOptions::unbounded: bool
+impl core::clone::Clone for reed_distance::matrices::PiHatOptions
+pub fn reed_distance::matrices::PiHatOptions::clone(&self) -> reed_distance::matrices::PiHatOptions
+impl core::default::Default for reed_distance::matrices::PiHatOptions
+pub fn reed_distance::matrices::PiHatOptions::default() -> reed_distance::matrices::PiHatOptions
+impl core::fmt::Debug for reed_distance::matrices::PiHatOptions
+pub fn reed_distance::matrices::PiHatOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::PiHatOptions
+impl core::marker::Freeze for reed_distance::matrices::PiHatOptions
+impl core::marker::Send for reed_distance::matrices::PiHatOptions
+impl core::marker::Sync for reed_distance::matrices::PiHatOptions
+impl core::marker::Unpin for reed_distance::matrices::PiHatOptions
+impl core::marker::UnsafeUnpin for reed_distance::matrices::PiHatOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::PiHatOptions
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::PiHatOptions
+pub struct reed_distance::PiHatResult
+pub reed_distance::PiHatResult::ibs0: u64
+pub reed_distance::PiHatResult::ibs1: u64
+pub reed_distance::PiHatResult::n_valid: u64
+pub reed_distance::PiHatResult::pi_hat: f64
+pub reed_distance::PiHatResult::z0: f64
+pub reed_distance::PiHatResult::z1: f64
+pub reed_distance::PiHatResult::z2: f64
+impl core::clone::Clone for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::PiHatResult::clone(&self) -> reed_distance::matrices::PiHatResult
+impl core::default::Default for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::PiHatResult::default() -> reed_distance::matrices::PiHatResult
+impl core::fmt::Debug for reed_distance::matrices::PiHatResult
+pub fn reed_distance::matrices::PiHatResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_distance::matrices::PiHatResult
+impl core::marker::Freeze for reed_distance::matrices::PiHatResult
+impl core::marker::Send for reed_distance::matrices::PiHatResult
+impl core::marker::Sync for reed_distance::matrices::PiHatResult
+impl core::marker::Unpin for reed_distance::matrices::PiHatResult
+impl core::marker::UnsafeUnpin for reed_distance::matrices::PiHatResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::matrices::PiHatResult
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::matrices::PiHatResult
+pub struct reed_distance::Standardized
+pub reed_distance::Standardized::called: alloc::vec::Vec<bool>
+pub reed_distance::Standardized::freq: alloc::vec::Vec<f64>
+pub reed_distance::Standardized::mean: alloc::vec::Vec<f64>
+pub reed_distance::Standardized::n_sites: usize
+pub reed_distance::Standardized::sd: alloc::vec::Vec<f64>
+pub reed_distance::Standardized::w: reed_core::linalg::Mat
+impl reed_distance::standard::Standardized
+pub fn reed_distance::standard::Standardized::called_both(&self, usize, usize) -> usize
+pub fn reed_distance::standard::Standardized::called_count(&self, usize) -> usize
+pub fn reed_distance::standard::Standardized::is_called(&self, usize, usize) -> bool
+pub fn reed_distance::standard::Standardized::n_samples(&self) -> usize
+impl core::clone::Clone for reed_distance::standard::Standardized
+pub fn reed_distance::standard::Standardized::clone(&self) -> reed_distance::standard::Standardized
+impl core::fmt::Debug for reed_distance::standard::Standardized
+pub fn reed_distance::standard::Standardized::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_distance::standard::Standardized
+impl core::marker::Send for reed_distance::standard::Standardized
+impl core::marker::Sync for reed_distance::standard::Standardized
+impl core::marker::Unpin for reed_distance::standard::Standardized
+impl core::marker::UnsafeUnpin for reed_distance::standard::Standardized
+impl core::panic::unwind_safe::RefUnwindSafe for reed_distance::standard::Standardized
+impl core::panic::unwind_safe::UnwindSafe for reed_distance::standard::Standardized
+pub fn reed_distance::ajk(&reed_distance::standard::Standardized, &reed_distance::matrices::AjkOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::allele_ct_distance(&reed_distance::standard::Standardized, &reed_distance::matrices::DistanceOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::discordance(&reed_distance::standard::Standardized, &reed_distance::matrices::DiscordanceOptions) -> (reed_distance::matrices::MatrixResult, reed_distance::matrices::AuxCounts)
+pub fn reed_distance::genome_columns(&reed_distance::matrices::PiHatResult) -> (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>)
+pub fn reed_distance::grm(&reed_distance::standard::Standardized, reed_distance::matrices::MissingPolicy, bool) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::ibs(&reed_distance::standard::Standardized, &reed_distance::matrices::DistanceOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::king(&reed_distance::standard::Standardized) -> (reed_distance::matrices::MatrixResult, alloc::vec::Vec<reed_distance::matrices::KingCounts>)
+pub fn reed_distance::one_minus_ibs(&reed_distance::standard::Standardized, &reed_distance::matrices::DistanceOptions) -> reed_distance::matrices::MatrixResult
+pub fn reed_distance::phi(&reed_distance::standard::Standardized) -> (reed_distance::matrices::MatrixResult, reed_distance::matrices::AuxCounts)
+pub fn reed_distance::pi_hat(&reed_distance::standard::Standardized, &reed_distance::matrices::PiHatOptions) -> (reed_distance::matrices::MatrixResult, alloc::vec::Vec<reed_distance::matrices::PiHatResult>)
+pub fn reed_distance::standardize(&reed_core::linalg::Mat, reed_distance::standard::Stand) -> reed_distance::standard::Standardized
+pub fn reed_distance::standardize_binom2(&reed_core::linalg::Mat) -> reed_distance::standard::Standardized
+pub fn reed_distance::write_ids_to<W: std::io::Write>(&mut W, &[alloc::string::String]) -> std::io::error::Result<()>
+pub fn reed_distance::write_matrix(&std::path::Path, &reed_distance::matrices::MatrixResult, reed_distance::output::MatrixFormat) -> std::io::error::Result<()>
+pub fn reed_distance::write_matrix_to<W: std::io::Write>(&mut W, &reed_distance::matrices::MatrixResult, reed_distance::output::MatrixFormat) -> std::io::error::Result<()>

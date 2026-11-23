@@ -20,7 +20,7 @@ const MAX_DEPTH: usize = 10_000;
 /// # Errors
 ///
 /// `BadBranchLength` for a non-finite length, `TreeTooDeep` past
-/// [`MAX_DEPTH`], and `NotSquare`-family errors never arise here.
+/// `MAX_DEPTH`, and `NotSquare`-family errors never arise here.
 pub fn to_newick(tree: &Tree, digits: usize) -> Result<String, GraphError> {
     let n = tree.n_tips();
     if n == 0 {

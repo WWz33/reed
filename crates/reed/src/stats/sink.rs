@@ -373,6 +373,13 @@ pub(super) struct LdExecutor {
     next_sequence: usize,
     next_merge: usize,
     completed: std::collections::BTreeMap<usize, Result<LdResult, String>>,
+    /// Bytes of queued-but-unmerged matrices (doc_v30 R09: the count cap is
+    /// not enough when one contig's matrix is large).
+    resident_bytes: u64,
+    /// Byte ceiling for those matrices, from the run's `MemBudget`.
+    resident_cap: u64,
+    /// Resident bytes per queued contig, released when it merges.
+    bytes_by_seq: std::collections::BTreeMap<usize, u64>,
     /// Set only after every result was merged successfully. Dropping an
     /// unfinished executor aborts; dropping a finished one must not flip the
     /// run's shared abort flag (V27-17).
@@ -382,6 +389,7 @@ pub(super) struct LdExecutor {
 impl LdExecutor {
     pub(super) fn new(
         worker_threads: usize,
+        resident_cap: u64,
         abort: reed_engine::abort::AbortHandle,
         signal: reed_engine::abort::AbortSignal,
     ) -> Result<Self, EngineError> {
@@ -409,6 +417,9 @@ impl LdExecutor {
             next_sequence: 0,
             next_merge: 0,
             completed: std::collections::BTreeMap::new(),
+            resident_bytes: 0,
+            resident_cap,
+            bytes_by_seq: std::collections::BTreeMap::new(),
             finished: false,
         })
     }
@@ -416,6 +427,18 @@ impl LdExecutor {
     /// Number of tasks that have not yet been merged by the sink.
     fn in_flight(&self) -> usize {
         self.next_sequence - self.next_merge
+    }
+
+    /// Whether queueing `bytes` more would exceed the run's memory share.
+    fn would_exceed(&self, bytes: u64) -> bool {
+        self.resident_bytes.saturating_add(bytes) > self.resident_cap
+    }
+
+    /// Releases the bytes of contig `sequence` once its result merged.
+    fn release(&mut self, sequence: usize) {
+        if let Some(bytes) = self.bytes_by_seq.remove(&sequence) {
+            self.resident_bytes = self.resident_bytes.saturating_sub(bytes);
+        }
     }
 
     /// Queues one contig, or computes it inline in the sequential path.
@@ -453,6 +476,11 @@ impl LdExecutor {
             );
             return;
         };
+        // The queued matrix stays resident until its result merges; charge
+        // it against the run's memory share (doc_v30 R09).
+        let bytes = matrix.size_bytes();
+        self.bytes_by_seq.insert(sequence, bytes);
+        self.resident_bytes = self.resident_bytes.saturating_add(bytes);
         let sender = self.sender.clone();
         let signal = self.signal.clone();
         pool.spawn(move || {
@@ -486,7 +514,8 @@ impl LdExecutor {
         mut merge: impl FnMut(LdResult) -> Result<(), EngineError>,
     ) -> Result<(), EngineError> {
         while self.completed.contains_key(&self.next_merge) {
-            let (_, result) = self.completed.pop_first().expect("invariant: key checked");
+            let (sequence, result) = self.completed.pop_first().expect("invariant: key checked");
+            self.release(sequence);
             self.next_merge += 1;
             let result = result.map_err(EngineError::job)?;
             merge(result)?;
@@ -503,6 +532,7 @@ impl LdExecutor {
     ) -> Result<(), EngineError> {
         while self.in_flight() > 0 {
             if let Some(result) = self.completed.remove(&self.next_merge) {
+                self.release(self.next_merge);
                 self.next_merge += 1;
                 merge(result.map_err(EngineError::job)?)?;
                 return Ok(());
@@ -627,11 +657,15 @@ impl StatsSink {
         // Bound resident matrices, not the number of OS threads. The oldest
         // contig is merged before another one is queued, so a run with many
         // contigs still has one pool and at most `max_ld_jobs` matrices.
-        if self
-            .ld_executor
-            .as_ref()
-            .is_some_and(|executor| executor.in_flight() >= self.max_ld_jobs)
-        {
+        // The run's memory share is the second cap: a single large matrix is
+        // admitted even over the share (it must be processed somewhere), but
+        // two never stack past it (doc_v30 R09).
+        let next_bytes = matrix.size_bytes();
+        let over_cap = self.ld_executor.as_ref().is_some_and(|executor| {
+            executor.in_flight() >= self.max_ld_jobs
+                || (executor.in_flight() > 0 && executor.would_exceed(next_bytes))
+        });
+        if over_cap {
             let mut merged = self.ld_merged.take();
             self.join_ld(&mut merged)?;
             self.ld_merged = merged;
@@ -764,6 +798,13 @@ impl StatsSink {
                 let earliest = candidate.saturating_sub(size - 1);
                 if earliest > s {
                     s = earliest.div_ceil(step) * step;
+                    // The window jumped to may still be filling: the loop
+                    // guard above tested the pre-jump `s`, so re-check the
+                    // new one before emitting a truncated window and
+                    // dropping its bins (N-1; doc_v30 04-recheck §4).
+                    if s.saturating_add(size) > watermark {
+                        break;
+                    }
                 }
             }
             let end = s + size;
@@ -1381,5 +1422,81 @@ mod tests {
             3,
             "two seam copies plus the later site"
         );
+    }
+}
+
+#[cfg(test)]
+mod ld_idle_abort_tests {
+    use super::*;
+    use reed_stats::matrix::{ContigMatrix, SampleLayout};
+    use std::sync::Arc;
+
+    /// A matrix large enough that one contig's decay scan takes long enough
+    /// to observe an early return (hundreds of thousands of pairs).
+    fn big_matrix(sites: usize, samples: usize) -> ContigMatrix {
+        let layout = Arc::new(SampleLayout::from_assignments(
+            &vec![Some(0); samples],
+            1,
+            None,
+        ));
+        let mut m = ContigMatrix::new(b"chr1".to_vec(), layout);
+        let w = m.layout().w();
+        for start in (0..sites).step_by(4096) {
+            let n = (start + 4096).min(sites) - start;
+            let positions: Vec<u64> = (start..start + n).map(|i| i as u64).collect();
+            // A varying bit pattern so the scan is not optimized to a trivial
+            // loop: alternate all-REF / mixed words per site.
+            let mut flat = Vec::with_capacity(n * 4 * w);
+            for (i, _) in (0..n).enumerate() {
+                for plane in 0..4 {
+                    for word in 0..w {
+                        flat.push(if (i + plane + word) % 2 == 0 {
+                            u64::MAX
+                        } else {
+                            0
+                        });
+                    }
+                }
+            }
+            m.push_run(flat, positions);
+        }
+        m
+    }
+
+    /// doc_v30 §3.4/§4.7: an idle context has no trigger handle. Pairing a
+    /// fresh handle with the never-aborting idle *signal* left
+    /// `LdExecutor::drop`'s `trigger()` setting a flag no worker polls, so
+    /// an error waited for every queued matrix. With one real channel for
+    /// both ends, dropping an unfinished executor sets the flag the worker
+    /// loop actually reads (`signal.is_aborted()` in the block check).
+    #[test]
+    fn dropping_an_unfinished_executor_sets_the_flag_the_workers_poll() {
+        let (handle, signal) = reed_engine::abort::abort_channel_for(2);
+        let worker_view = signal.clone();
+        let mut exec = LdExecutor::new(2, u64::MAX, handle, signal).expect("invariant: pool");
+
+        let edges = vec![1, 2, 4, 8, 16];
+        for _ in 0..8 {
+            exec.submit(big_matrix(200_000, 256), 1_000_000, edges.clone(), false);
+        }
+
+        assert!(
+            !worker_view.is_aborted(),
+            "nothing may be cancelled before the error path runs"
+        );
+        // Simulate the library error path: the sink is dropped un-finished.
+        drop(exec);
+        assert!(
+            worker_view.is_aborted(),
+            "drop must set the flag the LD block loop polls; a fresh handle \
+             paired with an idle signal sets a different flag (doc_v30 §3.4)"
+        );
+
+        // And the worker loop really stops: a subsequent scan sees the flag
+        // and returns without computing (the block check runs first).
+        let matrix = big_matrix(4096, 64);
+        let err = decay_contig_with_abort(&matrix, 1_000_000, &edges, false, false, &worker_view)
+            .expect_err("an aborted signal must stop the scan");
+        assert!(err.contains("aborted"), "{err}");
     }
 }

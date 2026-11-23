@@ -9,6 +9,13 @@
 //!
 //! Usage: `cargo run --release --example families -- [small|medium]`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::map_unwrap_or,
+    clippy::uninlined_format_args,
+    clippy::unreadable_literal,
+    clippy::cloned_instead_of_copied
+)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
@@ -22,13 +29,13 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::extra::{lle, nmf, ppca, tsne, TsneConfig};
+use reed_reduce::extra::{TsneConfig, lle, nmf, ppca, tsne};
 use reed_reduce::graph::{
-    diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa, Kernel,
+    Kernel, diffusion_map, isomap, kernel_pca, knn_graph, laplacian_eigenmaps, pcoa,
 };
-use reed_reduce::pca::{pca_dense, pca_dense_with, standardize, Grm, Stand};
-use reed_reduce::umap::{umap, UmapConfig};
-use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
+use reed_reduce::pca::{Grm, Stand, pca_dense, pca_dense_with, standardize};
+use reed_reduce::umap::{UmapConfig, umap};
+use reed_reduce::{Mat, StreamConfig, lanczos_top_k};
 use std::time::Instant;
 
 /// Genotype-like fixture: three populations with shifted allele frequencies.

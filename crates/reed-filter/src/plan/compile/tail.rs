@@ -91,21 +91,12 @@ pub(super) fn compile(
         )));
     }
     if let Some(p) = spec.site_after_mask.min_hwe_p {
-        if spec.site_after_mask.hwe_mode == crate::spec::HweMode::MidP {
-            // doc_v21 S12: no internal milestone code; the exact test is the
-            // only implemented mode and the message says so.
-            return Err(FilterError::Spec(
-                "--hwe midp is not implemented yet: only the exact test is available; \
-                 drop the `midp` token"
-                    .into(),
-            ));
-        }
         if !(0.0..=1.0).contains(&p) {
             return Err(FilterError::Spec(format!(
                 "min_hwe_p out of range [0,1]: {p}"
             )));
         }
-        tail.push(TailRule::MinHweP(p));
+        tail.push(TailRule::MinHweP(p, spec.site_after_mask.hwe_mode));
     }
     // `-g/--genotype` (repeated flags AND, unlike bcftools' last-wins):
     // exact duplicates collapse; requiring a class and its absence is

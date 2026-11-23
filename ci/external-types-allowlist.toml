@@ -1,0 +1,12 @@
+# ADR api-contract §3: third-party types are opaque unless explicitly
+# re-exported and registered here. The workspace's own model crates are the
+# facade's implementation and are re-exported through `reed` (the P3
+# nameability gate checks that every type in a signature is nameable), so
+# they are allowed; `noodles`, `serde`, `rayon`, `memmap2` are not.
+allowed_external_types = [
+    "reed_core::*",
+    "reed_io::*",
+    "reed_engine::*",
+    "reed_stats::*",
+    "reed_filter::*",
+]

@@ -5,14 +5,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use reed::budget::ThreadBudget;
+use reed::ThreadBudget;
 
 use crate::units::input_path;
 
 /// Prints the engine's stage metrics (doc_v4 03 A4-5): the reader, reducer
 /// and frame-chain cumulative times without which "reader-bound" is only an
 /// inference.
-pub(crate) fn print_engine_metrics(m: &reed::metrics::StageMetrics) {
+pub(crate) fn print_engine_metrics(m: &reed::StageMetrics) {
     // One renderer for every command (doc_v25 V25-08b).
     eprint!("{}", m.render_tsv());
 }
@@ -26,12 +26,9 @@ pub(crate) fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
 }
 
 /// The parsed region flags: indexed regions as a seek request, plus the
-/// [`SiteSelector`] holding the three record-level families that AND
+/// `SiteSelector` holding the three record-level families that AND
 /// (doc_v27 V27-14/V27-15).
-type ParsedRegions = (
-    Vec<reed::chunk::region::Region>,
-    reed::spec::region::SiteSelector,
-);
+type ParsedRegions = (Vec<reed::Region>, reed::spec::region::SiteSelector);
 
 /// Canonicalizes one line of a region/target file (`-r/-R/-t/-T`, bcftools
 /// accepts a plain region list *or* a BED) into region spellings the spec
@@ -109,7 +106,7 @@ pub(crate) fn region_tokens(text: &str, from_file: bool) -> Result<Vec<String>, 
 }
 
 /// Parses the shared region flags into a seek request (`-r/-R`, needing a
-/// seekable input) plus a [`SiteSelector`] whose `indexed`/`include`/
+/// seekable input) plus a `SiteSelector` whose `indexed`/`include`/
 /// `exclude` families are filled from `-r/-R` and `-t/-T` (`^` = exclude).
 ///
 /// The `indexed` family is duplicated into the seek list rather than pushed
@@ -137,7 +134,7 @@ fn parse_regions(
                     reed::spec::region::parse_regions_strict(std::slice::from_ref(&token), contigs)
                         .map_err(|e| format!("invalid region {token:?}: {e}"))?
                         .remove(0);
-                regions.push(reed::chunk::region::Region {
+                regions.push(reed::Region {
                     contig: contig.clone(),
                     start1,
                     end1,
@@ -335,7 +332,7 @@ pub(crate) fn parse_sample_keep(
 pub(crate) struct Prelude {
     /// `-r/-R` as a seek request (`select.indexed` carries the same ranges
     /// as the record predicate).
-    pub regions: Vec<reed::chunk::region::Region>,
+    pub regions: Vec<reed::Region>,
     /// The record-level site selection: `-r/-R` ∧ `-t/-T` ∧
     /// `--sites-file` (doc_v27 V27-14/V27-15).
     pub select: reed::spec::region::SiteSelector,
@@ -366,8 +363,8 @@ pub(crate) fn prelude(
     site_args: &crate::cli::filter_flags::SiteFilterArgs,
     sites_file: Option<&str>,
     contig_lengths_arg: Option<&str>,
-    threads_arg: Option<reed::budget::Threads>,
-    memory_arg: Option<reed::budget::MemMiB>,
+    threads_arg: Option<reed::frontend::Threads>,
+    memory_arg: Option<reed::frontend::MemMiB>,
 ) -> Result<Prelude, reed::Error> {
     let started = std::time::Instant::now();
     let input_file = input_path(input);
@@ -379,20 +376,23 @@ pub(crate) fn prelude(
         ));
     }
     // The region grammar needs the header's contig vocabulary (doc_v24
-    // V24-04): `HLA-A*01:01` is a name, not `contig:pos`. Indexed regions
-    // also drive the seek, so read the header once before opening for the
-    // seek range; a `-t`-only run reuses its single open.
+    // V24-04): `HLA-A*01:01` is a name, not `contig:pos`. The pending probe
+    // hands its one open to the seek source, so `-r` opens the file once
+    // (doc_v30 R05/R06); a `-t`-only run reuses its single open.
     let (opened, regions, select) = if has_indexed {
-        let probe = reed::open_regions(open_path.as_deref(), &[])?;
+        let probe = reed::frontend::PendingInput::open(
+            open_path
+                .as_deref()
+                .expect("invariant: stdin with indexed regions was rejected above"),
+        )?;
         let contigs = probe.facts().contig_names.clone();
-        drop(probe);
         let (regions, select) =
             parse_regions(regions_args, &contigs).map_err(reed::Error::usage)?;
         debug_assert!(
             !select.indexed.is_empty(),
             "indexed flags -> both the seek list and the record predicate"
         );
-        let opened = Some(reed::open_regions(open_path.as_deref(), &regions)?);
+        let opened = Some(probe.into_opened(&regions)?);
         (opened, regions, select)
     } else {
         let opened = Some(reed::open_regions(open_path.as_deref(), &[])?);

@@ -23,7 +23,8 @@
 use std::sync::{Arc, Mutex};
 
 use reed_core::genotype::GtCode;
-use reed_engine::budget::ThreadBudget;
+
+use crate::context::RunContext;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_filter::funnel::FunnelPartial;
@@ -770,9 +771,9 @@ struct MatrixSink {
     pending: Option<SiteMatrix>,
     open: Option<OpenChunk>,
     chunks: Vec<ChunkSites>,
-    prune_jobs: Vec<std::thread::JoinHandle<super::prune::PruneOutcome>>,
-    /// Prune results already joined to respect `max_prune` (doc_v7 D7-19).
-    prune_done: Vec<super::prune::PruneOutcome>,
+    /// The streaming per-contig pruner threads and their joined outcomes
+    /// (doc_v30 R08: the pool cancels and joins on Drop).
+    prune: super::prune::PrunePool,
     out: Arc<Mutex<Option<MatrixOutput>>>,
 }
 
@@ -809,15 +810,7 @@ impl OrderedSink<MatrixPartial> for MatrixSink {
             let mut pruned = 0_u64;
             let mut per_contig = Vec::new();
             let started = std::time::Instant::now();
-            for outcome in self.prune_done.drain(..) {
-                seen += outcome.n_seen;
-                pruned += outcome.n_pruned;
-                per_contig.extend(outcome.keep.per_contig);
-            }
-            for handle in self.prune_jobs.drain(..) {
-                let outcome = handle
-                    .join()
-                    .map_err(|_| EngineError::job("the per-contig prune worker panicked"))?;
+            for outcome in self.prune.finish()? {
                 seen += outcome.n_seen;
                 pruned += outcome.n_pruned;
                 per_contig.extend(outcome.keep.per_contig);
@@ -1013,21 +1006,15 @@ impl MatrixSink {
             });
         }
         // Bound the number of concurrently running prune threads so M contigs
-        // cannot keep M matrices resident (doc_v7 D7-19): join the oldest
-        // when the cap is reached, keeping its outcome for `finish`.
-        if self.prune_jobs.len() >= self.max_prune {
-            let handle = self.prune_jobs.remove(0);
-            let outcome = handle
-                .join()
-                .map_err(|_| EngineError::job("the per-contig prune worker panicked"))?;
-            self.prune_done.push(outcome);
-        }
-        let n_samples = self.n_samples;
-        let keep_words = Arc::clone(&self.keep_words);
-        self.prune_jobs.push(std::thread::spawn(move || {
-            super::prune::prune_one(matrix, &config, None, 0, n_samples, &keep_words)
-        }));
-        Ok(())
+        // cannot keep M matrices resident (doc_v7 D7-19); the pool joins the
+        // oldest when the cap is reached (doc_v30 R08).
+        self.prune.spawn(
+            matrix,
+            &config,
+            self.n_samples,
+            Arc::clone(&self.keep_words),
+            self.max_prune,
+        )
     }
 }
 
@@ -1045,19 +1032,13 @@ pub(crate) fn run_matrix_pass(
     tail_n_samples: Option<u64>,
     keep: Arc<[bool]>,
     prune_config: Option<super::prune::PruneConfig>,
-    budget_bytes: u64,
+    ctx: &RunContext<'_>,
     opts: &FilterOptions,
     native_bcf: bool,
 ) -> Result<MatrixOutput, FilterError> {
-    let budget = ThreadBudget {
-        threads: opts.threads.max(1),
-        mem: opts.mem_bytes.map_or_else(
-            reed_engine::budget::MemBudget::default_half_memory,
-            reed_engine::budget::MemBudget::from_bytes,
-        ),
-    };
-    let n_samples = opened.facts.header.sample_names().len();
-    let abort = reed_engine::abort::abort_for(&budget);
+    let budget = ctx.budget;
+    let abort = ctx.abort;
+    let n_samples = opened.facts().header.sample_names().len();
     let inner = MatrixJob {
         plan: Arc::new(plan.clone()),
         n_samples,
@@ -1068,8 +1049,8 @@ pub(crate) fn run_matrix_pass(
         keep: Arc::clone(&keep),
         bcf_input: native_bcf.then(|| {
             opened
-                .bcf
-                .clone()
+                .bcf_dict()
+                .cloned()
                 .expect("invariant: a BCF input carries its dictionary")
         }),
         gt_table: native_bcf.then(|| Arc::new(reed_io::bcf::GtTable::new(plan.policies))),
@@ -1086,14 +1067,14 @@ pub(crate) fn run_matrix_pass(
         crate::bcf_input::InputJob::with_bcf_records(
             inner,
             &opened,
-            &abort,
-            &budget,
+            abort,
+            budget,
             MatrixJob::run_bcf_records,
         )
     } else {
-        crate::bcf_input::InputJob::new(inner, &opened, &abort, &budget)
+        crate::bcf_input::InputJob::new(inner, &opened, abort, budget)
     };
-    let crate::input::OpenedInput { mut source, .. } = opened;
+    let (mut source, _facts, _meta) = opened.into_parts();
     let out: Arc<Mutex<Option<MatrixOutput>>> = Arc::new(Mutex::new(None));
     let w = n_samples.div_ceil(64).max(1);
     let mut keep_words = vec![0_u64; w];
@@ -1110,7 +1091,7 @@ pub(crate) fn run_matrix_pass(
         n_samples,
         track_chunks: mode.rule_bits,
         prune_config,
-        budget_bytes,
+        budget_bytes: budget.mem.bytes,
         resident_bytes: 0,
         max_prune: budget.auxiliary(),
         keep_words: keep_words.into(),
@@ -1128,11 +1109,10 @@ pub(crate) fn run_matrix_pass(
         pending: None,
         open: None,
         chunks: Vec::new(),
-        prune_jobs: Vec::new(),
-        prune_done: Vec::new(),
+        prune: super::prune::PrunePool::new(),
         out: Arc::clone(&out),
     };
-    let report = run(source.as_mut(), &job, sink, &budget, &abort).map_err(ferr)?;
+    let report = run(source.as_mut(), &job, sink, budget, abort).map_err(ferr)?;
     job.finish(report.n_chunks, opts.regions.is_empty())
         .map_err(ferr)?;
     let mut output = out

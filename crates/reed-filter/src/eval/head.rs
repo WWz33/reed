@@ -3,9 +3,9 @@
 //! evaluation order is semantics and must not be reordered).
 
 use reed_core::site::{VariantClass, classify_variant};
-use reed_io::vcf::fixed::parse_qual;
-use reed_io::vcf::info::InfoIndex;
-use reed_io::vcf::line::LineRef;
+use reed_core::vcf::fixed::{QualValue, parse_qual};
+use reed_core::vcf::info::InfoIndex;
+use reed_core::vcf::line::LineRef;
 
 use crate::FilterError;
 use crate::plan::{HeadRule, InfoRule};
@@ -164,8 +164,8 @@ fn eval_head_with(
                 };
                 acgt(reference) && alts.split(|&b| b == b',').all(acgt)
             }
-            HeadRule::MinAltAlleles(min) => reed_io::vcf::site::count_alts(alts) >= *min,
-            HeadRule::MaxAltAlleles(max) => reed_io::vcf::site::count_alts(alts) <= *max,
+            HeadRule::MinAltAlleles(min) => reed_core::site::count_alts(alts) >= *min,
+            HeadRule::MaxAltAlleles(max) => reed_core::site::count_alts(alts) <= *max,
             HeadRule::BiallelicGate => !alts.contains(&b','),
             // bcftools `-f` matches any `;`-separated value of the column,
             // not the whole text (`bcftools filter` routinely writes
@@ -217,11 +217,12 @@ fn eval_head_with(
                 }
             }
             HeadRule::MinQual(q) => {
-                // A missing QUAL fails (bcftools semantics).
-                parse_qual(line.qual_text(), locus(line, pos1))
-                    .ok()
-                    .flatten()
-                    .is_some_and(|v| f64::from(v) >= f64::from(*q))
+                // A missing or malformed QUAL fails (bcftools semantics; the
+                // transport reports the malformed record on its own path).
+                matches!(
+                    parse_qual(line.qual_text()),
+                    QualValue::Value(v) if f64::from(v) >= f64::from(*q)
+                )
             }
             HeadRule::Info(rule) => eval_info(line, rule, scratch),
             HeadRule::Expr { include, expr, .. } => {
@@ -283,7 +284,7 @@ enum AfInfoDecision {
 fn af_info_decision(
     info: &[u8],
     n_alt: u32,
-    index: Option<&reed_io::vcf::info::InfoIndex>,
+    index: Option<&reed_core::vcf::info::InfoIndex>,
 ) -> AfInfoDecision {
     use crate::semantics::{InfoAfOutcome, info_af_indexed, info_af_outcome};
     let outcome = match index {
@@ -401,12 +402,6 @@ fn missing_value_passes(rule: &InfoRule) -> bool {
 /// Parses an INFO value as f64 (Integer widened; `.`/malformed → None).
 fn parse_number(value: &[u8]) -> Option<f64> {
     std::str::from_utf8(value).ok().and_then(|s| s.parse().ok())
-}
-
-/// A cheap error locus: the borrowed CHROM bytes plus the position; the
-/// `Locus` (and its `String`) is built only when an error carries it (A6-11).
-fn locus<'a>(line: &'a LineRef<'_>, pos1: u64) -> (&'a [u8], u64) {
-    (line.chrom(), pos1)
 }
 
 #[cfg(test)]

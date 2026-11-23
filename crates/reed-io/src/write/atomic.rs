@@ -57,6 +57,42 @@ fn unregister_live(path: &Path) {
     }
 }
 
+/// Registers a temporary owned by another subsystem of the same process
+/// (doc_v30 R10: the spill files share this table, so a sweep can never
+/// remove a temporary that is still being written).
+///
+/// `#[doc(hidden)]`: internal plumbing between `reed-io` and the spill owner,
+/// not part of the facade surface.
+#[doc(hidden)]
+pub fn register_live_temp(path: &Path) {
+    if let Ok(mut live) = LIVE_TEMPORARIES.lock()
+        && !live.iter().any(|p| p == path)
+    {
+        live.push(path.to_path_buf());
+    }
+}
+
+/// Releases a path registered with [`register_live_temp`].
+///
+/// `#[doc(hidden)]`, like the registration.
+#[doc(hidden)]
+pub fn unregister_live_temp(path: &Path) {
+    unregister_live(path);
+}
+
+/// A snapshot of the registered temporaries (used by the spill sweep, which
+/// keeps only names it can prove stale).
+///
+/// `#[doc(hidden)]`, like the registration.
+#[doc(hidden)]
+#[must_use]
+pub fn live_temp_paths() -> Vec<PathBuf> {
+    LIVE_TEMPORARIES
+        .lock()
+        .map(|live| live.clone())
+        .unwrap_or_default()
+}
+
 /// How many candidate names one output may burn through before giving up.
 const TEMP_ATTEMPTS: usize = 16;
 

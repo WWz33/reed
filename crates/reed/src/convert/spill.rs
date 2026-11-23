@@ -2,8 +2,8 @@
 //! stream, the MSA frame stream and their readers. Every on-disk file goes
 //! through [`crate::spill::TempSpill`] (O_EXCL + unlink on drop).
 
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::{Read, Seek, Write};
 
 use reed_engine::error::EngineError;
 
@@ -49,9 +49,11 @@ impl RowsBlob {
         threshold: usize,
     ) -> Result<(), EngineError> {
         if let Self::Spilled { spill, len } = self {
-            let mut file = OpenOptions::new()
-                .append(true)
-                .open(spill.path())
+            // doc_v30 R10: write through the guard's pinned inode instead of
+            // reopening the name. The clone shares the offset, so seek to the
+            // end explicitly (`append(true)` is no longer needed).
+            let mut file = spill.try_clone().map_err(EngineError::Io)?;
+            file.seek(std::io::SeekFrom::End(0))
                 .map_err(EngineError::Io)?;
             file.write_all(rows).map_err(EngineError::Io)?;
             *len = len.saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));

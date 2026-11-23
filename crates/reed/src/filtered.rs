@@ -26,7 +26,7 @@ use reed_engine::pipeline::ChunkJob;
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::chunk::ChunkBytes;
-use reed_io::vcf::line_edit::{EditPlan, edit_vcf_line};
+use reed_io::vcf::line_edit::edit_vcf_line;
 
 use crate::filter::record_pipeline::{PipelineOptions, RecordPipeline};
 
@@ -163,7 +163,7 @@ impl<J: ChunkJob> FilteredJob<J> {
         let pipeline = pipeline.as_mut().expect("invariant: start_chunk built it");
         let opts = self.pipeline_options();
         pipeline.process(line, plan, &self.keep, opts, funnel, |view| {
-            let edit = EditPlan {
+            let edit = reed_filter::eval::edit_plan::SurvivorEdit {
                 // Every column stays: the inner consumer selects samples
                 // through its own group assignment.
                 keep_samples: None,
@@ -173,7 +173,7 @@ impl<J: ChunkJob> FilteredJob<J> {
                 info_set: &[],
             };
             let gt_index = reed_io::vcf::format_layout::gt_index(view.line.format_text());
-            edit_vcf_line(view.line, &edit, gt_index, buffer);
+            edit_vcf_line(view.line, &edit.edit_plan(), gt_index, buffer);
             Ok(())
         })?;
         Ok(())

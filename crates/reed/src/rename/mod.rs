@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use reed_engine::budget::ThreadBudget;
+use crate::context::RunContext;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink, run};
 use reed_io::chunk::ChunkBytes;
@@ -375,10 +375,10 @@ pub fn run_rename(
     input: Option<&Path>,
     spec: &RenameSpec,
     output: &RenameOutput,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<RenameReport, crate::Error> {
     let opened = crate::input::open(input).map_err(EngineError::from)?;
-    run_rename_opened(opened, spec, output, budget)
+    run_rename_opened(opened, spec, output, ctx)
 }
 
 /// Runs `reed rename` over an already-opened input (the CLI opens once so
@@ -391,11 +391,12 @@ pub fn run_rename_opened(
     opened: OpenedInput,
     spec: &RenameSpec,
     output: &RenameOutput,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<RenameReport, crate::Error> {
+    let budget = ctx.budget;
     validate(spec)?;
     let facts = opened.facts().clone();
-    if opened.bcf_dict().is_some() {
+    if opened.is_bcf() {
         return Err(crate::Error::usage(
             "reed rename: BCF input is not supported yet; convert to VCF first \
              (`reed filter -Ov` or `bcftools view`)",
@@ -745,12 +746,9 @@ pub fn run_rename_opened(
         },
         slot: Arc::clone(&report_slot),
     };
-    let abort = reed_engine::abort::abort_for(budget);
-    let mut opened = opened;
-    let run_report = {
-        let source = opened.source_mut();
-        run(source, &job, sink, budget, &abort)?
-    };
+    let abort = ctx.abort;
+    let (mut source, _facts, _meta) = opened.into_parts();
+    let run_report = { run(source.as_mut(), &job, sink, budget, abort)? };
     let mut report = report_slot
         .lock()
         .expect("invariant: rename slot not poisoned")

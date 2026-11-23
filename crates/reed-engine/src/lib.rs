@@ -3,6 +3,13 @@
 //! facade wraps their pure logic into [`pipeline::ChunkJob`] and
 //! [`pipeline::OrderedSink`] and calls [`pipeline::run`].
 
+//! # Examples
+//!
+//! ```
+//! let budget = reed_engine::ThreadBudget::default();
+//! assert!(budget.threads >= 1);
+//! ```
+//!
 pub mod abort;
 pub mod budget;
 pub mod error;

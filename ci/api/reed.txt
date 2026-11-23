@@ -1,0 +1,2516 @@
+pub mod reed
+pub use reed::Abort
+pub use reed::AbortHandle
+pub use reed::AbortSignal
+pub use reed::BcfDict
+pub use reed::ChunkSource
+pub use reed::ContigRegions
+pub use reed::EngineError
+pub use reed::FilterReport
+pub use reed::FilterSpec
+pub use reed::Format
+pub use reed::FstKind
+pub use reed::HeaderFacts
+pub use reed::InfoDefinition
+pub use reed::InfoNumber
+pub use reed::InfoType
+pub use reed::Interval0
+pub use reed::IoError
+pub use reed::Mat
+pub use reed::MemBudget
+pub use reed::PbsKind
+pub use reed::Pos0
+pub use reed::QcReportAcc
+pub use reed::Region
+pub use reed::SiteSelector
+pub use reed::StageMetrics
+pub use reed::StatAcc
+pub use reed::StatKind
+pub use reed::StatOutput
+pub use reed::TagNumber
+pub use reed::TagTable
+pub use reed::TagType
+pub use reed::ThreadBudget
+pub use reed::VcfHeader
+pub use reed::WindowGrid
+pub use reed::WriteIndex
+pub use reed::abort_for
+pub use reed::spec
+pub mod reed::prelude
+pub use reed::prelude::Abort
+pub use reed::prelude::AbortHandle
+pub use reed::prelude::AbortSignal
+pub use reed::prelude::EngineError
+pub use reed::prelude::FilterReport
+pub use reed::prelude::FilterSpec
+pub use reed::prelude::FstKind
+pub use reed::prelude::IoError
+pub use reed::prelude::MemBudget
+pub use reed::prelude::PbsKind
+pub use reed::prelude::QcReportAcc
+pub use reed::prelude::StatAcc
+pub use reed::prelude::StatKind
+pub use reed::prelude::StatOutput
+pub use reed::prelude::ThreadBudget
+pub use reed::prelude::WriteIndex
+pub use reed::prelude::abort_for
+pub enum reed::prelude::ChrStyle
+pub reed::prelude::ChrStyle::MtIsM
+pub reed::prelude::ChrStyle::Plain
+pub reed::prelude::ChrStyle::Ucsc
+impl reed::ChrStyle
+pub fn reed::ChrStyle::apply(self, &str) -> alloc::string::String
+pub fn reed::ChrStyle::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::ChrStyle
+pub fn reed::ChrStyle::clone(&self) -> reed::ChrStyle
+impl core::cmp::Eq for reed::ChrStyle
+impl core::cmp::PartialEq for reed::ChrStyle
+pub fn reed::ChrStyle::eq(&self, &reed::ChrStyle) -> bool
+impl core::fmt::Debug for reed::ChrStyle
+pub fn reed::ChrStyle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::ChrStyle
+impl core::marker::StructuralPartialEq for reed::ChrStyle
+impl core::marker::Freeze for reed::ChrStyle
+impl core::marker::Send for reed::ChrStyle
+impl core::marker::Sync for reed::ChrStyle
+impl core::marker::Unpin for reed::ChrStyle
+impl core::marker::UnsafeUnpin for reed::ChrStyle
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ChrStyle
+impl core::panic::unwind_safe::UnwindSafe for reed::ChrStyle
+pub enum reed::prelude::ConvertTarget
+pub reed::prelude::ConvertTarget::CountMatrix
+pub reed::prelude::ConvertTarget::Hapmap
+pub reed::prelude::ConvertTarget::Msa
+pub reed::prelude::ConvertTarget::Msa::collapse_suffix: core::option::Option<alloc::string::String>
+pub reed::prelude::ConvertTarget::Msa::flank: u64
+pub reed::prelude::ConvertTarget::Msa::reference: std::path::PathBuf
+pub reed::prelude::ConvertTarget::Msa::regions: alloc::vec::Vec<alloc::string::String>
+pub reed::prelude::ConvertTarget::NexusBin
+pub reed::prelude::ConvertTarget::Phylo
+pub reed::prelude::ConvertTarget::Phylo::formats: reed::PhyloFormats
+pub reed::prelude::ConvertTarget::Phylo::options: reed::PhyloOptions
+pub reed::prelude::ConvertTarget::Sfs
+pub reed::prelude::ConvertTarget::Sfs::int_dtype: bool
+pub reed::prelude::ConvertTarget::Sfs::request: reed::SfsRequest
+pub reed::prelude::ConvertTarget::Vcf
+pub reed::prelude::ConvertTarget::Vcf::command_line: alloc::string::String
+pub reed::prelude::ConvertTarget::Vcf::compressed: bool
+pub reed::prelude::ConvertTarget::Vcf::level: u8
+pub reed::prelude::ConvertTarget::Vcf::no_version: bool
+pub reed::prelude::ConvertTarget::Vcf::output: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::ConvertTarget
+pub fn reed::ConvertTarget::clone(&self) -> reed::ConvertTarget
+impl core::cmp::Eq for reed::ConvertTarget
+impl core::cmp::PartialEq for reed::ConvertTarget
+pub fn reed::ConvertTarget::eq(&self, &reed::ConvertTarget) -> bool
+impl core::fmt::Debug for reed::ConvertTarget
+pub fn reed::ConvertTarget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::ConvertTarget
+impl core::marker::Freeze for reed::ConvertTarget
+impl core::marker::Send for reed::ConvertTarget
+impl core::marker::Sync for reed::ConvertTarget
+impl core::marker::Unpin for reed::ConvertTarget
+impl core::marker::UnsafeUnpin for reed::ConvertTarget
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertTarget
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertTarget
+pub enum reed::prelude::DistanceFormat
+pub reed::prelude::DistanceFormat::Bin
+pub reed::prelude::DistanceFormat::Square
+pub reed::prelude::DistanceFormat::Square0
+pub reed::prelude::DistanceFormat::Triangle
+impl reed::DistanceFormat
+pub const fn reed::DistanceFormat::name(self) -> &'static str
+pub fn reed::DistanceFormat::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::DistanceFormat
+pub fn reed::DistanceFormat::clone(&self) -> reed::DistanceFormat
+impl core::cmp::Eq for reed::DistanceFormat
+impl core::cmp::PartialEq for reed::DistanceFormat
+pub fn reed::DistanceFormat::eq(&self, &reed::DistanceFormat) -> bool
+impl core::default::Default for reed::DistanceFormat
+pub fn reed::DistanceFormat::default() -> reed::DistanceFormat
+impl core::fmt::Debug for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceFormat
+impl core::marker::StructuralPartialEq for reed::DistanceFormat
+impl core::str::traits::FromStr for reed::DistanceFormat
+pub type reed::DistanceFormat::Err = alloc::string::String
+pub fn reed::DistanceFormat::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceFormat
+impl core::marker::Send for reed::DistanceFormat
+impl core::marker::Sync for reed::DistanceFormat
+impl core::marker::Unpin for reed::DistanceFormat
+impl core::marker::UnsafeUnpin for reed::DistanceFormat
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceFormat
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceFormat
+pub enum reed::prelude::DistanceKind
+pub reed::prelude::DistanceKind::Ajk
+pub reed::prelude::DistanceKind::AlleleCountDistance
+pub reed::prelude::DistanceKind::Covariance
+pub reed::prelude::DistanceKind::Discordance
+pub reed::prelude::DistanceKind::Grm
+pub reed::prelude::DistanceKind::Ibs
+pub reed::prelude::DistanceKind::King
+pub reed::prelude::DistanceKind::OneMinusIbs
+pub reed::prelude::DistanceKind::Phi
+pub reed::prelude::DistanceKind::PiHat
+impl reed::DistanceKind
+pub const fn reed::DistanceKind::is_matrix(self) -> bool
+pub const fn reed::DistanceKind::name(self) -> &'static str
+pub fn reed::DistanceKind::parse(&str) -> core::result::Result<Self, alloc::string::String>
+pub fn reed::DistanceKind::suffix(self) -> &'static str
+impl core::clone::Clone for reed::DistanceKind
+pub fn reed::DistanceKind::clone(&self) -> reed::DistanceKind
+impl core::cmp::Eq for reed::DistanceKind
+impl core::cmp::PartialEq for reed::DistanceKind
+pub fn reed::DistanceKind::eq(&self, &reed::DistanceKind) -> bool
+impl core::default::Default for reed::DistanceKind
+pub fn reed::DistanceKind::default() -> reed::DistanceKind
+impl core::fmt::Debug for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceKind
+impl core::marker::StructuralPartialEq for reed::DistanceKind
+impl core::str::traits::FromStr for reed::DistanceKind
+pub type reed::DistanceKind::Err = alloc::string::String
+pub fn reed::DistanceKind::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceKind
+impl core::marker::Send for reed::DistanceKind
+impl core::marker::Sync for reed::DistanceKind
+impl core::marker::Unpin for reed::DistanceKind
+impl core::marker::UnsafeUnpin for reed::DistanceKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceKind
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceKind
+pub enum reed::prelude::ErrorKind
+pub reed::prelude::ErrorKind::Runtime
+pub reed::prelude::ErrorKind::Usage
+impl core::clone::Clone for reed::ErrorKind
+pub fn reed::ErrorKind::clone(&self) -> reed::ErrorKind
+impl core::cmp::Eq for reed::ErrorKind
+impl core::cmp::PartialEq for reed::ErrorKind
+pub fn reed::ErrorKind::eq(&self, &reed::ErrorKind) -> bool
+impl core::fmt::Debug for reed::ErrorKind
+pub fn reed::ErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::ErrorKind
+impl core::marker::StructuralPartialEq for reed::ErrorKind
+impl core::marker::Freeze for reed::ErrorKind
+impl core::marker::Send for reed::ErrorKind
+impl core::marker::Sync for reed::ErrorKind
+impl core::marker::Unpin for reed::ErrorKind
+impl core::marker::UnsafeUnpin for reed::ErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ErrorKind
+impl core::panic::unwind_safe::UnwindSafe for reed::ErrorKind
+pub enum reed::prelude::FStatTest
+pub reed::prelude::FStatTest::Dstat
+pub reed::prelude::FStatTest::Dstat::a: usize
+pub reed::prelude::FStatTest::Dstat::b: usize
+pub reed::prelude::FStatTest::Dstat::c: usize
+pub reed::prelude::FStatTest::Dstat::d: usize
+pub reed::prelude::FStatTest::F2
+pub reed::prelude::FStatTest::F2::a: usize
+pub reed::prelude::FStatTest::F2::b: usize
+pub reed::prelude::FStatTest::F3
+pub reed::prelude::FStatTest::F3::a: usize
+pub reed::prelude::FStatTest::F3::b: usize
+pub reed::prelude::FStatTest::F3::c: usize
+pub reed::prelude::FStatTest::F4
+pub reed::prelude::FStatTest::F4::a: usize
+pub reed::prelude::FStatTest::F4::b: usize
+pub reed::prelude::FStatTest::F4::c: usize
+pub reed::prelude::FStatTest::F4::d: usize
+pub reed::prelude::FStatTest::F4Ratio
+pub reed::prelude::FStatTest::F4Ratio::a: usize
+pub reed::prelude::FStatTest::F4Ratio::b: usize
+pub reed::prelude::FStatTest::F4Ratio::c: usize
+pub reed::prelude::FStatTest::F4Ratio::o: usize
+pub reed::prelude::FStatTest::F4Ratio::x: usize
+impl reed::FStatTest
+pub const fn reed::FStatTest::id(&self) -> &'static str
+pub fn reed::FStatTest::pops(&self) -> alloc::vec::Vec<usize>
+impl core::clone::Clone for reed::FStatTest
+pub fn reed::FStatTest::clone(&self) -> reed::FStatTest
+impl core::cmp::Eq for reed::FStatTest
+impl core::cmp::PartialEq for reed::FStatTest
+pub fn reed::FStatTest::eq(&self, &reed::FStatTest) -> bool
+impl core::fmt::Debug for reed::FStatTest
+pub fn reed::FStatTest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::FStatTest
+impl core::marker::Freeze for reed::FStatTest
+impl core::marker::Send for reed::FStatTest
+impl core::marker::Sync for reed::FStatTest
+impl core::marker::Unpin for reed::FStatTest
+impl core::marker::UnsafeUnpin for reed::FStatTest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatTest
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatTest
+pub enum reed::prelude::InvariantMode
+pub reed::prelude::InvariantMode::Bypass
+pub reed::prelude::InvariantMode::Require
+pub reed::prelude::InvariantMode::VariantOnly
+impl core::clone::Clone for reed::InvariantMode
+pub fn reed::InvariantMode::clone(&self) -> reed::InvariantMode
+impl core::cmp::Eq for reed::InvariantMode
+impl core::cmp::PartialEq for reed::InvariantMode
+pub fn reed::InvariantMode::eq(&self, &reed::InvariantMode) -> bool
+impl core::fmt::Debug for reed::InvariantMode
+pub fn reed::InvariantMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::InvariantMode
+impl core::marker::StructuralPartialEq for reed::InvariantMode
+impl core::marker::Freeze for reed::InvariantMode
+impl core::marker::Send for reed::InvariantMode
+impl core::marker::Sync for reed::InvariantMode
+impl core::marker::Unpin for reed::InvariantMode
+impl core::marker::UnsafeUnpin for reed::InvariantMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed::InvariantMode
+impl core::panic::unwind_safe::UnwindSafe for reed::InvariantMode
+pub enum reed::prelude::MatrixUse
+pub reed::prelude::MatrixUse::DenseMeanImpute
+pub reed::prelude::MatrixUse::DensePairwise
+pub reed::prelude::MatrixUse::Plain
+pub reed::prelude::MatrixUse::Stream
+impl core::clone::Clone for reed::MatrixUse
+pub fn reed::MatrixUse::clone(&self) -> reed::MatrixUse
+impl core::cmp::Eq for reed::MatrixUse
+impl core::cmp::PartialEq for reed::MatrixUse
+pub fn reed::MatrixUse::eq(&self, &reed::MatrixUse) -> bool
+impl core::fmt::Debug for reed::MatrixUse
+pub fn reed::MatrixUse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::MatrixUse
+impl core::marker::StructuralPartialEq for reed::MatrixUse
+impl core::marker::Freeze for reed::MatrixUse
+impl core::marker::Send for reed::MatrixUse
+impl core::marker::Sync for reed::MatrixUse
+impl core::marker::Unpin for reed::MatrixUse
+impl core::marker::UnsafeUnpin for reed::MatrixUse
+impl core::panic::unwind_safe::RefUnwindSafe for reed::MatrixUse
+impl core::panic::unwind_safe::UnwindSafe for reed::MatrixUse
+pub enum reed::prelude::MissingPolicy
+pub reed::prelude::MissingPolicy::MeanImpute
+pub reed::prelude::MissingPolicy::Pairwise
+impl reed::MissingPolicy
+pub const fn reed::MissingPolicy::name(self) -> &'static str
+pub fn reed::MissingPolicy::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::MissingPolicy
+pub fn reed::MissingPolicy::clone(&self) -> reed::MissingPolicy
+impl core::cmp::Eq for reed::MissingPolicy
+impl core::cmp::PartialEq for reed::MissingPolicy
+pub fn reed::MissingPolicy::eq(&self, &reed::MissingPolicy) -> bool
+impl core::default::Default for reed::MissingPolicy
+pub fn reed::MissingPolicy::default() -> reed::MissingPolicy
+impl core::fmt::Debug for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::MissingPolicy
+impl core::marker::StructuralPartialEq for reed::MissingPolicy
+impl core::str::traits::FromStr for reed::MissingPolicy
+pub type reed::MissingPolicy::Err = alloc::string::String
+pub fn reed::MissingPolicy::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::MissingPolicy
+impl core::marker::Send for reed::MissingPolicy
+impl core::marker::Sync for reed::MissingPolicy
+impl core::marker::Unpin for reed::MissingPolicy
+impl core::marker::UnsafeUnpin for reed::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed::MissingPolicy
+pub enum reed::prelude::PcaSolver
+pub reed::prelude::PcaSolver::Auto
+pub reed::prelude::PcaSolver::Dense
+pub reed::prelude::PcaSolver::Stream
+impl reed::PcaSolver
+pub const fn reed::PcaSolver::name(self) -> &'static str
+pub fn reed::PcaSolver::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::PcaSolver
+pub fn reed::PcaSolver::clone(&self) -> reed::PcaSolver
+impl core::cmp::Eq for reed::PcaSolver
+impl core::cmp::PartialEq for reed::PcaSolver
+pub fn reed::PcaSolver::eq(&self, &reed::PcaSolver) -> bool
+impl core::default::Default for reed::PcaSolver
+pub fn reed::PcaSolver::default() -> reed::PcaSolver
+impl core::fmt::Debug for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::PcaSolver
+impl core::marker::StructuralPartialEq for reed::PcaSolver
+impl core::str::traits::FromStr for reed::PcaSolver
+pub type reed::PcaSolver::Err = alloc::string::String
+pub fn reed::PcaSolver::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::PcaSolver
+impl core::marker::Send for reed::PcaSolver
+impl core::marker::Sync for reed::PcaSolver
+impl core::marker::Unpin for reed::PcaSolver
+impl core::marker::UnsafeUnpin for reed::PcaSolver
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaSolver
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaSolver
+pub enum reed::prelude::Populations
+pub reed::prelude::Populations::All
+pub reed::prelude::Populations::Assignment(alloc::vec::Vec<(alloc::string::String, alloc::string::String)>)
+pub reed::prelude::Populations::File(std::path::PathBuf)
+impl reed::Populations
+pub fn reed::Populations::group_names(&self, &[alloc::string::String], bool) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, reed::Error>
+impl core::clone::Clone for reed::Populations
+pub fn reed::Populations::clone(&self) -> reed::Populations
+impl core::cmp::Eq for reed::Populations
+impl core::cmp::PartialEq for reed::Populations
+pub fn reed::Populations::eq(&self, &reed::Populations) -> bool
+impl core::default::Default for reed::Populations
+pub fn reed::Populations::default() -> reed::Populations
+impl core::fmt::Debug for reed::Populations
+pub fn reed::Populations::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::Populations
+impl core::marker::Freeze for reed::Populations
+impl core::marker::Send for reed::Populations
+impl core::marker::Sync for reed::Populations
+impl core::marker::Unpin for reed::Populations
+impl core::marker::UnsafeUnpin for reed::Populations
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Populations
+impl core::panic::unwind_safe::UnwindSafe for reed::Populations
+pub enum reed::prelude::Stand
+pub reed::prelude::Stand::Binom
+pub reed::prelude::Stand::Binom2
+impl reed::Stand
+pub const fn reed::Stand::name(self) -> &'static str
+pub fn reed::Stand::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::Stand
+pub fn reed::Stand::clone(&self) -> reed::Stand
+impl core::cmp::Eq for reed::Stand
+impl core::cmp::PartialEq for reed::Stand
+pub fn reed::Stand::eq(&self, &reed::Stand) -> bool
+impl core::default::Default for reed::Stand
+pub fn reed::Stand::default() -> reed::Stand
+impl core::fmt::Debug for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Stand
+impl core::marker::StructuralPartialEq for reed::Stand
+impl core::str::traits::FromStr for reed::Stand
+pub type reed::Stand::Err = alloc::string::String
+pub fn reed::Stand::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::Stand
+impl core::marker::Send for reed::Stand
+impl core::marker::Sync for reed::Stand
+impl core::marker::Unpin for reed::Stand
+impl core::marker::UnsafeUnpin for reed::Stand
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Stand
+impl core::panic::unwind_safe::UnwindSafe for reed::Stand
+pub enum reed::prelude::TreeMethod
+pub reed::prelude::TreeMethod::Nj
+pub reed::prelude::TreeMethod::Upgma
+impl reed::TreeMethod
+pub const fn reed::TreeMethod::name(self) -> &'static str
+pub fn reed::TreeMethod::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::TreeMethod
+pub fn reed::TreeMethod::clone(&self) -> reed::TreeMethod
+impl core::cmp::Eq for reed::TreeMethod
+impl core::cmp::PartialEq for reed::TreeMethod
+pub fn reed::TreeMethod::eq(&self, &reed::TreeMethod) -> bool
+impl core::default::Default for reed::TreeMethod
+pub fn reed::TreeMethod::default() -> reed::TreeMethod
+impl core::fmt::Debug for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::TreeMethod
+impl core::marker::StructuralPartialEq for reed::TreeMethod
+impl core::str::traits::FromStr for reed::TreeMethod
+pub type reed::TreeMethod::Err = alloc::string::String
+pub fn reed::TreeMethod::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::TreeMethod
+impl core::marker::Send for reed::TreeMethod
+impl core::marker::Sync for reed::TreeMethod
+impl core::marker::Unpin for reed::TreeMethod
+impl core::marker::UnsafeUnpin for reed::TreeMethod
+impl core::panic::unwind_safe::RefUnwindSafe for reed::TreeMethod
+impl core::panic::unwind_safe::UnwindSafe for reed::TreeMethod
+pub enum reed::prelude::XvalResultMode
+pub reed::prelude::XvalResultMode::GroupMean
+pub reed::prelude::XvalResultMode::Overall
+impl reed::XvalResultMode
+pub const fn reed::XvalResultMode::name(self) -> &'static str
+pub fn reed::XvalResultMode::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::XvalResultMode
+pub fn reed::XvalResultMode::clone(&self) -> reed::XvalResultMode
+impl core::cmp::Eq for reed::XvalResultMode
+impl core::cmp::PartialEq for reed::XvalResultMode
+pub fn reed::XvalResultMode::eq(&self, &reed::XvalResultMode) -> bool
+impl core::default::Default for reed::XvalResultMode
+pub fn reed::XvalResultMode::default() -> reed::XvalResultMode
+impl core::fmt::Debug for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::XvalResultMode
+impl core::marker::StructuralPartialEq for reed::XvalResultMode
+impl core::str::traits::FromStr for reed::XvalResultMode
+pub type reed::XvalResultMode::Err = alloc::string::String
+pub fn reed::XvalResultMode::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::XvalResultMode
+impl core::marker::Send for reed::XvalResultMode
+impl core::marker::Sync for reed::XvalResultMode
+impl core::marker::Unpin for reed::XvalResultMode
+impl core::marker::UnsafeUnpin for reed::XvalResultMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalResultMode
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalResultMode
+pub struct reed::prelude::ConvertCounters
+pub reed::prelude::ConvertCounters::accepted: u64
+pub reed::prelude::ConvertCounters::biallelic_for_bin: u64
+pub reed::prelude::ConvertCounters::excess_missing: u64
+pub reed::prelude::ConvertCounters::malformed: u64
+pub reed::prelude::ConvertCounters::mnps: u64
+pub reed::prelude::ConvertCounters::polyploid: u64
+pub reed::prelude::ConvertCounters::total_records: u64
+impl core::clone::Clone for reed::ConvertCounters
+pub fn reed::ConvertCounters::clone(&self) -> reed::ConvertCounters
+impl core::cmp::Eq for reed::ConvertCounters
+impl core::cmp::PartialEq for reed::ConvertCounters
+pub fn reed::ConvertCounters::eq(&self, &reed::ConvertCounters) -> bool
+impl core::default::Default for reed::ConvertCounters
+pub fn reed::ConvertCounters::default() -> reed::ConvertCounters
+impl core::fmt::Debug for reed::ConvertCounters
+pub fn reed::ConvertCounters::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::ConvertCounters
+impl core::marker::StructuralPartialEq for reed::ConvertCounters
+impl core::marker::Freeze for reed::ConvertCounters
+impl core::marker::Send for reed::ConvertCounters
+impl core::marker::Sync for reed::ConvertCounters
+impl core::marker::Unpin for reed::ConvertCounters
+impl core::marker::UnsafeUnpin for reed::ConvertCounters
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertCounters
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertCounters
+pub struct reed::prelude::ConvertReport
+pub reed::prelude::ConvertReport::counters: core::option::Option<reed::ConvertCounters>
+pub reed::prelude::ConvertReport::elapsed: core::time::Duration
+pub reed::prelude::ConvertReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::prelude::ConvertReport::metrics: reed_engine::metrics::StageMetrics
+pub reed::prelude::ConvertReport::n_records: u64
+pub reed::prelude::ConvertReport::polyploid: u64
+pub reed::prelude::ConvertReport::sfs: core::option::Option<reed::SfsReport>
+impl core::fmt::Debug for reed::ConvertReport
+pub fn reed::ConvertReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::ConvertReport
+impl core::marker::Send for reed::ConvertReport
+impl core::marker::Sync for reed::ConvertReport
+impl core::marker::Unpin for reed::ConvertReport
+impl core::marker::UnsafeUnpin for reed::ConvertReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertReport
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertReport
+pub struct reed::prelude::ConvertRequest
+pub reed::prelude::ConvertRequest::force_samples: bool
+pub reed::prelude::ConvertRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::prelude::ConvertRequest::min_samples_locus: core::option::Option<u32>
+pub reed::prelude::ConvertRequest::populations: reed::Populations
+pub reed::prelude::ConvertRequest::prefix: std::path::PathBuf
+pub reed::prelude::ConvertRequest::seed: u64
+pub reed::prelude::ConvertRequest::targets: alloc::vec::Vec<reed::ConvertTarget>
+impl reed::ConvertRequest
+pub fn reed::ConvertRequest::to_args(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, reed::Error>
+pub fn reed::ConvertRequest::validate(&self) -> core::result::Result<(), reed::Error>
+impl core::clone::Clone for reed::ConvertRequest
+pub fn reed::ConvertRequest::clone(&self) -> reed::ConvertRequest
+impl core::cmp::Eq for reed::ConvertRequest
+impl core::cmp::PartialEq for reed::ConvertRequest
+pub fn reed::ConvertRequest::eq(&self, &reed::ConvertRequest) -> bool
+impl core::default::Default for reed::ConvertRequest
+pub fn reed::ConvertRequest::default() -> Self
+impl core::fmt::Debug for reed::ConvertRequest
+pub fn reed::ConvertRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::ConvertRequest
+impl core::marker::Freeze for reed::ConvertRequest
+impl core::marker::Send for reed::ConvertRequest
+impl core::marker::Sync for reed::ConvertRequest
+impl core::marker::Unpin for reed::ConvertRequest
+impl core::marker::UnsafeUnpin for reed::ConvertRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertRequest
+pub struct reed::prelude::DapcReport
+pub reed::prelude::DapcReport::eig: alloc::vec::Vec<f64>
+pub reed::prelude::DapcReport::elapsed: core::time::Duration
+pub reed::prelude::DapcReport::n_da: usize
+pub reed::prelude::DapcReport::n_groups: usize
+pub reed::prelude::DapcReport::n_pca: usize
+pub reed::prelude::DapcReport::n_samples: usize
+pub reed::prelude::DapcReport::n_sites: usize
+pub reed::prelude::DapcReport::var: f64
+pub reed::prelude::DapcReport::xval: core::option::Option<reed::XvalOutcome>
+impl core::clone::Clone for reed::DapcReport
+pub fn reed::DapcReport::clone(&self) -> reed::DapcReport
+impl core::fmt::Debug for reed::DapcReport
+pub fn reed::DapcReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DapcReport
+impl core::marker::Send for reed::DapcReport
+impl core::marker::Sync for reed::DapcReport
+impl core::marker::Unpin for reed::DapcReport
+impl core::marker::UnsafeUnpin for reed::DapcReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DapcReport
+impl core::panic::unwind_safe::UnwindSafe for reed::DapcReport
+pub struct reed::prelude::DapcRequest
+pub reed::prelude::DapcRequest::force_samples: bool
+pub reed::prelude::DapcRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::prelude::DapcRequest::missing: reed::MissingPolicy
+pub reed::prelude::DapcRequest::n_da: core::option::Option<usize>
+pub reed::prelude::DapcRequest::n_pca: core::option::Option<usize>
+pub reed::prelude::DapcRequest::populations: alloc::string::String
+pub reed::prelude::DapcRequest::prefix: alloc::string::String
+pub reed::prelude::DapcRequest::solver: reed::PcaSolver
+pub reed::prelude::DapcRequest::stand: reed::Stand
+pub reed::prelude::DapcRequest::xval: core::option::Option<reed::XvalRequest>
+impl core::clone::Clone for reed::DapcRequest
+pub fn reed::DapcRequest::clone(&self) -> reed::DapcRequest
+impl core::default::Default for reed::DapcRequest
+pub fn reed::DapcRequest::default() -> Self
+impl core::fmt::Debug for reed::DapcRequest
+pub fn reed::DapcRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DapcRequest
+impl core::marker::Send for reed::DapcRequest
+impl core::marker::Sync for reed::DapcRequest
+impl core::marker::Unpin for reed::DapcRequest
+impl core::marker::UnsafeUnpin for reed::DapcRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DapcRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::DapcRequest
+pub struct reed::prelude::DistanceReport
+pub reed::prelude::DistanceReport::bootstrap_support: core::option::Option<alloc::vec::Vec<f64>>
+pub reed::prelude::DistanceReport::elapsed: core::time::Duration
+pub reed::prelude::DistanceReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::prelude::DistanceReport::format: reed::DistanceFormat
+pub reed::prelude::DistanceReport::kind: reed::DistanceKind
+pub reed::prelude::DistanceReport::n_samples: usize
+pub reed::prelude::DistanceReport::n_sites: usize
+impl core::clone::Clone for reed::DistanceReport
+pub fn reed::DistanceReport::clone(&self) -> reed::DistanceReport
+impl core::fmt::Debug for reed::DistanceReport
+pub fn reed::DistanceReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceReport
+impl core::marker::Send for reed::DistanceReport
+impl core::marker::Sync for reed::DistanceReport
+impl core::marker::Unpin for reed::DistanceReport
+impl core::marker::UnsafeUnpin for reed::DistanceReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceReport
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceReport
+pub struct reed::prelude::DistanceRequest
+pub reed::prelude::DistanceRequest::bootstrap: core::option::Option<usize>
+pub reed::prelude::DistanceRequest::bootstrap_cutoff: f64
+pub reed::prelude::DistanceRequest::bootstrap_seed: u64
+pub reed::prelude::DistanceRequest::digits: usize
+pub reed::prelude::DistanceRequest::error_probability: u32
+pub reed::prelude::DistanceRequest::format: reed::DistanceFormat
+pub reed::prelude::DistanceRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::prelude::DistanceRequest::kind: reed::DistanceKind
+pub reed::prelude::DistanceRequest::mismatch_count: bool
+pub reed::prelude::DistanceRequest::missing: reed::MissingPolicy
+pub reed::prelude::DistanceRequest::nudge: bool
+pub reed::prelude::DistanceRequest::prefix: alloc::string::String
+pub reed::prelude::DistanceRequest::stand: reed::Stand
+pub reed::prelude::DistanceRequest::tree: core::option::Option<reed::TreeMethod>
+pub reed::prelude::DistanceRequest::unbounded: bool
+impl core::clone::Clone for reed::DistanceRequest
+pub fn reed::DistanceRequest::clone(&self) -> reed::DistanceRequest
+impl core::default::Default for reed::DistanceRequest
+pub fn reed::DistanceRequest::default() -> Self
+impl core::fmt::Debug for reed::DistanceRequest
+pub fn reed::DistanceRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceRequest
+impl core::marker::Send for reed::DistanceRequest
+impl core::marker::Sync for reed::DistanceRequest
+impl core::marker::Unpin for reed::DistanceRequest
+impl core::marker::UnsafeUnpin for reed::DistanceRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceRequest
+pub struct reed::prelude::Error(_)
+impl reed::Error
+pub fn reed::Error::foreign(impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
+pub fn reed::Error::kind(&self) -> reed::ErrorKind
+pub fn reed::Error::usage(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<reed_core::error::CoreError> for reed::Error
+pub fn reed::Error::from(reed_core::error::CoreError) -> Self
+impl core::convert::From<reed_engine::error::EngineError> for reed::Error
+pub fn reed::Error::from(reed_engine::error::EngineError) -> Self
+impl core::convert::From<reed_filter::error::FilterError> for reed::Error
+pub fn reed::Error::from(reed_filter::error::FilterError) -> Self
+impl core::convert::From<reed_io::error::IoError> for reed::Error
+pub fn reed::Error::from(reed_io::error::IoError) -> Self
+impl core::convert::From<std::io::error::Error> for reed::Error
+pub fn reed::Error::from(std::io::error::Error) -> Self
+impl core::error::Error for reed::Error
+pub fn reed::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for reed::Error
+pub fn reed::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::Error
+pub fn reed::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::Error
+impl core::marker::Send for reed::Error
+impl core::marker::Sync for reed::Error
+impl core::marker::Unpin for reed::Error
+impl core::marker::UnsafeUnpin for reed::Error
+impl !core::panic::unwind_safe::RefUnwindSafe for reed::Error
+impl !core::panic::unwind_safe::UnwindSafe for reed::Error
+pub struct reed::prelude::FStatRow
+pub reed::prelude::FStatRow::estimate: f64
+pub reed::prelude::FStatRow::n_blocks: usize
+pub reed::prelude::FStatRow::n_sites: u64
+pub reed::prelude::FStatRow::se: f64
+pub reed::prelude::FStatRow::test: reed::FStatTest
+pub reed::prelude::FStatRow::z: f64
+impl core::clone::Clone for reed::FStatRow
+pub fn reed::FStatRow::clone(&self) -> reed::FStatRow
+impl core::fmt::Debug for reed::FStatRow
+pub fn reed::FStatRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::FStatRow
+impl core::marker::Send for reed::FStatRow
+impl core::marker::Sync for reed::FStatRow
+impl core::marker::Unpin for reed::FStatRow
+impl core::marker::UnsafeUnpin for reed::FStatRow
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatRow
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatRow
+pub struct reed::prelude::FStatsReport
+pub reed::prelude::FStatsReport::rows: alloc::vec::Vec<reed::FStatRow>
+impl core::clone::Clone for reed::FStatsReport
+pub fn reed::FStatsReport::clone(&self) -> reed::FStatsReport
+impl core::fmt::Debug for reed::FStatsReport
+pub fn reed::FStatsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::FStatsReport
+impl core::marker::Send for reed::FStatsReport
+impl core::marker::Sync for reed::FStatsReport
+impl core::marker::Unpin for reed::FStatsReport
+impl core::marker::UnsafeUnpin for reed::FStatsReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatsReport
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatsReport
+pub struct reed::prelude::FStatsRequest
+pub reed::prelude::FStatsRequest::block_bp: u64
+pub reed::prelude::FStatsRequest::tests: alloc::vec::Vec<reed::FStatTest>
+impl core::clone::Clone for reed::FStatsRequest
+pub fn reed::FStatsRequest::clone(&self) -> reed::FStatsRequest
+impl core::cmp::Eq for reed::FStatsRequest
+impl core::cmp::PartialEq for reed::FStatsRequest
+pub fn reed::FStatsRequest::eq(&self, &reed::FStatsRequest) -> bool
+impl core::fmt::Debug for reed::FStatsRequest
+pub fn reed::FStatsRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::FStatsRequest
+impl core::marker::Freeze for reed::FStatsRequest
+impl core::marker::Send for reed::FStatsRequest
+impl core::marker::Sync for reed::FStatsRequest
+impl core::marker::Unpin for reed::FStatsRequest
+impl core::marker::UnsafeUnpin for reed::FStatsRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatsRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatsRequest
+pub struct reed::prelude::FilterOptions
+pub reed::prelude::FilterOptions::command_line: alloc::string::String
+pub reed::prelude::FilterOptions::compress_level: u8
+pub reed::prelude::FilterOptions::force_samples: bool
+pub reed::prelude::FilterOptions::no_command: bool
+pub reed::prelude::FilterOptions::no_version: bool
+pub reed::prelude::FilterOptions::output: core::option::Option<std::path::PathBuf>
+pub reed::prelude::FilterOptions::output_bcf: core::option::Option<u8>
+pub reed::prelude::FilterOptions::output_compressed: core::option::Option<bool>
+pub reed::prelude::FilterOptions::regions: alloc::vec::Vec<reed_io::chunk::region::Region>
+pub reed::prelude::FilterOptions::report_json: core::option::Option<std::path::PathBuf>
+pub reed::prelude::FilterOptions::timing: core::option::Option<std::path::PathBuf>
+pub reed::prelude::FilterOptions::tmp_dir: core::option::Option<std::path::PathBuf>
+pub reed::prelude::FilterOptions::write_index: reed_io::write::index::WriteIndex
+impl core::clone::Clone for reed::FilterOptions
+pub fn reed::FilterOptions::clone(&self) -> reed::FilterOptions
+impl core::default::Default for reed::FilterOptions
+pub fn reed::FilterOptions::default() -> Self
+impl core::fmt::Debug for reed::FilterOptions
+pub fn reed::FilterOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::FilterOptions
+impl core::marker::Send for reed::FilterOptions
+impl core::marker::Sync for reed::FilterOptions
+impl core::marker::Unpin for reed::FilterOptions
+impl core::marker::UnsafeUnpin for reed::FilterOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FilterOptions
+impl core::panic::unwind_safe::UnwindSafe for reed::FilterOptions
+pub struct reed::prelude::IndexOutcome
+pub reed::prelude::IndexOutcome::metrics: reed_engine::metrics::StageMetrics
+pub reed::prelude::IndexOutcome::n_records: u64
+pub reed::prelude::IndexOutcome::path: std::path::PathBuf
+impl core::clone::Clone for reed::IndexOutcome
+pub fn reed::IndexOutcome::clone(&self) -> reed::IndexOutcome
+impl core::fmt::Debug for reed::IndexOutcome
+pub fn reed::IndexOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::IndexOutcome
+impl core::marker::Send for reed::IndexOutcome
+impl core::marker::Sync for reed::IndexOutcome
+impl core::marker::Unpin for reed::IndexOutcome
+impl core::marker::UnsafeUnpin for reed::IndexOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for reed::IndexOutcome
+impl core::panic::unwind_safe::UnwindSafe for reed::IndexOutcome
+pub struct reed::prelude::JointSfsReport
+pub reed::prelude::JointSfsReport::folded: bool
+pub reed::prelude::JointSfsReport::n_sites: alloc::vec::Vec<u64>
+pub reed::prelude::JointSfsReport::n_skipped_m_lt_n: alloc::vec::Vec<u64>
+pub reed::prelude::JointSfsReport::pairs: alloc::vec::Vec<(usize, usize)>
+pub reed::prelude::JointSfsReport::projections: alloc::vec::Vec<(u32, u32)>
+pub reed::prelude::JointSfsReport::spectra: alloc::vec::Vec<alloc::vec::Vec<f64>>
+impl core::clone::Clone for reed::JointSfsReport
+pub fn reed::JointSfsReport::clone(&self) -> reed::JointSfsReport
+impl core::fmt::Debug for reed::JointSfsReport
+pub fn reed::JointSfsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::JointSfsReport
+impl core::marker::Send for reed::JointSfsReport
+impl core::marker::Sync for reed::JointSfsReport
+impl core::marker::Unpin for reed::JointSfsReport
+impl core::marker::UnsafeUnpin for reed::JointSfsReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::JointSfsReport
+impl core::panic::unwind_safe::UnwindSafe for reed::JointSfsReport
+pub struct reed::prelude::LdReport
+pub reed::prelude::LdReport::decay: alloc::vec::Vec<reed::DecayBin>
+pub reed::prelude::LdReport::group_decay: alloc::vec::Vec<alloc::vec::Vec<reed::DecayBin>>
+pub reed::prelude::LdReport::pairs: alloc::vec::Vec<(alloc::string::String, u64, u64, f64)>
+impl core::clone::Clone for reed::LdReport
+pub fn reed::LdReport::clone(&self) -> reed::LdReport
+impl core::default::Default for reed::LdReport
+pub fn reed::LdReport::default() -> reed::LdReport
+impl core::fmt::Debug for reed::LdReport
+pub fn reed::LdReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::LdReport
+impl core::marker::Send for reed::LdReport
+impl core::marker::Sync for reed::LdReport
+impl core::marker::Unpin for reed::LdReport
+impl core::marker::UnsafeUnpin for reed::LdReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::LdReport
+impl core::panic::unwind_safe::UnwindSafe for reed::LdReport
+pub struct reed::prelude::LdRequest
+pub reed::prelude::LdRequest::decay_bin_bp: u64
+pub reed::prelude::LdRequest::decay_max_bp: core::option::Option<u64>
+pub reed::prelude::LdRequest::pairs: bool
+pub reed::prelude::LdRequest::pairs_path: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::LdRequest
+pub fn reed::LdRequest::clone(&self) -> reed::LdRequest
+impl core::cmp::PartialEq for reed::LdRequest
+pub fn reed::LdRequest::eq(&self, &reed::LdRequest) -> bool
+impl core::fmt::Debug for reed::LdRequest
+pub fn reed::LdRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::LdRequest
+impl core::marker::Freeze for reed::LdRequest
+impl core::marker::Send for reed::LdRequest
+impl core::marker::Sync for reed::LdRequest
+impl core::marker::Unpin for reed::LdRequest
+impl core::marker::UnsafeUnpin for reed::LdRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::LdRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::LdRequest
+pub struct reed::prelude::Levels
+pub reed::prelude::Levels::contig: bool
+pub reed::prelude::Levels::genome: bool
+pub reed::prelude::Levels::window: bool
+impl reed::Levels
+pub fn reed::Levels::parse(&str) -> core::result::Result<Self, reed::Error>
+impl core::clone::Clone for reed::Levels
+pub fn reed::Levels::clone(&self) -> reed::Levels
+impl core::cmp::Eq for reed::Levels
+impl core::cmp::PartialEq for reed::Levels
+pub fn reed::Levels::eq(&self, &reed::Levels) -> bool
+impl core::default::Default for reed::Levels
+pub fn reed::Levels::default() -> Self
+impl core::fmt::Debug for reed::Levels
+pub fn reed::Levels::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Levels
+impl core::marker::StructuralPartialEq for reed::Levels
+impl core::marker::Freeze for reed::Levels
+impl core::marker::Send for reed::Levels
+impl core::marker::Sync for reed::Levels
+impl core::marker::Unpin for reed::Levels
+impl core::marker::UnsafeUnpin for reed::Levels
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Levels
+impl core::panic::unwind_safe::UnwindSafe for reed::Levels
+pub struct reed::prelude::PcaReport
+pub reed::prelude::PcaReport::eigenvalues: alloc::vec::Vec<f64>
+pub reed::prelude::PcaReport::elapsed: core::time::Duration
+pub reed::prelude::PcaReport::n_pcs: usize
+pub reed::prelude::PcaReport::n_samples: usize
+pub reed::prelude::PcaReport::n_sites: usize
+pub reed::prelude::PcaReport::solver: alloc::string::String
+pub reed::prelude::PcaReport::stream_max_residual: core::option::Option<f64>
+impl core::clone::Clone for reed::PcaReport
+pub fn reed::PcaReport::clone(&self) -> reed::PcaReport
+impl core::fmt::Debug for reed::PcaReport
+pub fn reed::PcaReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PcaReport
+impl core::marker::Send for reed::PcaReport
+impl core::marker::Sync for reed::PcaReport
+impl core::marker::Unpin for reed::PcaReport
+impl core::marker::UnsafeUnpin for reed::PcaReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaReport
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaReport
+pub struct reed::prelude::PcaRequest
+pub reed::prelude::PcaRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::prelude::PcaRequest::missing: reed::MissingPolicy
+pub reed::prelude::PcaRequest::pcs: usize
+pub reed::prelude::PcaRequest::prefix: alloc::string::String
+pub reed::prelude::PcaRequest::solver: reed::PcaSolver
+pub reed::prelude::PcaRequest::stand: reed::Stand
+impl core::clone::Clone for reed::PcaRequest
+pub fn reed::PcaRequest::clone(&self) -> reed::PcaRequest
+impl core::default::Default for reed::PcaRequest
+pub fn reed::PcaRequest::default() -> Self
+impl core::fmt::Debug for reed::PcaRequest
+pub fn reed::PcaRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PcaRequest
+impl core::marker::Send for reed::PcaRequest
+impl core::marker::Sync for reed::PcaRequest
+impl core::marker::Unpin for reed::PcaRequest
+impl core::marker::UnsafeUnpin for reed::PcaRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaRequest
+pub struct reed::prelude::PhyloFormats
+pub reed::prelude::PhyloFormats::fasta: bool
+pub reed::prelude::PhyloFormats::nexus: bool
+pub reed::prelude::PhyloFormats::phylip: bool
+impl reed::PhyloFormats
+pub const fn reed::PhyloFormats::any(self) -> bool
+impl core::clone::Clone for reed::PhyloFormats
+pub fn reed::PhyloFormats::clone(&self) -> reed::PhyloFormats
+impl core::cmp::Eq for reed::PhyloFormats
+impl core::cmp::PartialEq for reed::PhyloFormats
+pub fn reed::PhyloFormats::eq(&self, &reed::PhyloFormats) -> bool
+impl core::default::Default for reed::PhyloFormats
+pub fn reed::PhyloFormats::default() -> reed::PhyloFormats
+impl core::fmt::Debug for reed::PhyloFormats
+pub fn reed::PhyloFormats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::PhyloFormats
+impl core::marker::StructuralPartialEq for reed::PhyloFormats
+impl core::marker::Freeze for reed::PhyloFormats
+impl core::marker::Send for reed::PhyloFormats
+impl core::marker::Sync for reed::PhyloFormats
+impl core::marker::Unpin for reed::PhyloFormats
+impl core::marker::UnsafeUnpin for reed::PhyloFormats
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PhyloFormats
+impl core::panic::unwind_safe::UnwindSafe for reed::PhyloFormats
+pub struct reed::prelude::PhyloOptions
+pub reed::prelude::PhyloOptions::outgroup: core::option::Option<alloc::string::String>
+pub reed::prelude::PhyloOptions::resolve_iupac: bool
+pub reed::prelude::PhyloOptions::write_used_sites: bool
+impl core::clone::Clone for reed::PhyloOptions
+pub fn reed::PhyloOptions::clone(&self) -> reed::PhyloOptions
+impl core::cmp::Eq for reed::PhyloOptions
+impl core::cmp::PartialEq for reed::PhyloOptions
+pub fn reed::PhyloOptions::eq(&self, &reed::PhyloOptions) -> bool
+impl core::default::Default for reed::PhyloOptions
+pub fn reed::PhyloOptions::default() -> reed::PhyloOptions
+impl core::fmt::Debug for reed::PhyloOptions
+pub fn reed::PhyloOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::PhyloOptions
+impl core::marker::Freeze for reed::PhyloOptions
+impl core::marker::Send for reed::PhyloOptions
+impl core::marker::Sync for reed::PhyloOptions
+impl core::marker::Unpin for reed::PhyloOptions
+impl core::marker::UnsafeUnpin for reed::PhyloOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PhyloOptions
+impl core::panic::unwind_safe::UnwindSafe for reed::PhyloOptions
+pub struct reed::prelude::PopgenReport
+pub reed::prelude::PopgenReport::elapsed: core::time::Duration
+pub reed::prelude::PopgenReport::fstats: core::option::Option<reed::FStatsReport>
+pub reed::prelude::PopgenReport::ld: core::option::Option<reed::LdReport>
+pub reed::prelude::PopgenReport::metrics: reed_engine::metrics::StageMetrics
+pub reed::prelude::PopgenReport::n_chunks: u64
+pub reed::prelude::PopgenReport::n_invariant_sites: u64
+pub reed::prelude::PopgenReport::n_multiallelic_skipped: u64
+pub reed::prelude::PopgenReport::n_no_alt_records: u64
+pub reed::prelude::PopgenReport::n_records: u64
+pub reed::prelude::PopgenReport::n_windows: u64
+pub reed::prelude::PopgenReport::pairs_path: core::option::Option<std::path::PathBuf>
+pub reed::prelude::PopgenReport::sfs: core::option::Option<reed::SfsReport>
+pub reed::prelude::PopgenReport::window_files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::prelude::PopgenReport::windows: alloc::vec::Vec<reed::WindowRow>
+impl core::clone::Clone for reed::PopgenReport
+pub fn reed::PopgenReport::clone(&self) -> reed::PopgenReport
+impl core::fmt::Debug for reed::PopgenReport
+pub fn reed::PopgenReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PopgenReport
+impl core::marker::Send for reed::PopgenReport
+impl core::marker::Sync for reed::PopgenReport
+impl core::marker::Unpin for reed::PopgenReport
+impl core::marker::UnsafeUnpin for reed::PopgenReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PopgenReport
+impl core::panic::unwind_safe::UnwindSafe for reed::PopgenReport
+pub struct reed::prelude::PopgenRequest
+pub reed::prelude::PopgenRequest::compact_window_accumulators: bool
+pub reed::prelude::PopgenRequest::contig_lengths: std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, u64>
+pub reed::prelude::PopgenRequest::force_samples: bool
+pub reed::prelude::PopgenRequest::fstats: core::option::Option<reed::FStatsRequest>
+pub reed::prelude::PopgenRequest::grid: reed_core::grid::WindowGrid
+pub reed::prelude::PopgenRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::prelude::PopgenRequest::kinds: alloc::vec::Vec<reed_stats::request::StatKind>
+pub reed::prelude::PopgenRequest::layout: core::option::Option<reed::WindowLayoutOptions>
+pub reed::prelude::PopgenRequest::ld: core::option::Option<reed::LdRequest>
+pub reed::prelude::PopgenRequest::levels: reed::Levels
+pub reed::prelude::PopgenRequest::populations: reed::Populations
+pub reed::prelude::PopgenRequest::regions: alloc::vec::Vec<reed_io::chunk::region::Region>
+pub reed::prelude::PopgenRequest::select: reed_filter::spec::region::SiteSelector
+pub reed::prelude::PopgenRequest::sfs: core::option::Option<reed::SfsRequest>
+pub reed::prelude::PopgenRequest::site: core::option::Option<reed_filter::spec::FilterSpec>
+pub reed::prelude::PopgenRequest::skip_empty: bool
+pub reed::prelude::PopgenRequest::window_output: core::option::Option<reed::WindowOutputConfig>
+impl reed::PopgenRequest
+pub fn reed::PopgenRequest::to_args(&self, &[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, reed::Error>
+impl core::clone::Clone for reed::PopgenRequest
+pub fn reed::PopgenRequest::clone(&self) -> reed::PopgenRequest
+impl core::default::Default for reed::PopgenRequest
+pub fn reed::PopgenRequest::default() -> reed::PopgenRequest
+impl core::fmt::Debug for reed::PopgenRequest
+pub fn reed::PopgenRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PopgenRequest
+impl core::marker::Send for reed::PopgenRequest
+impl core::marker::Sync for reed::PopgenRequest
+impl core::marker::Unpin for reed::PopgenRequest
+impl core::marker::UnsafeUnpin for reed::PopgenRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PopgenRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::PopgenRequest
+pub struct reed::prelude::RenameOutput
+pub reed::prelude::RenameOutput::command_line: alloc::string::String
+pub reed::prelude::RenameOutput::compressed: bool
+pub reed::prelude::RenameOutput::level: u8
+pub reed::prelude::RenameOutput::no_command: bool
+pub reed::prelude::RenameOutput::no_version: bool
+pub reed::prelude::RenameOutput::path: core::option::Option<std::path::PathBuf>
+pub reed::prelude::RenameOutput::write_index: core::option::Option<reed_io::write::index::WriteIndex>
+impl core::clone::Clone for reed::RenameOutput
+pub fn reed::RenameOutput::clone(&self) -> reed::RenameOutput
+impl core::fmt::Debug for reed::RenameOutput
+pub fn reed::RenameOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::RenameOutput
+impl core::marker::Send for reed::RenameOutput
+impl core::marker::Sync for reed::RenameOutput
+impl core::marker::Unpin for reed::RenameOutput
+impl core::marker::UnsafeUnpin for reed::RenameOutput
+impl core::panic::unwind_safe::RefUnwindSafe for reed::RenameOutput
+impl core::panic::unwind_safe::UnwindSafe for reed::RenameOutput
+pub struct reed::prelude::RenameReport
+pub reed::prelude::RenameReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::prelude::RenameReport::n_contigs: u64
+pub reed::prelude::RenameReport::n_dup_ids: u64
+pub reed::prelude::RenameReport::n_ids: u64
+pub reed::prelude::RenameReport::n_records: u64
+pub reed::prelude::RenameReport::n_samples: u64
+pub reed::prelude::RenameReport::stale_index: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::RenameReport
+pub fn reed::RenameReport::clone(&self) -> reed::RenameReport
+impl core::default::Default for reed::RenameReport
+pub fn reed::RenameReport::default() -> reed::RenameReport
+impl core::fmt::Debug for reed::RenameReport
+pub fn reed::RenameReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::RenameReport
+impl core::marker::Send for reed::RenameReport
+impl core::marker::Sync for reed::RenameReport
+impl core::marker::Unpin for reed::RenameReport
+impl core::marker::UnsafeUnpin for reed::RenameReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::RenameReport
+impl core::panic::unwind_safe::UnwindSafe for reed::RenameReport
+pub struct reed::prelude::RenameSpec
+pub reed::prelude::RenameSpec::add_meta: alloc::vec::Vec<alloc::string::String>
+pub reed::prelude::RenameSpec::chr_style: core::option::Option<reed::ChrStyle>
+pub reed::prelude::RenameSpec::clear_ids: bool
+pub reed::prelude::RenameSpec::fai: core::option::Option<std::path::PathBuf>
+pub reed::prelude::RenameSpec::header: core::option::Option<std::path::PathBuf>
+pub reed::prelude::RenameSpec::idspace_to: core::option::Option<alloc::string::String>
+pub reed::prelude::RenameSpec::remove_meta: alloc::vec::Vec<alloc::string::String>
+pub reed::prelude::RenameSpec::rename_chrs: core::option::Option<std::path::PathBuf>
+pub reed::prelude::RenameSpec::replace_sample_name: core::option::Option<alloc::string::String>
+pub reed::prelude::RenameSpec::rm_dup_ids: bool
+pub reed::prelude::RenameSpec::samples: core::option::Option<alloc::string::String>
+pub reed::prelude::RenameSpec::samples_file: core::option::Option<std::path::PathBuf>
+pub reed::prelude::RenameSpec::set_id: core::option::Option<alloc::string::String>
+pub reed::prelude::RenameSpec::set_missing_var_ids: core::option::Option<alloc::string::String>
+pub reed::prelude::RenameSpec::update_name: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::RenameSpec
+pub fn reed::RenameSpec::clone(&self) -> reed::RenameSpec
+impl core::default::Default for reed::RenameSpec
+pub fn reed::RenameSpec::default() -> reed::RenameSpec
+impl core::fmt::Debug for reed::RenameSpec
+pub fn reed::RenameSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::RenameSpec
+impl core::marker::Send for reed::RenameSpec
+impl core::marker::Sync for reed::RenameSpec
+impl core::marker::Unpin for reed::RenameSpec
+impl core::marker::UnsafeUnpin for reed::RenameSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed::RenameSpec
+impl core::panic::unwind_safe::UnwindSafe for reed::RenameSpec
+pub struct reed::prelude::RunContext<'a>
+pub reed::prelude::RunContext::abort: &'a reed_engine::abort::AbortSignal
+pub reed::prelude::RunContext::budget: &'a reed_engine::budget::ThreadBudget
+impl<'a> reed::RunContext<'a>
+pub fn reed::RunContext<'a>::idle(&'a reed_engine::budget::ThreadBudget) -> Self
+pub const fn reed::RunContext<'a>::new(&'a reed_engine::budget::ThreadBudget, &'a reed_engine::abort::AbortSignal) -> Self
+impl<'a> core::clone::Clone for reed::RunContext<'a>
+pub fn reed::RunContext<'a>::clone(&self) -> reed::RunContext<'a>
+impl<'a> core::fmt::Debug for reed::RunContext<'a>
+pub fn reed::RunContext<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed::RunContext<'a>
+impl<'a> core::marker::Freeze for reed::RunContext<'a>
+impl<'a> core::marker::Send for reed::RunContext<'a>
+impl<'a> core::marker::Sync for reed::RunContext<'a>
+impl<'a> core::marker::Unpin for reed::RunContext<'a>
+impl<'a> core::marker::UnsafeUnpin for reed::RunContext<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed::RunContext<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed::RunContext<'a>
+pub struct reed::prelude::SfsReport
+pub reed::prelude::SfsReport::folded: bool
+pub reed::prelude::SfsReport::joint: core::option::Option<reed::JointSfsReport>
+pub reed::prelude::SfsReport::n_sites: alloc::vec::Vec<u64>
+pub reed::prelude::SfsReport::n_skipped_m_lt_n: alloc::vec::Vec<u64>
+pub reed::prelude::SfsReport::projections: alloc::vec::Vec<u32>
+pub reed::prelude::SfsReport::spectra: alloc::vec::Vec<alloc::vec::Vec<f64>>
+impl core::clone::Clone for reed::SfsReport
+pub fn reed::SfsReport::clone(&self) -> reed::SfsReport
+impl core::fmt::Debug for reed::SfsReport
+pub fn reed::SfsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::SfsReport
+impl core::marker::Send for reed::SfsReport
+impl core::marker::Sync for reed::SfsReport
+impl core::marker::Unpin for reed::SfsReport
+impl core::marker::UnsafeUnpin for reed::SfsReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::SfsReport
+impl core::panic::unwind_safe::UnwindSafe for reed::SfsReport
+pub struct reed::prelude::SfsRequest
+pub reed::prelude::SfsRequest::folded: bool
+pub reed::prelude::SfsRequest::projections: alloc::vec::Vec<u32>
+impl core::clone::Clone for reed::SfsRequest
+pub fn reed::SfsRequest::clone(&self) -> reed::SfsRequest
+impl core::cmp::Eq for reed::SfsRequest
+impl core::cmp::PartialEq for reed::SfsRequest
+pub fn reed::SfsRequest::eq(&self, &reed::SfsRequest) -> bool
+impl core::fmt::Debug for reed::SfsRequest
+pub fn reed::SfsRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::SfsRequest
+impl core::marker::Freeze for reed::SfsRequest
+impl core::marker::Send for reed::SfsRequest
+impl core::marker::Sync for reed::SfsRequest
+impl core::marker::Unpin for reed::SfsRequest
+impl core::marker::UnsafeUnpin for reed::SfsRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::SfsRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::SfsRequest
+pub struct reed::prelude::StatsOutcome
+pub reed::prelude::StatsOutcome::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::prelude::StatsOutcome::hist: alloc::vec::Vec<reed::stats::writers::histogram::HistOut>
+pub reed::prelude::StatsOutcome::metrics: reed_engine::metrics::StageMetrics
+pub reed::prelude::StatsOutcome::n_multiallelic_skipped: u64
+pub reed::prelude::StatsOutcome::n_records: u64
+pub reed::prelude::StatsOutcome::qc: core::option::Option<reed_stats::summary::report::QcReportAcc>
+impl core::clone::Clone for reed::StatsOutcome
+pub fn reed::StatsOutcome::clone(&self) -> reed::StatsOutcome
+impl core::fmt::Debug for reed::StatsOutcome
+pub fn reed::StatsOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::StatsOutcome
+impl core::marker::Send for reed::StatsOutcome
+impl core::marker::Sync for reed::StatsOutcome
+impl core::marker::Unpin for reed::StatsOutcome
+impl core::marker::UnsafeUnpin for reed::StatsOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for reed::StatsOutcome
+impl core::panic::unwind_safe::UnwindSafe for reed::StatsOutcome
+pub struct reed::prelude::StatsReportRequest
+pub reed::prelude::StatsReportRequest::depth: bool
+pub reed::prelude::StatsReportRequest::force_samples: bool
+pub reed::prelude::StatsReportRequest::freq: bool
+pub reed::prelude::StatsReportRequest::hardy: bool
+pub reed::prelude::StatsReportRequest::het: bool
+pub reed::prelude::StatsReportRequest::hist: alloc::vec::Vec<reed::stats::writers::histogram::HistMetric>
+pub reed::prelude::StatsReportRequest::missing: bool
+pub reed::prelude::StatsReportRequest::populations: core::option::Option<reed::Populations>
+pub reed::prelude::StatsReportRequest::prefix: std::path::PathBuf
+pub reed::prelude::StatsReportRequest::select: reed_filter::spec::region::SiteSelector
+pub reed::prelude::StatsReportRequest::singletons: bool
+pub reed::prelude::StatsReportRequest::summary: bool
+impl reed::StatsReportRequest
+pub const fn reed::StatsReportRequest::is_empty(&self) -> bool
+impl core::clone::Clone for reed::StatsReportRequest
+pub fn reed::StatsReportRequest::clone(&self) -> reed::StatsReportRequest
+impl core::default::Default for reed::StatsReportRequest
+pub fn reed::StatsReportRequest::default() -> reed::StatsReportRequest
+impl core::fmt::Debug for reed::StatsReportRequest
+pub fn reed::StatsReportRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::StatsReportRequest
+impl core::marker::Send for reed::StatsReportRequest
+impl core::marker::Sync for reed::StatsReportRequest
+impl core::marker::Unpin for reed::StatsReportRequest
+impl core::marker::UnsafeUnpin for reed::StatsReportRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::StatsReportRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::StatsReportRequest
+pub struct reed::prelude::WindowLayoutOptions
+pub reed::prelude::WindowLayoutOptions::invariant: reed::InvariantMode
+impl core::clone::Clone for reed::WindowLayoutOptions
+pub fn reed::WindowLayoutOptions::clone(&self) -> reed::WindowLayoutOptions
+impl core::fmt::Debug for reed::WindowLayoutOptions
+pub fn reed::WindowLayoutOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::WindowLayoutOptions
+impl core::marker::Freeze for reed::WindowLayoutOptions
+impl core::marker::Send for reed::WindowLayoutOptions
+impl core::marker::Sync for reed::WindowLayoutOptions
+impl core::marker::Unpin for reed::WindowLayoutOptions
+impl core::marker::UnsafeUnpin for reed::WindowLayoutOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed::WindowLayoutOptions
+impl core::panic::unwind_safe::UnwindSafe for reed::WindowLayoutOptions
+pub struct reed::prelude::WindowOutputConfig
+pub reed::prelude::WindowOutputConfig::command: alloc::string::String
+pub reed::prelude::WindowOutputConfig::fstats: bool
+pub reed::prelude::WindowOutputConfig::ld: bool
+pub reed::prelude::WindowOutputConfig::prefix: std::path::PathBuf
+pub reed::prelude::WindowOutputConfig::sfs: bool
+pub reed::prelude::WindowOutputConfig::version: alloc::string::String
+impl core::clone::Clone for reed::WindowOutputConfig
+pub fn reed::WindowOutputConfig::clone(&self) -> reed::WindowOutputConfig
+impl core::fmt::Debug for reed::WindowOutputConfig
+pub fn reed::WindowOutputConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::WindowOutputConfig
+impl core::marker::Send for reed::WindowOutputConfig
+impl core::marker::Sync for reed::WindowOutputConfig
+impl core::marker::Unpin for reed::WindowOutputConfig
+impl core::marker::UnsafeUnpin for reed::WindowOutputConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed::WindowOutputConfig
+impl core::panic::unwind_safe::UnwindSafe for reed::WindowOutputConfig
+pub struct reed::prelude::WindowRow
+pub reed::prelude::WindowRow::accs: alloc::vec::Vec<reed_stats::request::StatAcc>
+pub reed::prelude::WindowRow::bp: u64
+pub reed::prelude::WindowRow::contig: alloc::string::String
+pub reed::prelude::WindowRow::denom_bp: u64
+pub reed::prelude::WindowRow::end: u64
+pub reed::prelude::WindowRow::outputs: alloc::vec::Vec<reed_stats::request::StatOutput>
+pub reed::prelude::WindowRow::start1: u64
+impl core::clone::Clone for reed::WindowRow
+pub fn reed::WindowRow::clone(&self) -> reed::WindowRow
+impl core::fmt::Debug for reed::WindowRow
+pub fn reed::WindowRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::WindowRow
+impl core::marker::Send for reed::WindowRow
+impl core::marker::Sync for reed::WindowRow
+impl core::marker::Unpin for reed::WindowRow
+impl core::marker::UnsafeUnpin for reed::WindowRow
+impl core::panic::unwind_safe::RefUnwindSafe for reed::WindowRow
+impl core::panic::unwind_safe::UnwindSafe for reed::WindowRow
+pub struct reed::prelude::XvalOutcome
+pub reed::prelude::XvalOutcome::best_mean_success_n_pca: usize
+pub reed::prelude::XvalOutcome::best_n_pca: usize
+pub reed::prelude::XvalOutcome::candidates: alloc::vec::Vec<(usize, f64)>
+pub reed::prelude::XvalOutcome::random_chance: f64
+impl core::clone::Clone for reed::XvalOutcome
+pub fn reed::XvalOutcome::clone(&self) -> reed::XvalOutcome
+impl core::fmt::Debug for reed::XvalOutcome
+pub fn reed::XvalOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::XvalOutcome
+impl core::marker::Send for reed::XvalOutcome
+impl core::marker::Sync for reed::XvalOutcome
+impl core::marker::Unpin for reed::XvalOutcome
+impl core::marker::UnsafeUnpin for reed::XvalOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalOutcome
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalOutcome
+pub struct reed::prelude::XvalRequest
+pub reed::prelude::XvalRequest::n_pca: core::option::Option<alloc::vec::Vec<usize>>
+pub reed::prelude::XvalRequest::n_rep: usize
+pub reed::prelude::XvalRequest::result: reed::XvalResultMode
+pub reed::prelude::XvalRequest::seed: u64
+pub reed::prelude::XvalRequest::training_set: f64
+impl core::clone::Clone for reed::XvalRequest
+pub fn reed::XvalRequest::clone(&self) -> reed::XvalRequest
+impl core::default::Default for reed::XvalRequest
+pub fn reed::XvalRequest::default() -> Self
+impl core::fmt::Debug for reed::XvalRequest
+pub fn reed::XvalRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::XvalRequest
+impl core::marker::Send for reed::XvalRequest
+impl core::marker::Sync for reed::XvalRequest
+impl core::marker::Unpin for reed::XvalRequest
+impl core::marker::UnsafeUnpin for reed::XvalRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalRequest
+pub fn reed::prelude::run_convert(core::option::Option<&std::path::Path>, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
+pub fn reed::prelude::run_convert_opened(reed::OpenedInput, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
+pub fn reed::prelude::run_dapc(core::option::Option<&std::path::Path>, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
+pub fn reed::prelude::run_dapc_opened(reed::OpenedInput, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
+pub fn reed::prelude::run_distance(core::option::Option<&std::path::Path>, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
+pub fn reed::prelude::run_distance_opened(reed::OpenedInput, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
+pub fn reed::prelude::run_filter(core::option::Option<&std::path::Path>, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
+pub fn reed::prelude::run_filter_opened(reed::OpenedInput, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
+pub fn reed::prelude::run_index(&std::path::Path, reed_io::write::index::WriteIndex, core::option::Option<&std::path::Path>, &reed::RunContext<'_>) -> core::result::Result<reed::IndexOutcome, reed::Error>
+pub fn reed::prelude::run_pca(core::option::Option<&std::path::Path>, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
+pub fn reed::prelude::run_pca_opened(reed::OpenedInput, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
+pub fn reed::prelude::run_popgen(core::option::Option<&std::path::Path>, &reed::PopgenRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PopgenReport, reed::Error>
+pub fn reed::prelude::run_popgen_opened(reed::OpenedInput, &reed::PopgenRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PopgenReport, reed::Error>
+pub fn reed::prelude::run_rename(core::option::Option<&std::path::Path>, &reed::RenameSpec, &reed::RenameOutput, &reed::RunContext<'_>) -> core::result::Result<reed::RenameReport, reed::Error>
+pub fn reed::prelude::run_rename_opened(reed::OpenedInput, &reed::RenameSpec, &reed::RenameOutput, &reed::RunContext<'_>) -> core::result::Result<reed::RenameReport, reed::Error>
+pub fn reed::prelude::run_stats(core::option::Option<&std::path::Path>, &reed::StatsReportRequest, &reed::RunContext<'_>) -> core::result::Result<reed::StatsOutcome, reed::Error>
+pub fn reed::prelude::run_stats_opened(reed::OpenedInput, &reed::StatsReportRequest, &reed::RunContext<'_>) -> core::result::Result<reed::StatsOutcome, reed::Error>
+pub type reed::prelude::DecayBin = (u64, u64, u64, core::option::Option<f64>)
+pub type reed::prelude::OpenedInput = reed::StreamedInput
+pub enum reed::ChrStyle
+pub reed::ChrStyle::MtIsM
+pub reed::ChrStyle::Plain
+pub reed::ChrStyle::Ucsc
+impl reed::ChrStyle
+pub fn reed::ChrStyle::apply(self, &str) -> alloc::string::String
+pub fn reed::ChrStyle::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::ChrStyle
+pub fn reed::ChrStyle::clone(&self) -> reed::ChrStyle
+impl core::cmp::Eq for reed::ChrStyle
+impl core::cmp::PartialEq for reed::ChrStyle
+pub fn reed::ChrStyle::eq(&self, &reed::ChrStyle) -> bool
+impl core::fmt::Debug for reed::ChrStyle
+pub fn reed::ChrStyle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::ChrStyle
+impl core::marker::StructuralPartialEq for reed::ChrStyle
+impl core::marker::Freeze for reed::ChrStyle
+impl core::marker::Send for reed::ChrStyle
+impl core::marker::Sync for reed::ChrStyle
+impl core::marker::Unpin for reed::ChrStyle
+impl core::marker::UnsafeUnpin for reed::ChrStyle
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ChrStyle
+impl core::panic::unwind_safe::UnwindSafe for reed::ChrStyle
+pub enum reed::ConvertTarget
+pub reed::ConvertTarget::CountMatrix
+pub reed::ConvertTarget::Hapmap
+pub reed::ConvertTarget::Msa
+pub reed::ConvertTarget::Msa::collapse_suffix: core::option::Option<alloc::string::String>
+pub reed::ConvertTarget::Msa::flank: u64
+pub reed::ConvertTarget::Msa::reference: std::path::PathBuf
+pub reed::ConvertTarget::Msa::regions: alloc::vec::Vec<alloc::string::String>
+pub reed::ConvertTarget::NexusBin
+pub reed::ConvertTarget::Phylo
+pub reed::ConvertTarget::Phylo::formats: reed::PhyloFormats
+pub reed::ConvertTarget::Phylo::options: reed::PhyloOptions
+pub reed::ConvertTarget::Sfs
+pub reed::ConvertTarget::Sfs::int_dtype: bool
+pub reed::ConvertTarget::Sfs::request: reed::SfsRequest
+pub reed::ConvertTarget::Vcf
+pub reed::ConvertTarget::Vcf::command_line: alloc::string::String
+pub reed::ConvertTarget::Vcf::compressed: bool
+pub reed::ConvertTarget::Vcf::level: u8
+pub reed::ConvertTarget::Vcf::no_version: bool
+pub reed::ConvertTarget::Vcf::output: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::ConvertTarget
+pub fn reed::ConvertTarget::clone(&self) -> reed::ConvertTarget
+impl core::cmp::Eq for reed::ConvertTarget
+impl core::cmp::PartialEq for reed::ConvertTarget
+pub fn reed::ConvertTarget::eq(&self, &reed::ConvertTarget) -> bool
+impl core::fmt::Debug for reed::ConvertTarget
+pub fn reed::ConvertTarget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::ConvertTarget
+impl core::marker::Freeze for reed::ConvertTarget
+impl core::marker::Send for reed::ConvertTarget
+impl core::marker::Sync for reed::ConvertTarget
+impl core::marker::Unpin for reed::ConvertTarget
+impl core::marker::UnsafeUnpin for reed::ConvertTarget
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertTarget
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertTarget
+pub enum reed::DistanceFormat
+pub reed::DistanceFormat::Bin
+pub reed::DistanceFormat::Square
+pub reed::DistanceFormat::Square0
+pub reed::DistanceFormat::Triangle
+impl reed::DistanceFormat
+pub const fn reed::DistanceFormat::name(self) -> &'static str
+pub fn reed::DistanceFormat::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::DistanceFormat
+pub fn reed::DistanceFormat::clone(&self) -> reed::DistanceFormat
+impl core::cmp::Eq for reed::DistanceFormat
+impl core::cmp::PartialEq for reed::DistanceFormat
+pub fn reed::DistanceFormat::eq(&self, &reed::DistanceFormat) -> bool
+impl core::default::Default for reed::DistanceFormat
+pub fn reed::DistanceFormat::default() -> reed::DistanceFormat
+impl core::fmt::Debug for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceFormat
+impl core::marker::StructuralPartialEq for reed::DistanceFormat
+impl core::str::traits::FromStr for reed::DistanceFormat
+pub type reed::DistanceFormat::Err = alloc::string::String
+pub fn reed::DistanceFormat::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceFormat
+impl core::marker::Send for reed::DistanceFormat
+impl core::marker::Sync for reed::DistanceFormat
+impl core::marker::Unpin for reed::DistanceFormat
+impl core::marker::UnsafeUnpin for reed::DistanceFormat
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceFormat
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceFormat
+pub enum reed::DistanceKind
+pub reed::DistanceKind::Ajk
+pub reed::DistanceKind::AlleleCountDistance
+pub reed::DistanceKind::Covariance
+pub reed::DistanceKind::Discordance
+pub reed::DistanceKind::Grm
+pub reed::DistanceKind::Ibs
+pub reed::DistanceKind::King
+pub reed::DistanceKind::OneMinusIbs
+pub reed::DistanceKind::Phi
+pub reed::DistanceKind::PiHat
+impl reed::DistanceKind
+pub const fn reed::DistanceKind::is_matrix(self) -> bool
+pub const fn reed::DistanceKind::name(self) -> &'static str
+pub fn reed::DistanceKind::parse(&str) -> core::result::Result<Self, alloc::string::String>
+pub fn reed::DistanceKind::suffix(self) -> &'static str
+impl core::clone::Clone for reed::DistanceKind
+pub fn reed::DistanceKind::clone(&self) -> reed::DistanceKind
+impl core::cmp::Eq for reed::DistanceKind
+impl core::cmp::PartialEq for reed::DistanceKind
+pub fn reed::DistanceKind::eq(&self, &reed::DistanceKind) -> bool
+impl core::default::Default for reed::DistanceKind
+pub fn reed::DistanceKind::default() -> reed::DistanceKind
+impl core::fmt::Debug for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceKind
+impl core::marker::StructuralPartialEq for reed::DistanceKind
+impl core::str::traits::FromStr for reed::DistanceKind
+pub type reed::DistanceKind::Err = alloc::string::String
+pub fn reed::DistanceKind::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceKind
+impl core::marker::Send for reed::DistanceKind
+impl core::marker::Sync for reed::DistanceKind
+impl core::marker::Unpin for reed::DistanceKind
+impl core::marker::UnsafeUnpin for reed::DistanceKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceKind
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceKind
+pub enum reed::ErrorKind
+pub reed::ErrorKind::Runtime
+pub reed::ErrorKind::Usage
+impl core::clone::Clone for reed::ErrorKind
+pub fn reed::ErrorKind::clone(&self) -> reed::ErrorKind
+impl core::cmp::Eq for reed::ErrorKind
+impl core::cmp::PartialEq for reed::ErrorKind
+pub fn reed::ErrorKind::eq(&self, &reed::ErrorKind) -> bool
+impl core::fmt::Debug for reed::ErrorKind
+pub fn reed::ErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::ErrorKind
+impl core::marker::StructuralPartialEq for reed::ErrorKind
+impl core::marker::Freeze for reed::ErrorKind
+impl core::marker::Send for reed::ErrorKind
+impl core::marker::Sync for reed::ErrorKind
+impl core::marker::Unpin for reed::ErrorKind
+impl core::marker::UnsafeUnpin for reed::ErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ErrorKind
+impl core::panic::unwind_safe::UnwindSafe for reed::ErrorKind
+pub enum reed::FStatTest
+pub reed::FStatTest::Dstat
+pub reed::FStatTest::Dstat::a: usize
+pub reed::FStatTest::Dstat::b: usize
+pub reed::FStatTest::Dstat::c: usize
+pub reed::FStatTest::Dstat::d: usize
+pub reed::FStatTest::F2
+pub reed::FStatTest::F2::a: usize
+pub reed::FStatTest::F2::b: usize
+pub reed::FStatTest::F3
+pub reed::FStatTest::F3::a: usize
+pub reed::FStatTest::F3::b: usize
+pub reed::FStatTest::F3::c: usize
+pub reed::FStatTest::F4
+pub reed::FStatTest::F4::a: usize
+pub reed::FStatTest::F4::b: usize
+pub reed::FStatTest::F4::c: usize
+pub reed::FStatTest::F4::d: usize
+pub reed::FStatTest::F4Ratio
+pub reed::FStatTest::F4Ratio::a: usize
+pub reed::FStatTest::F4Ratio::b: usize
+pub reed::FStatTest::F4Ratio::c: usize
+pub reed::FStatTest::F4Ratio::o: usize
+pub reed::FStatTest::F4Ratio::x: usize
+impl reed::FStatTest
+pub const fn reed::FStatTest::id(&self) -> &'static str
+pub fn reed::FStatTest::pops(&self) -> alloc::vec::Vec<usize>
+impl core::clone::Clone for reed::FStatTest
+pub fn reed::FStatTest::clone(&self) -> reed::FStatTest
+impl core::cmp::Eq for reed::FStatTest
+impl core::cmp::PartialEq for reed::FStatTest
+pub fn reed::FStatTest::eq(&self, &reed::FStatTest) -> bool
+impl core::fmt::Debug for reed::FStatTest
+pub fn reed::FStatTest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::FStatTest
+impl core::marker::Freeze for reed::FStatTest
+impl core::marker::Send for reed::FStatTest
+impl core::marker::Sync for reed::FStatTest
+impl core::marker::Unpin for reed::FStatTest
+impl core::marker::UnsafeUnpin for reed::FStatTest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatTest
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatTest
+pub enum reed::Framing
+pub reed::Framing::Bgzf
+pub reed::Framing::Gzip
+pub reed::Framing::Plain
+impl reed::Framing
+pub const fn reed::Framing::of(reed_io::format::Format) -> Self
+impl core::clone::Clone for reed::Framing
+pub fn reed::Framing::clone(&self) -> reed::Framing
+impl core::cmp::Eq for reed::Framing
+impl core::cmp::PartialEq for reed::Framing
+pub fn reed::Framing::eq(&self, &reed::Framing) -> bool
+impl core::fmt::Debug for reed::Framing
+pub fn reed::Framing::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Framing
+impl core::marker::StructuralPartialEq for reed::Framing
+impl core::marker::Freeze for reed::Framing
+impl core::marker::Send for reed::Framing
+impl core::marker::Sync for reed::Framing
+impl core::marker::Unpin for reed::Framing
+impl core::marker::UnsafeUnpin for reed::Framing
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Framing
+impl core::panic::unwind_safe::UnwindSafe for reed::Framing
+pub enum reed::InputCapability
+pub reed::InputCapability::OneShot
+pub reed::InputCapability::Replayable(reed::ReplayableInput)
+pub reed::InputCapability::Seekable(reed::SeekableInput)
+impl reed::InputCapability
+pub const fn reed::InputCapability::can_replay(&self) -> bool
+pub fn reed::InputCapability::replay(&self, &[reed_io::chunk::region::Region]) -> core::result::Result<reed::StreamedInput, reed_io::error::IoError>
+pub const fn reed::InputCapability::replayable(&self) -> core::option::Option<&reed::ReplayableInput>
+impl core::default::Default for reed::InputCapability
+pub fn reed::InputCapability::default() -> reed::InputCapability
+impl core::marker::Freeze for reed::InputCapability
+impl core::marker::Send for reed::InputCapability
+impl core::marker::Sync for reed::InputCapability
+impl core::marker::Unpin for reed::InputCapability
+impl core::marker::UnsafeUnpin for reed::InputCapability
+impl core::panic::unwind_safe::RefUnwindSafe for reed::InputCapability
+impl core::panic::unwind_safe::UnwindSafe for reed::InputCapability
+pub enum reed::InvariantMode
+pub reed::InvariantMode::Bypass
+pub reed::InvariantMode::Require
+pub reed::InvariantMode::VariantOnly
+impl core::clone::Clone for reed::InvariantMode
+pub fn reed::InvariantMode::clone(&self) -> reed::InvariantMode
+impl core::cmp::Eq for reed::InvariantMode
+impl core::cmp::PartialEq for reed::InvariantMode
+pub fn reed::InvariantMode::eq(&self, &reed::InvariantMode) -> bool
+impl core::fmt::Debug for reed::InvariantMode
+pub fn reed::InvariantMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::InvariantMode
+impl core::marker::StructuralPartialEq for reed::InvariantMode
+impl core::marker::Freeze for reed::InvariantMode
+impl core::marker::Send for reed::InvariantMode
+impl core::marker::Sync for reed::InvariantMode
+impl core::marker::Unpin for reed::InvariantMode
+impl core::marker::UnsafeUnpin for reed::InvariantMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed::InvariantMode
+impl core::panic::unwind_safe::UnwindSafe for reed::InvariantMode
+pub enum reed::MatrixUse
+pub reed::MatrixUse::DenseMeanImpute
+pub reed::MatrixUse::DensePairwise
+pub reed::MatrixUse::Plain
+pub reed::MatrixUse::Stream
+impl core::clone::Clone for reed::MatrixUse
+pub fn reed::MatrixUse::clone(&self) -> reed::MatrixUse
+impl core::cmp::Eq for reed::MatrixUse
+impl core::cmp::PartialEq for reed::MatrixUse
+pub fn reed::MatrixUse::eq(&self, &reed::MatrixUse) -> bool
+impl core::fmt::Debug for reed::MatrixUse
+pub fn reed::MatrixUse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::MatrixUse
+impl core::marker::StructuralPartialEq for reed::MatrixUse
+impl core::marker::Freeze for reed::MatrixUse
+impl core::marker::Send for reed::MatrixUse
+impl core::marker::Sync for reed::MatrixUse
+impl core::marker::Unpin for reed::MatrixUse
+impl core::marker::UnsafeUnpin for reed::MatrixUse
+impl core::panic::unwind_safe::RefUnwindSafe for reed::MatrixUse
+impl core::panic::unwind_safe::UnwindSafe for reed::MatrixUse
+pub enum reed::MissingPolicy
+pub reed::MissingPolicy::MeanImpute
+pub reed::MissingPolicy::Pairwise
+impl reed::MissingPolicy
+pub const fn reed::MissingPolicy::name(self) -> &'static str
+pub fn reed::MissingPolicy::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::MissingPolicy
+pub fn reed::MissingPolicy::clone(&self) -> reed::MissingPolicy
+impl core::cmp::Eq for reed::MissingPolicy
+impl core::cmp::PartialEq for reed::MissingPolicy
+pub fn reed::MissingPolicy::eq(&self, &reed::MissingPolicy) -> bool
+impl core::default::Default for reed::MissingPolicy
+pub fn reed::MissingPolicy::default() -> reed::MissingPolicy
+impl core::fmt::Debug for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::MissingPolicy
+impl core::marker::StructuralPartialEq for reed::MissingPolicy
+impl core::str::traits::FromStr for reed::MissingPolicy
+pub type reed::MissingPolicy::Err = alloc::string::String
+pub fn reed::MissingPolicy::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::MissingPolicy
+impl core::marker::Send for reed::MissingPolicy
+impl core::marker::Sync for reed::MissingPolicy
+impl core::marker::Unpin for reed::MissingPolicy
+impl core::marker::UnsafeUnpin for reed::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed::MissingPolicy
+pub enum reed::PcaSolver
+pub reed::PcaSolver::Auto
+pub reed::PcaSolver::Dense
+pub reed::PcaSolver::Stream
+impl reed::PcaSolver
+pub const fn reed::PcaSolver::name(self) -> &'static str
+pub fn reed::PcaSolver::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::PcaSolver
+pub fn reed::PcaSolver::clone(&self) -> reed::PcaSolver
+impl core::cmp::Eq for reed::PcaSolver
+impl core::cmp::PartialEq for reed::PcaSolver
+pub fn reed::PcaSolver::eq(&self, &reed::PcaSolver) -> bool
+impl core::default::Default for reed::PcaSolver
+pub fn reed::PcaSolver::default() -> reed::PcaSolver
+impl core::fmt::Debug for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::PcaSolver
+impl core::marker::StructuralPartialEq for reed::PcaSolver
+impl core::str::traits::FromStr for reed::PcaSolver
+pub type reed::PcaSolver::Err = alloc::string::String
+pub fn reed::PcaSolver::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::PcaSolver
+impl core::marker::Send for reed::PcaSolver
+impl core::marker::Sync for reed::PcaSolver
+impl core::marker::Unpin for reed::PcaSolver
+impl core::marker::UnsafeUnpin for reed::PcaSolver
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaSolver
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaSolver
+pub enum reed::Populations
+pub reed::Populations::All
+pub reed::Populations::Assignment(alloc::vec::Vec<(alloc::string::String, alloc::string::String)>)
+pub reed::Populations::File(std::path::PathBuf)
+impl reed::Populations
+pub fn reed::Populations::group_names(&self, &[alloc::string::String], bool) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, reed::Error>
+impl core::clone::Clone for reed::Populations
+pub fn reed::Populations::clone(&self) -> reed::Populations
+impl core::cmp::Eq for reed::Populations
+impl core::cmp::PartialEq for reed::Populations
+pub fn reed::Populations::eq(&self, &reed::Populations) -> bool
+impl core::default::Default for reed::Populations
+pub fn reed::Populations::default() -> reed::Populations
+impl core::fmt::Debug for reed::Populations
+pub fn reed::Populations::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::Populations
+impl core::marker::Freeze for reed::Populations
+impl core::marker::Send for reed::Populations
+impl core::marker::Sync for reed::Populations
+impl core::marker::Unpin for reed::Populations
+impl core::marker::UnsafeUnpin for reed::Populations
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Populations
+impl core::panic::unwind_safe::UnwindSafe for reed::Populations
+pub enum reed::Stand
+pub reed::Stand::Binom
+pub reed::Stand::Binom2
+impl reed::Stand
+pub const fn reed::Stand::name(self) -> &'static str
+pub fn reed::Stand::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::Stand
+pub fn reed::Stand::clone(&self) -> reed::Stand
+impl core::cmp::Eq for reed::Stand
+impl core::cmp::PartialEq for reed::Stand
+pub fn reed::Stand::eq(&self, &reed::Stand) -> bool
+impl core::default::Default for reed::Stand
+pub fn reed::Stand::default() -> reed::Stand
+impl core::fmt::Debug for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Stand
+impl core::marker::StructuralPartialEq for reed::Stand
+impl core::str::traits::FromStr for reed::Stand
+pub type reed::Stand::Err = alloc::string::String
+pub fn reed::Stand::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::Stand
+impl core::marker::Send for reed::Stand
+impl core::marker::Sync for reed::Stand
+impl core::marker::Unpin for reed::Stand
+impl core::marker::UnsafeUnpin for reed::Stand
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Stand
+impl core::panic::unwind_safe::UnwindSafe for reed::Stand
+pub enum reed::TreeMethod
+pub reed::TreeMethod::Nj
+pub reed::TreeMethod::Upgma
+impl reed::TreeMethod
+pub const fn reed::TreeMethod::name(self) -> &'static str
+pub fn reed::TreeMethod::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::TreeMethod
+pub fn reed::TreeMethod::clone(&self) -> reed::TreeMethod
+impl core::cmp::Eq for reed::TreeMethod
+impl core::cmp::PartialEq for reed::TreeMethod
+pub fn reed::TreeMethod::eq(&self, &reed::TreeMethod) -> bool
+impl core::default::Default for reed::TreeMethod
+pub fn reed::TreeMethod::default() -> reed::TreeMethod
+impl core::fmt::Debug for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::TreeMethod
+impl core::marker::StructuralPartialEq for reed::TreeMethod
+impl core::str::traits::FromStr for reed::TreeMethod
+pub type reed::TreeMethod::Err = alloc::string::String
+pub fn reed::TreeMethod::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::TreeMethod
+impl core::marker::Send for reed::TreeMethod
+impl core::marker::Sync for reed::TreeMethod
+impl core::marker::Unpin for reed::TreeMethod
+impl core::marker::UnsafeUnpin for reed::TreeMethod
+impl core::panic::unwind_safe::RefUnwindSafe for reed::TreeMethod
+impl core::panic::unwind_safe::UnwindSafe for reed::TreeMethod
+pub enum reed::XvalResultMode
+pub reed::XvalResultMode::GroupMean
+pub reed::XvalResultMode::Overall
+impl reed::XvalResultMode
+pub const fn reed::XvalResultMode::name(self) -> &'static str
+pub fn reed::XvalResultMode::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::XvalResultMode
+pub fn reed::XvalResultMode::clone(&self) -> reed::XvalResultMode
+impl core::cmp::Eq for reed::XvalResultMode
+impl core::cmp::PartialEq for reed::XvalResultMode
+pub fn reed::XvalResultMode::eq(&self, &reed::XvalResultMode) -> bool
+impl core::default::Default for reed::XvalResultMode
+pub fn reed::XvalResultMode::default() -> reed::XvalResultMode
+impl core::fmt::Debug for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::XvalResultMode
+impl core::marker::StructuralPartialEq for reed::XvalResultMode
+impl core::str::traits::FromStr for reed::XvalResultMode
+pub type reed::XvalResultMode::Err = alloc::string::String
+pub fn reed::XvalResultMode::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::XvalResultMode
+impl core::marker::Send for reed::XvalResultMode
+impl core::marker::Sync for reed::XvalResultMode
+impl core::marker::Unpin for reed::XvalResultMode
+impl core::marker::UnsafeUnpin for reed::XvalResultMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalResultMode
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalResultMode
+pub struct reed::ConvertCounters
+pub reed::ConvertCounters::accepted: u64
+pub reed::ConvertCounters::biallelic_for_bin: u64
+pub reed::ConvertCounters::excess_missing: u64
+pub reed::ConvertCounters::malformed: u64
+pub reed::ConvertCounters::mnps: u64
+pub reed::ConvertCounters::polyploid: u64
+pub reed::ConvertCounters::total_records: u64
+impl core::clone::Clone for reed::ConvertCounters
+pub fn reed::ConvertCounters::clone(&self) -> reed::ConvertCounters
+impl core::cmp::Eq for reed::ConvertCounters
+impl core::cmp::PartialEq for reed::ConvertCounters
+pub fn reed::ConvertCounters::eq(&self, &reed::ConvertCounters) -> bool
+impl core::default::Default for reed::ConvertCounters
+pub fn reed::ConvertCounters::default() -> reed::ConvertCounters
+impl core::fmt::Debug for reed::ConvertCounters
+pub fn reed::ConvertCounters::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::ConvertCounters
+impl core::marker::StructuralPartialEq for reed::ConvertCounters
+impl core::marker::Freeze for reed::ConvertCounters
+impl core::marker::Send for reed::ConvertCounters
+impl core::marker::Sync for reed::ConvertCounters
+impl core::marker::Unpin for reed::ConvertCounters
+impl core::marker::UnsafeUnpin for reed::ConvertCounters
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertCounters
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertCounters
+pub struct reed::ConvertReport
+pub reed::ConvertReport::counters: core::option::Option<reed::ConvertCounters>
+pub reed::ConvertReport::elapsed: core::time::Duration
+pub reed::ConvertReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::ConvertReport::metrics: reed_engine::metrics::StageMetrics
+pub reed::ConvertReport::n_records: u64
+pub reed::ConvertReport::polyploid: u64
+pub reed::ConvertReport::sfs: core::option::Option<reed::SfsReport>
+impl core::fmt::Debug for reed::ConvertReport
+pub fn reed::ConvertReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::ConvertReport
+impl core::marker::Send for reed::ConvertReport
+impl core::marker::Sync for reed::ConvertReport
+impl core::marker::Unpin for reed::ConvertReport
+impl core::marker::UnsafeUnpin for reed::ConvertReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertReport
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertReport
+pub struct reed::ConvertRequest
+pub reed::ConvertRequest::force_samples: bool
+pub reed::ConvertRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::ConvertRequest::min_samples_locus: core::option::Option<u32>
+pub reed::ConvertRequest::populations: reed::Populations
+pub reed::ConvertRequest::prefix: std::path::PathBuf
+pub reed::ConvertRequest::seed: u64
+pub reed::ConvertRequest::targets: alloc::vec::Vec<reed::ConvertTarget>
+impl reed::ConvertRequest
+pub fn reed::ConvertRequest::to_args(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, reed::Error>
+pub fn reed::ConvertRequest::validate(&self) -> core::result::Result<(), reed::Error>
+impl core::clone::Clone for reed::ConvertRequest
+pub fn reed::ConvertRequest::clone(&self) -> reed::ConvertRequest
+impl core::cmp::Eq for reed::ConvertRequest
+impl core::cmp::PartialEq for reed::ConvertRequest
+pub fn reed::ConvertRequest::eq(&self, &reed::ConvertRequest) -> bool
+impl core::default::Default for reed::ConvertRequest
+pub fn reed::ConvertRequest::default() -> Self
+impl core::fmt::Debug for reed::ConvertRequest
+pub fn reed::ConvertRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::ConvertRequest
+impl core::marker::Freeze for reed::ConvertRequest
+impl core::marker::Send for reed::ConvertRequest
+impl core::marker::Sync for reed::ConvertRequest
+impl core::marker::Unpin for reed::ConvertRequest
+impl core::marker::UnsafeUnpin for reed::ConvertRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::ConvertRequest
+pub struct reed::DapcReport
+pub reed::DapcReport::eig: alloc::vec::Vec<f64>
+pub reed::DapcReport::elapsed: core::time::Duration
+pub reed::DapcReport::n_da: usize
+pub reed::DapcReport::n_groups: usize
+pub reed::DapcReport::n_pca: usize
+pub reed::DapcReport::n_samples: usize
+pub reed::DapcReport::n_sites: usize
+pub reed::DapcReport::var: f64
+pub reed::DapcReport::xval: core::option::Option<reed::XvalOutcome>
+impl core::clone::Clone for reed::DapcReport
+pub fn reed::DapcReport::clone(&self) -> reed::DapcReport
+impl core::fmt::Debug for reed::DapcReport
+pub fn reed::DapcReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DapcReport
+impl core::marker::Send for reed::DapcReport
+impl core::marker::Sync for reed::DapcReport
+impl core::marker::Unpin for reed::DapcReport
+impl core::marker::UnsafeUnpin for reed::DapcReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DapcReport
+impl core::panic::unwind_safe::UnwindSafe for reed::DapcReport
+pub struct reed::DapcRequest
+pub reed::DapcRequest::force_samples: bool
+pub reed::DapcRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::DapcRequest::missing: reed::MissingPolicy
+pub reed::DapcRequest::n_da: core::option::Option<usize>
+pub reed::DapcRequest::n_pca: core::option::Option<usize>
+pub reed::DapcRequest::populations: alloc::string::String
+pub reed::DapcRequest::prefix: alloc::string::String
+pub reed::DapcRequest::solver: reed::PcaSolver
+pub reed::DapcRequest::stand: reed::Stand
+pub reed::DapcRequest::xval: core::option::Option<reed::XvalRequest>
+impl core::clone::Clone for reed::DapcRequest
+pub fn reed::DapcRequest::clone(&self) -> reed::DapcRequest
+impl core::default::Default for reed::DapcRequest
+pub fn reed::DapcRequest::default() -> Self
+impl core::fmt::Debug for reed::DapcRequest
+pub fn reed::DapcRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DapcRequest
+impl core::marker::Send for reed::DapcRequest
+impl core::marker::Sync for reed::DapcRequest
+impl core::marker::Unpin for reed::DapcRequest
+impl core::marker::UnsafeUnpin for reed::DapcRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DapcRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::DapcRequest
+pub struct reed::DistanceReport
+pub reed::DistanceReport::bootstrap_support: core::option::Option<alloc::vec::Vec<f64>>
+pub reed::DistanceReport::elapsed: core::time::Duration
+pub reed::DistanceReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::DistanceReport::format: reed::DistanceFormat
+pub reed::DistanceReport::kind: reed::DistanceKind
+pub reed::DistanceReport::n_samples: usize
+pub reed::DistanceReport::n_sites: usize
+impl core::clone::Clone for reed::DistanceReport
+pub fn reed::DistanceReport::clone(&self) -> reed::DistanceReport
+impl core::fmt::Debug for reed::DistanceReport
+pub fn reed::DistanceReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceReport
+impl core::marker::Send for reed::DistanceReport
+impl core::marker::Sync for reed::DistanceReport
+impl core::marker::Unpin for reed::DistanceReport
+impl core::marker::UnsafeUnpin for reed::DistanceReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceReport
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceReport
+pub struct reed::DistanceRequest
+pub reed::DistanceRequest::bootstrap: core::option::Option<usize>
+pub reed::DistanceRequest::bootstrap_cutoff: f64
+pub reed::DistanceRequest::bootstrap_seed: u64
+pub reed::DistanceRequest::digits: usize
+pub reed::DistanceRequest::error_probability: u32
+pub reed::DistanceRequest::format: reed::DistanceFormat
+pub reed::DistanceRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::DistanceRequest::kind: reed::DistanceKind
+pub reed::DistanceRequest::mismatch_count: bool
+pub reed::DistanceRequest::missing: reed::MissingPolicy
+pub reed::DistanceRequest::nudge: bool
+pub reed::DistanceRequest::prefix: alloc::string::String
+pub reed::DistanceRequest::stand: reed::Stand
+pub reed::DistanceRequest::tree: core::option::Option<reed::TreeMethod>
+pub reed::DistanceRequest::unbounded: bool
+impl core::clone::Clone for reed::DistanceRequest
+pub fn reed::DistanceRequest::clone(&self) -> reed::DistanceRequest
+impl core::default::Default for reed::DistanceRequest
+pub fn reed::DistanceRequest::default() -> Self
+impl core::fmt::Debug for reed::DistanceRequest
+pub fn reed::DistanceRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceRequest
+impl core::marker::Send for reed::DistanceRequest
+impl core::marker::Sync for reed::DistanceRequest
+impl core::marker::Unpin for reed::DistanceRequest
+impl core::marker::UnsafeUnpin for reed::DistanceRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceRequest
+pub struct reed::Error(_)
+impl reed::Error
+pub fn reed::Error::foreign(impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
+pub fn reed::Error::kind(&self) -> reed::ErrorKind
+pub fn reed::Error::usage(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<reed_core::error::CoreError> for reed::Error
+pub fn reed::Error::from(reed_core::error::CoreError) -> Self
+impl core::convert::From<reed_engine::error::EngineError> for reed::Error
+pub fn reed::Error::from(reed_engine::error::EngineError) -> Self
+impl core::convert::From<reed_filter::error::FilterError> for reed::Error
+pub fn reed::Error::from(reed_filter::error::FilterError) -> Self
+impl core::convert::From<reed_io::error::IoError> for reed::Error
+pub fn reed::Error::from(reed_io::error::IoError) -> Self
+impl core::convert::From<std::io::error::Error> for reed::Error
+pub fn reed::Error::from(std::io::error::Error) -> Self
+impl core::error::Error for reed::Error
+pub fn reed::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for reed::Error
+pub fn reed::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::Error
+pub fn reed::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::Error
+impl core::marker::Send for reed::Error
+impl core::marker::Sync for reed::Error
+impl core::marker::Unpin for reed::Error
+impl core::marker::UnsafeUnpin for reed::Error
+impl !core::panic::unwind_safe::RefUnwindSafe for reed::Error
+impl !core::panic::unwind_safe::UnwindSafe for reed::Error
+pub struct reed::FStatRow
+pub reed::FStatRow::estimate: f64
+pub reed::FStatRow::n_blocks: usize
+pub reed::FStatRow::n_sites: u64
+pub reed::FStatRow::se: f64
+pub reed::FStatRow::test: reed::FStatTest
+pub reed::FStatRow::z: f64
+impl core::clone::Clone for reed::FStatRow
+pub fn reed::FStatRow::clone(&self) -> reed::FStatRow
+impl core::fmt::Debug for reed::FStatRow
+pub fn reed::FStatRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::FStatRow
+impl core::marker::Send for reed::FStatRow
+impl core::marker::Sync for reed::FStatRow
+impl core::marker::Unpin for reed::FStatRow
+impl core::marker::UnsafeUnpin for reed::FStatRow
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatRow
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatRow
+pub struct reed::FStatsReport
+pub reed::FStatsReport::rows: alloc::vec::Vec<reed::FStatRow>
+impl core::clone::Clone for reed::FStatsReport
+pub fn reed::FStatsReport::clone(&self) -> reed::FStatsReport
+impl core::fmt::Debug for reed::FStatsReport
+pub fn reed::FStatsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::FStatsReport
+impl core::marker::Send for reed::FStatsReport
+impl core::marker::Sync for reed::FStatsReport
+impl core::marker::Unpin for reed::FStatsReport
+impl core::marker::UnsafeUnpin for reed::FStatsReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatsReport
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatsReport
+pub struct reed::FStatsRequest
+pub reed::FStatsRequest::block_bp: u64
+pub reed::FStatsRequest::tests: alloc::vec::Vec<reed::FStatTest>
+impl core::clone::Clone for reed::FStatsRequest
+pub fn reed::FStatsRequest::clone(&self) -> reed::FStatsRequest
+impl core::cmp::Eq for reed::FStatsRequest
+impl core::cmp::PartialEq for reed::FStatsRequest
+pub fn reed::FStatsRequest::eq(&self, &reed::FStatsRequest) -> bool
+impl core::fmt::Debug for reed::FStatsRequest
+pub fn reed::FStatsRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::FStatsRequest
+impl core::marker::Freeze for reed::FStatsRequest
+impl core::marker::Send for reed::FStatsRequest
+impl core::marker::Sync for reed::FStatsRequest
+impl core::marker::Unpin for reed::FStatsRequest
+impl core::marker::UnsafeUnpin for reed::FStatsRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FStatsRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::FStatsRequest
+pub struct reed::FilterOptions
+pub reed::FilterOptions::command_line: alloc::string::String
+pub reed::FilterOptions::compress_level: u8
+pub reed::FilterOptions::force_samples: bool
+pub reed::FilterOptions::no_command: bool
+pub reed::FilterOptions::no_version: bool
+pub reed::FilterOptions::output: core::option::Option<std::path::PathBuf>
+pub reed::FilterOptions::output_bcf: core::option::Option<u8>
+pub reed::FilterOptions::output_compressed: core::option::Option<bool>
+pub reed::FilterOptions::regions: alloc::vec::Vec<reed_io::chunk::region::Region>
+pub reed::FilterOptions::report_json: core::option::Option<std::path::PathBuf>
+pub reed::FilterOptions::timing: core::option::Option<std::path::PathBuf>
+pub reed::FilterOptions::tmp_dir: core::option::Option<std::path::PathBuf>
+pub reed::FilterOptions::write_index: reed_io::write::index::WriteIndex
+impl core::clone::Clone for reed::FilterOptions
+pub fn reed::FilterOptions::clone(&self) -> reed::FilterOptions
+impl core::default::Default for reed::FilterOptions
+pub fn reed::FilterOptions::default() -> Self
+impl core::fmt::Debug for reed::FilterOptions
+pub fn reed::FilterOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::FilterOptions
+impl core::marker::Send for reed::FilterOptions
+impl core::marker::Sync for reed::FilterOptions
+impl core::marker::Unpin for reed::FilterOptions
+impl core::marker::UnsafeUnpin for reed::FilterOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed::FilterOptions
+impl core::panic::unwind_safe::UnwindSafe for reed::FilterOptions
+pub struct reed::IndexOutcome
+pub reed::IndexOutcome::metrics: reed_engine::metrics::StageMetrics
+pub reed::IndexOutcome::n_records: u64
+pub reed::IndexOutcome::path: std::path::PathBuf
+impl core::clone::Clone for reed::IndexOutcome
+pub fn reed::IndexOutcome::clone(&self) -> reed::IndexOutcome
+impl core::fmt::Debug for reed::IndexOutcome
+pub fn reed::IndexOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::IndexOutcome
+impl core::marker::Send for reed::IndexOutcome
+impl core::marker::Sync for reed::IndexOutcome
+impl core::marker::Unpin for reed::IndexOutcome
+impl core::marker::UnsafeUnpin for reed::IndexOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for reed::IndexOutcome
+impl core::panic::unwind_safe::UnwindSafe for reed::IndexOutcome
+pub struct reed::InputMeta
+impl reed::InputMeta
+pub fn reed::InputMeta::bcf_dict(&self) -> core::option::Option<&alloc::sync::Arc<reed_io::bcf::dict::BcfDict>>
+pub const fn reed::InputMeta::format(&self) -> reed_io::format::Format
+pub const fn reed::InputMeta::framing(&self) -> reed::Framing
+pub const fn reed::InputMeta::is_bcf(&self) -> bool
+impl core::clone::Clone for reed::InputMeta
+pub fn reed::InputMeta::clone(&self) -> reed::InputMeta
+impl core::marker::Freeze for reed::InputMeta
+impl core::marker::Send for reed::InputMeta
+impl core::marker::Sync for reed::InputMeta
+impl core::marker::Unpin for reed::InputMeta
+impl core::marker::UnsafeUnpin for reed::InputMeta
+impl core::panic::unwind_safe::RefUnwindSafe for reed::InputMeta
+impl core::panic::unwind_safe::UnwindSafe for reed::InputMeta
+pub struct reed::JointSfsReport
+pub reed::JointSfsReport::folded: bool
+pub reed::JointSfsReport::n_sites: alloc::vec::Vec<u64>
+pub reed::JointSfsReport::n_skipped_m_lt_n: alloc::vec::Vec<u64>
+pub reed::JointSfsReport::pairs: alloc::vec::Vec<(usize, usize)>
+pub reed::JointSfsReport::projections: alloc::vec::Vec<(u32, u32)>
+pub reed::JointSfsReport::spectra: alloc::vec::Vec<alloc::vec::Vec<f64>>
+impl core::clone::Clone for reed::JointSfsReport
+pub fn reed::JointSfsReport::clone(&self) -> reed::JointSfsReport
+impl core::fmt::Debug for reed::JointSfsReport
+pub fn reed::JointSfsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::JointSfsReport
+impl core::marker::Send for reed::JointSfsReport
+impl core::marker::Sync for reed::JointSfsReport
+impl core::marker::Unpin for reed::JointSfsReport
+impl core::marker::UnsafeUnpin for reed::JointSfsReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::JointSfsReport
+impl core::panic::unwind_safe::UnwindSafe for reed::JointSfsReport
+pub struct reed::LdReport
+pub reed::LdReport::decay: alloc::vec::Vec<reed::DecayBin>
+pub reed::LdReport::group_decay: alloc::vec::Vec<alloc::vec::Vec<reed::DecayBin>>
+pub reed::LdReport::pairs: alloc::vec::Vec<(alloc::string::String, u64, u64, f64)>
+impl core::clone::Clone for reed::LdReport
+pub fn reed::LdReport::clone(&self) -> reed::LdReport
+impl core::default::Default for reed::LdReport
+pub fn reed::LdReport::default() -> reed::LdReport
+impl core::fmt::Debug for reed::LdReport
+pub fn reed::LdReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::LdReport
+impl core::marker::Send for reed::LdReport
+impl core::marker::Sync for reed::LdReport
+impl core::marker::Unpin for reed::LdReport
+impl core::marker::UnsafeUnpin for reed::LdReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::LdReport
+impl core::panic::unwind_safe::UnwindSafe for reed::LdReport
+pub struct reed::LdRequest
+pub reed::LdRequest::decay_bin_bp: u64
+pub reed::LdRequest::decay_max_bp: core::option::Option<u64>
+pub reed::LdRequest::pairs: bool
+pub reed::LdRequest::pairs_path: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::LdRequest
+pub fn reed::LdRequest::clone(&self) -> reed::LdRequest
+impl core::cmp::PartialEq for reed::LdRequest
+pub fn reed::LdRequest::eq(&self, &reed::LdRequest) -> bool
+impl core::fmt::Debug for reed::LdRequest
+pub fn reed::LdRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::LdRequest
+impl core::marker::Freeze for reed::LdRequest
+impl core::marker::Send for reed::LdRequest
+impl core::marker::Sync for reed::LdRequest
+impl core::marker::Unpin for reed::LdRequest
+impl core::marker::UnsafeUnpin for reed::LdRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::LdRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::LdRequest
+pub struct reed::Levels
+pub reed::Levels::contig: bool
+pub reed::Levels::genome: bool
+pub reed::Levels::window: bool
+impl reed::Levels
+pub fn reed::Levels::parse(&str) -> core::result::Result<Self, reed::Error>
+impl core::clone::Clone for reed::Levels
+pub fn reed::Levels::clone(&self) -> reed::Levels
+impl core::cmp::Eq for reed::Levels
+impl core::cmp::PartialEq for reed::Levels
+pub fn reed::Levels::eq(&self, &reed::Levels) -> bool
+impl core::default::Default for reed::Levels
+pub fn reed::Levels::default() -> Self
+impl core::fmt::Debug for reed::Levels
+pub fn reed::Levels::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Levels
+impl core::marker::StructuralPartialEq for reed::Levels
+impl core::marker::Freeze for reed::Levels
+impl core::marker::Send for reed::Levels
+impl core::marker::Sync for reed::Levels
+impl core::marker::Unpin for reed::Levels
+impl core::marker::UnsafeUnpin for reed::Levels
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Levels
+impl core::panic::unwind_safe::UnwindSafe for reed::Levels
+pub struct reed::PcaReport
+pub reed::PcaReport::eigenvalues: alloc::vec::Vec<f64>
+pub reed::PcaReport::elapsed: core::time::Duration
+pub reed::PcaReport::n_pcs: usize
+pub reed::PcaReport::n_samples: usize
+pub reed::PcaReport::n_sites: usize
+pub reed::PcaReport::solver: alloc::string::String
+pub reed::PcaReport::stream_max_residual: core::option::Option<f64>
+impl core::clone::Clone for reed::PcaReport
+pub fn reed::PcaReport::clone(&self) -> reed::PcaReport
+impl core::fmt::Debug for reed::PcaReport
+pub fn reed::PcaReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PcaReport
+impl core::marker::Send for reed::PcaReport
+impl core::marker::Sync for reed::PcaReport
+impl core::marker::Unpin for reed::PcaReport
+impl core::marker::UnsafeUnpin for reed::PcaReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaReport
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaReport
+pub struct reed::PcaRequest
+pub reed::PcaRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::PcaRequest::missing: reed::MissingPolicy
+pub reed::PcaRequest::pcs: usize
+pub reed::PcaRequest::prefix: alloc::string::String
+pub reed::PcaRequest::solver: reed::PcaSolver
+pub reed::PcaRequest::stand: reed::Stand
+impl core::clone::Clone for reed::PcaRequest
+pub fn reed::PcaRequest::clone(&self) -> reed::PcaRequest
+impl core::default::Default for reed::PcaRequest
+pub fn reed::PcaRequest::default() -> Self
+impl core::fmt::Debug for reed::PcaRequest
+pub fn reed::PcaRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PcaRequest
+impl core::marker::Send for reed::PcaRequest
+impl core::marker::Sync for reed::PcaRequest
+impl core::marker::Unpin for reed::PcaRequest
+impl core::marker::UnsafeUnpin for reed::PcaRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaRequest
+pub struct reed::PhyloFormats
+pub reed::PhyloFormats::fasta: bool
+pub reed::PhyloFormats::nexus: bool
+pub reed::PhyloFormats::phylip: bool
+impl reed::PhyloFormats
+pub const fn reed::PhyloFormats::any(self) -> bool
+impl core::clone::Clone for reed::PhyloFormats
+pub fn reed::PhyloFormats::clone(&self) -> reed::PhyloFormats
+impl core::cmp::Eq for reed::PhyloFormats
+impl core::cmp::PartialEq for reed::PhyloFormats
+pub fn reed::PhyloFormats::eq(&self, &reed::PhyloFormats) -> bool
+impl core::default::Default for reed::PhyloFormats
+pub fn reed::PhyloFormats::default() -> reed::PhyloFormats
+impl core::fmt::Debug for reed::PhyloFormats
+pub fn reed::PhyloFormats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::PhyloFormats
+impl core::marker::StructuralPartialEq for reed::PhyloFormats
+impl core::marker::Freeze for reed::PhyloFormats
+impl core::marker::Send for reed::PhyloFormats
+impl core::marker::Sync for reed::PhyloFormats
+impl core::marker::Unpin for reed::PhyloFormats
+impl core::marker::UnsafeUnpin for reed::PhyloFormats
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PhyloFormats
+impl core::panic::unwind_safe::UnwindSafe for reed::PhyloFormats
+pub struct reed::PhyloOptions
+pub reed::PhyloOptions::outgroup: core::option::Option<alloc::string::String>
+pub reed::PhyloOptions::resolve_iupac: bool
+pub reed::PhyloOptions::write_used_sites: bool
+impl core::clone::Clone for reed::PhyloOptions
+pub fn reed::PhyloOptions::clone(&self) -> reed::PhyloOptions
+impl core::cmp::Eq for reed::PhyloOptions
+impl core::cmp::PartialEq for reed::PhyloOptions
+pub fn reed::PhyloOptions::eq(&self, &reed::PhyloOptions) -> bool
+impl core::default::Default for reed::PhyloOptions
+pub fn reed::PhyloOptions::default() -> reed::PhyloOptions
+impl core::fmt::Debug for reed::PhyloOptions
+pub fn reed::PhyloOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::PhyloOptions
+impl core::marker::Freeze for reed::PhyloOptions
+impl core::marker::Send for reed::PhyloOptions
+impl core::marker::Sync for reed::PhyloOptions
+impl core::marker::Unpin for reed::PhyloOptions
+impl core::marker::UnsafeUnpin for reed::PhyloOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PhyloOptions
+impl core::panic::unwind_safe::UnwindSafe for reed::PhyloOptions
+pub struct reed::PopgenReport
+pub reed::PopgenReport::elapsed: core::time::Duration
+pub reed::PopgenReport::fstats: core::option::Option<reed::FStatsReport>
+pub reed::PopgenReport::ld: core::option::Option<reed::LdReport>
+pub reed::PopgenReport::metrics: reed_engine::metrics::StageMetrics
+pub reed::PopgenReport::n_chunks: u64
+pub reed::PopgenReport::n_invariant_sites: u64
+pub reed::PopgenReport::n_multiallelic_skipped: u64
+pub reed::PopgenReport::n_no_alt_records: u64
+pub reed::PopgenReport::n_records: u64
+pub reed::PopgenReport::n_windows: u64
+pub reed::PopgenReport::pairs_path: core::option::Option<std::path::PathBuf>
+pub reed::PopgenReport::sfs: core::option::Option<reed::SfsReport>
+pub reed::PopgenReport::window_files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::PopgenReport::windows: alloc::vec::Vec<reed::WindowRow>
+impl core::clone::Clone for reed::PopgenReport
+pub fn reed::PopgenReport::clone(&self) -> reed::PopgenReport
+impl core::fmt::Debug for reed::PopgenReport
+pub fn reed::PopgenReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PopgenReport
+impl core::marker::Send for reed::PopgenReport
+impl core::marker::Sync for reed::PopgenReport
+impl core::marker::Unpin for reed::PopgenReport
+impl core::marker::UnsafeUnpin for reed::PopgenReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PopgenReport
+impl core::panic::unwind_safe::UnwindSafe for reed::PopgenReport
+pub struct reed::PopgenRequest
+pub reed::PopgenRequest::compact_window_accumulators: bool
+pub reed::PopgenRequest::contig_lengths: std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, u64>
+pub reed::PopgenRequest::force_samples: bool
+pub reed::PopgenRequest::fstats: core::option::Option<reed::FStatsRequest>
+pub reed::PopgenRequest::grid: reed_core::grid::WindowGrid
+pub reed::PopgenRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::PopgenRequest::kinds: alloc::vec::Vec<reed_stats::request::StatKind>
+pub reed::PopgenRequest::layout: core::option::Option<reed::WindowLayoutOptions>
+pub reed::PopgenRequest::ld: core::option::Option<reed::LdRequest>
+pub reed::PopgenRequest::levels: reed::Levels
+pub reed::PopgenRequest::populations: reed::Populations
+pub reed::PopgenRequest::regions: alloc::vec::Vec<reed_io::chunk::region::Region>
+pub reed::PopgenRequest::select: reed_filter::spec::region::SiteSelector
+pub reed::PopgenRequest::sfs: core::option::Option<reed::SfsRequest>
+pub reed::PopgenRequest::site: core::option::Option<reed_filter::spec::FilterSpec>
+pub reed::PopgenRequest::skip_empty: bool
+pub reed::PopgenRequest::window_output: core::option::Option<reed::WindowOutputConfig>
+impl reed::PopgenRequest
+pub fn reed::PopgenRequest::to_args(&self, &[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, reed::Error>
+impl core::clone::Clone for reed::PopgenRequest
+pub fn reed::PopgenRequest::clone(&self) -> reed::PopgenRequest
+impl core::default::Default for reed::PopgenRequest
+pub fn reed::PopgenRequest::default() -> reed::PopgenRequest
+impl core::fmt::Debug for reed::PopgenRequest
+pub fn reed::PopgenRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::PopgenRequest
+impl core::marker::Send for reed::PopgenRequest
+impl core::marker::Sync for reed::PopgenRequest
+impl core::marker::Unpin for reed::PopgenRequest
+impl core::marker::UnsafeUnpin for reed::PopgenRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PopgenRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::PopgenRequest
+pub struct reed::RenameOutput
+pub reed::RenameOutput::command_line: alloc::string::String
+pub reed::RenameOutput::compressed: bool
+pub reed::RenameOutput::level: u8
+pub reed::RenameOutput::no_command: bool
+pub reed::RenameOutput::no_version: bool
+pub reed::RenameOutput::path: core::option::Option<std::path::PathBuf>
+pub reed::RenameOutput::write_index: core::option::Option<reed_io::write::index::WriteIndex>
+impl core::clone::Clone for reed::RenameOutput
+pub fn reed::RenameOutput::clone(&self) -> reed::RenameOutput
+impl core::fmt::Debug for reed::RenameOutput
+pub fn reed::RenameOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::RenameOutput
+impl core::marker::Send for reed::RenameOutput
+impl core::marker::Sync for reed::RenameOutput
+impl core::marker::Unpin for reed::RenameOutput
+impl core::marker::UnsafeUnpin for reed::RenameOutput
+impl core::panic::unwind_safe::RefUnwindSafe for reed::RenameOutput
+impl core::panic::unwind_safe::UnwindSafe for reed::RenameOutput
+pub struct reed::RenameReport
+pub reed::RenameReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::RenameReport::n_contigs: u64
+pub reed::RenameReport::n_dup_ids: u64
+pub reed::RenameReport::n_ids: u64
+pub reed::RenameReport::n_records: u64
+pub reed::RenameReport::n_samples: u64
+pub reed::RenameReport::stale_index: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::RenameReport
+pub fn reed::RenameReport::clone(&self) -> reed::RenameReport
+impl core::default::Default for reed::RenameReport
+pub fn reed::RenameReport::default() -> reed::RenameReport
+impl core::fmt::Debug for reed::RenameReport
+pub fn reed::RenameReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::RenameReport
+impl core::marker::Send for reed::RenameReport
+impl core::marker::Sync for reed::RenameReport
+impl core::marker::Unpin for reed::RenameReport
+impl core::marker::UnsafeUnpin for reed::RenameReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::RenameReport
+impl core::panic::unwind_safe::UnwindSafe for reed::RenameReport
+pub struct reed::RenameSpec
+pub reed::RenameSpec::add_meta: alloc::vec::Vec<alloc::string::String>
+pub reed::RenameSpec::chr_style: core::option::Option<reed::ChrStyle>
+pub reed::RenameSpec::clear_ids: bool
+pub reed::RenameSpec::fai: core::option::Option<std::path::PathBuf>
+pub reed::RenameSpec::header: core::option::Option<std::path::PathBuf>
+pub reed::RenameSpec::idspace_to: core::option::Option<alloc::string::String>
+pub reed::RenameSpec::remove_meta: alloc::vec::Vec<alloc::string::String>
+pub reed::RenameSpec::rename_chrs: core::option::Option<std::path::PathBuf>
+pub reed::RenameSpec::replace_sample_name: core::option::Option<alloc::string::String>
+pub reed::RenameSpec::rm_dup_ids: bool
+pub reed::RenameSpec::samples: core::option::Option<alloc::string::String>
+pub reed::RenameSpec::samples_file: core::option::Option<std::path::PathBuf>
+pub reed::RenameSpec::set_id: core::option::Option<alloc::string::String>
+pub reed::RenameSpec::set_missing_var_ids: core::option::Option<alloc::string::String>
+pub reed::RenameSpec::update_name: core::option::Option<std::path::PathBuf>
+impl core::clone::Clone for reed::RenameSpec
+pub fn reed::RenameSpec::clone(&self) -> reed::RenameSpec
+impl core::default::Default for reed::RenameSpec
+pub fn reed::RenameSpec::default() -> reed::RenameSpec
+impl core::fmt::Debug for reed::RenameSpec
+pub fn reed::RenameSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::RenameSpec
+impl core::marker::Send for reed::RenameSpec
+impl core::marker::Sync for reed::RenameSpec
+impl core::marker::Unpin for reed::RenameSpec
+impl core::marker::UnsafeUnpin for reed::RenameSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed::RenameSpec
+impl core::panic::unwind_safe::UnwindSafe for reed::RenameSpec
+pub struct reed::ReplayableInput
+impl reed::ReplayableInput
+pub fn reed::ReplayableInput::from_stdin(core::option::Option<&std::path::Path>) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed::ReplayableInput::path(&self) -> &std::path::Path
+pub fn reed::ReplayableInput::replay(&self, &[reed_io::chunk::region::Region]) -> core::result::Result<reed::StreamedInput, reed_io::error::IoError>
+impl core::marker::Freeze for reed::ReplayableInput
+impl core::marker::Send for reed::ReplayableInput
+impl core::marker::Sync for reed::ReplayableInput
+impl core::marker::Unpin for reed::ReplayableInput
+impl core::marker::UnsafeUnpin for reed::ReplayableInput
+impl core::panic::unwind_safe::RefUnwindSafe for reed::ReplayableInput
+impl core::panic::unwind_safe::UnwindSafe for reed::ReplayableInput
+pub struct reed::RunContext<'a>
+pub reed::RunContext::abort: &'a reed_engine::abort::AbortSignal
+pub reed::RunContext::budget: &'a reed_engine::budget::ThreadBudget
+impl<'a> reed::RunContext<'a>
+pub fn reed::RunContext<'a>::idle(&'a reed_engine::budget::ThreadBudget) -> Self
+pub const fn reed::RunContext<'a>::new(&'a reed_engine::budget::ThreadBudget, &'a reed_engine::abort::AbortSignal) -> Self
+impl<'a> core::clone::Clone for reed::RunContext<'a>
+pub fn reed::RunContext<'a>::clone(&self) -> reed::RunContext<'a>
+impl<'a> core::fmt::Debug for reed::RunContext<'a>
+pub fn reed::RunContext<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed::RunContext<'a>
+impl<'a> core::marker::Freeze for reed::RunContext<'a>
+impl<'a> core::marker::Send for reed::RunContext<'a>
+impl<'a> core::marker::Sync for reed::RunContext<'a>
+impl<'a> core::marker::Unpin for reed::RunContext<'a>
+impl<'a> core::marker::UnsafeUnpin for reed::RunContext<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed::RunContext<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed::RunContext<'a>
+pub struct reed::SeekableInput
+impl reed::SeekableInput
+pub fn reed::SeekableInput::path(&self) -> &std::path::Path
+pub const fn reed::SeekableInput::replayable(&self) -> &reed::ReplayableInput
+pub fn reed::SeekableInput::seek(&self, &[reed_io::chunk::region::Region]) -> core::result::Result<reed::StreamedInput, reed_io::error::IoError>
+impl core::marker::Freeze for reed::SeekableInput
+impl core::marker::Send for reed::SeekableInput
+impl core::marker::Sync for reed::SeekableInput
+impl core::marker::Unpin for reed::SeekableInput
+impl core::marker::UnsafeUnpin for reed::SeekableInput
+impl core::panic::unwind_safe::RefUnwindSafe for reed::SeekableInput
+impl core::panic::unwind_safe::UnwindSafe for reed::SeekableInput
+pub struct reed::SfsReport
+pub reed::SfsReport::folded: bool
+pub reed::SfsReport::joint: core::option::Option<reed::JointSfsReport>
+pub reed::SfsReport::n_sites: alloc::vec::Vec<u64>
+pub reed::SfsReport::n_skipped_m_lt_n: alloc::vec::Vec<u64>
+pub reed::SfsReport::projections: alloc::vec::Vec<u32>
+pub reed::SfsReport::spectra: alloc::vec::Vec<alloc::vec::Vec<f64>>
+impl core::clone::Clone for reed::SfsReport
+pub fn reed::SfsReport::clone(&self) -> reed::SfsReport
+impl core::fmt::Debug for reed::SfsReport
+pub fn reed::SfsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::SfsReport
+impl core::marker::Send for reed::SfsReport
+impl core::marker::Sync for reed::SfsReport
+impl core::marker::Unpin for reed::SfsReport
+impl core::marker::UnsafeUnpin for reed::SfsReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::SfsReport
+impl core::panic::unwind_safe::UnwindSafe for reed::SfsReport
+pub struct reed::SfsRequest
+pub reed::SfsRequest::folded: bool
+pub reed::SfsRequest::projections: alloc::vec::Vec<u32>
+impl core::clone::Clone for reed::SfsRequest
+pub fn reed::SfsRequest::clone(&self) -> reed::SfsRequest
+impl core::cmp::Eq for reed::SfsRequest
+impl core::cmp::PartialEq for reed::SfsRequest
+pub fn reed::SfsRequest::eq(&self, &reed::SfsRequest) -> bool
+impl core::fmt::Debug for reed::SfsRequest
+pub fn reed::SfsRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed::SfsRequest
+impl core::marker::Freeze for reed::SfsRequest
+impl core::marker::Send for reed::SfsRequest
+impl core::marker::Sync for reed::SfsRequest
+impl core::marker::Unpin for reed::SfsRequest
+impl core::marker::UnsafeUnpin for reed::SfsRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::SfsRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::SfsRequest
+pub struct reed::StatsOutcome
+pub reed::StatsOutcome::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::StatsOutcome::hist: alloc::vec::Vec<reed::stats::writers::histogram::HistOut>
+pub reed::StatsOutcome::metrics: reed_engine::metrics::StageMetrics
+pub reed::StatsOutcome::n_multiallelic_skipped: u64
+pub reed::StatsOutcome::n_records: u64
+pub reed::StatsOutcome::qc: core::option::Option<reed_stats::summary::report::QcReportAcc>
+impl core::clone::Clone for reed::StatsOutcome
+pub fn reed::StatsOutcome::clone(&self) -> reed::StatsOutcome
+impl core::fmt::Debug for reed::StatsOutcome
+pub fn reed::StatsOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::StatsOutcome
+impl core::marker::Send for reed::StatsOutcome
+impl core::marker::Sync for reed::StatsOutcome
+impl core::marker::Unpin for reed::StatsOutcome
+impl core::marker::UnsafeUnpin for reed::StatsOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for reed::StatsOutcome
+impl core::panic::unwind_safe::UnwindSafe for reed::StatsOutcome
+pub struct reed::StatsReportRequest
+pub reed::StatsReportRequest::depth: bool
+pub reed::StatsReportRequest::force_samples: bool
+pub reed::StatsReportRequest::freq: bool
+pub reed::StatsReportRequest::hardy: bool
+pub reed::StatsReportRequest::het: bool
+pub reed::StatsReportRequest::hist: alloc::vec::Vec<reed::stats::writers::histogram::HistMetric>
+pub reed::StatsReportRequest::missing: bool
+pub reed::StatsReportRequest::populations: core::option::Option<reed::Populations>
+pub reed::StatsReportRequest::prefix: std::path::PathBuf
+pub reed::StatsReportRequest::select: reed_filter::spec::region::SiteSelector
+pub reed::StatsReportRequest::singletons: bool
+pub reed::StatsReportRequest::summary: bool
+impl reed::StatsReportRequest
+pub const fn reed::StatsReportRequest::is_empty(&self) -> bool
+impl core::clone::Clone for reed::StatsReportRequest
+pub fn reed::StatsReportRequest::clone(&self) -> reed::StatsReportRequest
+impl core::default::Default for reed::StatsReportRequest
+pub fn reed::StatsReportRequest::default() -> reed::StatsReportRequest
+impl core::fmt::Debug for reed::StatsReportRequest
+pub fn reed::StatsReportRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::StatsReportRequest
+impl core::marker::Send for reed::StatsReportRequest
+impl core::marker::Sync for reed::StatsReportRequest
+impl core::marker::Unpin for reed::StatsReportRequest
+impl core::marker::UnsafeUnpin for reed::StatsReportRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::StatsReportRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::StatsReportRequest
+pub struct reed::StreamedInput
+impl reed::StreamedInput
+pub fn reed::StreamedInput::bcf_dict(&self) -> core::option::Option<&alloc::sync::Arc<reed_io::bcf::dict::BcfDict>>
+pub const fn reed::StreamedInput::can_replay(&self) -> bool
+pub const fn reed::StreamedInput::facts(&self) -> &reed_io::header::HeaderFacts
+pub const fn reed::StreamedInput::format(&self) -> reed_io::format::Format
+pub fn reed::StreamedInput::into_parts(self) -> (alloc::boxed::Box<dyn reed_io::chunk::ChunkSource>, reed_io::header::HeaderFacts, reed::InputMeta)
+pub const fn reed::StreamedInput::is_bcf(&self) -> bool
+pub const fn reed::StreamedInput::meta(&self) -> &reed::InputMeta
+pub fn reed::StreamedInput::path(&self) -> core::option::Option<&std::path::Path>
+pub fn reed::StreamedInput::take_capability(&mut self) -> reed::InputCapability
+impl core::marker::Freeze for reed::StreamedInput
+impl core::marker::Send for reed::StreamedInput
+impl !core::marker::Sync for reed::StreamedInput
+impl core::marker::Unpin for reed::StreamedInput
+impl core::marker::UnsafeUnpin for reed::StreamedInput
+impl !core::panic::unwind_safe::RefUnwindSafe for reed::StreamedInput
+impl !core::panic::unwind_safe::UnwindSafe for reed::StreamedInput
+pub struct reed::WindowLayoutOptions
+pub reed::WindowLayoutOptions::invariant: reed::InvariantMode
+impl core::clone::Clone for reed::WindowLayoutOptions
+pub fn reed::WindowLayoutOptions::clone(&self) -> reed::WindowLayoutOptions
+impl core::fmt::Debug for reed::WindowLayoutOptions
+pub fn reed::WindowLayoutOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::WindowLayoutOptions
+impl core::marker::Freeze for reed::WindowLayoutOptions
+impl core::marker::Send for reed::WindowLayoutOptions
+impl core::marker::Sync for reed::WindowLayoutOptions
+impl core::marker::Unpin for reed::WindowLayoutOptions
+impl core::marker::UnsafeUnpin for reed::WindowLayoutOptions
+impl core::panic::unwind_safe::RefUnwindSafe for reed::WindowLayoutOptions
+impl core::panic::unwind_safe::UnwindSafe for reed::WindowLayoutOptions
+pub struct reed::WindowOutputConfig
+pub reed::WindowOutputConfig::command: alloc::string::String
+pub reed::WindowOutputConfig::fstats: bool
+pub reed::WindowOutputConfig::ld: bool
+pub reed::WindowOutputConfig::prefix: std::path::PathBuf
+pub reed::WindowOutputConfig::sfs: bool
+pub reed::WindowOutputConfig::version: alloc::string::String
+impl core::clone::Clone for reed::WindowOutputConfig
+pub fn reed::WindowOutputConfig::clone(&self) -> reed::WindowOutputConfig
+impl core::fmt::Debug for reed::WindowOutputConfig
+pub fn reed::WindowOutputConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::WindowOutputConfig
+impl core::marker::Send for reed::WindowOutputConfig
+impl core::marker::Sync for reed::WindowOutputConfig
+impl core::marker::Unpin for reed::WindowOutputConfig
+impl core::marker::UnsafeUnpin for reed::WindowOutputConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed::WindowOutputConfig
+impl core::panic::unwind_safe::UnwindSafe for reed::WindowOutputConfig
+pub struct reed::WindowRow
+pub reed::WindowRow::accs: alloc::vec::Vec<reed_stats::request::StatAcc>
+pub reed::WindowRow::bp: u64
+pub reed::WindowRow::contig: alloc::string::String
+pub reed::WindowRow::denom_bp: u64
+pub reed::WindowRow::end: u64
+pub reed::WindowRow::outputs: alloc::vec::Vec<reed_stats::request::StatOutput>
+pub reed::WindowRow::start1: u64
+impl core::clone::Clone for reed::WindowRow
+pub fn reed::WindowRow::clone(&self) -> reed::WindowRow
+impl core::fmt::Debug for reed::WindowRow
+pub fn reed::WindowRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::WindowRow
+impl core::marker::Send for reed::WindowRow
+impl core::marker::Sync for reed::WindowRow
+impl core::marker::Unpin for reed::WindowRow
+impl core::marker::UnsafeUnpin for reed::WindowRow
+impl core::panic::unwind_safe::RefUnwindSafe for reed::WindowRow
+impl core::panic::unwind_safe::UnwindSafe for reed::WindowRow
+pub struct reed::XvalOutcome
+pub reed::XvalOutcome::best_mean_success_n_pca: usize
+pub reed::XvalOutcome::best_n_pca: usize
+pub reed::XvalOutcome::candidates: alloc::vec::Vec<(usize, f64)>
+pub reed::XvalOutcome::random_chance: f64
+impl core::clone::Clone for reed::XvalOutcome
+pub fn reed::XvalOutcome::clone(&self) -> reed::XvalOutcome
+impl core::fmt::Debug for reed::XvalOutcome
+pub fn reed::XvalOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::XvalOutcome
+impl core::marker::Send for reed::XvalOutcome
+impl core::marker::Sync for reed::XvalOutcome
+impl core::marker::Unpin for reed::XvalOutcome
+impl core::marker::UnsafeUnpin for reed::XvalOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalOutcome
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalOutcome
+pub struct reed::XvalRequest
+pub reed::XvalRequest::n_pca: core::option::Option<alloc::vec::Vec<usize>>
+pub reed::XvalRequest::n_rep: usize
+pub reed::XvalRequest::result: reed::XvalResultMode
+pub reed::XvalRequest::seed: u64
+pub reed::XvalRequest::training_set: f64
+impl core::clone::Clone for reed::XvalRequest
+pub fn reed::XvalRequest::clone(&self) -> reed::XvalRequest
+impl core::default::Default for reed::XvalRequest
+pub fn reed::XvalRequest::default() -> Self
+impl core::fmt::Debug for reed::XvalRequest
+pub fn reed::XvalRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::XvalRequest
+impl core::marker::Send for reed::XvalRequest
+impl core::marker::Sync for reed::XvalRequest
+impl core::marker::Unpin for reed::XvalRequest
+impl core::marker::UnsafeUnpin for reed::XvalRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalRequest
+pub fn reed::assign_groups(&std::path::Path, &[alloc::string::String], bool) -> core::result::Result<(alloc::vec::Vec<core::option::Option<u32>>, alloc::vec::Vec<alloc::string::String>), reed::Error>
+pub fn reed::assign_groups_in_memory(&[(alloc::string::String, alloc::string::String)], &[alloc::string::String], bool) -> core::result::Result<(alloc::vec::Vec<core::option::Option<u32>>, alloc::vec::Vec<alloc::string::String>), reed::Error>
+pub fn reed::default_kinds(usize) -> alloc::vec::Vec<reed_stats::request::StatKind>
+pub fn reed::open_regions(core::option::Option<&std::path::Path>, &[reed_io::chunk::region::Region]) -> core::result::Result<reed::OpenedInput, reed_io::error::IoError>
+pub fn reed::read_genotype_matrix(reed::OpenedInput, core::option::Option<&[bool]>, &reed::RunContext<'_>, reed::MatrixUse) -> core::result::Result<(reed_core::linalg::Mat, alloc::vec::Vec<alloc::string::String>), reed::Error>
+pub fn reed::render_tsv(&[reed::WindowRow], &[reed_stats::request::StatKind], bool) -> alloc::string::String
+pub fn reed::run_convert(core::option::Option<&std::path::Path>, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
+pub fn reed::run_convert_opened(reed::OpenedInput, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
+pub fn reed::run_dapc(core::option::Option<&std::path::Path>, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
+pub fn reed::run_dapc_opened(reed::OpenedInput, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
+pub fn reed::run_distance(core::option::Option<&std::path::Path>, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
+pub fn reed::run_distance_opened(reed::OpenedInput, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
+pub fn reed::run_filter(core::option::Option<&std::path::Path>, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
+pub fn reed::run_filter_opened(reed::OpenedInput, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
+pub fn reed::run_index(&std::path::Path, reed_io::write::index::WriteIndex, core::option::Option<&std::path::Path>, &reed::RunContext<'_>) -> core::result::Result<reed::IndexOutcome, reed::Error>
+pub fn reed::run_pca(core::option::Option<&std::path::Path>, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
+pub fn reed::run_pca_opened(reed::OpenedInput, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
+pub fn reed::run_popgen(core::option::Option<&std::path::Path>, &reed::PopgenRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PopgenReport, reed::Error>
+pub fn reed::run_popgen_opened(reed::OpenedInput, &reed::PopgenRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PopgenReport, reed::Error>
+pub fn reed::run_rename(core::option::Option<&std::path::Path>, &reed::RenameSpec, &reed::RenameOutput, &reed::RunContext<'_>) -> core::result::Result<reed::RenameReport, reed::Error>
+pub fn reed::run_rename_opened(reed::OpenedInput, &reed::RenameSpec, &reed::RenameOutput, &reed::RunContext<'_>) -> core::result::Result<reed::RenameReport, reed::Error>
+pub fn reed::run_stats(core::option::Option<&std::path::Path>, &reed::StatsReportRequest, &reed::RunContext<'_>) -> core::result::Result<reed::StatsOutcome, reed::Error>
+pub fn reed::run_stats_opened(reed::OpenedInput, &reed::StatsReportRequest, &reed::RunContext<'_>) -> core::result::Result<reed::StatsOutcome, reed::Error>
+pub fn reed::validate_report_tags(&reed::StatsReportRequest, &reed_core::tag_table::TagTable) -> core::result::Result<(), reed::Error>
+pub fn reed::window_kinds(usize, bool, bool, bool, bool, core::option::Option<reed_stats::fst::FstKind>, core::option::Option<reed_stats::pbs::PbsKind>) -> alloc::vec::Vec<reed_stats::request::StatKind>
+pub type reed::DecayBin = (u64, u64, u64, core::option::Option<f64>)
+pub type reed::OpenedInput = reed::StreamedInput

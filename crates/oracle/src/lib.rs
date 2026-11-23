@@ -7,6 +7,14 @@
 //!   semantics + citation); availability is derived from a [`SiteCompleteness`]
 //!   manifest; results always carry exact integer counts, never bare floats.
 
+//! # Examples
+//!
+//! ```
+//! use reed_oracle::Bits;
+//! let bits = Bits::from_bools(&[true, false, true]);
+//! assert_eq!(bits.count_ones(), 2);
+//! ```
+//!
 pub mod bits;
 pub mod estimators;
 pub mod manifest;

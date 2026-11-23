@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use reed::budget::ThreadBudget;
+use reed::ThreadBudget;
 use reed::{ChrStyle, RenameOutput, RenameSpec};
 
 use crate::cli::RenameCli;
@@ -60,6 +60,8 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
         )?,
     };
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
     let command_line = crate::params::command_line();
     let write_index = reed::WriteIndex::parse(args.write_index.as_deref())?;
     // doc_v21 S16: `-W` with no possible index target used to be a silent
@@ -89,7 +91,7 @@ pub(crate) fn run_rename_cli(args: RenameCli) -> Result<(), reed::Error> {
     let input_file = input_path(&args.input);
     // (doc_v20 R5) refuse `-o` == input before the writer opens.
     super::common::refuse_output_eq_input(input_file.as_deref(), output.path.as_deref())?;
-    let report = reed::run_rename(input_file.as_deref(), &spec, &output, &budget)?;
+    let report = reed::run_rename(input_file.as_deref(), &spec, &output, &ctx)?;
     if let Some(stale) = &report.stale_index {
         eprintln!(
             "reed rename: warning: {} is stale after renaming (the CHROM/contig names \

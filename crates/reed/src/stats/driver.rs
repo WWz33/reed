@@ -10,6 +10,8 @@ use crate::stats::run::{BcfNative, GridMode, StatsJob, stats_policies};
 use crate::stats::sink::StatsSink;
 use reed_core::grid::WindowGrid;
 use reed_engine::budget::ThreadBudget;
+
+use crate::context::RunContext;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::run;
 use reed_stats::request::build_accs;
@@ -136,10 +138,10 @@ pub(crate) fn sfs_report(partial: &crate::stats::request::SfsPartial, plan: &Sfs
 pub fn run_popgen(
     path: Option<&Path>,
     request: &PopgenRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<PopgenReport, crate::error::Error> {
     let opened = crate::input::open(path).map_err(EngineError::from)?;
-    run_popgen_opened(opened, request, budget)
+    run_popgen_opened(opened, request, ctx)
 }
 
 /// Allocates the worker half of the budget to LD, leaving the other half
@@ -162,11 +164,12 @@ fn ld_worker_share(budget: &ThreadBudget, requested: bool) -> usize {
 pub fn run_popgen_opened(
     opened: crate::input::OpenedInput,
     request: &PopgenRequest,
-    budget: &ThreadBudget,
+    ctx: &RunContext<'_>,
 ) -> Result<PopgenReport, crate::error::Error> {
+    let budget = ctx.budget;
     // ---- Request → executable plan (08 §6.2). Every failure up to the end
     // of the validation section below is request construction (Usage). ----
-    let sample_names = opened.facts.sample_names.clone();
+    let sample_names = opened.facts().sample_names.clone();
     let (gt_groups, group_names) = resolve_groups(
         &request.populations,
         request.force_samples,
@@ -184,7 +187,7 @@ pub fn run_popgen_opened(
             spec.site.max_alt_alleles = None;
             Some(Arc::new(reed_filter::plan::compile(
                 &spec,
-                &reed_io::header::tag_table(&opened.facts.header),
+                &reed_io::header::tag_table(&opened.facts().header),
                 "",
                 false,
             )?))
@@ -293,8 +296,8 @@ pub fn run_popgen_opened(
     });
     let accs = build_accs(&request.kinds, &group_sizes)
         .map_err(|err| crate::error::Error::usage(format!("invalid stats request: {err}")))?;
-    let abort = reed_engine::abort::abort_for(budget);
-    let header = opened.facts.clone();
+    let abort = ctx.abort;
+    let header = opened.facts().clone();
     let contig_len: Arc<HashMap<Vec<u8>, u64>> = Arc::new({
         let mut map: HashMap<Vec<u8>, u64> = HashMap::new();
         for (name, len) in header
@@ -338,7 +341,7 @@ pub fn run_popgen_opened(
         // The native BCF path exists only for BCF input (02-bcf.md §2.4);
         // the table is built once per run.
         region_accs: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        bcf: opened.bcf.as_ref().map(|dict| BcfNative {
+        bcf: opened.bcf_dict().map(|dict| BcfNative {
             dict: Arc::clone(dict),
             gt_key: reed_io::bcf::format_key(dict, b"GT"),
             table: reed_io::bcf::GtTable::new(stats_policies()),
@@ -371,11 +374,25 @@ pub fn run_popgen_opened(
         mem: budget.mem,
     };
     let ld_executor = match ld_plan.as_ref() {
-        Some(_) => Some(crate::stats::sink::LdExecutor::new(
-            ld_workers,
-            abort.handle.clone(),
-            abort.signal.clone(),
-        )?),
+        Some(_) => {
+            // An idle context has no trigger handle, and pairing a fresh
+            // handle with the idle *signal* leaves `LdExecutor::drop`'s
+            // `trigger()` setting a flag no worker polls: an error would
+            // wait for every queued matrix before surfacing. Build one real
+            // channel and hand both ends of it over instead (doc_v30 §3.4).
+            let (handle, signal) = match abort.trigger_handle() {
+                Some(handle) => (handle.clone(), abort.clone()),
+                None => reed_engine::abort::abort_channel_for(pipeline_threads),
+            };
+            Some(crate::stats::sink::LdExecutor::new(
+                ld_workers,
+                // Half the memory budget for queued matrices, mirroring the
+                // worker split; the other half stays with the input pipeline.
+                budget.mem.bytes / 2,
+                handle,
+                signal,
+            )?)
+        }
         None => None,
     };
     let output_session = request
@@ -443,11 +460,11 @@ pub fn run_popgen_opened(
                     job,
                 ),
                 &opened,
-                &abort,
+                abort,
                 &pipeline_budget,
             );
-            let mut source = opened.source;
-            let report = run(source.as_mut(), &job, sink, &pipeline_budget, &abort)?;
+            let (mut source, _facts, _meta) = opened.into_parts();
+            let report = run(source.as_mut(), &job, sink, &pipeline_budget, abort)?;
             job.finish(report.n_chunks, true)?;
             report
         }
@@ -455,12 +472,12 @@ pub fn run_popgen_opened(
             let job = crate::bcf_input::InputJob::with_bcf_records(
                 job,
                 &opened,
-                &abort,
+                abort,
                 &pipeline_budget,
                 StatsJob::run_bcf_records,
             );
-            let mut source = opened.source;
-            let report = run(source.as_mut(), &job, sink, &pipeline_budget, &abort)?;
+            let (mut source, _facts, _meta) = opened.into_parts();
+            let report = run(source.as_mut(), &job, sink, &pipeline_budget, abort)?;
             job.finish(report.n_chunks, true)?;
             report
         }

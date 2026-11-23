@@ -1,0 +1,1861 @@
+pub mod reed_filter
+pub mod reed_filter::error
+pub enum reed_filter::error::FilterError
+pub reed_filter::error::FilterError::Decode
+pub reed_filter::error::FilterError::Decode::contig: alloc::string::String
+pub reed_filter::error::FilterError::Decode::msg: alloc::string::String
+pub reed_filter::error::FilterError::Decode::pos: u64
+pub reed_filter::error::FilterError::Format(alloc::string::String)
+pub reed_filter::error::FilterError::Io(std::io::error::Error)
+pub reed_filter::error::FilterError::Spec(alloc::string::String)
+pub reed_filter::error::FilterError::Usage(alloc::string::String)
+impl core::convert::From<std::io::error::Error> for reed_filter::error::FilterError
+pub fn reed_filter::error::FilterError::from(std::io::error::Error) -> Self
+impl core::error::Error for reed_filter::error::FilterError
+impl core::fmt::Debug for reed_filter::error::FilterError
+pub fn reed_filter::error::FilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_filter::error::FilterError
+pub fn reed_filter::error::FilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::error::FilterError
+impl core::marker::Send for reed_filter::error::FilterError
+impl core::marker::Sync for reed_filter::error::FilterError
+impl core::marker::Unpin for reed_filter::error::FilterError
+impl core::marker::UnsafeUnpin for reed_filter::error::FilterError
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_filter::error::FilterError
+impl !core::panic::unwind_safe::UnwindSafe for reed_filter::error::FilterError
+pub mod reed_filter::eval
+pub mod reed_filter::eval::edit_plan
+pub enum reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+pub reed_filter::eval::edit_plan::StaleTags::Borrowed(&'s [&'a [u8]])
+pub reed_filter::eval::edit_plan::StaleTags::Owned(alloc::vec::Vec<&'a [u8]>)
+impl<'a> reed_filter::eval::edit_plan::StaleTags<'_, 'a>
+pub fn reed_filter::eval::edit_plan::StaleTags<'_, 'a>::as_slice(&self) -> &[&'a [u8]]
+impl<'s, 'a> core::fmt::Debug for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+pub fn reed_filter::eval::edit_plan::StaleTags<'s, 'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'s, 'a> core::marker::Freeze for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+impl<'s, 'a> core::marker::Send for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+impl<'s, 'a> core::marker::Sync for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+impl<'s, 'a> core::marker::Unpin for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+impl<'s, 'a> core::marker::UnsafeUnpin for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+impl<'s, 'a> core::panic::unwind_safe::RefUnwindSafe for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+impl<'s, 'a> core::panic::unwind_safe::UnwindSafe for reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+pub struct reed_filter::eval::edit_plan::SurvivorEdit<'a>
+pub reed_filter::eval::edit_plan::SurvivorEdit::info_remove: &'a [&'a [u8]]
+pub reed_filter::eval::edit_plan::SurvivorEdit::info_set: &'a [(&'a [u8], reed_core::vcf::line_edit::InfoValueOut)]
+pub reed_filter::eval::edit_plan::SurvivorEdit::keep_samples: core::option::Option<&'a reed_core::sample::SampleMask>
+pub reed_filter::eval::edit_plan::SurvivorEdit::mask_gt: core::option::Option<&'a reed_core::bitset::Bitset>
+impl<'a> reed_filter::eval::edit_plan::SurvivorEdit<'a>
+pub fn reed_filter::eval::edit_plan::SurvivorEdit<'a>::edit_plan(&self) -> reed_core::vcf::line_edit::EditPlan<'a>
+impl<'a> core::fmt::Debug for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+pub fn reed_filter::eval::edit_plan::SurvivorEdit<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Freeze for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+impl<'a> core::marker::Send for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+impl<'a> core::marker::Sync for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+impl<'a> core::marker::Unpin for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_filter::eval::edit_plan::SurvivorEdit<'a>
+pub fn reed_filter::eval::edit_plan::fill_info_set(&reed_core::count::site_counts::SiteCounts, &reed_filter::plan::RecomputeFlags, &mut reed_core::math::hwe::HweCache, &mut alloc::vec::Vec<(&'static [u8], reed_core::vcf::line_edit::InfoValueOut)>)
+pub fn reed_filter::eval::edit_plan::stale_for_record<'s, 'a>(&'s [&'a [u8]], &[&'a [u8]], bool) -> reed_filter::eval::edit_plan::StaleTags<'s, 'a>
+pub mod reed_filter::eval::head
+pub struct reed_filter::eval::head::HeadScratch
+pub reed_filter::eval::head::HeadScratch::index: reed_core::vcf::info::InfoIndex
+pub reed_filter::eval::head::HeadScratch::index_current: bool
+impl reed_filter::eval::head::HeadScratch
+pub fn reed_filter::eval::head::HeadScratch::new() -> Self
+impl core::default::Default for reed_filter::eval::head::HeadScratch
+pub fn reed_filter::eval::head::HeadScratch::default() -> reed_filter::eval::head::HeadScratch
+impl core::marker::Freeze for reed_filter::eval::head::HeadScratch
+impl core::marker::Send for reed_filter::eval::head::HeadScratch
+impl core::marker::Sync for reed_filter::eval::head::HeadScratch
+impl core::marker::Unpin for reed_filter::eval::head::HeadScratch
+impl core::marker::UnsafeUnpin for reed_filter::eval::head::HeadScratch
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::eval::head::HeadScratch
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::eval::head::HeadScratch
+pub fn reed_filter::eval::head::eval_head(&reed_core::vcf::line::LineRef<'_>, u64, &[reed_filter::plan::HeadRule], &mut [u64], &mut reed_filter::eval::head::HeadScratch, &reed_core::tag_table::TagTable) -> core::result::Result<bool, reed_filter::error::FilterError>
+pub fn reed_filter::eval::head::eval_head_with_built_index(&reed_core::vcf::line::LineRef<'_>, u64, &[reed_filter::plan::HeadRule], &mut [u64], &mut reed_filter::eval::head::HeadScratch, &reed_core::tag_table::TagTable) -> core::result::Result<bool, reed_filter::error::FilterError>
+pub mod reed_filter::eval::tail
+pub fn reed_filter::eval::tail::eval_tail(&reed_filter::expr::SiteValues<'_>, &reed_core::count::site_counts::SiteCounts, usize, &[reed_filter::plan::TailRule], &mut [u64], &mut reed_core::math::hwe::HweCache) -> bool
+pub mod reed_filter::expr
+pub mod reed_filter::expr::lexer
+pub enum reed_filter::expr::lexer::Token
+pub reed_filter::expr::lexer::Token::Cmp(&'static str)
+pub reed_filter::expr::lexer::Token::Ident(alloc::string::String)
+pub reed_filter::expr::lexer::Token::LBracket
+pub reed_filter::expr::lexer::Token::LParen
+pub reed_filter::expr::lexer::Token::Logic(&'static str)
+pub reed_filter::expr::lexer::Token::Missing
+pub reed_filter::expr::lexer::Token::Not
+pub reed_filter::expr::lexer::Token::Number(f64)
+pub reed_filter::expr::lexer::Token::RBracket
+pub reed_filter::expr::lexer::Token::RParen
+pub reed_filter::expr::lexer::Token::Str(alloc::string::String)
+impl core::clone::Clone for reed_filter::expr::lexer::Token
+pub fn reed_filter::expr::lexer::Token::clone(&self) -> reed_filter::expr::lexer::Token
+impl core::cmp::PartialEq for reed_filter::expr::lexer::Token
+pub fn reed_filter::expr::lexer::Token::eq(&self, &reed_filter::expr::lexer::Token) -> bool
+impl core::fmt::Debug for reed_filter::expr::lexer::Token
+pub fn reed_filter::expr::lexer::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_filter::expr::lexer::Token
+pub fn reed_filter::expr::lexer::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::expr::lexer::Token
+impl core::marker::Freeze for reed_filter::expr::lexer::Token
+impl core::marker::Send for reed_filter::expr::lexer::Token
+impl core::marker::Sync for reed_filter::expr::lexer::Token
+impl core::marker::Unpin for reed_filter::expr::lexer::Token
+impl core::marker::UnsafeUnpin for reed_filter::expr::lexer::Token
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::lexer::Token
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::lexer::Token
+pub fn reed_filter::expr::lexer::tokenize(&str) -> core::result::Result<alloc::vec::Vec<reed_filter::expr::lexer::Token>, alloc::string::String>
+pub mod reed_filter::expr::parser
+pub enum reed_filter::expr::parser::CmpOp
+pub reed_filter::expr::parser::CmpOp::Eq
+pub reed_filter::expr::parser::CmpOp::Ge
+pub reed_filter::expr::parser::CmpOp::Gt
+pub reed_filter::expr::parser::CmpOp::Le
+pub reed_filter::expr::parser::CmpOp::Lt
+pub reed_filter::expr::parser::CmpOp::Match
+pub reed_filter::expr::parser::CmpOp::Ne
+pub reed_filter::expr::parser::CmpOp::NotMatch
+impl reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::as_str(self) -> &'static str
+impl core::clone::Clone for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::clone(&self) -> reed_filter::expr::parser::CmpOp
+impl core::cmp::Eq for reed_filter::expr::parser::CmpOp
+impl core::cmp::PartialEq for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::eq(&self, &reed_filter::expr::parser::CmpOp) -> bool
+impl core::convert::From<reed_filter::spec::predicate::Op> for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::from(reed_filter::spec::predicate::Op) -> Self
+impl core::fmt::Debug for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::CmpOp
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::CmpOp
+impl core::marker::Freeze for reed_filter::expr::parser::CmpOp
+impl core::marker::Send for reed_filter::expr::parser::CmpOp
+impl core::marker::Sync for reed_filter::expr::parser::CmpOp
+impl core::marker::Unpin for reed_filter::expr::parser::CmpOp
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::CmpOp
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::CmpOp
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::CmpOp
+pub enum reed_filter::expr::parser::Expr
+pub reed_filter::expr::parser::Expr::Bare(alloc::string::String)
+pub reed_filter::expr::parser::Expr::Cmp(reed_filter::expr::parser::CmpOp, alloc::boxed::Box<reed_filter::expr::parser::Expr>, alloc::boxed::Box<reed_filter::expr::parser::Expr>)
+pub reed_filter::expr::parser::Expr::Field(reed_filter::expr::parser::Field)
+pub reed_filter::expr::parser::Expr::Fmt(alloc::string::String)
+pub reed_filter::expr::parser::Expr::Info(alloc::string::String)
+pub reed_filter::expr::parser::Expr::Logic(reed_filter::expr::parser::LogicOp, alloc::boxed::Box<reed_filter::expr::parser::Expr>, alloc::boxed::Box<reed_filter::expr::parser::Expr>)
+pub reed_filter::expr::parser::Expr::Missing
+pub reed_filter::expr::parser::Expr::Not(alloc::boxed::Box<reed_filter::expr::parser::Expr>)
+pub reed_filter::expr::parser::Expr::Number(f64)
+pub reed_filter::expr::parser::Expr::Str(alloc::string::String)
+pub reed_filter::expr::parser::Expr::Subscript(alloc::boxed::Box<reed_filter::expr::parser::Expr>, reed_filter::expr::parser::Subscript)
+impl reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::fmt_tags(&self, &mut alloc::vec::Vec<alloc::string::String>)
+pub fn reed_filter::expr::parser::Expr::reads_gt_fields(&self) -> bool
+pub fn reed_filter::expr::parser::Expr::references_genotypes(&self) -> bool
+impl core::clone::Clone for reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::clone(&self) -> reed_filter::expr::parser::Expr
+impl core::cmp::PartialEq for reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::eq(&self, &reed_filter::expr::parser::Expr) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::Expr
+impl core::marker::Freeze for reed_filter::expr::parser::Expr
+impl core::marker::Send for reed_filter::expr::parser::Expr
+impl core::marker::Sync for reed_filter::expr::parser::Expr
+impl core::marker::Unpin for reed_filter::expr::parser::Expr
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::Expr
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::Expr
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::Expr
+pub enum reed_filter::expr::parser::Field
+pub reed_filter::expr::parser::Field::Ac
+pub reed_filter::expr::parser::Field::Af
+pub reed_filter::expr::parser::Field::An
+pub reed_filter::expr::parser::Field::Chrom
+pub reed_filter::expr::parser::Field::FMissing
+pub reed_filter::expr::parser::Field::Filter
+pub reed_filter::expr::parser::Field::Id
+pub reed_filter::expr::parser::Field::Mac
+pub reed_filter::expr::parser::Field::Maf
+pub reed_filter::expr::parser::Field::NAlt
+pub reed_filter::expr::parser::Field::NMissing
+pub reed_filter::expr::parser::Field::NSamples
+pub reed_filter::expr::parser::Field::Pos
+pub reed_filter::expr::parser::Field::Qual
+pub reed_filter::expr::parser::Field::Type
+impl reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::from_name(&str) -> core::option::Option<Self>
+pub const fn reed_filter::expr::parser::Field::is_genotype_derived(self) -> bool
+pub const fn reed_filter::expr::parser::Field::name(self) -> &'static str
+impl core::clone::Clone for reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::clone(&self) -> reed_filter::expr::parser::Field
+impl core::cmp::Eq for reed_filter::expr::parser::Field
+impl core::cmp::PartialEq for reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::eq(&self, &reed_filter::expr::parser::Field) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::Field
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::Field
+impl core::marker::Freeze for reed_filter::expr::parser::Field
+impl core::marker::Send for reed_filter::expr::parser::Field
+impl core::marker::Sync for reed_filter::expr::parser::Field
+impl core::marker::Unpin for reed_filter::expr::parser::Field
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::Field
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::Field
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::Field
+pub enum reed_filter::expr::parser::LogicOp
+pub reed_filter::expr::parser::LogicOp::And
+pub reed_filter::expr::parser::LogicOp::Or
+impl reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::as_str(self) -> &'static str
+impl core::clone::Clone for reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::clone(&self) -> reed_filter::expr::parser::LogicOp
+impl core::cmp::Eq for reed_filter::expr::parser::LogicOp
+impl core::cmp::PartialEq for reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::eq(&self, &reed_filter::expr::parser::LogicOp) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::LogicOp
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::LogicOp
+impl core::marker::Freeze for reed_filter::expr::parser::LogicOp
+impl core::marker::Send for reed_filter::expr::parser::LogicOp
+impl core::marker::Sync for reed_filter::expr::parser::LogicOp
+impl core::marker::Unpin for reed_filter::expr::parser::LogicOp
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::LogicOp
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::LogicOp
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::LogicOp
+pub enum reed_filter::expr::parser::Subscript
+pub reed_filter::expr::parser::Subscript::Any
+pub reed_filter::expr::parser::Subscript::Index(usize)
+impl core::clone::Clone for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::Subscript::clone(&self) -> reed_filter::expr::parser::Subscript
+impl core::cmp::Eq for reed_filter::expr::parser::Subscript
+impl core::cmp::PartialEq for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::Subscript::eq(&self, &reed_filter::expr::parser::Subscript) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::Subscript::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::Subscript
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::Subscript
+impl core::marker::Freeze for reed_filter::expr::parser::Subscript
+impl core::marker::Send for reed_filter::expr::parser::Subscript
+impl core::marker::Sync for reed_filter::expr::parser::Subscript
+impl core::marker::Unpin for reed_filter::expr::parser::Subscript
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::Subscript
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::Subscript
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::parse(&str) -> core::result::Result<reed_filter::expr::parser::Expr, alloc::string::String>
+pub enum reed_filter::expr::CmpOp
+pub reed_filter::expr::CmpOp::Eq
+pub reed_filter::expr::CmpOp::Ge
+pub reed_filter::expr::CmpOp::Gt
+pub reed_filter::expr::CmpOp::Le
+pub reed_filter::expr::CmpOp::Lt
+pub reed_filter::expr::CmpOp::Match
+pub reed_filter::expr::CmpOp::Ne
+pub reed_filter::expr::CmpOp::NotMatch
+impl reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::as_str(self) -> &'static str
+impl core::clone::Clone for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::clone(&self) -> reed_filter::expr::parser::CmpOp
+impl core::cmp::Eq for reed_filter::expr::parser::CmpOp
+impl core::cmp::PartialEq for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::eq(&self, &reed_filter::expr::parser::CmpOp) -> bool
+impl core::convert::From<reed_filter::spec::predicate::Op> for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::from(reed_filter::spec::predicate::Op) -> Self
+impl core::fmt::Debug for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::CmpOp
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::CmpOp
+impl core::marker::Freeze for reed_filter::expr::parser::CmpOp
+impl core::marker::Send for reed_filter::expr::parser::CmpOp
+impl core::marker::Sync for reed_filter::expr::parser::CmpOp
+impl core::marker::Unpin for reed_filter::expr::parser::CmpOp
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::CmpOp
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::CmpOp
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::CmpOp
+pub enum reed_filter::expr::Expr
+pub reed_filter::expr::Expr::Bare(alloc::string::String)
+pub reed_filter::expr::Expr::Cmp(reed_filter::expr::parser::CmpOp, alloc::boxed::Box<reed_filter::expr::parser::Expr>, alloc::boxed::Box<reed_filter::expr::parser::Expr>)
+pub reed_filter::expr::Expr::Field(reed_filter::expr::parser::Field)
+pub reed_filter::expr::Expr::Fmt(alloc::string::String)
+pub reed_filter::expr::Expr::Info(alloc::string::String)
+pub reed_filter::expr::Expr::Logic(reed_filter::expr::parser::LogicOp, alloc::boxed::Box<reed_filter::expr::parser::Expr>, alloc::boxed::Box<reed_filter::expr::parser::Expr>)
+pub reed_filter::expr::Expr::Missing
+pub reed_filter::expr::Expr::Not(alloc::boxed::Box<reed_filter::expr::parser::Expr>)
+pub reed_filter::expr::Expr::Number(f64)
+pub reed_filter::expr::Expr::Str(alloc::string::String)
+pub reed_filter::expr::Expr::Subscript(alloc::boxed::Box<reed_filter::expr::parser::Expr>, reed_filter::expr::parser::Subscript)
+impl reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::fmt_tags(&self, &mut alloc::vec::Vec<alloc::string::String>)
+pub fn reed_filter::expr::parser::Expr::reads_gt_fields(&self) -> bool
+pub fn reed_filter::expr::parser::Expr::references_genotypes(&self) -> bool
+impl core::clone::Clone for reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::clone(&self) -> reed_filter::expr::parser::Expr
+impl core::cmp::PartialEq for reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::eq(&self, &reed_filter::expr::parser::Expr) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::Expr
+pub fn reed_filter::expr::parser::Expr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::Expr
+impl core::marker::Freeze for reed_filter::expr::parser::Expr
+impl core::marker::Send for reed_filter::expr::parser::Expr
+impl core::marker::Sync for reed_filter::expr::parser::Expr
+impl core::marker::Unpin for reed_filter::expr::parser::Expr
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::Expr
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::Expr
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::Expr
+pub enum reed_filter::expr::Field
+pub reed_filter::expr::Field::Ac
+pub reed_filter::expr::Field::Af
+pub reed_filter::expr::Field::An
+pub reed_filter::expr::Field::Chrom
+pub reed_filter::expr::Field::FMissing
+pub reed_filter::expr::Field::Filter
+pub reed_filter::expr::Field::Id
+pub reed_filter::expr::Field::Mac
+pub reed_filter::expr::Field::Maf
+pub reed_filter::expr::Field::NAlt
+pub reed_filter::expr::Field::NMissing
+pub reed_filter::expr::Field::NSamples
+pub reed_filter::expr::Field::Pos
+pub reed_filter::expr::Field::Qual
+pub reed_filter::expr::Field::Type
+impl reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::from_name(&str) -> core::option::Option<Self>
+pub const fn reed_filter::expr::parser::Field::is_genotype_derived(self) -> bool
+pub const fn reed_filter::expr::parser::Field::name(self) -> &'static str
+impl core::clone::Clone for reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::clone(&self) -> reed_filter::expr::parser::Field
+impl core::cmp::Eq for reed_filter::expr::parser::Field
+impl core::cmp::PartialEq for reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::eq(&self, &reed_filter::expr::parser::Field) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::Field
+pub fn reed_filter::expr::parser::Field::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::Field
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::Field
+impl core::marker::Freeze for reed_filter::expr::parser::Field
+impl core::marker::Send for reed_filter::expr::parser::Field
+impl core::marker::Sync for reed_filter::expr::parser::Field
+impl core::marker::Unpin for reed_filter::expr::parser::Field
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::Field
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::Field
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::Field
+pub enum reed_filter::expr::LogicOp
+pub reed_filter::expr::LogicOp::And
+pub reed_filter::expr::LogicOp::Or
+impl reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::as_str(self) -> &'static str
+impl core::clone::Clone for reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::clone(&self) -> reed_filter::expr::parser::LogicOp
+impl core::cmp::Eq for reed_filter::expr::parser::LogicOp
+impl core::cmp::PartialEq for reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::eq(&self, &reed_filter::expr::parser::LogicOp) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::LogicOp
+pub fn reed_filter::expr::parser::LogicOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::LogicOp
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::LogicOp
+impl core::marker::Freeze for reed_filter::expr::parser::LogicOp
+impl core::marker::Send for reed_filter::expr::parser::LogicOp
+impl core::marker::Sync for reed_filter::expr::parser::LogicOp
+impl core::marker::Unpin for reed_filter::expr::parser::LogicOp
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::LogicOp
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::LogicOp
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::LogicOp
+pub enum reed_filter::expr::Subscript
+pub reed_filter::expr::Subscript::Any
+pub reed_filter::expr::Subscript::Index(usize)
+impl core::clone::Clone for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::Subscript::clone(&self) -> reed_filter::expr::parser::Subscript
+impl core::cmp::Eq for reed_filter::expr::parser::Subscript
+impl core::cmp::PartialEq for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::Subscript::eq(&self, &reed_filter::expr::parser::Subscript) -> bool
+impl core::fmt::Debug for reed_filter::expr::parser::Subscript
+pub fn reed_filter::expr::parser::Subscript::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::parser::Subscript
+impl core::marker::StructuralPartialEq for reed_filter::expr::parser::Subscript
+impl core::marker::Freeze for reed_filter::expr::parser::Subscript
+impl core::marker::Send for reed_filter::expr::parser::Subscript
+impl core::marker::Sync for reed_filter::expr::parser::Subscript
+impl core::marker::Unpin for reed_filter::expr::parser::Subscript
+impl core::marker::UnsafeUnpin for reed_filter::expr::parser::Subscript
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::parser::Subscript
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::parser::Subscript
+pub struct reed_filter::expr::GtCounts
+pub reed_filter::expr::GtCounts::ac: u64
+pub reed_filter::expr::GtCounts::an: u64
+pub reed_filter::expr::GtCounts::n_missing: u64
+pub reed_filter::expr::GtCounts::n_samples: u64
+impl core::clone::Clone for reed_filter::expr::GtCounts
+pub fn reed_filter::expr::GtCounts::clone(&self) -> reed_filter::expr::GtCounts
+impl core::cmp::Eq for reed_filter::expr::GtCounts
+impl core::cmp::PartialEq for reed_filter::expr::GtCounts
+pub fn reed_filter::expr::GtCounts::eq(&self, &reed_filter::expr::GtCounts) -> bool
+impl core::default::Default for reed_filter::expr::GtCounts
+pub fn reed_filter::expr::GtCounts::default() -> reed_filter::expr::GtCounts
+impl core::fmt::Debug for reed_filter::expr::GtCounts
+pub fn reed_filter::expr::GtCounts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::expr::GtCounts
+impl core::marker::StructuralPartialEq for reed_filter::expr::GtCounts
+impl core::marker::Freeze for reed_filter::expr::GtCounts
+impl core::marker::Send for reed_filter::expr::GtCounts
+impl core::marker::Sync for reed_filter::expr::GtCounts
+impl core::marker::Unpin for reed_filter::expr::GtCounts
+impl core::marker::UnsafeUnpin for reed_filter::expr::GtCounts
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::GtCounts
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::expr::GtCounts
+pub struct reed_filter::expr::SiteValues<'a>
+pub reed_filter::expr::SiteValues::chrom: &'a [u8]
+pub reed_filter::expr::SiteValues::filter: &'a [u8]
+pub reed_filter::expr::SiteValues::fmt: core::option::Option<&'a [(alloc::vec::Vec<u8>, core::option::Option<f64>)]>
+pub reed_filter::expr::SiteValues::gt: core::option::Option<reed_filter::expr::GtCounts>
+pub reed_filter::expr::SiteValues::id: &'a [u8]
+pub reed_filter::expr::SiteValues::info: &'a [u8]
+pub reed_filter::expr::SiteValues::info_index: core::option::Option<&'a reed_core::vcf::info::InfoIndex>
+pub reed_filter::expr::SiteValues::info_trusted: bool
+pub reed_filter::expr::SiteValues::n_alt: u32
+pub reed_filter::expr::SiteValues::n_samples: u64
+pub reed_filter::expr::SiteValues::pos: u64
+pub reed_filter::expr::SiteValues::qual: core::option::Option<f64>
+pub reed_filter::expr::SiteValues::tags: core::option::Option<&'a reed_core::tag_table::TagTable>
+pub reed_filter::expr::SiteValues::variant_type: &'a str
+impl reed_filter::expr::SiteValues<'static>
+pub fn reed_filter::expr::SiteValues<'static>::from_counts(reed_filter::expr::GtCounts) -> Self
+impl<'a> reed_filter::expr::SiteValues<'a>
+pub fn reed_filter::expr::SiteValues<'a>::from_line(&'a reed_core::vcf::line::LineRef<'a>, u64, core::option::Option<reed_filter::expr::GtCounts>, bool) -> Self
+impl<'a> core::clone::Clone for reed_filter::expr::SiteValues<'a>
+pub fn reed_filter::expr::SiteValues<'a>::clone(&self) -> reed_filter::expr::SiteValues<'a>
+impl<'a> core::fmt::Debug for reed_filter::expr::SiteValues<'a>
+pub fn reed_filter::expr::SiteValues<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_filter::expr::SiteValues<'a>
+impl<'a> core::marker::Freeze for reed_filter::expr::SiteValues<'a>
+impl<'a> core::marker::Send for reed_filter::expr::SiteValues<'a>
+impl<'a> core::marker::Sync for reed_filter::expr::SiteValues<'a>
+impl<'a> core::marker::Unpin for reed_filter::expr::SiteValues<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_filter::expr::SiteValues<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_filter::expr::SiteValues<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_filter::expr::SiteValues<'a>
+pub fn reed_filter::expr::check(&reed_filter::expr::parser::Expr, &reed_core::tag_table::TagTable, &[alloc::string::String]) -> core::result::Result<(), alloc::string::String>
+pub fn reed_filter::expr::eval(&reed_filter::expr::parser::Expr, &reed_filter::expr::SiteValues<'_>) -> bool
+pub fn reed_filter::expr::matches_pattern(&str, &str) -> bool
+pub fn reed_filter::expr::parse(&str) -> core::result::Result<reed_filter::expr::parser::Expr, alloc::string::String>
+pub fn reed_filter::expr::parse_and_check(&str, &reed_core::tag_table::TagTable) -> core::result::Result<reed_filter::expr::parser::Expr, alloc::string::String>
+pub fn reed_filter::expr::parse_and_check_fmt(&str, &reed_core::tag_table::TagTable, &[alloc::string::String]) -> core::result::Result<reed_filter::expr::parser::Expr, alloc::string::String>
+pub mod reed_filter::funnel
+pub use reed_filter::funnel::PolicyCounters
+pub struct reed_filter::funnel::FilterReport
+pub reed_filter::funnel::FilterReport::elapsed_secs: f64
+pub reed_filter::funnel::FilterReport::funnel: alloc::vec::Vec<reed_filter::funnel::FunnelStage>
+pub reed_filter::funnel::FilterReport::ld_prune: core::option::Option<(u64, u64)>
+pub reed_filter::funnel::FilterReport::masked_by_rule: alloc::vec::Vec<reed_filter::funnel::MaskedBy>
+pub reed_filter::funnel::FilterReport::n_input_records: u64
+pub reed_filter::funnel::FilterReport::n_masked_gt: u64
+pub reed_filter::funnel::FilterReport::n_output_records: u64
+pub reed_filter::funnel::FilterReport::n_samples_in: u32
+pub reed_filter::funnel::FilterReport::n_samples_out: u32
+pub reed_filter::funnel::FilterReport::policy_counters: reed_core::genotype::policy::PolicyCounters
+pub reed_filter::funnel::FilterReport::sample_rule: core::option::Option<reed_filter::funnel::SampleRuleReport>
+pub reed_filter::funnel::FilterReport::strategy: alloc::string::String
+pub reed_filter::funnel::FilterReport::timing: reed_filter::funnel::TimingReport
+impl reed_filter::funnel::FilterReport
+pub fn reed_filter::funnel::FilterReport::timing_text(&self) -> alloc::string::String
+impl core::clone::Clone for reed_filter::funnel::FilterReport
+pub fn reed_filter::funnel::FilterReport::clone(&self) -> reed_filter::funnel::FilterReport
+impl core::fmt::Debug for reed_filter::funnel::FilterReport
+pub fn reed_filter::funnel::FilterReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_filter::funnel::FilterReport
+pub fn reed_filter::funnel::FilterReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_filter::funnel::FilterReport
+impl core::marker::Send for reed_filter::funnel::FilterReport
+impl core::marker::Sync for reed_filter::funnel::FilterReport
+impl core::marker::Unpin for reed_filter::funnel::FilterReport
+impl core::marker::UnsafeUnpin for reed_filter::funnel::FilterReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::funnel::FilterReport
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::funnel::FilterReport
+pub struct reed_filter::funnel::FunnelPartial
+pub reed_filter::funnel::FunnelPartial::head_hits: alloc::vec::Vec<u64>
+pub reed_filter::funnel::FunnelPartial::mask_hits: alloc::vec::Vec<u64>
+pub reed_filter::funnel::FunnelPartial::masked_gt: u64
+pub reed_filter::funnel::FunnelPartial::n_input: u64
+pub reed_filter::funnel::FunnelPartial::n_ld_pruned: u64
+pub reed_filter::funnel::FunnelPartial::n_output: u64
+pub reed_filter::funnel::FunnelPartial::policy: reed_core::genotype::policy::PolicyCounters
+pub reed_filter::funnel::FunnelPartial::tail_hits: alloc::vec::Vec<u64>
+impl reed_filter::funnel::FunnelPartial
+pub fn reed_filter::funnel::FunnelPartial::merge(&mut self, &Self)
+pub fn reed_filter::funnel::FunnelPartial::reset(&mut self, usize, usize, usize)
+impl core::clone::Clone for reed_filter::funnel::FunnelPartial
+pub fn reed_filter::funnel::FunnelPartial::clone(&self) -> reed_filter::funnel::FunnelPartial
+impl core::default::Default for reed_filter::funnel::FunnelPartial
+pub fn reed_filter::funnel::FunnelPartial::default() -> reed_filter::funnel::FunnelPartial
+impl core::fmt::Debug for reed_filter::funnel::FunnelPartial
+pub fn reed_filter::funnel::FunnelPartial::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::funnel::FunnelPartial
+impl core::marker::Send for reed_filter::funnel::FunnelPartial
+impl core::marker::Sync for reed_filter::funnel::FunnelPartial
+impl core::marker::Unpin for reed_filter::funnel::FunnelPartial
+impl core::marker::UnsafeUnpin for reed_filter::funnel::FunnelPartial
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::funnel::FunnelPartial
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::funnel::FunnelPartial
+pub struct reed_filter::funnel::FunnelStage
+pub reed_filter::funnel::FunnelStage::n_passed: u64
+pub reed_filter::funnel::FunnelStage::rule: reed_filter::funnel::RuleId
+impl core::clone::Clone for reed_filter::funnel::FunnelStage
+pub fn reed_filter::funnel::FunnelStage::clone(&self) -> reed_filter::funnel::FunnelStage
+impl core::cmp::PartialEq for reed_filter::funnel::FunnelStage
+pub fn reed_filter::funnel::FunnelStage::eq(&self, &reed_filter::funnel::FunnelStage) -> bool
+impl core::fmt::Debug for reed_filter::funnel::FunnelStage
+pub fn reed_filter::funnel::FunnelStage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::funnel::FunnelStage
+impl serde_core::ser::Serialize for reed_filter::funnel::FunnelStage
+pub fn reed_filter::funnel::FunnelStage::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_filter::funnel::FunnelStage
+impl core::marker::Send for reed_filter::funnel::FunnelStage
+impl core::marker::Sync for reed_filter::funnel::FunnelStage
+impl core::marker::Unpin for reed_filter::funnel::FunnelStage
+impl core::marker::UnsafeUnpin for reed_filter::funnel::FunnelStage
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::funnel::FunnelStage
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::funnel::FunnelStage
+pub struct reed_filter::funnel::MaskedBy
+pub reed_filter::funnel::MaskedBy::n_masked: u64
+pub reed_filter::funnel::MaskedBy::rule: reed_filter::funnel::RuleId
+impl core::clone::Clone for reed_filter::funnel::MaskedBy
+pub fn reed_filter::funnel::MaskedBy::clone(&self) -> reed_filter::funnel::MaskedBy
+impl core::cmp::PartialEq for reed_filter::funnel::MaskedBy
+pub fn reed_filter::funnel::MaskedBy::eq(&self, &reed_filter::funnel::MaskedBy) -> bool
+impl core::fmt::Debug for reed_filter::funnel::MaskedBy
+pub fn reed_filter::funnel::MaskedBy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::funnel::MaskedBy
+impl serde_core::ser::Serialize for reed_filter::funnel::MaskedBy
+pub fn reed_filter::funnel::MaskedBy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_filter::funnel::MaskedBy
+impl core::marker::Send for reed_filter::funnel::MaskedBy
+impl core::marker::Sync for reed_filter::funnel::MaskedBy
+impl core::marker::Unpin for reed_filter::funnel::MaskedBy
+impl core::marker::UnsafeUnpin for reed_filter::funnel::MaskedBy
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::funnel::MaskedBy
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::funnel::MaskedBy
+pub struct reed_filter::funnel::SampleRuleReport
+pub reed_filter::funnel::SampleRuleReport::n_dropped: u64
+pub reed_filter::funnel::SampleRuleReport::rule: reed_filter::funnel::RuleId
+pub reed_filter::funnel::SampleRuleReport::threshold: alloc::string::String
+impl core::clone::Clone for reed_filter::funnel::SampleRuleReport
+pub fn reed_filter::funnel::SampleRuleReport::clone(&self) -> reed_filter::funnel::SampleRuleReport
+impl core::cmp::PartialEq for reed_filter::funnel::SampleRuleReport
+pub fn reed_filter::funnel::SampleRuleReport::eq(&self, &reed_filter::funnel::SampleRuleReport) -> bool
+impl core::fmt::Debug for reed_filter::funnel::SampleRuleReport
+pub fn reed_filter::funnel::SampleRuleReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::funnel::SampleRuleReport
+impl serde_core::ser::Serialize for reed_filter::funnel::SampleRuleReport
+pub fn reed_filter::funnel::SampleRuleReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_filter::funnel::SampleRuleReport
+impl core::marker::Send for reed_filter::funnel::SampleRuleReport
+impl core::marker::Sync for reed_filter::funnel::SampleRuleReport
+impl core::marker::Unpin for reed_filter::funnel::SampleRuleReport
+impl core::marker::UnsafeUnpin for reed_filter::funnel::SampleRuleReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::funnel::SampleRuleReport
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::funnel::SampleRuleReport
+pub struct reed_filter::funnel::TimingReport
+pub reed_filter::funnel::TimingReport::chain_wait_secs: f64
+pub reed_filter::funnel::TimingReport::chunks: u64
+pub reed_filter::funnel::TimingReport::chunks_read: u64
+pub reed_filter::funnel::TimingReport::deflate_secs: f64
+pub reed_filter::funnel::TimingReport::in_flight_peak_bytes: core::option::Option<u64>
+pub reed_filter::funnel::TimingReport::inflate_secs: f64
+pub reed_filter::funnel::TimingReport::job_secs: f64
+pub reed_filter::funnel::TimingReport::phases: alloc::vec::Vec<(alloc::string::String, f64)>
+pub reed_filter::funnel::TimingReport::reader_secs: f64
+pub reed_filter::funnel::TimingReport::reader_wait_secs: f64
+pub reed_filter::funnel::TimingReport::reduce_secs: f64
+pub reed_filter::funnel::TimingReport::reducer_wait_secs: f64
+pub reed_filter::funnel::TimingReport::threads: usize
+pub reed_filter::funnel::TimingReport::total_secs: f64
+pub reed_filter::funnel::TimingReport::worker_busy_secs: f64
+impl core::clone::Clone for reed_filter::funnel::TimingReport
+pub fn reed_filter::funnel::TimingReport::clone(&self) -> reed_filter::funnel::TimingReport
+impl core::default::Default for reed_filter::funnel::TimingReport
+pub fn reed_filter::funnel::TimingReport::default() -> reed_filter::funnel::TimingReport
+impl core::fmt::Debug for reed_filter::funnel::TimingReport
+pub fn reed_filter::funnel::TimingReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_filter::funnel::TimingReport
+pub fn reed_filter::funnel::TimingReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_filter::funnel::TimingReport
+impl core::marker::Send for reed_filter::funnel::TimingReport
+impl core::marker::Sync for reed_filter::funnel::TimingReport
+impl core::marker::Unpin for reed_filter::funnel::TimingReport
+impl core::marker::UnsafeUnpin for reed_filter::funnel::TimingReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::funnel::TimingReport
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::funnel::TimingReport
+pub const reed_filter::funnel::AFTER_MASK_LD_PRUNE: &str
+pub const reed_filter::funnel::AFTER_MASK_MISSING: &str
+pub const reed_filter::funnel::SAMPLE_MIND: &str
+pub type reed_filter::funnel::RuleId = alloc::string::String
+pub mod reed_filter::plan
+pub use reed_filter::plan::provenance
+pub mod reed_filter::plan::strategy
+pub fn reed_filter::plan::strategy::choose_for_mind(u64, usize, usize, u64) -> ExecStrategy
+pub fn reed_filter::plan::strategy::sketch_size_bytes(u64, usize, usize) -> u64
+pub enum reed_filter::plan::HeadRule
+pub reed_filter::plan::HeadRule::BiallelicGate
+pub reed_filter::plan::HeadRule::ExcludeVariantClass(alloc::vec::Vec<alloc::string::String>)
+pub reed_filter::plan::HeadRule::Expr
+pub reed_filter::plan::HeadRule::Expr::expr: reed_filter::expr::parser::Expr
+pub reed_filter::plan::HeadRule::Expr::id: alloc::string::String
+pub reed_filter::plan::HeadRule::Expr::include: bool
+pub reed_filter::plan::HeadRule::Info(reed_filter::plan::InfoRule)
+pub reed_filter::plan::HeadRule::JustAcgt
+pub reed_filter::plan::HeadRule::MaxAfInfo(f64)
+pub reed_filter::plan::HeadRule::MaxAltAlleles(u32)
+pub reed_filter::plan::HeadRule::MinAfInfo(f64)
+pub reed_filter::plan::HeadRule::MinAltAlleles(u32)
+pub reed_filter::plan::HeadRule::MinQual(f32)
+pub reed_filter::plan::HeadRule::Regions
+pub reed_filter::plan::HeadRule::Regions::exclude: alloc::vec::Vec<(alloc::string::String, core::option::Option<u64>, core::option::Option<u64>)>
+pub reed_filter::plan::HeadRule::Regions::include: alloc::vec::Vec<(alloc::string::String, core::option::Option<u64>, core::option::Option<u64>)>
+pub reed_filter::plan::HeadRule::RequireFilter(alloc::vec::Vec<alloc::vec::Vec<u8>>)
+pub reed_filter::plan::HeadRule::VariantClass(alloc::vec::Vec<alloc::string::String>)
+impl reed_filter::plan::HeadRule
+pub fn reed_filter::plan::HeadRule::id(&self) -> alloc::string::String
+impl core::clone::Clone for reed_filter::plan::HeadRule
+pub fn reed_filter::plan::HeadRule::clone(&self) -> reed_filter::plan::HeadRule
+impl core::fmt::Debug for reed_filter::plan::HeadRule
+pub fn reed_filter::plan::HeadRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::plan::HeadRule
+impl core::marker::Send for reed_filter::plan::HeadRule
+impl core::marker::Sync for reed_filter::plan::HeadRule
+impl core::marker::Unpin for reed_filter::plan::HeadRule
+impl core::marker::UnsafeUnpin for reed_filter::plan::HeadRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::HeadRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::HeadRule
+pub enum reed_filter::plan::TailRule
+pub reed_filter::plan::TailRule::Expr
+pub reed_filter::plan::TailRule::Expr::expr: reed_filter::expr::parser::Expr
+pub reed_filter::plan::TailRule::Expr::id: alloc::string::String
+pub reed_filter::plan::TailRule::Expr::include: bool
+pub reed_filter::plan::TailRule::GtClass(reed_filter::spec::GtClassRule)
+pub reed_filter::plan::TailRule::MaxAf(f64, reed_filter::spec::AfKind)
+pub reed_filter::plan::TailRule::MaxMac(u32)
+pub reed_filter::plan::TailRule::MaxMaf(f64)
+pub reed_filter::plan::TailRule::MaxMissing(reed_filter::spec::missing_rate::MissingRate)
+pub reed_filter::plan::TailRule::MinAf(f64, reed_filter::spec::AfKind)
+pub reed_filter::plan::TailRule::MinHweP(f64, reed_filter::spec::HweMode)
+pub reed_filter::plan::TailRule::MinMac(u32)
+pub reed_filter::plan::TailRule::MinMaf(f64)
+impl reed_filter::plan::TailRule
+pub fn reed_filter::plan::TailRule::id(&self) -> alloc::string::String
+impl core::clone::Clone for reed_filter::plan::TailRule
+pub fn reed_filter::plan::TailRule::clone(&self) -> reed_filter::plan::TailRule
+impl core::fmt::Debug for reed_filter::plan::TailRule
+pub fn reed_filter::plan::TailRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::plan::TailRule
+impl core::marker::Send for reed_filter::plan::TailRule
+impl core::marker::Sync for reed_filter::plan::TailRule
+impl core::marker::Unpin for reed_filter::plan::TailRule
+impl core::marker::UnsafeUnpin for reed_filter::plan::TailRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::TailRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::TailRule
+pub struct reed_filter::plan::FilterPlan
+pub reed_filter::plan::FilterPlan::auto_stale_tags: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub reed_filter::plan::FilterPlan::float_fields: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub reed_filter::plan::FilterPlan::fmt_expr_fields: alloc::vec::Vec<reed_filter::plan::FmtExprField>
+pub reed_filter::plan::FilterPlan::head: alloc::vec::Vec<reed_filter::plan::HeadRule>
+pub reed_filter::plan::FilterPlan::info_trusted: bool
+pub reed_filter::plan::FilterPlan::int_fields: alloc::vec::Vec<reed_filter::plan::IntField>
+pub reed_filter::plan::FilterPlan::mask: alloc::vec::Vec<reed_filter::plan::MaskRule>
+pub reed_filter::plan::FilterPlan::no_update: bool
+pub reed_filter::plan::FilterPlan::policies: reed_core::genotype::policy::GenotypePolicies
+pub reed_filter::plan::FilterPlan::provenance: reed_core::provenance::Provenance
+pub reed_filter::plan::FilterPlan::recompute: reed_filter::plan::RecomputeFlags
+pub reed_filter::plan::FilterPlan::stale_tags: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub reed_filter::plan::FilterPlan::strategy: ExecStrategy
+pub reed_filter::plan::FilterPlan::tags: alloc::sync::Arc<reed_core::tag_table::TagTable>
+pub reed_filter::plan::FilterPlan::tail: alloc::vec::Vec<reed_filter::plan::TailRule>
+impl reed_filter::plan::FilterPlan
+pub fn reed_filter::plan::FilterPlan::reads_info(&self) -> bool
+pub fn reed_filter::plan::FilterPlan::tail_reads_record(&self) -> bool
+impl core::clone::Clone for reed_filter::plan::FilterPlan
+pub fn reed_filter::plan::FilterPlan::clone(&self) -> reed_filter::plan::FilterPlan
+impl core::fmt::Debug for reed_filter::plan::FilterPlan
+pub fn reed_filter::plan::FilterPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::plan::FilterPlan
+impl core::marker::Send for reed_filter::plan::FilterPlan
+impl core::marker::Sync for reed_filter::plan::FilterPlan
+impl core::marker::Unpin for reed_filter::plan::FilterPlan
+impl core::marker::UnsafeUnpin for reed_filter::plan::FilterPlan
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::FilterPlan
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::FilterPlan
+pub struct reed_filter::plan::FmtExprField
+pub reed_filter::plan::FmtExprField::float_column: core::option::Option<usize>
+pub reed_filter::plan::FmtExprField::int_column: usize
+pub reed_filter::plan::FmtExprField::tag: alloc::vec::Vec<u8>
+impl core::clone::Clone for reed_filter::plan::FmtExprField
+pub fn reed_filter::plan::FmtExprField::clone(&self) -> reed_filter::plan::FmtExprField
+impl core::fmt::Debug for reed_filter::plan::FmtExprField
+pub fn reed_filter::plan::FmtExprField::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::plan::FmtExprField
+impl core::marker::Send for reed_filter::plan::FmtExprField
+impl core::marker::Sync for reed_filter::plan::FmtExprField
+impl core::marker::Unpin for reed_filter::plan::FmtExprField
+impl core::marker::UnsafeUnpin for reed_filter::plan::FmtExprField
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::FmtExprField
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::FmtExprField
+pub struct reed_filter::plan::InfoRule
+pub reed_filter::plan::InfoRule::cmp: reed_filter::spec::predicate::Cmp
+pub reed_filter::plan::InfoRule::number_a: bool
+pub reed_filter::plan::InfoRule::on_missing: reed_filter::spec::predicate::OnMissing
+pub reed_filter::plan::InfoRule::quantifier: reed_filter::spec::predicate::Quantifier
+pub reed_filter::plan::InfoRule::tag: alloc::vec::Vec<u8>
+impl core::clone::Clone for reed_filter::plan::InfoRule
+pub fn reed_filter::plan::InfoRule::clone(&self) -> reed_filter::plan::InfoRule
+impl core::fmt::Debug for reed_filter::plan::InfoRule
+pub fn reed_filter::plan::InfoRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::plan::InfoRule
+impl core::marker::Send for reed_filter::plan::InfoRule
+impl core::marker::Sync for reed_filter::plan::InfoRule
+impl core::marker::Unpin for reed_filter::plan::InfoRule
+impl core::marker::UnsafeUnpin for reed_filter::plan::InfoRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::InfoRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::InfoRule
+pub struct reed_filter::plan::IntField
+pub reed_filter::plan::IntField::fallback: core::option::Option<alloc::vec::Vec<u8>>
+pub reed_filter::plan::IntField::name: alloc::vec::Vec<u8>
+impl core::clone::Clone for reed_filter::plan::IntField
+pub fn reed_filter::plan::IntField::clone(&self) -> reed_filter::plan::IntField
+impl core::cmp::Eq for reed_filter::plan::IntField
+impl core::cmp::PartialEq for reed_filter::plan::IntField
+pub fn reed_filter::plan::IntField::eq(&self, &reed_filter::plan::IntField) -> bool
+impl core::convert::From<&reed_filter::plan::IntField> for reed_core::vcf::format_layout::IntSpec
+pub fn reed_core::vcf::format_layout::IntSpec::from(&reed_filter::plan::IntField) -> Self
+impl core::fmt::Debug for reed_filter::plan::IntField
+pub fn reed_filter::plan::IntField::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::plan::IntField
+impl core::marker::Freeze for reed_filter::plan::IntField
+impl core::marker::Send for reed_filter::plan::IntField
+impl core::marker::Sync for reed_filter::plan::IntField
+impl core::marker::Unpin for reed_filter::plan::IntField
+impl core::marker::UnsafeUnpin for reed_filter::plan::IntField
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::IntField
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::IntField
+pub struct reed_filter::plan::MaskRule
+pub reed_filter::plan::MaskRule::cmp: reed_filter::spec::predicate::Cmp
+pub reed_filter::plan::MaskRule::expr: core::option::Option<reed_filter::expr::parser::Expr>
+pub reed_filter::plan::MaskRule::field: alloc::vec::Vec<u8>
+pub reed_filter::plan::MaskRule::float_column: core::option::Option<usize>
+pub reed_filter::plan::MaskRule::include: bool
+pub reed_filter::plan::MaskRule::int_column: usize
+pub reed_filter::plan::MaskRule::on_missing: reed_filter::spec::predicate::OnMissing
+impl core::clone::Clone for reed_filter::plan::MaskRule
+pub fn reed_filter::plan::MaskRule::clone(&self) -> reed_filter::plan::MaskRule
+impl core::fmt::Debug for reed_filter::plan::MaskRule
+pub fn reed_filter::plan::MaskRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::plan::MaskRule
+impl core::marker::Send for reed_filter::plan::MaskRule
+impl core::marker::Sync for reed_filter::plan::MaskRule
+impl core::marker::Unpin for reed_filter::plan::MaskRule
+impl core::marker::UnsafeUnpin for reed_filter::plan::MaskRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::MaskRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::MaskRule
+pub struct reed_filter::plan::RecomputeFlags
+pub reed_filter::plan::RecomputeFlags::tags: alloc::vec::Vec<&'static reed_core::count::recompute::RecomputeTag>
+impl reed_filter::plan::RecomputeFlags
+pub fn reed_filter::plan::RecomputeFlags::enable(&mut self, &str)
+pub fn reed_filter::plan::RecomputeFlags::is_empty(&self) -> bool
+pub fn reed_filter::plan::RecomputeFlags::wants(&self, &str) -> bool
+impl core::clone::Clone for reed_filter::plan::RecomputeFlags
+pub fn reed_filter::plan::RecomputeFlags::clone(&self) -> reed_filter::plan::RecomputeFlags
+impl core::cmp::Eq for reed_filter::plan::RecomputeFlags
+impl core::cmp::PartialEq for reed_filter::plan::RecomputeFlags
+pub fn reed_filter::plan::RecomputeFlags::eq(&self, &reed_filter::plan::RecomputeFlags) -> bool
+impl core::default::Default for reed_filter::plan::RecomputeFlags
+pub fn reed_filter::plan::RecomputeFlags::default() -> reed_filter::plan::RecomputeFlags
+impl core::fmt::Debug for reed_filter::plan::RecomputeFlags
+pub fn reed_filter::plan::RecomputeFlags::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::plan::RecomputeFlags
+impl core::marker::Freeze for reed_filter::plan::RecomputeFlags
+impl core::marker::Send for reed_filter::plan::RecomputeFlags
+impl core::marker::Sync for reed_filter::plan::RecomputeFlags
+impl core::marker::Unpin for reed_filter::plan::RecomputeFlags
+impl core::marker::UnsafeUnpin for reed_filter::plan::RecomputeFlags
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::plan::RecomputeFlags
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::plan::RecomputeFlags
+pub fn reed_filter::plan::compile(&reed_filter::spec::FilterSpec, &reed_core::tag_table::TagTable, &str, bool) -> core::result::Result<reed_filter::plan::FilterPlan, reed_filter::error::FilterError>
+pub mod reed_filter::semantics
+pub use reed_filter::semantics::InfoAfCounts
+pub use reed_filter::semantics::InfoAfOutcome
+pub enum reed_filter::semantics::MissingCtx
+pub reed_filter::semantics::MissingCtx::ColumnarMask(reed_filter::spec::predicate::OnMissing)
+pub reed_filter::semantics::MissingCtx::Expr
+pub reed_filter::semantics::MissingCtx::InfoRule(reed_filter::spec::predicate::OnMissing)
+impl core::clone::Clone for reed_filter::semantics::MissingCtx
+pub fn reed_filter::semantics::MissingCtx::clone(&self) -> reed_filter::semantics::MissingCtx
+impl core::cmp::Eq for reed_filter::semantics::MissingCtx
+impl core::cmp::PartialEq for reed_filter::semantics::MissingCtx
+pub fn reed_filter::semantics::MissingCtx::eq(&self, &reed_filter::semantics::MissingCtx) -> bool
+impl core::fmt::Debug for reed_filter::semantics::MissingCtx
+pub fn reed_filter::semantics::MissingCtx::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::semantics::MissingCtx
+impl core::marker::StructuralPartialEq for reed_filter::semantics::MissingCtx
+impl core::marker::Freeze for reed_filter::semantics::MissingCtx
+impl core::marker::Send for reed_filter::semantics::MissingCtx
+impl core::marker::Sync for reed_filter::semantics::MissingCtx
+impl core::marker::Unpin for reed_filter::semantics::MissingCtx
+impl core::marker::UnsafeUnpin for reed_filter::semantics::MissingCtx
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::semantics::MissingCtx
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::semantics::MissingCtx
+pub enum reed_filter::semantics::MissingSides
+pub reed_filter::semantics::MissingSides::Both
+pub reed_filter::semantics::MissingSides::Lhs
+pub reed_filter::semantics::MissingSides::Rhs
+impl core::clone::Clone for reed_filter::semantics::MissingSides
+pub fn reed_filter::semantics::MissingSides::clone(&self) -> reed_filter::semantics::MissingSides
+impl core::cmp::Eq for reed_filter::semantics::MissingSides
+impl core::cmp::PartialEq for reed_filter::semantics::MissingSides
+pub fn reed_filter::semantics::MissingSides::eq(&self, &reed_filter::semantics::MissingSides) -> bool
+impl core::fmt::Debug for reed_filter::semantics::MissingSides
+pub fn reed_filter::semantics::MissingSides::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::semantics::MissingSides
+impl core::marker::StructuralPartialEq for reed_filter::semantics::MissingSides
+impl core::marker::Freeze for reed_filter::semantics::MissingSides
+impl core::marker::Send for reed_filter::semantics::MissingSides
+impl core::marker::Sync for reed_filter::semantics::MissingSides
+impl core::marker::Unpin for reed_filter::semantics::MissingSides
+impl core::marker::UnsafeUnpin for reed_filter::semantics::MissingSides
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::semantics::MissingSides
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::semantics::MissingSides
+pub fn reed_filter::semantics::compare_missing(reed_filter::expr::parser::CmpOp, reed_filter::semantics::MissingSides, reed_filter::semantics::MissingCtx) -> bool
+pub fn reed_filter::semantics::info_af(&[u8], u32) -> core::option::Option<reed_core::count::info_counts::InfoCounts>
+pub fn reed_filter::semantics::info_af_indexed(&reed_core::vcf::info::InfoIndex, &[u8], u32) -> reed_core::count::info_counts::InfoCountsOutcome
+pub fn reed_filter::semantics::info_af_outcome(&[u8], u32) -> reed_core::count::info_counts::InfoCountsOutcome
+pub mod reed_filter::spec
+pub mod reed_filter::spec::cohort
+pub enum reed_filter::spec::cohort::SampleList
+pub reed_filter::spec::cohort::SampleList::File(alloc::string::String)
+pub reed_filter::spec::cohort::SampleList::Names(alloc::vec::Vec<alloc::string::String>)
+impl core::clone::Clone for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::clone(&self) -> reed_filter::spec::cohort::SampleList
+impl core::cmp::PartialEq for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::eq(&self, &reed_filter::spec::cohort::SampleList) -> bool
+impl core::fmt::Debug for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::cohort::SampleList
+impl serde_core::ser::Serialize for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::cohort::SampleList
+impl core::marker::Send for reed_filter::spec::cohort::SampleList
+impl core::marker::Sync for reed_filter::spec::cohort::SampleList
+impl core::marker::Unpin for reed_filter::spec::cohort::SampleList
+impl core::marker::UnsafeUnpin for reed_filter::spec::cohort::SampleList
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::cohort::SampleList
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::cohort::SampleList
+pub struct reed_filter::spec::cohort::SampleSelect
+pub reed_filter::spec::cohort::SampleSelect::keep: core::option::Option<reed_filter::spec::cohort::SampleList>
+pub reed_filter::spec::cohort::SampleSelect::remove: core::option::Option<reed_filter::spec::cohort::SampleList>
+impl reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::is_empty(&self) -> bool
+impl core::clone::Clone for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::clone(&self) -> reed_filter::spec::cohort::SampleSelect
+impl core::cmp::PartialEq for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::eq(&self, &reed_filter::spec::cohort::SampleSelect) -> bool
+impl core::default::Default for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::default() -> reed_filter::spec::cohort::SampleSelect
+impl core::fmt::Debug for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::cohort::SampleSelect
+impl serde_core::ser::Serialize for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::cohort::SampleSelect
+impl core::marker::Send for reed_filter::spec::cohort::SampleSelect
+impl core::marker::Sync for reed_filter::spec::cohort::SampleSelect
+impl core::marker::Unpin for reed_filter::spec::cohort::SampleSelect
+impl core::marker::UnsafeUnpin for reed_filter::spec::cohort::SampleSelect
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::cohort::SampleSelect
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::cohort::SampleSelect
+pub mod reed_filter::spec::mask
+pub struct reed_filter::spec::mask::GenotypeMaskRule
+pub reed_filter::spec::mask::GenotypeMaskRule::depth: bool
+pub reed_filter::spec::mask::GenotypeMaskRule::field: alloc::string::String
+pub reed_filter::spec::mask::GenotypeMaskRule::on_missing: reed_filter::spec::predicate::OnMissing
+pub reed_filter::spec::mask::GenotypeMaskRule::when: alloc::string::String
+impl reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::parsed(&self) -> core::result::Result<reed_filter::spec::predicate::Cmp, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::clone(&self) -> reed_filter::spec::mask::GenotypeMaskRule
+impl core::cmp::PartialEq for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::eq(&self, &reed_filter::spec::mask::GenotypeMaskRule) -> bool
+impl core::fmt::Debug for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::mask::GenotypeMaskRule
+impl serde_core::ser::Serialize for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::Send for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::Sync for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::Unpin for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::UnsafeUnpin for reed_filter::spec::mask::GenotypeMaskRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::mask::GenotypeMaskRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::mask::GenotypeMaskRule
+pub mod reed_filter::spec::missing_rate
+pub struct reed_filter::spec::missing_rate::MissingRate
+impl reed_filter::spec::missing_rate::MissingRate
+pub const fn reed_filter::spec::missing_rate::MissingRate::complement(self) -> Self
+pub fn reed_filter::spec::missing_rate::MissingRate::from_f64(f64) -> core::result::Result<Self, reed_filter::error::FilterError>
+pub fn reed_filter::spec::missing_rate::MissingRate::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+pub const fn reed_filter::spec::missing_rate::MissingRate::q(self) -> u64
+pub fn reed_filter::spec::missing_rate::MissingRate::render(self) -> alloc::string::String
+pub fn reed_filter::spec::missing_rate::MissingRate::tolerates(self, u64, u64) -> bool
+impl core::clone::Clone for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::clone(&self) -> reed_filter::spec::missing_rate::MissingRate
+impl core::cmp::Eq for reed_filter::spec::missing_rate::MissingRate
+impl core::cmp::PartialEq for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::eq(&self, &reed_filter::spec::missing_rate::MissingRate) -> bool
+impl core::fmt::Debug for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::StructuralPartialEq for reed_filter::spec::missing_rate::MissingRate
+impl serde_core::ser::Serialize for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+impl core::marker::Freeze for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::Send for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::Sync for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::Unpin for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::UnsafeUnpin for reed_filter::spec::missing_rate::MissingRate
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::missing_rate::MissingRate
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::missing_rate::MissingRate
+pub const reed_filter::spec::missing_rate::MISSING_RATE_DENOMINATOR: u64
+pub mod reed_filter::spec::predicate
+pub enum reed_filter::spec::predicate::OnMissing
+pub reed_filter::spec::predicate::OnMissing::Fail
+pub reed_filter::spec::predicate::OnMissing::Keep
+pub reed_filter::spec::predicate::OnMissing::Mask
+pub reed_filter::spec::predicate::OnMissing::Pass
+impl core::clone::Clone for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::clone(&self) -> reed_filter::spec::predicate::OnMissing
+impl core::cmp::Eq for reed_filter::spec::predicate::OnMissing
+impl core::cmp::PartialEq for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::eq(&self, &reed_filter::spec::predicate::OnMissing) -> bool
+impl core::default::Default for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::default() -> reed_filter::spec::predicate::OnMissing
+impl core::fmt::Debug for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::predicate::OnMissing
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::OnMissing
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::OnMissing
+impl core::marker::Send for reed_filter::spec::predicate::OnMissing
+impl core::marker::Sync for reed_filter::spec::predicate::OnMissing
+impl core::marker::Unpin for reed_filter::spec::predicate::OnMissing
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::OnMissing
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::OnMissing
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::OnMissing
+pub enum reed_filter::spec::predicate::Op
+pub reed_filter::spec::predicate::Op::Eq
+pub reed_filter::spec::predicate::Op::Ge
+pub reed_filter::spec::predicate::Op::Gt
+pub reed_filter::spec::predicate::Op::Le
+pub reed_filter::spec::predicate::Op::Lt
+pub reed_filter::spec::predicate::Op::Ne
+impl reed_filter::spec::predicate::Op
+pub fn reed_filter::spec::predicate::Op::apply_f64(self, f64, f64) -> bool
+pub fn reed_filter::spec::predicate::Op::apply_i64(self, i64, i64) -> bool
+pub fn reed_filter::spec::predicate::Op::parse_from(&str) -> core::result::Result<(Self, &str), reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::predicate::Op
+pub fn reed_filter::spec::predicate::Op::clone(&self) -> reed_filter::spec::predicate::Op
+impl core::cmp::Eq for reed_filter::spec::predicate::Op
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Op
+pub fn reed_filter::spec::predicate::Op::eq(&self, &reed_filter::spec::predicate::Op) -> bool
+impl core::convert::From<reed_filter::spec::predicate::Op> for reed_filter::expr::parser::CmpOp
+pub fn reed_filter::expr::parser::CmpOp::from(reed_filter::spec::predicate::Op) -> Self
+impl core::fmt::Debug for reed_filter::spec::predicate::Op
+pub fn reed_filter::spec::predicate::Op::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::predicate::Op
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Op
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::Op
+pub fn reed_filter::spec::predicate::Op::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::Op
+pub fn reed_filter::spec::predicate::Op::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::Op
+impl core::marker::Send for reed_filter::spec::predicate::Op
+impl core::marker::Sync for reed_filter::spec::predicate::Op
+impl core::marker::Unpin for reed_filter::spec::predicate::Op
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Op
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Op
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Op
+pub enum reed_filter::spec::predicate::Quantifier
+pub reed_filter::spec::predicate::Quantifier::All
+pub reed_filter::spec::predicate::Quantifier::Any
+impl core::clone::Clone for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::clone(&self) -> reed_filter::spec::predicate::Quantifier
+impl core::cmp::Eq for reed_filter::spec::predicate::Quantifier
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::eq(&self, &reed_filter::spec::predicate::Quantifier) -> bool
+impl core::default::Default for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::default() -> reed_filter::spec::predicate::Quantifier
+impl core::fmt::Debug for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::predicate::Quantifier
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Quantifier
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::Quantifier
+impl core::marker::Send for reed_filter::spec::predicate::Quantifier
+impl core::marker::Sync for reed_filter::spec::predicate::Quantifier
+impl core::marker::Unpin for reed_filter::spec::predicate::Quantifier
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Quantifier
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Quantifier
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Quantifier
+pub enum reed_filter::spec::predicate::Typed
+pub reed_filter::spec::predicate::Typed::Float(f64)
+pub reed_filter::spec::predicate::Typed::Int(i64)
+impl reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::clone(&self) -> reed_filter::spec::predicate::Typed
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::eq(&self, &reed_filter::spec::predicate::Typed) -> bool
+impl core::fmt::Debug for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Typed
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::Typed
+impl core::marker::Send for reed_filter::spec::predicate::Typed
+impl core::marker::Sync for reed_filter::spec::predicate::Typed
+impl core::marker::Unpin for reed_filter::spec::predicate::Typed
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Typed
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Typed
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Typed
+pub struct reed_filter::spec::predicate::Cmp
+pub reed_filter::spec::predicate::Cmp::op: reed_filter::spec::predicate::Op
+pub reed_filter::spec::predicate::Cmp::value: reed_filter::spec::predicate::Typed
+impl reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::apply_f64(&self, f64) -> bool
+pub fn reed_filter::spec::predicate::Cmp::apply_i64(&self, i64) -> bool
+pub fn reed_filter::spec::predicate::Cmp::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::clone(&self) -> reed_filter::spec::predicate::Cmp
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::eq(&self, &reed_filter::spec::predicate::Cmp) -> bool
+impl core::fmt::Debug for reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Cmp
+impl core::marker::Freeze for reed_filter::spec::predicate::Cmp
+impl core::marker::Send for reed_filter::spec::predicate::Cmp
+impl core::marker::Sync for reed_filter::spec::predicate::Cmp
+impl core::marker::Unpin for reed_filter::spec::predicate::Cmp
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Cmp
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Cmp
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Cmp
+pub mod reed_filter::spec::recompute
+pub struct reed_filter::spec::recompute::RecomputeSpec
+pub reed_filter::spec::recompute::RecomputeSpec::drop_stale: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::recompute::RecomputeSpec::drop_stale_explicit: bool
+pub reed_filter::spec::recompute::RecomputeSpec::no_update: bool
+pub reed_filter::spec::recompute::RecomputeSpec::tags: alloc::vec::Vec<alloc::string::String>
+impl reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::all() -> Self
+pub fn reed_filter::spec::recompute::RecomputeSpec::stale_bytes(&self) -> alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub fn reed_filter::spec::recompute::RecomputeSpec::wants(&self, &str) -> bool
+impl core::clone::Clone for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::clone(&self) -> reed_filter::spec::recompute::RecomputeSpec
+impl core::cmp::Eq for reed_filter::spec::recompute::RecomputeSpec
+impl core::cmp::PartialEq for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::eq(&self, &reed_filter::spec::recompute::RecomputeSpec) -> bool
+impl core::default::Default for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::default() -> Self
+impl core::fmt::Debug for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::recompute::RecomputeSpec
+impl serde_core::ser::Serialize for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::Send for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::Sync for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::Unpin for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::UnsafeUnpin for reed_filter::spec::recompute::RecomputeSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::recompute::RecomputeSpec
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::canonical_fill_tag(&str) -> core::result::Result<&'static str, alloc::string::String>
+pub fn reed_filter::spec::recompute::supported_fill_tags() -> impl core::iter::traits::iterator::Iterator<Item = &'static str>
+pub mod reed_filter::spec::region
+pub struct reed_filter::spec::region::Region
+pub reed_filter::spec::region::Region::contig: alloc::string::String
+pub reed_filter::spec::region::Region::end: core::option::Option<u64>
+pub reed_filter::spec::region::Region::start: core::option::Option<u64>
+impl reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::contains(&self, &str, u64) -> bool
+pub fn reed_filter::spec::region::Region::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+pub fn reed_filter::spec::region::Region::parse_in(&str, &[alloc::string::String]) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::clone(&self) -> reed_filter::spec::region::Region
+impl core::cmp::PartialEq for reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::eq(&self, &reed_filter::spec::region::Region) -> bool
+impl core::fmt::Debug for reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::region::Region
+impl core::marker::Freeze for reed_filter::spec::region::Region
+impl core::marker::Send for reed_filter::spec::region::Region
+impl core::marker::Sync for reed_filter::spec::region::Region
+impl core::marker::Unpin for reed_filter::spec::region::Region
+impl core::marker::UnsafeUnpin for reed_filter::spec::region::Region
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::region::Region
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::region::Region
+pub struct reed_filter::spec::region::RegionRule
+pub reed_filter::spec::region::RegionRule::exclude: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::region::RegionRule::include: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::region::RegionRule::indexed: alloc::vec::Vec<alloc::string::String>
+impl reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::is_empty(&self) -> bool
+impl core::clone::Clone for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::clone(&self) -> reed_filter::spec::region::RegionRule
+impl core::cmp::PartialEq for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::eq(&self, &reed_filter::spec::region::RegionRule) -> bool
+impl core::default::Default for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::default() -> reed_filter::spec::region::RegionRule
+impl core::fmt::Debug for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::region::RegionRule
+impl serde_core::ser::Serialize for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::region::RegionRule
+impl core::marker::Send for reed_filter::spec::region::RegionRule
+impl core::marker::Sync for reed_filter::spec::region::RegionRule
+impl core::marker::Unpin for reed_filter::spec::region::RegionRule
+impl core::marker::UnsafeUnpin for reed_filter::spec::region::RegionRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::region::RegionRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::region::RegionRule
+pub struct reed_filter::spec::region::SiteSelector
+pub reed_filter::spec::region::SiteSelector::exclude: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+pub reed_filter::spec::region::SiteSelector::include: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+pub reed_filter::spec::region::SiteSelector::indexed: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+pub reed_filter::spec::region::SiteSelector::sites: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+impl reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::allows(&self, &[u8], u64) -> bool
+pub fn reed_filter::spec::region::SiteSelector::is_empty(&self) -> bool
+impl core::clone::Clone for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::clone(&self) -> reed_filter::spec::region::SiteSelector
+impl core::cmp::Eq for reed_filter::spec::region::SiteSelector
+impl core::cmp::PartialEq for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::eq(&self, &reed_filter::spec::region::SiteSelector) -> bool
+impl core::default::Default for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::default() -> reed_filter::spec::region::SiteSelector
+impl core::fmt::Debug for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::region::SiteSelector
+impl core::marker::Freeze for reed_filter::spec::region::SiteSelector
+impl core::marker::Send for reed_filter::spec::region::SiteSelector
+impl core::marker::Sync for reed_filter::spec::region::SiteSelector
+impl core::marker::Unpin for reed_filter::spec::region::SiteSelector
+impl core::marker::UnsafeUnpin for reed_filter::spec::region::SiteSelector
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::region::SiteSelector
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::parse_regions(&[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<reed_filter::spec::region::RegionTriple>, reed_filter::error::FilterError>
+pub fn reed_filter::spec::region::parse_regions_strict(&[alloc::string::String], &[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<reed_filter::spec::region::RegionTriple>, reed_filter::error::FilterError>
+pub fn reed_filter::spec::region::parse_regions_with(&[alloc::string::String], &[alloc::string::String]) -> core::result::Result<alloc::vec::Vec<reed_filter::spec::region::RegionTriple>, reed_filter::error::FilterError>
+pub fn reed_filter::spec::region::region_allows(&[reed_filter::spec::region::RegionTriple], &[reed_filter::spec::region::RegionTriple], &[u8], u64) -> bool
+pub type reed_filter::spec::region::RegionTriple = (alloc::string::String, core::option::Option<u64>, core::option::Option<u64>)
+pub mod reed_filter::spec::render
+pub enum reed_filter::spec::AfKind
+pub reed_filter::spec::AfKind::Alt1
+pub reed_filter::spec::AfKind::Major
+pub reed_filter::spec::AfKind::Minor
+pub reed_filter::spec::AfKind::Nonmajor
+pub reed_filter::spec::AfKind::Nref
+impl reed_filter::spec::AfKind
+pub const fn reed_filter::spec::AfKind::id(self) -> &'static str
+pub fn reed_filter::spec::AfKind::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::AfKind
+pub fn reed_filter::spec::AfKind::clone(&self) -> reed_filter::spec::AfKind
+impl core::cmp::Eq for reed_filter::spec::AfKind
+impl core::cmp::PartialEq for reed_filter::spec::AfKind
+pub fn reed_filter::spec::AfKind::eq(&self, &reed_filter::spec::AfKind) -> bool
+impl core::fmt::Debug for reed_filter::spec::AfKind
+pub fn reed_filter::spec::AfKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::AfKind
+impl core::marker::StructuralPartialEq for reed_filter::spec::AfKind
+impl serde_core::ser::Serialize for reed_filter::spec::AfKind
+pub fn reed_filter::spec::AfKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::AfKind
+pub fn reed_filter::spec::AfKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::AfKind
+impl core::marker::Send for reed_filter::spec::AfKind
+impl core::marker::Sync for reed_filter::spec::AfKind
+impl core::marker::Unpin for reed_filter::spec::AfKind
+impl core::marker::UnsafeUnpin for reed_filter::spec::AfKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::AfKind
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::AfKind
+pub enum reed_filter::spec::GtClassRule
+pub reed_filter::spec::GtClassRule::Het
+pub reed_filter::spec::GtClassRule::Hom
+pub reed_filter::spec::GtClassRule::Miss
+pub reed_filter::spec::GtClassRule::NoHet
+pub reed_filter::spec::GtClassRule::NoHom
+pub reed_filter::spec::GtClassRule::NoMiss
+impl reed_filter::spec::GtClassRule
+pub const fn reed_filter::spec::GtClassRule::class(self) -> &'static str
+pub const fn reed_filter::spec::GtClassRule::id(self) -> &'static str
+pub fn reed_filter::spec::GtClassRule::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::GtClassRule
+pub fn reed_filter::spec::GtClassRule::clone(&self) -> reed_filter::spec::GtClassRule
+impl core::cmp::Eq for reed_filter::spec::GtClassRule
+impl core::cmp::PartialEq for reed_filter::spec::GtClassRule
+pub fn reed_filter::spec::GtClassRule::eq(&self, &reed_filter::spec::GtClassRule) -> bool
+impl core::fmt::Debug for reed_filter::spec::GtClassRule
+pub fn reed_filter::spec::GtClassRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::GtClassRule
+impl core::marker::StructuralPartialEq for reed_filter::spec::GtClassRule
+impl serde_core::ser::Serialize for reed_filter::spec::GtClassRule
+pub fn reed_filter::spec::GtClassRule::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::GtClassRule
+pub fn reed_filter::spec::GtClassRule::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::GtClassRule
+impl core::marker::Send for reed_filter::spec::GtClassRule
+impl core::marker::Sync for reed_filter::spec::GtClassRule
+impl core::marker::Unpin for reed_filter::spec::GtClassRule
+impl core::marker::UnsafeUnpin for reed_filter::spec::GtClassRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::GtClassRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::GtClassRule
+pub enum reed_filter::spec::HweMode
+pub reed_filter::spec::HweMode::Exact
+pub reed_filter::spec::HweMode::MidP
+impl core::clone::Clone for reed_filter::spec::HweMode
+pub fn reed_filter::spec::HweMode::clone(&self) -> reed_filter::spec::HweMode
+impl core::cmp::Eq for reed_filter::spec::HweMode
+impl core::cmp::PartialEq for reed_filter::spec::HweMode
+pub fn reed_filter::spec::HweMode::eq(&self, &reed_filter::spec::HweMode) -> bool
+impl core::default::Default for reed_filter::spec::HweMode
+pub fn reed_filter::spec::HweMode::default() -> reed_filter::spec::HweMode
+impl core::fmt::Debug for reed_filter::spec::HweMode
+pub fn reed_filter::spec::HweMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::HweMode
+impl core::marker::StructuralPartialEq for reed_filter::spec::HweMode
+impl serde_core::ser::Serialize for reed_filter::spec::HweMode
+pub fn reed_filter::spec::HweMode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::HweMode
+pub fn reed_filter::spec::HweMode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::HweMode
+impl core::marker::Send for reed_filter::spec::HweMode
+impl core::marker::Sync for reed_filter::spec::HweMode
+impl core::marker::Unpin for reed_filter::spec::HweMode
+impl core::marker::UnsafeUnpin for reed_filter::spec::HweMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::HweMode
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::HweMode
+pub enum reed_filter::spec::MultiallelicPolicy
+pub reed_filter::spec::MultiallelicPolicy::Allow
+pub reed_filter::spec::MultiallelicPolicy::Reject
+impl core::clone::Clone for reed_filter::spec::MultiallelicPolicy
+pub fn reed_filter::spec::MultiallelicPolicy::clone(&self) -> reed_filter::spec::MultiallelicPolicy
+impl core::cmp::Eq for reed_filter::spec::MultiallelicPolicy
+impl core::cmp::PartialEq for reed_filter::spec::MultiallelicPolicy
+pub fn reed_filter::spec::MultiallelicPolicy::eq(&self, &reed_filter::spec::MultiallelicPolicy) -> bool
+impl core::default::Default for reed_filter::spec::MultiallelicPolicy
+pub fn reed_filter::spec::MultiallelicPolicy::default() -> reed_filter::spec::MultiallelicPolicy
+impl core::fmt::Debug for reed_filter::spec::MultiallelicPolicy
+pub fn reed_filter::spec::MultiallelicPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::MultiallelicPolicy
+impl core::marker::StructuralPartialEq for reed_filter::spec::MultiallelicPolicy
+impl serde_core::ser::Serialize for reed_filter::spec::MultiallelicPolicy
+pub fn reed_filter::spec::MultiallelicPolicy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::MultiallelicPolicy
+pub fn reed_filter::spec::MultiallelicPolicy::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::MultiallelicPolicy
+impl core::marker::Send for reed_filter::spec::MultiallelicPolicy
+impl core::marker::Sync for reed_filter::spec::MultiallelicPolicy
+impl core::marker::Unpin for reed_filter::spec::MultiallelicPolicy
+impl core::marker::UnsafeUnpin for reed_filter::spec::MultiallelicPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::MultiallelicPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::MultiallelicPolicy
+pub enum reed_filter::spec::OnMissing
+pub reed_filter::spec::OnMissing::Fail
+pub reed_filter::spec::OnMissing::Keep
+pub reed_filter::spec::OnMissing::Mask
+pub reed_filter::spec::OnMissing::Pass
+impl core::clone::Clone for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::clone(&self) -> reed_filter::spec::predicate::OnMissing
+impl core::cmp::Eq for reed_filter::spec::predicate::OnMissing
+impl core::cmp::PartialEq for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::eq(&self, &reed_filter::spec::predicate::OnMissing) -> bool
+impl core::default::Default for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::default() -> reed_filter::spec::predicate::OnMissing
+impl core::fmt::Debug for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::predicate::OnMissing
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::OnMissing
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::OnMissing
+pub fn reed_filter::spec::predicate::OnMissing::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::OnMissing
+impl core::marker::Send for reed_filter::spec::predicate::OnMissing
+impl core::marker::Sync for reed_filter::spec::predicate::OnMissing
+impl core::marker::Unpin for reed_filter::spec::predicate::OnMissing
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::OnMissing
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::OnMissing
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::OnMissing
+pub enum reed_filter::spec::PloidyPolicy
+pub reed_filter::spec::PloidyPolicy::AllowHaploid
+pub reed_filter::spec::PloidyPolicy::RequireDiploid
+impl core::clone::Clone for reed_filter::spec::PloidyPolicy
+pub fn reed_filter::spec::PloidyPolicy::clone(&self) -> reed_filter::spec::PloidyPolicy
+impl core::cmp::Eq for reed_filter::spec::PloidyPolicy
+impl core::cmp::PartialEq for reed_filter::spec::PloidyPolicy
+pub fn reed_filter::spec::PloidyPolicy::eq(&self, &reed_filter::spec::PloidyPolicy) -> bool
+impl core::default::Default for reed_filter::spec::PloidyPolicy
+pub fn reed_filter::spec::PloidyPolicy::default() -> reed_filter::spec::PloidyPolicy
+impl core::fmt::Debug for reed_filter::spec::PloidyPolicy
+pub fn reed_filter::spec::PloidyPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::PloidyPolicy
+impl core::marker::StructuralPartialEq for reed_filter::spec::PloidyPolicy
+impl serde_core::ser::Serialize for reed_filter::spec::PloidyPolicy
+pub fn reed_filter::spec::PloidyPolicy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::PloidyPolicy
+pub fn reed_filter::spec::PloidyPolicy::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::PloidyPolicy
+impl core::marker::Send for reed_filter::spec::PloidyPolicy
+impl core::marker::Sync for reed_filter::spec::PloidyPolicy
+impl core::marker::Unpin for reed_filter::spec::PloidyPolicy
+impl core::marker::UnsafeUnpin for reed_filter::spec::PloidyPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::PloidyPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::PloidyPolicy
+pub enum reed_filter::spec::Quantifier
+pub reed_filter::spec::Quantifier::All
+pub reed_filter::spec::Quantifier::Any
+impl core::clone::Clone for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::clone(&self) -> reed_filter::spec::predicate::Quantifier
+impl core::cmp::Eq for reed_filter::spec::predicate::Quantifier
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::eq(&self, &reed_filter::spec::predicate::Quantifier) -> bool
+impl core::default::Default for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::default() -> reed_filter::spec::predicate::Quantifier
+impl core::fmt::Debug for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::predicate::Quantifier
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Quantifier
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::Quantifier
+pub fn reed_filter::spec::predicate::Quantifier::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::Quantifier
+impl core::marker::Send for reed_filter::spec::predicate::Quantifier
+impl core::marker::Sync for reed_filter::spec::predicate::Quantifier
+impl core::marker::Unpin for reed_filter::spec::predicate::Quantifier
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Quantifier
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Quantifier
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Quantifier
+pub enum reed_filter::spec::SampleList
+pub reed_filter::spec::SampleList::File(alloc::string::String)
+pub reed_filter::spec::SampleList::Names(alloc::vec::Vec<alloc::string::String>)
+impl core::clone::Clone for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::clone(&self) -> reed_filter::spec::cohort::SampleList
+impl core::cmp::PartialEq for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::eq(&self, &reed_filter::spec::cohort::SampleList) -> bool
+impl core::fmt::Debug for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::cohort::SampleList
+impl serde_core::ser::Serialize for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::cohort::SampleList
+pub fn reed_filter::spec::cohort::SampleList::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::cohort::SampleList
+impl core::marker::Send for reed_filter::spec::cohort::SampleList
+impl core::marker::Sync for reed_filter::spec::cohort::SampleList
+impl core::marker::Unpin for reed_filter::spec::cohort::SampleList
+impl core::marker::UnsafeUnpin for reed_filter::spec::cohort::SampleList
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::cohort::SampleList
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::cohort::SampleList
+pub enum reed_filter::spec::Typed
+pub reed_filter::spec::Typed::Float(f64)
+pub reed_filter::spec::Typed::Int(i64)
+impl reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::clone(&self) -> reed_filter::spec::predicate::Typed
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::eq(&self, &reed_filter::spec::predicate::Typed) -> bool
+impl core::fmt::Debug for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Typed
+impl serde_core::ser::Serialize for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::predicate::Typed
+pub fn reed_filter::spec::predicate::Typed::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::predicate::Typed
+impl core::marker::Send for reed_filter::spec::predicate::Typed
+impl core::marker::Sync for reed_filter::spec::predicate::Typed
+impl core::marker::Unpin for reed_filter::spec::predicate::Typed
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Typed
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Typed
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Typed
+pub struct reed_filter::spec::Cmp
+pub reed_filter::spec::Cmp::op: reed_filter::spec::predicate::Op
+pub reed_filter::spec::Cmp::value: reed_filter::spec::predicate::Typed
+impl reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::apply_f64(&self, f64) -> bool
+pub fn reed_filter::spec::predicate::Cmp::apply_i64(&self, i64) -> bool
+pub fn reed_filter::spec::predicate::Cmp::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::clone(&self) -> reed_filter::spec::predicate::Cmp
+impl core::cmp::PartialEq for reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::eq(&self, &reed_filter::spec::predicate::Cmp) -> bool
+impl core::fmt::Debug for reed_filter::spec::predicate::Cmp
+pub fn reed_filter::spec::predicate::Cmp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::predicate::Cmp
+impl core::marker::Freeze for reed_filter::spec::predicate::Cmp
+impl core::marker::Send for reed_filter::spec::predicate::Cmp
+impl core::marker::Sync for reed_filter::spec::predicate::Cmp
+impl core::marker::Unpin for reed_filter::spec::predicate::Cmp
+impl core::marker::UnsafeUnpin for reed_filter::spec::predicate::Cmp
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::predicate::Cmp
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::predicate::Cmp
+pub struct reed_filter::spec::FilterSpec
+pub reed_filter::spec::FilterSpec::genotype: reed_filter::spec::GenotypeRules
+pub reed_filter::spec::FilterSpec::ld_prune: core::option::Option<reed_filter::spec::LdPruneSpec>
+pub reed_filter::spec::FilterSpec::mind: core::option::Option<reed_filter::spec::missing_rate::MissingRate>
+pub reed_filter::spec::FilterSpec::policy: reed_filter::spec::PolicyRules
+pub reed_filter::spec::FilterSpec::recompute: reed_filter::spec::recompute::RecomputeSpec
+pub reed_filter::spec::FilterSpec::sample_select: core::option::Option<reed_filter::spec::cohort::SampleSelect>
+pub reed_filter::spec::FilterSpec::site: reed_filter::spec::SiteRules
+pub reed_filter::spec::FilterSpec::site_after_mask: reed_filter::spec::TailRules
+pub reed_filter::spec::FilterSpec::targets: reed_filter::spec::region::RegionRule
+impl reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::multiallelics_allowed(&self) -> bool
+impl reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::to_args(&self) -> alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::clone(&self) -> reed_filter::spec::FilterSpec
+impl core::cmp::PartialEq for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::eq(&self, &reed_filter::spec::FilterSpec) -> bool
+impl core::default::Default for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::default() -> reed_filter::spec::FilterSpec
+impl core::fmt::Debug for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::FilterSpec
+impl serde_core::ser::Serialize for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::FilterSpec
+impl core::marker::Send for reed_filter::spec::FilterSpec
+impl core::marker::Sync for reed_filter::spec::FilterSpec
+impl core::marker::Unpin for reed_filter::spec::FilterSpec
+impl core::marker::UnsafeUnpin for reed_filter::spec::FilterSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::FilterSpec
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::FilterSpec
+pub struct reed_filter::spec::GenotypeMaskRule
+pub reed_filter::spec::GenotypeMaskRule::depth: bool
+pub reed_filter::spec::GenotypeMaskRule::field: alloc::string::String
+pub reed_filter::spec::GenotypeMaskRule::on_missing: reed_filter::spec::predicate::OnMissing
+pub reed_filter::spec::GenotypeMaskRule::when: alloc::string::String
+impl reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::parsed(&self) -> core::result::Result<reed_filter::spec::predicate::Cmp, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::clone(&self) -> reed_filter::spec::mask::GenotypeMaskRule
+impl core::cmp::PartialEq for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::eq(&self, &reed_filter::spec::mask::GenotypeMaskRule) -> bool
+impl core::fmt::Debug for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::mask::GenotypeMaskRule
+impl serde_core::ser::Serialize for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::mask::GenotypeMaskRule
+pub fn reed_filter::spec::mask::GenotypeMaskRule::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::Send for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::Sync for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::Unpin for reed_filter::spec::mask::GenotypeMaskRule
+impl core::marker::UnsafeUnpin for reed_filter::spec::mask::GenotypeMaskRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::mask::GenotypeMaskRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::mask::GenotypeMaskRule
+pub struct reed_filter::spec::GenotypeRules
+pub reed_filter::spec::GenotypeRules::mask_if: alloc::vec::Vec<reed_filter::spec::mask::GenotypeMaskRule>
+pub reed_filter::spec::GenotypeRules::set_gts: core::option::Option<alloc::string::String>
+impl core::clone::Clone for reed_filter::spec::GenotypeRules
+pub fn reed_filter::spec::GenotypeRules::clone(&self) -> reed_filter::spec::GenotypeRules
+impl core::cmp::PartialEq for reed_filter::spec::GenotypeRules
+pub fn reed_filter::spec::GenotypeRules::eq(&self, &reed_filter::spec::GenotypeRules) -> bool
+impl core::default::Default for reed_filter::spec::GenotypeRules
+pub fn reed_filter::spec::GenotypeRules::default() -> reed_filter::spec::GenotypeRules
+impl core::fmt::Debug for reed_filter::spec::GenotypeRules
+pub fn reed_filter::spec::GenotypeRules::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::GenotypeRules
+impl serde_core::ser::Serialize for reed_filter::spec::GenotypeRules
+pub fn reed_filter::spec::GenotypeRules::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::GenotypeRules
+pub fn reed_filter::spec::GenotypeRules::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::GenotypeRules
+impl core::marker::Send for reed_filter::spec::GenotypeRules
+impl core::marker::Sync for reed_filter::spec::GenotypeRules
+impl core::marker::Unpin for reed_filter::spec::GenotypeRules
+impl core::marker::UnsafeUnpin for reed_filter::spec::GenotypeRules
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::GenotypeRules
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::GenotypeRules
+pub struct reed_filter::spec::InfoPredicate
+pub reed_filter::spec::InfoPredicate::keep_if: alloc::string::String
+pub reed_filter::spec::InfoPredicate::on_missing: reed_filter::spec::predicate::OnMissing
+pub reed_filter::spec::InfoPredicate::quantifier: core::option::Option<reed_filter::spec::predicate::Quantifier>
+pub reed_filter::spec::InfoPredicate::tag: alloc::string::String
+impl core::clone::Clone for reed_filter::spec::InfoPredicate
+pub fn reed_filter::spec::InfoPredicate::clone(&self) -> reed_filter::spec::InfoPredicate
+impl core::cmp::PartialEq for reed_filter::spec::InfoPredicate
+pub fn reed_filter::spec::InfoPredicate::eq(&self, &reed_filter::spec::InfoPredicate) -> bool
+impl core::fmt::Debug for reed_filter::spec::InfoPredicate
+pub fn reed_filter::spec::InfoPredicate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::InfoPredicate
+impl serde_core::ser::Serialize for reed_filter::spec::InfoPredicate
+pub fn reed_filter::spec::InfoPredicate::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::InfoPredicate
+pub fn reed_filter::spec::InfoPredicate::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::InfoPredicate
+impl core::marker::Send for reed_filter::spec::InfoPredicate
+impl core::marker::Sync for reed_filter::spec::InfoPredicate
+impl core::marker::Unpin for reed_filter::spec::InfoPredicate
+impl core::marker::UnsafeUnpin for reed_filter::spec::InfoPredicate
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::InfoPredicate
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::InfoPredicate
+pub struct reed_filter::spec::LdPruneSpec
+pub reed_filter::spec::LdPruneSpec::kb: bool
+pub reed_filter::spec::LdPruneSpec::r2: f64
+pub reed_filter::spec::LdPruneSpec::step: usize
+pub reed_filter::spec::LdPruneSpec::window: u64
+impl core::clone::Clone for reed_filter::spec::LdPruneSpec
+pub fn reed_filter::spec::LdPruneSpec::clone(&self) -> reed_filter::spec::LdPruneSpec
+impl core::cmp::PartialEq for reed_filter::spec::LdPruneSpec
+pub fn reed_filter::spec::LdPruneSpec::eq(&self, &reed_filter::spec::LdPruneSpec) -> bool
+impl core::fmt::Debug for reed_filter::spec::LdPruneSpec
+pub fn reed_filter::spec::LdPruneSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::LdPruneSpec
+impl core::marker::StructuralPartialEq for reed_filter::spec::LdPruneSpec
+impl serde_core::ser::Serialize for reed_filter::spec::LdPruneSpec
+pub fn reed_filter::spec::LdPruneSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::LdPruneSpec
+pub fn reed_filter::spec::LdPruneSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::LdPruneSpec
+impl core::marker::Send for reed_filter::spec::LdPruneSpec
+impl core::marker::Sync for reed_filter::spec::LdPruneSpec
+impl core::marker::Unpin for reed_filter::spec::LdPruneSpec
+impl core::marker::UnsafeUnpin for reed_filter::spec::LdPruneSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::LdPruneSpec
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::LdPruneSpec
+pub struct reed_filter::spec::MissingRate
+impl reed_filter::spec::missing_rate::MissingRate
+pub const fn reed_filter::spec::missing_rate::MissingRate::complement(self) -> Self
+pub fn reed_filter::spec::missing_rate::MissingRate::from_f64(f64) -> core::result::Result<Self, reed_filter::error::FilterError>
+pub fn reed_filter::spec::missing_rate::MissingRate::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+pub const fn reed_filter::spec::missing_rate::MissingRate::q(self) -> u64
+pub fn reed_filter::spec::missing_rate::MissingRate::render(self) -> alloc::string::String
+pub fn reed_filter::spec::missing_rate::MissingRate::tolerates(self, u64, u64) -> bool
+impl core::clone::Clone for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::clone(&self) -> reed_filter::spec::missing_rate::MissingRate
+impl core::cmp::Eq for reed_filter::spec::missing_rate::MissingRate
+impl core::cmp::PartialEq for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::eq(&self, &reed_filter::spec::missing_rate::MissingRate) -> bool
+impl core::fmt::Debug for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::StructuralPartialEq for reed_filter::spec::missing_rate::MissingRate
+impl serde_core::ser::Serialize for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::missing_rate::MissingRate
+pub fn reed_filter::spec::missing_rate::MissingRate::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+impl core::marker::Freeze for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::Send for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::Sync for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::Unpin for reed_filter::spec::missing_rate::MissingRate
+impl core::marker::UnsafeUnpin for reed_filter::spec::missing_rate::MissingRate
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::missing_rate::MissingRate
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::missing_rate::MissingRate
+pub struct reed_filter::spec::PolicyRules
+pub reed_filter::spec::PolicyRules::multiallelic: reed_filter::spec::MultiallelicPolicy
+pub reed_filter::spec::PolicyRules::ploidy: reed_filter::spec::PloidyPolicy
+impl core::clone::Clone for reed_filter::spec::PolicyRules
+pub fn reed_filter::spec::PolicyRules::clone(&self) -> reed_filter::spec::PolicyRules
+impl core::cmp::Eq for reed_filter::spec::PolicyRules
+impl core::cmp::PartialEq for reed_filter::spec::PolicyRules
+pub fn reed_filter::spec::PolicyRules::eq(&self, &reed_filter::spec::PolicyRules) -> bool
+impl core::default::Default for reed_filter::spec::PolicyRules
+pub fn reed_filter::spec::PolicyRules::default() -> reed_filter::spec::PolicyRules
+impl core::fmt::Debug for reed_filter::spec::PolicyRules
+pub fn reed_filter::spec::PolicyRules::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::PolicyRules
+impl serde_core::ser::Serialize for reed_filter::spec::PolicyRules
+pub fn reed_filter::spec::PolicyRules::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::PolicyRules
+pub fn reed_filter::spec::PolicyRules::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::PolicyRules
+impl core::marker::Send for reed_filter::spec::PolicyRules
+impl core::marker::Sync for reed_filter::spec::PolicyRules
+impl core::marker::Unpin for reed_filter::spec::PolicyRules
+impl core::marker::UnsafeUnpin for reed_filter::spec::PolicyRules
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::PolicyRules
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::PolicyRules
+pub struct reed_filter::spec::RecomputeSpec
+pub reed_filter::spec::RecomputeSpec::drop_stale: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::RecomputeSpec::drop_stale_explicit: bool
+pub reed_filter::spec::RecomputeSpec::no_update: bool
+pub reed_filter::spec::RecomputeSpec::tags: alloc::vec::Vec<alloc::string::String>
+impl reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::all() -> Self
+pub fn reed_filter::spec::recompute::RecomputeSpec::stale_bytes(&self) -> alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub fn reed_filter::spec::recompute::RecomputeSpec::wants(&self, &str) -> bool
+impl core::clone::Clone for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::clone(&self) -> reed_filter::spec::recompute::RecomputeSpec
+impl core::cmp::Eq for reed_filter::spec::recompute::RecomputeSpec
+impl core::cmp::PartialEq for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::eq(&self, &reed_filter::spec::recompute::RecomputeSpec) -> bool
+impl core::default::Default for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::default() -> Self
+impl core::fmt::Debug for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::recompute::RecomputeSpec
+impl serde_core::ser::Serialize for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::recompute::RecomputeSpec
+pub fn reed_filter::spec::recompute::RecomputeSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::Send for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::Sync for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::Unpin for reed_filter::spec::recompute::RecomputeSpec
+impl core::marker::UnsafeUnpin for reed_filter::spec::recompute::RecomputeSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::recompute::RecomputeSpec
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::recompute::RecomputeSpec
+pub struct reed_filter::spec::Region
+pub reed_filter::spec::Region::contig: alloc::string::String
+pub reed_filter::spec::Region::end: core::option::Option<u64>
+pub reed_filter::spec::Region::start: core::option::Option<u64>
+impl reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::contains(&self, &str, u64) -> bool
+pub fn reed_filter::spec::region::Region::parse(&str) -> core::result::Result<Self, reed_filter::error::FilterError>
+pub fn reed_filter::spec::region::Region::parse_in(&str, &[alloc::string::String]) -> core::result::Result<Self, reed_filter::error::FilterError>
+impl core::clone::Clone for reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::clone(&self) -> reed_filter::spec::region::Region
+impl core::cmp::PartialEq for reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::eq(&self, &reed_filter::spec::region::Region) -> bool
+impl core::fmt::Debug for reed_filter::spec::region::Region
+pub fn reed_filter::spec::region::Region::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::region::Region
+impl core::marker::Freeze for reed_filter::spec::region::Region
+impl core::marker::Send for reed_filter::spec::region::Region
+impl core::marker::Sync for reed_filter::spec::region::Region
+impl core::marker::Unpin for reed_filter::spec::region::Region
+impl core::marker::UnsafeUnpin for reed_filter::spec::region::Region
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::region::Region
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::region::Region
+pub struct reed_filter::spec::RegionRule
+pub reed_filter::spec::RegionRule::exclude: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::RegionRule::include: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::RegionRule::indexed: alloc::vec::Vec<alloc::string::String>
+impl reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::is_empty(&self) -> bool
+impl core::clone::Clone for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::clone(&self) -> reed_filter::spec::region::RegionRule
+impl core::cmp::PartialEq for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::eq(&self, &reed_filter::spec::region::RegionRule) -> bool
+impl core::default::Default for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::default() -> reed_filter::spec::region::RegionRule
+impl core::fmt::Debug for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::region::RegionRule
+impl serde_core::ser::Serialize for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::region::RegionRule
+pub fn reed_filter::spec::region::RegionRule::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::region::RegionRule
+impl core::marker::Send for reed_filter::spec::region::RegionRule
+impl core::marker::Sync for reed_filter::spec::region::RegionRule
+impl core::marker::Unpin for reed_filter::spec::region::RegionRule
+impl core::marker::UnsafeUnpin for reed_filter::spec::region::RegionRule
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::region::RegionRule
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::region::RegionRule
+pub struct reed_filter::spec::SampleSelect
+pub reed_filter::spec::SampleSelect::keep: core::option::Option<reed_filter::spec::cohort::SampleList>
+pub reed_filter::spec::SampleSelect::remove: core::option::Option<reed_filter::spec::cohort::SampleList>
+impl reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::is_empty(&self) -> bool
+impl core::clone::Clone for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::clone(&self) -> reed_filter::spec::cohort::SampleSelect
+impl core::cmp::PartialEq for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::eq(&self, &reed_filter::spec::cohort::SampleSelect) -> bool
+impl core::default::Default for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::default() -> reed_filter::spec::cohort::SampleSelect
+impl core::fmt::Debug for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::cohort::SampleSelect
+impl serde_core::ser::Serialize for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::cohort::SampleSelect
+pub fn reed_filter::spec::cohort::SampleSelect::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::cohort::SampleSelect
+impl core::marker::Send for reed_filter::spec::cohort::SampleSelect
+impl core::marker::Sync for reed_filter::spec::cohort::SampleSelect
+impl core::marker::Unpin for reed_filter::spec::cohort::SampleSelect
+impl core::marker::UnsafeUnpin for reed_filter::spec::cohort::SampleSelect
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::cohort::SampleSelect
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::cohort::SampleSelect
+pub struct reed_filter::spec::SiteRules
+pub reed_filter::spec::SiteRules::exclude: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::SiteRules::exclude_variant_class: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::SiteRules::include: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::SiteRules::info: alloc::vec::Vec<reed_filter::spec::InfoPredicate>
+pub reed_filter::spec::SiteRules::just_acgt: bool
+pub reed_filter::spec::SiteRules::max_alt_alleles: core::option::Option<u32>
+pub reed_filter::spec::SiteRules::min_alt_alleles: u32
+pub reed_filter::spec::SiteRules::min_qual: core::option::Option<f32>
+pub reed_filter::spec::SiteRules::require_filter: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::SiteRules::variant_class: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for reed_filter::spec::SiteRules
+pub fn reed_filter::spec::SiteRules::clone(&self) -> reed_filter::spec::SiteRules
+impl core::cmp::PartialEq for reed_filter::spec::SiteRules
+pub fn reed_filter::spec::SiteRules::eq(&self, &reed_filter::spec::SiteRules) -> bool
+impl core::default::Default for reed_filter::spec::SiteRules
+pub fn reed_filter::spec::SiteRules::default() -> reed_filter::spec::SiteRules
+impl core::fmt::Debug for reed_filter::spec::SiteRules
+pub fn reed_filter::spec::SiteRules::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::SiteRules
+impl serde_core::ser::Serialize for reed_filter::spec::SiteRules
+pub fn reed_filter::spec::SiteRules::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::SiteRules
+pub fn reed_filter::spec::SiteRules::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::SiteRules
+impl core::marker::Send for reed_filter::spec::SiteRules
+impl core::marker::Sync for reed_filter::spec::SiteRules
+impl core::marker::Unpin for reed_filter::spec::SiteRules
+impl core::marker::UnsafeUnpin for reed_filter::spec::SiteRules
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::SiteRules
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::SiteRules
+pub struct reed_filter::spec::SiteSelector
+pub reed_filter::spec::SiteSelector::exclude: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+pub reed_filter::spec::SiteSelector::include: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+pub reed_filter::spec::SiteSelector::indexed: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+pub reed_filter::spec::SiteSelector::sites: alloc::vec::Vec<reed_filter::spec::region::RegionTriple>
+impl reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::allows(&self, &[u8], u64) -> bool
+pub fn reed_filter::spec::region::SiteSelector::is_empty(&self) -> bool
+impl core::clone::Clone for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::clone(&self) -> reed_filter::spec::region::SiteSelector
+impl core::cmp::Eq for reed_filter::spec::region::SiteSelector
+impl core::cmp::PartialEq for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::eq(&self, &reed_filter::spec::region::SiteSelector) -> bool
+impl core::default::Default for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::default() -> reed_filter::spec::region::SiteSelector
+impl core::fmt::Debug for reed_filter::spec::region::SiteSelector
+pub fn reed_filter::spec::region::SiteSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::region::SiteSelector
+impl core::marker::Freeze for reed_filter::spec::region::SiteSelector
+impl core::marker::Send for reed_filter::spec::region::SiteSelector
+impl core::marker::Sync for reed_filter::spec::region::SiteSelector
+impl core::marker::Unpin for reed_filter::spec::region::SiteSelector
+impl core::marker::UnsafeUnpin for reed_filter::spec::region::SiteSelector
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::region::SiteSelector
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::region::SiteSelector
+pub struct reed_filter::spec::TailRules
+pub reed_filter::spec::TailRules::exclude: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::TailRules::gt_class: alloc::vec::Vec<reed_filter::spec::GtClassRule>
+pub reed_filter::spec::TailRules::hwe_mode: reed_filter::spec::HweMode
+pub reed_filter::spec::TailRules::include: alloc::vec::Vec<alloc::string::String>
+pub reed_filter::spec::TailRules::max_af: core::option::Option<f64>
+pub reed_filter::spec::TailRules::max_af_kind: core::option::Option<reed_filter::spec::AfKind>
+pub reed_filter::spec::TailRules::max_mac: u32
+pub reed_filter::spec::TailRules::max_maf: core::option::Option<f64>
+pub reed_filter::spec::TailRules::max_missing: core::option::Option<reed_filter::spec::missing_rate::MissingRate>
+pub reed_filter::spec::TailRules::min_af: core::option::Option<f64>
+pub reed_filter::spec::TailRules::min_af_kind: core::option::Option<reed_filter::spec::AfKind>
+pub reed_filter::spec::TailRules::min_hwe_p: core::option::Option<f64>
+pub reed_filter::spec::TailRules::min_mac: u32
+pub reed_filter::spec::TailRules::min_maf: core::option::Option<f64>
+impl core::clone::Clone for reed_filter::spec::TailRules
+pub fn reed_filter::spec::TailRules::clone(&self) -> reed_filter::spec::TailRules
+impl core::cmp::PartialEq for reed_filter::spec::TailRules
+pub fn reed_filter::spec::TailRules::eq(&self, &reed_filter::spec::TailRules) -> bool
+impl core::default::Default for reed_filter::spec::TailRules
+pub fn reed_filter::spec::TailRules::default() -> reed_filter::spec::TailRules
+impl core::fmt::Debug for reed_filter::spec::TailRules
+pub fn reed_filter::spec::TailRules::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::TailRules
+impl serde_core::ser::Serialize for reed_filter::spec::TailRules
+pub fn reed_filter::spec::TailRules::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::TailRules
+pub fn reed_filter::spec::TailRules::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::TailRules
+impl core::marker::Send for reed_filter::spec::TailRules
+impl core::marker::Sync for reed_filter::spec::TailRules
+impl core::marker::Unpin for reed_filter::spec::TailRules
+impl core::marker::UnsafeUnpin for reed_filter::spec::TailRules
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::TailRules
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::TailRules
+pub enum reed_filter::FilterError
+pub reed_filter::FilterError::Decode
+pub reed_filter::FilterError::Decode::contig: alloc::string::String
+pub reed_filter::FilterError::Decode::msg: alloc::string::String
+pub reed_filter::FilterError::Decode::pos: u64
+pub reed_filter::FilterError::Format(alloc::string::String)
+pub reed_filter::FilterError::Io(std::io::error::Error)
+pub reed_filter::FilterError::Spec(alloc::string::String)
+pub reed_filter::FilterError::Usage(alloc::string::String)
+impl core::convert::From<std::io::error::Error> for reed_filter::error::FilterError
+pub fn reed_filter::error::FilterError::from(std::io::error::Error) -> Self
+impl core::error::Error for reed_filter::error::FilterError
+impl core::fmt::Debug for reed_filter::error::FilterError
+pub fn reed_filter::error::FilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_filter::error::FilterError
+pub fn reed_filter::error::FilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_filter::error::FilterError
+impl core::marker::Send for reed_filter::error::FilterError
+impl core::marker::Sync for reed_filter::error::FilterError
+impl core::marker::Unpin for reed_filter::error::FilterError
+impl core::marker::UnsafeUnpin for reed_filter::error::FilterError
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_filter::error::FilterError
+impl !core::panic::unwind_safe::UnwindSafe for reed_filter::error::FilterError
+pub struct reed_filter::FilterSpec
+pub reed_filter::FilterSpec::genotype: reed_filter::spec::GenotypeRules
+pub reed_filter::FilterSpec::ld_prune: core::option::Option<reed_filter::spec::LdPruneSpec>
+pub reed_filter::FilterSpec::mind: core::option::Option<reed_filter::spec::missing_rate::MissingRate>
+pub reed_filter::FilterSpec::policy: reed_filter::spec::PolicyRules
+pub reed_filter::FilterSpec::recompute: reed_filter::spec::recompute::RecomputeSpec
+pub reed_filter::FilterSpec::sample_select: core::option::Option<reed_filter::spec::cohort::SampleSelect>
+pub reed_filter::FilterSpec::site: reed_filter::spec::SiteRules
+pub reed_filter::FilterSpec::site_after_mask: reed_filter::spec::TailRules
+pub reed_filter::FilterSpec::targets: reed_filter::spec::region::RegionRule
+impl reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::multiallelics_allowed(&self) -> bool
+impl reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::to_args(&self) -> alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::clone(&self) -> reed_filter::spec::FilterSpec
+impl core::cmp::PartialEq for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::eq(&self, &reed_filter::spec::FilterSpec) -> bool
+impl core::default::Default for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::default() -> reed_filter::spec::FilterSpec
+impl core::fmt::Debug for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_filter::spec::FilterSpec
+impl serde_core::ser::Serialize for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for reed_filter::spec::FilterSpec
+pub fn reed_filter::spec::FilterSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for reed_filter::spec::FilterSpec
+impl core::marker::Send for reed_filter::spec::FilterSpec
+impl core::marker::Sync for reed_filter::spec::FilterSpec
+impl core::marker::Unpin for reed_filter::spec::FilterSpec
+impl core::marker::UnsafeUnpin for reed_filter::spec::FilterSpec
+impl core::panic::unwind_safe::RefUnwindSafe for reed_filter::spec::FilterSpec
+impl core::panic::unwind_safe::UnwindSafe for reed_filter::spec::FilterSpec

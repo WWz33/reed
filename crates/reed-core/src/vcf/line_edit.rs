@@ -14,8 +14,8 @@
 // Casts in this file are bounded by construction: Sample counts are validated against the header and fit u32.
 #![allow(clippy::cast_possible_truncation)]
 
-use reed_core::Bitset;
-use reed_core::sample::SampleMask;
+use crate::Bitset;
+use crate::sample::SampleMask;
 
 use crate::vcf::line::{LineRef, Shape};
 
@@ -216,10 +216,7 @@ fn edit_info(info: &[u8], plan: &EditPlan<'_>, out: &mut Vec<u8>) {
 fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_index: Option<usize>, out: &mut Vec<u8>) {
     let keep = plan.keep_samples;
     let mask = plan.mask_gt;
-    let n_samples = keep.map_or_else(
-        || mask.map_or(0, Bitset::len),
-        reed_core::SampleMask::n_samples,
-    );
+    let n_samples = keep.map_or_else(|| mask.map_or(0, Bitset::len), crate::SampleMask::n_samples);
     // Work only on the first `n_samples` fields. The line may carry extra
     // empty columns past the header count (htslib ignores them); they have
     // no mask bit, and the verbatim tail copy at the end of this function
@@ -234,7 +231,7 @@ fn edit_samples(samples: &[u8], plan: &EditPlan<'_>, gt_index: Option<usize>, ou
     while field_start < samples.len() && sample_idx < n_samples {
         let field_end = memchr::memchr(b'\t', &samples[field_start..])
             .map_or(samples.len(), |rel| field_start + rel);
-        let kept = keep.is_none_or(|k| k.contains(reed_core::SampleId(sample_idx as u32)));
+        let kept = keep.is_none_or(|k| k.contains(crate::SampleId(sample_idx as u32)));
         let masked = kept && mask.is_some_and(|m| m.get(sample_idx));
         if kept && !masked {
             run_start.get_or_insert(field_start);
@@ -442,7 +439,7 @@ pub fn format_g6_into(out: &mut Vec<u8>, v: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reed_core::SampleId;
+    use crate::SampleId;
 
     #[test]
     fn g6_matches_htslib_gold_rendings() {

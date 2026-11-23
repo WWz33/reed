@@ -2,7 +2,7 @@
 //! [`reed::PcaRequest`]; the driver owns the semantics.
 
 use reed::PcaRequest;
-use reed::budget::ThreadBudget;
+use reed::ThreadBudget;
 
 use crate::cli::PcaCli;
 
@@ -35,7 +35,12 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
     let sample_names = opened.facts().sample_names.clone();
     let keep = parse_sample_keep(&args.samples, &sample_names).map_err(reed::Error::usage)?;
 
+    let stand = reed::Stand::parse(&args.stand).map_err(reed::Error::usage)?;
+    let missing = reed::MissingPolicy::parse(&args.missing).map_err(reed::Error::usage)?;
+    let solver = reed::PcaSolver::parse(&args.solver).map_err(reed::Error::usage)?;
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
+    let abort = reed::abort_for(&budget);
+    let ctx = reed::RunContext::new(&budget, &abort.signal);
 
     // `--dapc` turns the run into a discriminant analysis on the components.
     if args.dapc {
@@ -66,7 +71,8 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             Some(reed::XvalRequest {
                 n_rep: args.xval_rep,
                 training_set: args.xval_training,
-                result: args.xval_result,
+                result: reed::XvalResultMode::parse(&args.xval_result)
+                    .map_err(reed::Error::usage)?,
                 seed: args.xval_seed,
                 n_pca,
             })
@@ -77,17 +83,15 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             n_pca: Some(args.pcs),
             n_da: args.n_da,
             populations: pop,
-            stand: args.stand,
-            missing: args.missing,
-            solver: args.solver,
+            stand,
+            missing,
+            solver,
             prefix: prefix.to_string(),
             keep_samples: keep,
             force_samples: args.force_samples,
-            threads: Some(budget.threads),
-            memory: args.memory.map(|m| u64::from(m.get())),
             xval,
         };
-        let report = reed::run_dapc_opened(opened, &request, &budget)?;
+        let report = reed::run_dapc_opened(opened, &request, &ctx)?;
         if args.verbosity.shows_summary() {
             eprintln!(
                 "reed pca --dapc: {} samples, {} sites, {} groups, \
@@ -129,16 +133,14 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
 
     let request = PcaRequest {
         pcs: args.pcs,
-        stand: args.stand,
-        missing: args.missing,
-        solver: args.solver,
+        stand,
+        missing,
+        solver,
         prefix: prefix.to_string(),
         keep_samples: keep,
-        threads: Some(budget.threads),
-        memory: args.memory.map(|m| u64::from(m.get())),
     };
 
-    let report = reed::run_pca_opened(opened, &request, &budget)?;
+    let report = reed::run_pca_opened(opened, &request, &ctx)?;
     if args.verbosity.shows_summary() {
         eprintln!(
             "reed pca: {} samples, {} sites, {} PCs, solver={} ({:.2}s)",

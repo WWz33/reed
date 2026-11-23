@@ -8,6 +8,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::error::{IoError, Locus};
+use reed_core::coord::{Pos0, Pos1};
 
 /// BCF value types (the low nibble of a typed descriptor).
 pub mod value_type {
@@ -370,7 +371,7 @@ impl FormatTable {
     ///
     /// # Errors
     ///
-    /// [`IoError::MalformedRecord`] as [`format_fields`].
+    /// [`IoError::MalformedRecord`] as `format_fields`.
     pub fn rebuild(
         &mut self,
         record: &BcfRecordRef<'_>,
@@ -388,14 +389,49 @@ impl FormatTable {
     }
 }
 
+/// The one BCF `pos0` → VCF `POS` conversion (doc_v30 R03).
+///
+/// htslib's telomere sentinel is `pos0 == -1`: `v->pos` is `UINT32_MAX` and
+/// the text renderer prints `POS 0` (`vcf.c:1649-1650`, the `MT:0` case).
+/// Every value below `-1` is malformed. The renderer, the GT readers, filter
+/// and stats all go through this function; a bare `try_from(pos0) + 1` at a
+/// call site is a review reject because it silently turns `-1` into `POS 1`.
+///
+/// # Errors
+///
+/// [`IoError::MalformedRecord`] for `pos0 < -1`.
+pub fn pos1_from_pos0(pos0: i32) -> Result<Pos1, IoError> {
+    if pos0 == -1 {
+        return Ok(Pos1(0));
+    }
+    let pos0 = u64::try_from(pos0)
+        .map_err(|_| malformed("BCF position is below the telomere sentinel (-1)"))?;
+    Ok(Pos0(pos0).to_pos1())
+}
+
+/// The inverse of [`pos1_from_pos0`]: VCF `POS` → BCF `pos0`.
+///
+/// `POS 0` is the telomere sentinel and encodes as `pos0 = -1` (a text→BCF
+/// pass must not turn it into `POS 1`). `None` when `pos1` exceeds
+/// `i32::MAX + 1`, the largest position the BCF signed field can hold.
+#[must_use]
+pub fn pos0_from_pos1(pos1: u64) -> Option<i32> {
+    if pos1 == 0 {
+        // Telomere: the sentinel, not `-1` arithmetic.
+        Some(-1)
+    } else {
+        i32::try_from(pos1 - 1).ok()
+    }
+}
+
 /// The fixed 24-byte shared-block header (hts-specs §6.3.1), decoded once
 /// (doc_v28 V28-21).
 ///
 /// Three callers used to unpack these six words themselves — the GT site
 /// reader, the text renderer and the native encoder — with the same shifts and
 /// the same zero-allele rule written out three times. This type owns the
-/// framing and that one validation; everything semantic (contig lookup, the
-/// telomere sentinel, what to render) stays with the callers.
+/// framing, that validation and the telomere rule ([`Self::pos1`]); contig
+/// lookup and what to render stay with the callers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SharedHeader {
     /// Contig dictionary index.
@@ -453,6 +489,16 @@ impl SharedHeader {
             },
             c,
         ))
+    }
+
+    /// The record's 1-based `POS`, with the telomere sentinel applied
+    /// (doc_v30 R03; see [`pos1_from_pos0`]).
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedRecord`] for `pos0 < -1`.
+    pub fn pos1(&self) -> Result<Pos1, IoError> {
+        pos1_from_pos0(self.pos0)
     }
 }
 
@@ -639,6 +685,48 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// doc_v30 R03: the telomere sentinel is decoded in exactly one place.
+    #[test]
+    fn telomere_sentinel_is_the_only_pos0_conversion() {
+        assert_eq!(pos1_from_pos0(-1).expect("telomere"), Pos1(0));
+        assert_eq!(pos1_from_pos0(0).expect("first base"), Pos1(1));
+        assert_eq!(pos1_from_pos0(19).expect("ordinary"), Pos1(20));
+        for below in [-2, -5, i32::MIN] {
+            let err = pos1_from_pos0(below).expect_err("below the sentinel");
+            assert!(err.to_string().contains("telomere sentinel"), "{err}");
+        }
+    }
+
+    /// The text→BCF direction uses the same sentinel: `POS 0` is the
+    /// telomere (`pos0 = -1`), not `POS 1`.
+    #[test]
+    fn pos0_from_pos1_is_the_inverse_with_the_same_sentinel() {
+        assert_eq!(pos0_from_pos1(0), Some(-1));
+        assert_eq!(pos0_from_pos1(1), Some(0));
+        assert_eq!(pos0_from_pos1(20), Some(19));
+        assert_eq!(pos0_from_pos1(i32::MAX as u64 + 1), Some(i32::MAX));
+        assert_eq!(pos0_from_pos1(i32::MAX as u64 + 2), None);
+        for pos0 in [-1, 0, 19, i32::MAX] {
+            let pos1 = pos1_from_pos0(pos0).expect("in range");
+            assert_eq!(pos0_from_pos1(pos1.0), Some(pos0));
+        }
+    }
+
+    /// The header method and the free function cannot drift: both are the
+    /// same rule, and `-1` renders `POS 0` like htslib.
+    #[test]
+    fn shared_header_pos1_applies_the_sentinel() {
+        let mut shared = Vec::new();
+        shared.extend_from_slice(&0_i32.to_le_bytes()); // chrom
+        shared.extend_from_slice(&(-1_i32).to_le_bytes()); // pos0 = telomere
+        shared.extend_from_slice(&1_i32.to_le_bytes()); // rlen
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // qual
+        shared.extend_from_slice(&(1_u32 << 16).to_le_bytes()); // 1 allele, 0 INFO
+        shared.extend_from_slice(&0_u32.to_le_bytes()); // 0 FORMAT, 0 samples
+        let (header, _) = SharedHeader::parse(&shared).expect("invariant: header");
+        assert_eq!(header.pos1().expect("telomere"), Pos1(0));
+    }
 
     #[test]
     fn record_length_and_split() {

@@ -1,5 +1,5 @@
-# Development branches keep the full gates; main checks the public source build.
-# For pull requests, use the target branch to select the checks. Release tags
+# Development branches keep the full gates; main checks only the public source.
+# Pull requests use the target branch to select the same boundary. Release tags
 # are handled by release.yml, since the public tree omits development fixtures.
 name: ci
 
@@ -8,9 +8,14 @@ on:
     branches: ['**']
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
-    if: (github.base_ref || github.ref_name) == 'main'
+    # The published main tree intentionally excludes development docs, tests,
+    # and gold fixtures. Keep this job limited to the source that is public.
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -21,23 +26,29 @@ jobs:
         run: cargo build --release --locked --workspace
 
   gates:
-    if: (github.base_ref || github.ref_name) != 'main'
+    # All non-main pushes and PRs targeting dev/non-main branches use the full
+    # development gates. Main uses public-build above instead.
+    if: github.ref != 'refs/heads/main' && github.base_ref != 'main'
     runs-on: ubuntu-24.04
     steps:
+      # semver-checks needs release tags: a shallow clone has none.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Stable is the default for every ordinary build, test, lint, and format
+      # command in this job. Nightly is isolated in api-gates below.
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          components: clippy
+          components: clippy, rustfmt
       - name: Install the BCF test oracle
         run: sudo apt-get update && sudo apt-get install -y bcftools
-      # Compiling the workspace is the first gate (doc_v5 A5-4: the trunk
-      # must never sit in a "tests do not compile" state).
+      - name: formatting
+        run: cargo fmt --all --check
+      - name: publish safety
+        run: bash ci/test-publish.sh
       - name: build (release, all targets)
         run: cargo build --release --locked --workspace --all-targets
-      # Debug first: `debug_assert!` is compiled out of the release run below,
-      # so a red assertion test is invisible there (doc_v9 D9-8: the stitcher
-      # test survived two rounds because only release ran).
       - name: test (debug)
         env:
           # One Lanczos unit fixture exceeds the default 2 MiB test-thread stack on MSRV.
@@ -49,10 +60,54 @@ jobs:
         run: cargo test --locked --doc -p reed
       - name: clippy
         run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
+      # Empty feature sets must build: reed-reduce used to fail here.
+      - name: feature matrix (no default features)
+        run: cargo check --locked -p reed-reduce --no-default-features
       - name: doc-drift guards
         run: bash ci/check-doc-drift.sh
+      - name: structure guards
+        run: bash ci/check-structure.sh
+      - name: Install cargo-hack, cargo-semver-checks, cargo-modules
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack@0.6.46,cargo-semver-checks@0.51.0,cargo-modules@0.28.0
+      - name: nameability guards
+        run: bash ci/check-nameable.sh
+      - name: documentation guards
+        run: bash ci/check-docs.sh
+      - name: feature matrix (each feature)
+        run: bash ci/check-features.sh
+      - name: semver guards
+        run: bash ci/check-semver.sh
+      - name: package guards
+        run: bash ci/check-package.sh
+
+  api-gates:
+    # These tools require nightly rustdoc JSON. Keep the pinned nightly out of
+    # the ordinary stable gates so it cannot become their default compiler.
+    if: github.ref != 'refs/heads/main' && github.base_ref != 'main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly-2026-03-20
+      - name: Install cargo-public-api
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api@0.52.0
+      - name: public API snapshot
+        run: bash ci/check-api.sh
+      - name: Install cargo-check-external-types
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-check-external-types@0.5.0
+      - name: external types
+        run: bash ci/check-external-types.sh
 
   msrv:
+    # Main checks only source/library targets; development branches retain the
+    # broader all-targets MSRV check, including tests and benches.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -60,16 +115,15 @@ jobs:
         with:
           toolchain: "1.91.1"
       - name: Check public source on the minimum supported Rust version
-        if: (github.base_ref || github.ref_name) == 'main'
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
         run: cargo check --locked --workspace
       - name: Check all development targets on the minimum supported Rust version
-        if: (github.base_ref || github.ref_name) != 'main'
+        if: github.ref != 'refs/heads/main' && github.base_ref != 'main'
         run: cargo check --locked --workspace --all-targets
 
   data-gates:
-    # The subset numeric gates and the gold parity run need clean.vcf.gz and
-    # the reference tools; only a runner with the data can execute them.
-    if: (github.base_ref || github.ref_name) != 'main' && contains(github.event.pull_request.labels.*.name, 'run-data-gates')
+    # Data and gold fixtures are development-only and must never run on main.
+    if: github.ref != 'refs/heads/main' && github.base_ref != 'main' && contains(github.event.pull_request.labels.*.name, 'run-data-gates')
     runs-on: [self-hosted, reed-data]
     steps:
       - uses: actions/checkout@v4
@@ -91,13 +145,7 @@ jobs:
       - name: gold parity
         run: |
           export REED_SCRATCH=target/gold
-          # doc_v26 V26-14: the parity step used to read out/reed.vcf.gz
-          # without ever producing it, so it compared whatever a previous
-          # self-hosted run had left behind. Use the binary built above and
-          # export REED: `run_all.sh` joins the reed branch (see
-          # review item 6 -- the explicit `run_reed.sh` after it ran the same
-          # large computation twice), so the parity input is provably from the
-          # commit under test.
+          # Use the binary built above so parity is checked against this commit.
           export REED="$PWD/target/release/reed"
           bash gold/scripts/run_all.sh
           test -s "$REED_SCRATCH/out/reed.vcf.gz"

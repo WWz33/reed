@@ -88,9 +88,20 @@ impl OrderedOutput {
     /// Makes this sink the owner of `atomic`: [`Self::finish`] publishes it.
     ///
     /// Used when the caller opened the file itself (the filter clones the
-    /// handle for its `BufWriter`).
+    /// handle for its `BufWriter`), i.e. `new(...).adopting(atomic)`.
+    ///
+    /// # Panics
+    ///
+    /// If the sink already owns a file ([`Self::create`] sets one). Replacing
+    /// the owner silently discarded the bytes written to the previous
+    /// temporary — the `create(p).adopting(a)` shape that made `finish`
+    /// publish `a` while `p` never appeared (doc_v30 R11).
     #[must_use]
     pub fn adopting(mut self, atomic: AtomicFile) -> Self {
+        assert!(
+            self.atomic.is_none(),
+            "OrderedOutput already owns an output file; `adopting` would discard its temporary"
+        );
         self.atomic = Some(atomic);
         self
     }
@@ -291,5 +302,32 @@ impl PendingOrderedOutput {
             indexer.write(&path)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v30 R11: `create` already owns a temporary. Adopting a second
+    /// owner used to overwrite it, so `finish` published the adopter and the
+    /// bytes written for the original path vanished.
+    #[test]
+    #[should_panic(expected = "already owns an output file")]
+    fn adopting_a_second_file_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("reed-oo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: temp dir");
+        let out = OrderedOutput::create(
+            &dir.join("a.vcf.gz"),
+            false,
+            6,
+            None,
+            None,
+            Arc::from(Vec::<Vec<u8>>::new()),
+        )
+        .expect("invariant: create");
+        let (atomic, _file) = AtomicFile::create(&dir.join("b.vcf.gz")).expect("invariant: create");
+        let _ = out.adopting(atomic);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,1891 @@
+pub mod reed_stats
+pub mod reed_stats::dxy
+pub struct reed_stats::dxy::DxyAcc
+impl reed_stats::dxy::DxyAcc
+pub const fn reed_stats::dxy::DxyAcc::counts(&self) -> &reed_stats::pi::PairAcc
+pub fn reed_stats::dxy::DxyAcc::merge(&mut self, &Self)
+pub const fn reed_stats::dxy::DxyAcc::n_present(&self) -> u64
+pub const fn reed_stats::dxy::DxyAcc::n_present_file(&self) -> u64
+pub fn reed_stats::dxy::DxyAcc::new(usize, usize, u32, u32) -> Self
+pub fn reed_stats::dxy::DxyAcc::push(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::dxy::DxyAcc::value_accessible_bp(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::dxy::DxyAcc::value_per_pair(&self) -> core::option::Option<f64>
+pub fn reed_stats::dxy::DxyAcc::value_variant_only(&self, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::dxy::DxyAcc
+pub fn reed_stats::dxy::DxyAcc::clone(&self) -> reed_stats::dxy::DxyAcc
+impl core::fmt::Debug for reed_stats::dxy::DxyAcc
+pub fn reed_stats::dxy::DxyAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::dxy::DxyAcc
+impl core::marker::Send for reed_stats::dxy::DxyAcc
+impl core::marker::Sync for reed_stats::dxy::DxyAcc
+impl core::marker::Unpin for reed_stats::dxy::DxyAcc
+impl core::marker::UnsafeUnpin for reed_stats::dxy::DxyAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::dxy::DxyAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::dxy::DxyAcc
+pub mod reed_stats::fst
+pub enum reed_stats::fst::FstKind
+pub reed_stats::fst::FstKind::Hudson
+pub reed_stats::fst::FstKind::WeirCockerham84
+impl reed_stats::fst::FstKind
+pub const fn reed_stats::fst::FstKind::id(self) -> &'static str
+impl core::clone::Clone for reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstKind::clone(&self) -> reed_stats::fst::FstKind
+impl core::cmp::Eq for reed_stats::fst::FstKind
+impl core::cmp::PartialEq for reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstKind::eq(&self, &reed_stats::fst::FstKind) -> bool
+impl core::fmt::Debug for reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::fst::FstKind
+impl core::marker::StructuralPartialEq for reed_stats::fst::FstKind
+impl core::marker::Freeze for reed_stats::fst::FstKind
+impl core::marker::Send for reed_stats::fst::FstKind
+impl core::marker::Sync for reed_stats::fst::FstKind
+impl core::marker::Unpin for reed_stats::fst::FstKind
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstKind
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstKind
+pub struct reed_stats::fst::FstAcc
+impl reed_stats::fst::FstAcc
+pub const fn reed_stats::fst::FstAcc::audit(&self) -> (&reed_stats::pi::PairAcc, &reed_stats::pi::PairAcc, &reed_stats::pi::PairAcc)
+pub fn reed_stats::fst::FstAcc::merge(&mut self, &Self)
+pub const fn reed_stats::fst::FstAcc::n_sites(&self) -> u64
+pub fn reed_stats::fst::FstAcc::new(usize, usize) -> Self
+pub fn reed_stats::fst::FstAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::fst::FstAcc::push_with_variant(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::fst::FstAcc::value(&self, reed_stats::fst::FstKind) -> core::option::Option<f64>
+pub fn reed_stats::fst::FstAcc::value_hudson(&self) -> core::option::Option<f64>
+pub fn reed_stats::fst::FstAcc::value_wc84(&self) -> core::option::Option<f64>
+pub fn reed_stats::fst::FstAcc::wc_components(&self) -> (f64, f64, f64)
+pub const fn reed_stats::fst::FstAcc::wc_tally(&self) -> (u64, u64)
+impl core::clone::Clone for reed_stats::fst::FstAcc
+pub fn reed_stats::fst::FstAcc::clone(&self) -> reed_stats::fst::FstAcc
+impl core::fmt::Debug for reed_stats::fst::FstAcc
+pub fn reed_stats::fst::FstAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::FstAcc
+impl core::marker::Send for reed_stats::fst::FstAcc
+impl core::marker::Sync for reed_stats::fst::FstAcc
+impl core::marker::Unpin for reed_stats::fst::FstAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstAcc
+pub struct reed_stats::fst::FstMatrixAcc
+impl reed_stats::fst::FstMatrixAcc
+pub fn reed_stats::fst::FstMatrixAcc::entries(&self) -> alloc::vec::Vec<reed_stats::fst::FstMatrixEntry>
+pub const fn reed_stats::fst::FstMatrixAcc::kind(&self) -> reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstMatrixAcc::merge(&mut self, &Self)
+pub fn reed_stats::fst::FstMatrixAcc::new(usize, reed_stats::fst::FstKind) -> Self
+pub fn reed_stats::fst::FstMatrixAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+impl core::clone::Clone for reed_stats::fst::FstMatrixAcc
+pub fn reed_stats::fst::FstMatrixAcc::clone(&self) -> reed_stats::fst::FstMatrixAcc
+impl core::fmt::Debug for reed_stats::fst::FstMatrixAcc
+pub fn reed_stats::fst::FstMatrixAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::FstMatrixAcc
+impl core::marker::Send for reed_stats::fst::FstMatrixAcc
+impl core::marker::Sync for reed_stats::fst::FstMatrixAcc
+impl core::marker::Unpin for reed_stats::fst::FstMatrixAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstMatrixAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstMatrixAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstMatrixAcc
+pub struct reed_stats::fst::FstMatrixEntry
+pub reed_stats::fst::FstMatrixEntry::i: usize
+pub reed_stats::fst::FstMatrixEntry::j: usize
+pub reed_stats::fst::FstMatrixEntry::value: core::option::Option<f64>
+impl core::clone::Clone for reed_stats::fst::FstMatrixEntry
+pub fn reed_stats::fst::FstMatrixEntry::clone(&self) -> reed_stats::fst::FstMatrixEntry
+impl core::fmt::Debug for reed_stats::fst::FstMatrixEntry
+pub fn reed_stats::fst::FstMatrixEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::FstMatrixEntry
+impl core::marker::Send for reed_stats::fst::FstMatrixEntry
+impl core::marker::Sync for reed_stats::fst::FstMatrixEntry
+impl core::marker::Unpin for reed_stats::fst::FstMatrixEntry
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstMatrixEntry
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstMatrixEntry
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstMatrixEntry
+pub struct reed_stats::fst::WcAcc
+pub reed_stats::fst::WcAcc::a: reed_core::math::sum::NeumaierSum
+pub reed_stats::fst::WcAcc::b: reed_core::math::sum::NeumaierSum
+pub reed_stats::fst::WcAcc::c: reed_core::math::sum::NeumaierSum
+pub reed_stats::fst::WcAcc::n_sites: u64
+pub reed_stats::fst::WcAcc::n_skipped: u64
+impl core::clone::Clone for reed_stats::fst::WcAcc
+pub fn reed_stats::fst::WcAcc::clone(&self) -> reed_stats::fst::WcAcc
+impl core::default::Default for reed_stats::fst::WcAcc
+pub fn reed_stats::fst::WcAcc::default() -> reed_stats::fst::WcAcc
+impl core::fmt::Debug for reed_stats::fst::WcAcc
+pub fn reed_stats::fst::WcAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::WcAcc
+impl core::marker::Send for reed_stats::fst::WcAcc
+impl core::marker::Sync for reed_stats::fst::WcAcc
+impl core::marker::Unpin for reed_stats::fst::WcAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::WcAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::WcAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::WcAcc
+pub struct reed_stats::fst::WcMultiAcc
+impl reed_stats::fst::WcMultiAcc
+pub const fn reed_stats::fst::WcMultiAcc::components(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+pub fn reed_stats::fst::WcMultiAcc::merge(&mut self, &Self)
+pub fn reed_stats::fst::WcMultiAcc::new(alloc::vec::Vec<usize>) -> Self
+pub fn reed_stats::fst::WcMultiAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::fst::WcMultiAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::fst::WcMultiAcc::value(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::fst::WcMultiAcc
+pub fn reed_stats::fst::WcMultiAcc::clone(&self) -> reed_stats::fst::WcMultiAcc
+impl core::fmt::Debug for reed_stats::fst::WcMultiAcc
+pub fn reed_stats::fst::WcMultiAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::WcMultiAcc
+impl core::marker::Send for reed_stats::fst::WcMultiAcc
+impl core::marker::Sync for reed_stats::fst::WcMultiAcc
+impl core::marker::Unpin for reed_stats::fst::WcMultiAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::WcMultiAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::WcMultiAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::WcMultiAcc
+pub mod reed_stats::het
+pub struct reed_stats::het::IndividualFAcc
+pub reed_stats::het::IndividualFAcc::hetero_expected: alloc::vec::Vec<reed_core::math::sum::NeumaierSum>
+pub reed_stats::het::IndividualFAcc::n_called: alloc::vec::Vec<u64>
+pub reed_stats::het::IndividualFAcc::o_hom: alloc::vec::Vec<u64>
+impl reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::f_values(&self) -> alloc::vec::Vec<core::option::Option<f64>>
+pub fn reed_stats::het::IndividualFAcc::merge(&mut self, &Self)
+pub fn reed_stats::het::IndividualFAcc::new(usize) -> Self
+pub fn reed_stats::het::IndividualFAcc::push_site(&mut self, &reed_core::genotype::planes::PlaneBlock, usize, &reed_core::sample::SampleMask, f64)
+impl core::clone::Clone for reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::clone(&self) -> reed_stats::het::IndividualFAcc
+impl core::default::Default for reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::default() -> reed_stats::het::IndividualFAcc
+impl core::fmt::Debug for reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::het::IndividualFAcc
+impl core::marker::Send for reed_stats::het::IndividualFAcc
+impl core::marker::Sync for reed_stats::het::IndividualFAcc
+impl core::marker::Unpin for reed_stats::het::IndividualFAcc
+impl core::marker::UnsafeUnpin for reed_stats::het::IndividualFAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::het::IndividualFAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::het::IndividualFAcc
+pub mod reed_stats::jackknife
+pub struct reed_stats::jackknife::BlockJackknife
+impl reed_stats::jackknife::BlockJackknife
+pub fn reed_stats::jackknife::BlockJackknife::accept(&mut self, &reed_stats::jackknife::BlockPartial)
+pub fn reed_stats::jackknife::BlockJackknife::estimate(&self) -> core::option::Option<f64>
+pub fn reed_stats::jackknife::BlockJackknife::jackknife(&self) -> core::option::Option<(f64, f64, alloc::vec::Vec<f64>)>
+pub fn reed_stats::jackknife::BlockJackknife::jackknife_sum(&self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BlockJackknife::n_blocks(&self) -> usize
+pub fn reed_stats::jackknife::BlockJackknife::new(u64) -> Self
+pub fn reed_stats::jackknife::BlockJackknife::push(&mut self, f64, f64)
+pub const fn reed_stats::jackknife::BlockJackknife::totals(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+impl core::clone::Clone for reed_stats::jackknife::BlockJackknife
+pub fn reed_stats::jackknife::BlockJackknife::clone(&self) -> reed_stats::jackknife::BlockJackknife
+impl core::fmt::Debug for reed_stats::jackknife::BlockJackknife
+pub fn reed_stats::jackknife::BlockJackknife::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::jackknife::BlockJackknife
+impl core::marker::Send for reed_stats::jackknife::BlockJackknife
+impl core::marker::Sync for reed_stats::jackknife::BlockJackknife
+impl core::marker::Unpin for reed_stats::jackknife::BlockJackknife
+impl core::marker::UnsafeUnpin for reed_stats::jackknife::BlockJackknife
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::jackknife::BlockJackknife
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::jackknife::BlockJackknife
+pub struct reed_stats::jackknife::BlockPartial
+pub reed_stats::jackknife::BlockPartial::values: alloc::vec::Vec<(f64, f64)>
+impl core::clone::Clone for reed_stats::jackknife::BlockPartial
+pub fn reed_stats::jackknife::BlockPartial::clone(&self) -> reed_stats::jackknife::BlockPartial
+impl core::default::Default for reed_stats::jackknife::BlockPartial
+pub fn reed_stats::jackknife::BlockPartial::default() -> reed_stats::jackknife::BlockPartial
+impl core::fmt::Debug for reed_stats::jackknife::BlockPartial
+pub fn reed_stats::jackknife::BlockPartial::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::jackknife::BlockPartial
+impl core::marker::Send for reed_stats::jackknife::BlockPartial
+impl core::marker::Sync for reed_stats::jackknife::BlockPartial
+impl core::marker::Unpin for reed_stats::jackknife::BlockPartial
+impl core::marker::UnsafeUnpin for reed_stats::jackknife::BlockPartial
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::jackknife::BlockPartial
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::jackknife::BlockPartial
+pub struct reed_stats::jackknife::BpBlockJackknife
+impl reed_stats::jackknife::BpBlockJackknife
+pub fn reed_stats::jackknife::BpBlockJackknife::estimate(&self) -> core::option::Option<f64>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife(&self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife_shared(&self, &Self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife_sum(&self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife_sum_shared(&self, &Self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::merge_grid(&mut self, &Self)
+pub fn reed_stats::jackknife::BpBlockJackknife::merge_shared(&mut self, &Self, &Self)
+pub fn reed_stats::jackknife::BpBlockJackknife::n_blocks(&self) -> usize
+pub fn reed_stats::jackknife::BpBlockJackknife::n_blocks_shared(&self, &Self) -> usize
+pub fn reed_stats::jackknife::BpBlockJackknife::n_sites(&self) -> u64
+pub fn reed_stats::jackknife::BpBlockJackknife::new(u64) -> Self
+pub fn reed_stats::jackknife::BpBlockJackknife::push(&mut self, &[u8], u64, f64, f64)
+pub fn reed_stats::jackknife::BpBlockJackknife::push_usable(&mut self, &[u8], u64, f64, f64, bool)
+pub fn reed_stats::jackknife::BpBlockJackknife::share_grid(&mut self)
+impl core::clone::Clone for reed_stats::jackknife::BpBlockJackknife
+pub fn reed_stats::jackknife::BpBlockJackknife::clone(&self) -> reed_stats::jackknife::BpBlockJackknife
+impl core::fmt::Debug for reed_stats::jackknife::BpBlockJackknife
+pub fn reed_stats::jackknife::BpBlockJackknife::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::Send for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::Sync for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::Unpin for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::UnsafeUnpin for reed_stats::jackknife::BpBlockJackknife
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::jackknife::BpBlockJackknife
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::jackknife::BpBlockJackknife
+pub mod reed_stats::ld
+pub enum reed_stats::ld::LdWindow
+pub reed_stats::ld::LdWindow::Bp(u64)
+pub reed_stats::ld::LdWindow::Variants(usize)
+impl core::clone::Clone for reed_stats::ld::LdWindow
+pub fn reed_stats::ld::LdWindow::clone(&self) -> reed_stats::ld::LdWindow
+impl core::cmp::Eq for reed_stats::ld::LdWindow
+impl core::cmp::PartialEq for reed_stats::ld::LdWindow
+pub fn reed_stats::ld::LdWindow::eq(&self, &reed_stats::ld::LdWindow) -> bool
+impl core::fmt::Debug for reed_stats::ld::LdWindow
+pub fn reed_stats::ld::LdWindow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::ld::LdWindow
+impl core::marker::StructuralPartialEq for reed_stats::ld::LdWindow
+impl core::marker::Freeze for reed_stats::ld::LdWindow
+impl core::marker::Send for reed_stats::ld::LdWindow
+impl core::marker::Sync for reed_stats::ld::LdWindow
+impl core::marker::Unpin for reed_stats::ld::LdWindow
+impl core::marker::UnsafeUnpin for reed_stats::ld::LdWindow
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::LdWindow
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::LdWindow
+pub struct reed_stats::ld::LdDecayAcc
+impl reed_stats::ld::LdDecayAcc
+pub fn reed_stats::ld::LdDecayAcc::bin_index(&self, u64) -> core::option::Option<usize>
+pub fn reed_stats::ld::LdDecayAcc::counts(&self) -> &[u64]
+pub fn reed_stats::ld::LdDecayAcc::mean_r2(&self) -> alloc::vec::Vec<core::option::Option<f64>>
+pub fn reed_stats::ld::LdDecayAcc::merge(&mut self, &Self)
+pub fn reed_stats::ld::LdDecayAcc::new(alloc::vec::Vec<u64>) -> Self
+pub fn reed_stats::ld::LdDecayAcc::push(&mut self, u64, f64)
+pub fn reed_stats::ld::LdDecayAcc::push_bin(&mut self, core::option::Option<usize>, f64)
+impl core::clone::Clone for reed_stats::ld::LdDecayAcc
+pub fn reed_stats::ld::LdDecayAcc::clone(&self) -> reed_stats::ld::LdDecayAcc
+impl core::fmt::Debug for reed_stats::ld::LdDecayAcc
+pub fn reed_stats::ld::LdDecayAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::ld::LdDecayAcc
+impl core::marker::Send for reed_stats::ld::LdDecayAcc
+impl core::marker::Sync for reed_stats::ld::LdDecayAcc
+impl core::marker::Unpin for reed_stats::ld::LdDecayAcc
+impl core::marker::UnsafeUnpin for reed_stats::ld::LdDecayAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::LdDecayAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::LdDecayAcc
+pub struct reed_stats::ld::LdPruner
+impl reed_stats::ld::LdPruner
+pub fn reed_stats::ld::LdPruner::finish_contig(&mut self)
+pub fn reed_stats::ld::LdPruner::kept_sites(&self) -> alloc::vec::Vec<usize>
+pub fn reed_stats::ld::LdPruner::new(f64, reed_stats::ld::LdWindow, usize, usize, usize) -> Self
+pub fn reed_stats::ld::LdPruner::pruned_sites(&self) -> alloc::vec::Vec<usize>
+pub fn reed_stats::ld::LdPruner::push(&mut self, usize, u64, [&[u64]; 4], reed_stats::ld::SitePruneStats) -> bool
+pub fn reed_stats::ld::LdPruner::push_ex(&mut self, usize, u64, [&[u64]; 4], reed_stats::ld::SitePruneStats, &[u64]) -> bool
+impl core::clone::Clone for reed_stats::ld::LdPruner
+pub fn reed_stats::ld::LdPruner::clone(&self) -> reed_stats::ld::LdPruner
+impl core::fmt::Debug for reed_stats::ld::LdPruner
+pub fn reed_stats::ld::LdPruner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::ld::LdPruner
+impl core::marker::Send for reed_stats::ld::LdPruner
+impl core::marker::Sync for reed_stats::ld::LdPruner
+impl core::marker::Unpin for reed_stats::ld::LdPruner
+impl core::marker::UnsafeUnpin for reed_stats::ld::LdPruner
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::LdPruner
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::LdPruner
+pub struct reed_stats::ld::PairSums
+pub reed_stats::ld::PairSums::n: i64
+pub reed_stats::ld::PairSums::sum_x: i64
+pub reed_stats::ld::PairSums::sum_x2: i64
+pub reed_stats::ld::PairSums::sum_xy: i64
+pub reed_stats::ld::PairSums::sum_y: i64
+pub reed_stats::ld::PairSums::sum_y2: i64
+impl reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::add_assign(&mut self, &Self)
+pub fn reed_stats::ld::PairSums::covariance(&self) -> core::option::Option<f64>
+pub fn reed_stats::ld::PairSums::r2(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::clone(&self) -> reed_stats::ld::PairSums
+impl core::cmp::Eq for reed_stats::ld::PairSums
+impl core::cmp::PartialEq for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::eq(&self, &reed_stats::ld::PairSums) -> bool
+impl core::default::Default for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::default() -> reed_stats::ld::PairSums
+impl core::fmt::Debug for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::ld::PairSums
+impl core::marker::StructuralPartialEq for reed_stats::ld::PairSums
+impl core::marker::Freeze for reed_stats::ld::PairSums
+impl core::marker::Send for reed_stats::ld::PairSums
+impl core::marker::Sync for reed_stats::ld::PairSums
+impl core::marker::Unpin for reed_stats::ld::PairSums
+impl core::marker::UnsafeUnpin for reed_stats::ld::PairSums
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::PairSums
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::PairSums
+pub struct reed_stats::ld::SitePruneStats
+pub reed_stats::ld::SitePruneStats::maj_freq: f64
+pub reed_stats::ld::SitePruneStats::n_het: u64
+pub reed_stats::ld::SitePruneStats::n_hom_alt: u64
+pub reed_stats::ld::SitePruneStats::n_hom_ref: u64
+impl reed_stats::ld::SitePruneStats
+pub const fn reed_stats::ld::SitePruneStats::monomorphic(&self) -> bool
+impl core::clone::Clone for reed_stats::ld::SitePruneStats
+pub fn reed_stats::ld::SitePruneStats::clone(&self) -> reed_stats::ld::SitePruneStats
+impl core::cmp::PartialEq for reed_stats::ld::SitePruneStats
+pub fn reed_stats::ld::SitePruneStats::eq(&self, &reed_stats::ld::SitePruneStats) -> bool
+impl core::fmt::Debug for reed_stats::ld::SitePruneStats
+pub fn reed_stats::ld::SitePruneStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::ld::SitePruneStats
+impl core::marker::StructuralPartialEq for reed_stats::ld::SitePruneStats
+impl core::marker::Freeze for reed_stats::ld::SitePruneStats
+impl core::marker::Send for reed_stats::ld::SitePruneStats
+impl core::marker::Sync for reed_stats::ld::SitePruneStats
+impl core::marker::Unpin for reed_stats::ld::SitePruneStats
+impl core::marker::UnsafeUnpin for reed_stats::ld::SitePruneStats
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::SitePruneStats
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::SitePruneStats
+pub fn reed_stats::ld::pair_sums([&[u64]; 4], [&[u64]; 4], usize) -> reed_stats::ld::PairSums
+pub fn reed_stats::ld::pair_sums_ex([&[u64]; 4], [&[u64]; 4], usize, &[u64], &[u64]) -> reed_stats::ld::PairSums
+pub mod reed_stats::matrix
+pub struct reed_stats::matrix::ContigMatrix
+impl reed_stats::matrix::ContigMatrix
+pub fn reed_stats::matrix::ContigMatrix::contig(&self) -> &[u8]
+pub fn reed_stats::matrix::ContigMatrix::layout(&self) -> &reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::ContigMatrix::n_sites(&self) -> usize
+pub fn reed_stats::matrix::ContigMatrix::new(alloc::vec::Vec<u8>, alloc::sync::Arc<reed_stats::matrix::SampleLayout>) -> Self
+pub fn reed_stats::matrix::ContigMatrix::planes(&self, usize) -> [&[u64]; 4]
+pub fn reed_stats::matrix::ContigMatrix::pos0(&self) -> &[u64]
+pub fn reed_stats::matrix::ContigMatrix::push_run(&mut self, alloc::vec::Vec<u64>, alloc::vec::Vec<u64>)
+pub fn reed_stats::matrix::ContigMatrix::size_bytes(&self) -> u64
+impl core::clone::Clone for reed_stats::matrix::ContigMatrix
+pub fn reed_stats::matrix::ContigMatrix::clone(&self) -> reed_stats::matrix::ContigMatrix
+impl core::fmt::Debug for reed_stats::matrix::ContigMatrix
+pub fn reed_stats::matrix::ContigMatrix::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::matrix::ContigMatrix
+impl core::marker::Send for reed_stats::matrix::ContigMatrix
+impl core::marker::Sync for reed_stats::matrix::ContigMatrix
+impl core::marker::Unpin for reed_stats::matrix::ContigMatrix
+impl core::marker::UnsafeUnpin for reed_stats::matrix::ContigMatrix
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::matrix::ContigMatrix
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::matrix::ContigMatrix
+pub struct reed_stats::matrix::LdDecaySet
+pub reed_stats::matrix::LdDecaySet::cohort: reed_stats::ld::LdDecayAcc
+pub reed_stats::matrix::LdDecaySet::groups: alloc::vec::Vec<reed_stats::ld::LdDecayAcc>
+pub reed_stats::matrix::LdDecaySet::pairs: alloc::vec::Vec<reed_stats::matrix::LdPairRow>
+impl reed_stats::matrix::LdDecaySet
+pub fn reed_stats::matrix::LdDecaySet::merge(&mut self, &Self)
+pub fn reed_stats::matrix::LdDecaySet::new(&[u64], usize) -> Self
+impl core::clone::Clone for reed_stats::matrix::LdDecaySet
+pub fn reed_stats::matrix::LdDecaySet::clone(&self) -> reed_stats::matrix::LdDecaySet
+impl core::fmt::Debug for reed_stats::matrix::LdDecaySet
+pub fn reed_stats::matrix::LdDecaySet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::matrix::LdDecaySet
+impl core::marker::Send for reed_stats::matrix::LdDecaySet
+impl core::marker::Sync for reed_stats::matrix::LdDecaySet
+impl core::marker::Unpin for reed_stats::matrix::LdDecaySet
+impl core::marker::UnsafeUnpin for reed_stats::matrix::LdDecaySet
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::matrix::LdDecaySet
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::matrix::LdDecaySet
+pub struct reed_stats::matrix::SampleLayout
+impl reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::SampleLayout::bit_of(&self, usize) -> core::option::Option<usize>
+pub fn reed_stats::matrix::SampleLayout::dest(&self) -> &[u32]
+pub fn reed_stats::matrix::SampleLayout::from_assignments(&[core::option::Option<u32>], usize, core::option::Option<&[bool]>) -> Self
+pub const fn reed_stats::matrix::SampleLayout::n_groups(&self) -> usize
+pub const fn reed_stats::matrix::SampleLayout::w(&self) -> usize
+impl core::clone::Clone for reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::SampleLayout::clone(&self) -> reed_stats::matrix::SampleLayout
+impl core::fmt::Debug for reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::SampleLayout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::matrix::SampleLayout
+impl core::marker::Send for reed_stats::matrix::SampleLayout
+impl core::marker::Sync for reed_stats::matrix::SampleLayout
+impl core::marker::Unpin for reed_stats::matrix::SampleLayout
+impl core::marker::UnsafeUnpin for reed_stats::matrix::SampleLayout
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::matrix::SampleLayout
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::decay_range(&reed_stats::matrix::ContigMatrix, core::ops::range::Range<usize>, u64, &[u64], bool) -> reed_stats::matrix::LdDecaySet
+pub type reed_stats::matrix::LdPairRow = (u64, u64, f64)
+pub mod reed_stats::patterson
+pub struct reed_stats::patterson::F2Acc
+impl reed_stats::patterson::F2Acc
+pub fn reed_stats::patterson::F2Acc::merge(&mut self, &Self)
+pub fn reed_stats::patterson::F2Acc::new(usize, usize) -> Self
+pub fn reed_stats::patterson::F2Acc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::patterson::F2Acc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::patterson::F2Acc::value(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::patterson::F2Acc
+pub fn reed_stats::patterson::F2Acc::clone(&self) -> reed_stats::patterson::F2Acc
+impl core::fmt::Debug for reed_stats::patterson::F2Acc
+pub fn reed_stats::patterson::F2Acc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::patterson::F2Acc
+impl core::marker::Send for reed_stats::patterson::F2Acc
+impl core::marker::Sync for reed_stats::patterson::F2Acc
+impl core::marker::Unpin for reed_stats::patterson::F2Acc
+impl core::marker::UnsafeUnpin for reed_stats::patterson::F2Acc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::patterson::F2Acc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::patterson::F2Acc
+pub struct reed_stats::patterson::F3Acc
+impl reed_stats::patterson::F3Acc
+pub fn reed_stats::patterson::F3Acc::merge(&mut self, &Self)
+pub fn reed_stats::patterson::F3Acc::new(usize, usize, usize) -> Self
+pub fn reed_stats::patterson::F3Acc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::patterson::F3Acc::site_tally(&self) -> (u64, u64)
+pub const fn reed_stats::patterson::F3Acc::sums(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+pub fn reed_stats::patterson::F3Acc::value(&self) -> core::option::Option<f64>
+pub fn reed_stats::patterson::F3Acc::value_normalized(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::patterson::F3Acc
+pub fn reed_stats::patterson::F3Acc::clone(&self) -> reed_stats::patterson::F3Acc
+impl core::fmt::Debug for reed_stats::patterson::F3Acc
+pub fn reed_stats::patterson::F3Acc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::patterson::F3Acc
+impl core::marker::Send for reed_stats::patterson::F3Acc
+impl core::marker::Sync for reed_stats::patterson::F3Acc
+impl core::marker::Unpin for reed_stats::patterson::F3Acc
+impl core::marker::UnsafeUnpin for reed_stats::patterson::F3Acc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::patterson::F3Acc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::patterson::F3Acc
+pub struct reed_stats::patterson::F4Acc
+impl reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::F4Acc::merge(&mut self, &Self)
+pub fn reed_stats::patterson::F4Acc::new(usize, usize, usize, usize) -> Self
+pub fn reed_stats::patterson::F4Acc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::patterson::F4Acc::site_tally(&self) -> (u64, u64)
+pub const fn reed_stats::patterson::F4Acc::sums(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+pub fn reed_stats::patterson::F4Acc::value_d(&self) -> core::option::Option<f64>
+pub fn reed_stats::patterson::F4Acc::value_f4(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::F4Acc::clone(&self) -> reed_stats::patterson::F4Acc
+impl core::fmt::Debug for reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::F4Acc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::patterson::F4Acc
+impl core::marker::Send for reed_stats::patterson::F4Acc
+impl core::marker::Sync for reed_stats::patterson::F4Acc
+impl core::marker::Unpin for reed_stats::patterson::F4Acc
+impl core::marker::UnsafeUnpin for reed_stats::patterson::F4Acc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::patterson::F4Acc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::f2_site(&[reed_core::count::SiteGroupCounts], usize, usize) -> core::option::Option<f64>
+pub fn reed_stats::patterson::f3_site(&[reed_core::count::SiteGroupCounts], usize, usize, usize) -> core::option::Option<(f64, f64)>
+pub fn reed_stats::patterson::f4_ratio(&reed_stats::patterson::F4Acc, &reed_stats::patterson::F4Acc) -> core::option::Option<f64>
+pub fn reed_stats::patterson::f4_site(&[reed_core::count::SiteGroupCounts], usize, usize, usize, usize) -> core::option::Option<(f64, f64)>
+pub mod reed_stats::pbs
+pub enum reed_stats::pbs::PbsKind
+pub reed_stats::pbs::PbsKind::PbsN1
+pub reed_stats::pbs::PbsKind::Yi2010
+impl reed_stats::pbs::PbsKind
+pub const fn reed_stats::pbs::PbsKind::id(self) -> &'static str
+impl core::clone::Clone for reed_stats::pbs::PbsKind
+pub fn reed_stats::pbs::PbsKind::clone(&self) -> reed_stats::pbs::PbsKind
+impl core::cmp::Eq for reed_stats::pbs::PbsKind
+impl core::cmp::PartialEq for reed_stats::pbs::PbsKind
+pub fn reed_stats::pbs::PbsKind::eq(&self, &reed_stats::pbs::PbsKind) -> bool
+impl core::fmt::Debug for reed_stats::pbs::PbsKind
+pub fn reed_stats::pbs::PbsKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::pbs::PbsKind
+impl core::marker::StructuralPartialEq for reed_stats::pbs::PbsKind
+impl core::marker::Freeze for reed_stats::pbs::PbsKind
+impl core::marker::Send for reed_stats::pbs::PbsKind
+impl core::marker::Sync for reed_stats::pbs::PbsKind
+impl core::marker::Unpin for reed_stats::pbs::PbsKind
+impl core::marker::UnsafeUnpin for reed_stats::pbs::PbsKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::pbs::PbsKind
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::pbs::PbsKind
+pub struct reed_stats::pbs::PbsAcc
+impl reed_stats::pbs::PbsAcc
+pub fn reed_stats::pbs::PbsAcc::merge(&mut self, &Self)
+pub const fn reed_stats::pbs::PbsAcc::n_sites(&self) -> u64
+pub fn reed_stats::pbs::PbsAcc::new(usize, usize, usize) -> Self
+pub fn reed_stats::pbs::PbsAcc::pair_fsts(&self) -> (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>)
+pub fn reed_stats::pbs::PbsAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::pbs::PbsAcc::push_with_variant(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub const fn reed_stats::pbs::PbsAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::pbs::PbsAcc::value(&self, reed_stats::pbs::PbsKind) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::pbs::PbsAcc
+pub fn reed_stats::pbs::PbsAcc::clone(&self) -> reed_stats::pbs::PbsAcc
+impl core::fmt::Debug for reed_stats::pbs::PbsAcc
+pub fn reed_stats::pbs::PbsAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::pbs::PbsAcc
+impl core::marker::Send for reed_stats::pbs::PbsAcc
+impl core::marker::Sync for reed_stats::pbs::PbsAcc
+impl core::marker::Unpin for reed_stats::pbs::PbsAcc
+impl core::marker::UnsafeUnpin for reed_stats::pbs::PbsAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::pbs::PbsAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::pbs::PbsAcc
+pub mod reed_stats::pi
+pub struct reed_stats::pi::PairAcc
+pub reed_stats::pi::PairAcc::comparable: u64
+pub reed_stats::pi::PairAcc::diffs: u64
+pub reed_stats::pi::PairAcc::missing: u64
+impl reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PairAcc::add(&mut self, u64, u64, u64)
+pub fn reed_stats::pi::PairAcc::add_partial(&mut self, u64, u64)
+pub fn reed_stats::pi::PairAcc::merge(&mut self, &Self)
+impl core::clone::Clone for reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PairAcc::clone(&self) -> reed_stats::pi::PairAcc
+impl core::cmp::Eq for reed_stats::pi::PairAcc
+impl core::cmp::PartialEq for reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PairAcc::eq(&self, &reed_stats::pi::PairAcc) -> bool
+impl core::default::Default for reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PairAcc::default() -> reed_stats::pi::PairAcc
+impl core::fmt::Debug for reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PairAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::pi::PairAcc
+impl core::marker::StructuralPartialEq for reed_stats::pi::PairAcc
+impl core::marker::Freeze for reed_stats::pi::PairAcc
+impl core::marker::Send for reed_stats::pi::PairAcc
+impl core::marker::Sync for reed_stats::pi::PairAcc
+impl core::marker::Unpin for reed_stats::pi::PairAcc
+impl core::marker::UnsafeUnpin for reed_stats::pi::PairAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::pi::PairAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::pi::PairAcc
+pub struct reed_stats::pi::PiAcc
+impl reed_stats::pi::PiAcc
+pub const fn reed_stats::pi::PiAcc::counts(&self) -> &reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PiAcc::merge(&mut self, &Self)
+pub const fn reed_stats::pi::PiAcc::n_chrom(&self) -> u64
+pub const fn reed_stats::pi::PiAcc::n_present(&self) -> u64
+pub const fn reed_stats::pi::PiAcc::n_present_file(&self) -> u64
+pub fn reed_stats::pi::PiAcc::new(usize, u32) -> Self
+pub fn reed_stats::pi::PiAcc::push(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub const fn reed_stats::pi::PiAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::pi::PiAcc::value_accessible_bp(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::pi::PiAcc::value_per_pair(&self) -> core::option::Option<f64>
+pub fn reed_stats::pi::PiAcc::value_variant_only(&self, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::pi::PiAcc
+pub fn reed_stats::pi::PiAcc::clone(&self) -> reed_stats::pi::PiAcc
+impl core::fmt::Debug for reed_stats::pi::PiAcc
+pub fn reed_stats::pi::PiAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::pi::PiAcc
+impl core::marker::Send for reed_stats::pi::PiAcc
+impl core::marker::Sync for reed_stats::pi::PiAcc
+impl core::marker::Unpin for reed_stats::pi::PiAcc
+impl core::marker::UnsafeUnpin for reed_stats::pi::PiAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::pi::PiAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::pi::PiAcc
+pub mod reed_stats::request
+pub enum reed_stats::request::StatAcc
+pub reed_stats::request::StatAcc::Dxy(reed_stats::dxy::DxyAcc)
+pub reed_stats::request::StatAcc::Fst(reed_stats::fst::FstAcc)
+pub reed_stats::request::StatAcc::FstGlobal(reed_stats::fst::WcMultiAcc)
+pub reed_stats::request::StatAcc::Pbs(reed_stats::pbs::PbsAcc)
+pub reed_stats::request::StatAcc::Pi(reed_stats::pi::PiAcc)
+pub reed_stats::request::StatAcc::Sfs(reed_stats::sfs::SfsAcc)
+pub reed_stats::request::StatAcc::Tajima(reed_stats::tajima::TajimaAcc)
+pub reed_stats::request::StatAcc::Theta(reed_stats::theta::ThetaAcc)
+impl reed_stats::request::StatAcc
+pub fn reed_stats::request::StatAcc::compacted(&self) -> Self
+pub fn reed_stats::request::StatAcc::fst_columns(&self, &reed_stats::request::StatKind) -> core::option::Option<(core::option::Option<f64>, u64)>
+pub fn reed_stats::request::StatAcc::fst_global_columns(&self, &reed_stats::request::StatKind) -> core::option::Option<(core::option::Option<f64>, u64)>
+pub fn reed_stats::request::StatAcc::merge(&mut self, &Self)
+pub const fn reed_stats::request::StatAcc::n_present(&self) -> core::option::Option<u64>
+pub const fn reed_stats::request::StatAcc::pair_counts(&self) -> core::option::Option<(u64, u64, u64)>
+pub fn reed_stats::request::StatAcc::pbs_columns(&self, &reed_stats::request::StatKind) -> core::option::Option<reed_stats::request::PbsColumns>
+pub fn reed_stats::request::StatAcc::push(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::request::StatAcc::sfs_bins(&self) -> core::option::Option<&[u64]>
+pub fn reed_stats::request::StatAcc::tajima_columns(&self) -> core::option::Option<reed_stats::request::TajimaColumns>
+pub fn reed_stats::request::StatAcc::theta_columns(&self) -> core::option::Option<(f64, u64, u64, f64)>
+pub fn reed_stats::request::StatAcc::value(&self, &reed_stats::request::StatKind, u64) -> core::option::Option<f64>
+pub fn reed_stats::request::StatAcc::value_variant_only(&self, &reed_stats::request::StatKind, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::request::StatAcc
+pub fn reed_stats::request::StatAcc::clone(&self) -> reed_stats::request::StatAcc
+impl core::fmt::Debug for reed_stats::request::StatAcc
+pub fn reed_stats::request::StatAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::request::StatAcc
+impl core::marker::Send for reed_stats::request::StatAcc
+impl core::marker::Sync for reed_stats::request::StatAcc
+impl core::marker::Unpin for reed_stats::request::StatAcc
+impl core::marker::UnsafeUnpin for reed_stats::request::StatAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatAcc
+pub enum reed_stats::request::StatKind
+pub reed_stats::request::StatKind::Dxy
+pub reed_stats::request::StatKind::Dxy::a: usize
+pub reed_stats::request::StatKind::Dxy::b: usize
+pub reed_stats::request::StatKind::Dxy::per_bp: bool
+pub reed_stats::request::StatKind::Fst
+pub reed_stats::request::StatKind::Fst::a: usize
+pub reed_stats::request::StatKind::Fst::b: usize
+pub reed_stats::request::StatKind::Fst::kind: reed_stats::fst::FstKind
+pub reed_stats::request::StatKind::FstGlobal
+pub reed_stats::request::StatKind::Pbs
+pub reed_stats::request::StatKind::Pbs::a: usize
+pub reed_stats::request::StatKind::Pbs::b: usize
+pub reed_stats::request::StatKind::Pbs::c: usize
+pub reed_stats::request::StatKind::Pbs::kind: reed_stats::pbs::PbsKind
+pub reed_stats::request::StatKind::Pi
+pub reed_stats::request::StatKind::Pi::group: usize
+pub reed_stats::request::StatKind::Pi::per_bp: bool
+pub reed_stats::request::StatKind::Sfs
+pub reed_stats::request::StatKind::Sfs::folded: bool
+pub reed_stats::request::StatKind::Sfs::group: usize
+pub reed_stats::request::StatKind::TajimaD
+pub reed_stats::request::StatKind::TajimaD::group: usize
+pub reed_stats::request::StatKind::TajimaD::min_sites: u64
+pub reed_stats::request::StatKind::ThetaW
+pub reed_stats::request::StatKind::ThetaW::group: usize
+pub reed_stats::request::StatKind::ThetaW::per_bp: bool
+impl reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::build(&self, &[u32]) -> core::result::Result<reed_stats::request::StatAcc, reed_core::error::CoreError>
+pub fn reed_stats::request::StatKind::key(&self) -> reed_stats::request::StatKey
+impl core::clone::Clone for reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::clone(&self) -> reed_stats::request::StatKind
+impl core::cmp::Eq for reed_stats::request::StatKind
+impl core::cmp::PartialEq for reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::eq(&self, &reed_stats::request::StatKind) -> bool
+impl core::fmt::Debug for reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_stats::request::StatKind
+impl core::marker::Freeze for reed_stats::request::StatKind
+impl core::marker::Send for reed_stats::request::StatKind
+impl core::marker::Sync for reed_stats::request::StatKind
+impl core::marker::Unpin for reed_stats::request::StatKind
+impl core::marker::UnsafeUnpin for reed_stats::request::StatKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatKind
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatKind
+pub enum reed_stats::request::StatOutput
+pub reed_stats::request::StatOutput::Fst
+pub reed_stats::request::StatOutput::Fst::no_snps: u64
+pub reed_stats::request::StatOutput::Fst::value: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Pair
+pub reed_stats::request::StatOutput::Pair::counts: (u64, u64, u64)
+pub reed_stats::request::StatOutput::Pair::no_sites: u64
+pub reed_stats::request::StatOutput::Pair::value: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Pbs
+pub reed_stats::request::StatOutput::Pbs::no_snps: u64
+pub reed_stats::request::StatOutput::Pbs::pair_fsts: (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>)
+pub reed_stats::request::StatOutput::Pbs::value: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Sfs(alloc::vec::Vec<u64>)
+pub reed_stats::request::StatOutput::Tajima
+pub reed_stats::request::StatOutput::Tajima::no_sites: u64
+pub reed_stats::request::StatOutput::Tajima::raw_pi: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Tajima::raw_theta: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Tajima::stdev: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Tajima::value: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Theta
+pub reed_stats::request::StatOutput::Theta::no_sites: u64
+pub reed_stats::request::StatOutput::Theta::no_var: u64
+pub reed_stats::request::StatOutput::Theta::raw: f64
+pub reed_stats::request::StatOutput::Theta::value: core::option::Option<f64>
+pub reed_stats::request::StatOutput::Theta::weighted: f64
+impl reed_stats::request::StatOutput
+pub fn reed_stats::request::StatOutput::from_acc(&reed_stats::request::StatAcc, &reed_stats::request::StatKind, u64, u64, bool) -> Self
+pub const fn reed_stats::request::StatOutput::fst_columns(&self) -> core::option::Option<(core::option::Option<f64>, u64)>
+pub const fn reed_stats::request::StatOutput::n_present(&self) -> core::option::Option<u64>
+pub const fn reed_stats::request::StatOutput::pair_counts(&self) -> core::option::Option<(u64, u64, u64)>
+pub const fn reed_stats::request::StatOutput::pbs_columns(&self) -> core::option::Option<reed_stats::request::PbsColumns>
+pub fn reed_stats::request::StatOutput::sfs_bins(&self) -> core::option::Option<&[u64]>
+pub const fn reed_stats::request::StatOutput::tajima_columns(&self) -> core::option::Option<reed_stats::request::TajimaColumns>
+pub const fn reed_stats::request::StatOutput::theta_columns(&self) -> core::option::Option<(f64, u64, u64, f64)>
+pub const fn reed_stats::request::StatOutput::value(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::request::StatOutput
+pub fn reed_stats::request::StatOutput::clone(&self) -> reed_stats::request::StatOutput
+impl core::fmt::Debug for reed_stats::request::StatOutput
+pub fn reed_stats::request::StatOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::request::StatOutput
+impl core::marker::Send for reed_stats::request::StatOutput
+impl core::marker::Sync for reed_stats::request::StatOutput
+impl core::marker::Unpin for reed_stats::request::StatOutput
+impl core::marker::UnsafeUnpin for reed_stats::request::StatOutput
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatOutput
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatOutput
+pub struct reed_stats::request::StatKey(pub alloc::string::String)
+impl reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::as_str(&self) -> &str
+impl core::clone::Clone for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::clone(&self) -> reed_stats::request::StatKey
+impl core::cmp::Eq for reed_stats::request::StatKey
+impl core::cmp::Ord for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::cmp(&self, &reed_stats::request::StatKey) -> core::cmp::Ordering
+impl core::cmp::PartialEq for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::eq(&self, &reed_stats::request::StatKey) -> bool
+impl core::cmp::PartialOrd for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::partial_cmp(&self, &reed_stats::request::StatKey) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for reed_stats::request::StatKey
+impl core::marker::Freeze for reed_stats::request::StatKey
+impl core::marker::Send for reed_stats::request::StatKey
+impl core::marker::Sync for reed_stats::request::StatKey
+impl core::marker::Unpin for reed_stats::request::StatKey
+impl core::marker::UnsafeUnpin for reed_stats::request::StatKey
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatKey
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatKey
+pub fn reed_stats::request::build_accs(&[reed_stats::request::StatKind], &[u32]) -> core::result::Result<alloc::vec::Vec<reed_stats::request::StatAcc>, reed_core::error::CoreError>
+pub type reed_stats::request::PbsColumns = (core::option::Option<f64>, u64, (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>))
+pub type reed_stats::request::TajimaColumns = (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>, u64)
+pub mod reed_stats::sfs
+pub struct reed_stats::sfs::JointProjectedAcc
+impl reed_stats::sfs::JointProjectedAcc
+pub fn reed_stats::sfs::JointProjectedAcc::at(&self, u32, u32) -> f64
+pub const fn reed_stats::sfs::JointProjectedAcc::folded(&self) -> bool
+pub fn reed_stats::sfs::JointProjectedAcc::merge(&mut self, &Self)
+pub fn reed_stats::sfs::JointProjectedAcc::new(u32, u32, bool) -> core::option::Option<Self>
+pub fn reed_stats::sfs::JointProjectedAcc::push_weighted(&mut self, core::option::Option<&[(u32, f64)]>, core::option::Option<&[(u32, f64)]>)
+pub const fn reed_stats::sfs::JointProjectedAcc::shape(&self) -> (u32, u32)
+pub const fn reed_stats::sfs::JointProjectedAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::sfs::JointProjectedAcc::values(&self) -> alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_stats::sfs::JointProjectedAcc
+pub fn reed_stats::sfs::JointProjectedAcc::clone(&self) -> reed_stats::sfs::JointProjectedAcc
+impl core::fmt::Debug for reed_stats::sfs::JointProjectedAcc
+pub fn reed_stats::sfs::JointProjectedAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::JointProjectedAcc
+impl core::marker::Send for reed_stats::sfs::JointProjectedAcc
+impl core::marker::Sync for reed_stats::sfs::JointProjectedAcc
+impl core::marker::Unpin for reed_stats::sfs::JointProjectedAcc
+impl core::marker::UnsafeUnpin for reed_stats::sfs::JointProjectedAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::JointProjectedAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::JointProjectedAcc
+pub struct reed_stats::sfs::ProjectedSfsAcc
+impl reed_stats::sfs::ProjectedSfsAcc
+pub fn reed_stats::sfs::ProjectedSfsAcc::bins(&self) -> &[reed_core::math::sum::NeumaierSum]
+pub const fn reed_stats::sfs::ProjectedSfsAcc::folded(&self) -> bool
+pub fn reed_stats::sfs::ProjectedSfsAcc::merge(&mut self, &Self)
+pub const fn reed_stats::sfs::ProjectedSfsAcc::n(&self) -> u32
+pub fn reed_stats::sfs::ProjectedSfsAcc::new(u32, bool) -> core::option::Option<Self>
+pub fn reed_stats::sfs::ProjectedSfsAcc::pi(&self) -> f64
+pub fn reed_stats::sfs::ProjectedSfsAcc::push_weighted(&mut self, core::option::Option<&[(u32, f64)]>)
+pub fn reed_stats::sfs::ProjectedSfsAcc::segregating(&self) -> f64
+pub const fn reed_stats::sfs::ProjectedSfsAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::sfs::ProjectedSfsAcc::spectrum(&self) -> alloc::vec::Vec<f64>
+pub fn reed_stats::sfs::ProjectedSfsAcc::tajima_d(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::sfs::ProjectedSfsAcc::theta_w(&self) -> core::option::Option<f64>
+pub fn reed_stats::sfs::ProjectedSfsAcc::xi(&self, u32) -> f64
+impl core::clone::Clone for reed_stats::sfs::ProjectedSfsAcc
+pub fn reed_stats::sfs::ProjectedSfsAcc::clone(&self) -> reed_stats::sfs::ProjectedSfsAcc
+impl core::fmt::Debug for reed_stats::sfs::ProjectedSfsAcc
+pub fn reed_stats::sfs::ProjectedSfsAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::Send for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::Sync for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::Unpin for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::UnsafeUnpin for reed_stats::sfs::ProjectedSfsAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::ProjectedSfsAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::ProjectedSfsAcc
+pub struct reed_stats::sfs::ProjectionCache
+impl reed_stats::sfs::ProjectionCache
+pub const fn reed_stats::sfs::ProjectionCache::n(&self) -> u32
+pub fn reed_stats::sfs::ProjectionCache::new(u32) -> Self
+pub fn reed_stats::sfs::ProjectionCache::weights(&mut self, u32, u32) -> reed_stats::sfs::WeightsArc
+impl core::clone::Clone for reed_stats::sfs::ProjectionCache
+pub fn reed_stats::sfs::ProjectionCache::clone(&self) -> reed_stats::sfs::ProjectionCache
+impl core::default::Default for reed_stats::sfs::ProjectionCache
+pub fn reed_stats::sfs::ProjectionCache::default() -> reed_stats::sfs::ProjectionCache
+impl core::fmt::Debug for reed_stats::sfs::ProjectionCache
+pub fn reed_stats::sfs::ProjectionCache::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::ProjectionCache
+impl core::marker::Send for reed_stats::sfs::ProjectionCache
+impl core::marker::Sync for reed_stats::sfs::ProjectionCache
+impl core::marker::Unpin for reed_stats::sfs::ProjectionCache
+impl core::marker::UnsafeUnpin for reed_stats::sfs::ProjectionCache
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::ProjectionCache
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::ProjectionCache
+pub struct reed_stats::sfs::SfsAcc
+impl reed_stats::sfs::SfsAcc
+pub fn reed_stats::sfs::SfsAcc::bins(&self) -> &[u64]
+pub fn reed_stats::sfs::SfsAcc::merge(&mut self, &Self)
+pub const fn reed_stats::sfs::SfsAcc::n_chrom(&self) -> u64
+pub fn reed_stats::sfs::SfsAcc::new(usize, u32, bool) -> core::result::Result<Self, reed_core::error::CoreError>
+pub fn reed_stats::sfs::SfsAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::sfs::SfsAcc::site_tally(&self) -> (u64, u64)
+impl core::clone::Clone for reed_stats::sfs::SfsAcc
+pub fn reed_stats::sfs::SfsAcc::clone(&self) -> reed_stats::sfs::SfsAcc
+impl core::fmt::Debug for reed_stats::sfs::SfsAcc
+pub fn reed_stats::sfs::SfsAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::SfsAcc
+impl core::marker::Send for reed_stats::sfs::SfsAcc
+impl core::marker::Sync for reed_stats::sfs::SfsAcc
+impl core::marker::Unpin for reed_stats::sfs::SfsAcc
+impl core::marker::UnsafeUnpin for reed_stats::sfs::SfsAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::SfsAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::SfsAcc
+pub const reed_stats::sfs::PROJECTION_CACHE_CAPACITY: usize
+pub fn reed_stats::sfs::projection_weights(u32, u32, u32) -> alloc::vec::Vec<(u32, f64)>
+pub type reed_stats::sfs::WeightsArc = alloc::sync::Arc<alloc::vec::Vec<(u32, f64)>>
+pub mod reed_stats::summary
+pub mod reed_stats::summary::histogram
+pub struct reed_stats::summary::histogram::IntHistogram
+impl reed_stats::summary::histogram::IntHistogram
+pub fn reed_stats::summary::histogram::IntHistogram::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (u32, u64)> + '_
+pub fn reed_stats::summary::histogram::IntHistogram::merge(&mut self, &Self)
+pub fn reed_stats::summary::histogram::IntHistogram::new(u32) -> Self
+pub fn reed_stats::summary::histogram::IntHistogram::push(&mut self, u32)
+pub fn reed_stats::summary::histogram::IntHistogram::quantile(&self, f64) -> core::option::Option<u32>
+pub fn reed_stats::summary::histogram::IntHistogram::total(&self) -> u64
+pub fn reed_stats::summary::histogram::IntHistogram::weighted_sum(&self) -> u128
+impl core::clone::Clone for reed_stats::summary::histogram::IntHistogram
+pub fn reed_stats::summary::histogram::IntHistogram::clone(&self) -> reed_stats::summary::histogram::IntHistogram
+impl core::fmt::Debug for reed_stats::summary::histogram::IntHistogram
+pub fn reed_stats::summary::histogram::IntHistogram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_stats::summary::histogram::IntHistogram
+pub fn reed_stats::summary::histogram::IntHistogram::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::histogram::IntHistogram
+impl core::marker::Send for reed_stats::summary::histogram::IntHistogram
+impl core::marker::Sync for reed_stats::summary::histogram::IntHistogram
+impl core::marker::Unpin for reed_stats::summary::histogram::IntHistogram
+impl core::marker::UnsafeUnpin for reed_stats::summary::histogram::IntHistogram
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::histogram::IntHistogram
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::histogram::IntHistogram
+pub struct reed_stats::summary::histogram::QualDist
+impl reed_stats::summary::histogram::QualDist
+pub fn reed_stats::summary::histogram::QualDist::bin_range(usize) -> (u32, u32)
+pub fn reed_stats::summary::histogram::QualDist::count_at(&self, usize) -> u64
+pub fn reed_stats::summary::histogram::QualDist::merge(&mut self, &Self)
+pub fn reed_stats::summary::histogram::QualDist::nbins(&self) -> usize
+pub fn reed_stats::summary::histogram::QualDist::new() -> Self
+pub fn reed_stats::summary::histogram::QualDist::occupied(&self) -> impl core::iter::traits::iterator::Iterator<Item = (usize, u64)> + '_
+pub fn reed_stats::summary::histogram::QualDist::push(&mut self, core::option::Option<f32>)
+pub fn reed_stats::summary::histogram::QualDist::push_iqual(&mut self, u32)
+pub fn reed_stats::summary::histogram::QualDist::total(&self) -> u64
+impl core::clone::Clone for reed_stats::summary::histogram::QualDist
+pub fn reed_stats::summary::histogram::QualDist::clone(&self) -> reed_stats::summary::histogram::QualDist
+impl core::default::Default for reed_stats::summary::histogram::QualDist
+pub fn reed_stats::summary::histogram::QualDist::default() -> reed_stats::summary::histogram::QualDist
+impl core::fmt::Debug for reed_stats::summary::histogram::QualDist
+pub fn reed_stats::summary::histogram::QualDist::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_stats::summary::histogram::QualDist
+pub fn reed_stats::summary::histogram::QualDist::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::histogram::QualDist
+impl core::marker::Send for reed_stats::summary::histogram::QualDist
+impl core::marker::Sync for reed_stats::summary::histogram::QualDist
+impl core::marker::Unpin for reed_stats::summary::histogram::QualDist
+impl core::marker::UnsafeUnpin for reed_stats::summary::histogram::QualDist
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::histogram::QualDist
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::histogram::QualDist
+pub mod reed_stats::summary::report
+pub struct reed_stats::summary::report::AfAcc
+pub reed_stats::summary::report::AfAcc::indels: alloc::vec::Vec<u64>
+pub reed_stats::summary::report::AfAcc::m_af: usize
+pub reed_stats::summary::report::AfAcc::snps: alloc::vec::Vec<u64>
+pub reed_stats::summary::report::AfAcc::ts: alloc::vec::Vec<u64>
+pub reed_stats::summary::report::AfAcc::tv: alloc::vec::Vec<u64>
+impl reed_stats::summary::report::AfAcc
+pub fn reed_stats::summary::report::AfAcc::new(u32) -> Self
+impl core::clone::Clone for reed_stats::summary::report::AfAcc
+pub fn reed_stats::summary::report::AfAcc::clone(&self) -> reed_stats::summary::report::AfAcc
+impl core::fmt::Debug for reed_stats::summary::report::AfAcc
+pub fn reed_stats::summary::report::AfAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_stats::summary::report::AfAcc
+pub fn reed_stats::summary::report::AfAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::AfAcc
+impl core::marker::Send for reed_stats::summary::report::AfAcc
+impl core::marker::Sync for reed_stats::summary::report::AfAcc
+impl core::marker::Unpin for reed_stats::summary::report::AfAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::AfAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::AfAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::AfAcc
+pub struct reed_stats::summary::report::PscAcc
+pub reed_stats::summary::report::PscAcc::dp_n: u64
+pub reed_stats::summary::report::PscAcc::dp_sum: u64
+pub reed_stats::summary::report::PscAcc::hap_alt: u64
+pub reed_stats::summary::report::PscAcc::hap_ref: u64
+pub reed_stats::summary::report::PscAcc::hets: u64
+pub reed_stats::summary::report::PscAcc::hom_aa: u64
+pub reed_stats::summary::report::PscAcc::hom_rr: u64
+pub reed_stats::summary::report::PscAcc::missing: u64
+pub reed_stats::summary::report::PscAcc::n_indels: u64
+pub reed_stats::summary::report::PscAcc::singletons: u64
+pub reed_stats::summary::report::PscAcc::ts: u64
+pub reed_stats::summary::report::PscAcc::tv: u64
+impl core::clone::Clone for reed_stats::summary::report::PscAcc
+pub fn reed_stats::summary::report::PscAcc::clone(&self) -> reed_stats::summary::report::PscAcc
+impl core::default::Default for reed_stats::summary::report::PscAcc
+pub fn reed_stats::summary::report::PscAcc::default() -> reed_stats::summary::report::PscAcc
+impl core::fmt::Debug for reed_stats::summary::report::PscAcc
+pub fn reed_stats::summary::report::PscAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_stats::summary::report::PscAcc
+pub fn reed_stats::summary::report::PscAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::PscAcc
+impl core::marker::Send for reed_stats::summary::report::PscAcc
+impl core::marker::Sync for reed_stats::summary::report::PscAcc
+impl core::marker::Unpin for reed_stats::summary::report::PscAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::PscAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::PscAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::PscAcc
+pub struct reed_stats::summary::report::QcReportAcc
+pub reed_stats::summary::report::QcReportAcc::af: reed_stats::summary::report::AfAcc
+pub reed_stats::summary::report::QcReportAcc::dp_genotypes: reed_stats::summary::histogram::IntHistogram
+pub reed_stats::summary::report::QcReportAcc::dp_sites: reed_stats::summary::histogram::IntHistogram
+pub reed_stats::summary::report::QcReportAcc::idd: reed_stats::summary::histogram::IntHistogram
+pub reed_stats::summary::report::QcReportAcc::idd_ins: reed_stats::summary::histogram::IntHistogram
+pub reed_stats::summary::report::QcReportAcc::n_samples: u32
+pub reed_stats::summary::report::QcReportAcc::psc: alloc::vec::Vec<reed_stats::summary::report::PscAcc>
+pub reed_stats::summary::report::QcReportAcc::qual: reed_stats::summary::report::QualAcc
+pub reed_stats::summary::report::QcReportAcc::sis: reed_stats::summary::report::SiSAcc
+pub reed_stats::summary::report::QcReportAcc::subst: [u64; 16]
+pub reed_stats::summary::report::QcReportAcc::summary: reed_stats::summary::report::SummaryAcc
+pub reed_stats::summary::report::QcReportAcc::tstv: reed_stats::summary::report::TstvAcc
+impl reed_stats::summary::report::QcReportAcc
+pub fn reed_stats::summary::report::QcReportAcc::merge(&mut self, &Self)
+pub fn reed_stats::summary::report::QcReportAcc::new(u32) -> Self
+impl core::clone::Clone for reed_stats::summary::report::QcReportAcc
+pub fn reed_stats::summary::report::QcReportAcc::clone(&self) -> reed_stats::summary::report::QcReportAcc
+impl core::fmt::Debug for reed_stats::summary::report::QcReportAcc
+pub fn reed_stats::summary::report::QcReportAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_stats::summary::report::QcReportAcc
+pub fn reed_stats::summary::report::QcReportAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::QcReportAcc
+impl core::marker::Send for reed_stats::summary::report::QcReportAcc
+impl core::marker::Sync for reed_stats::summary::report::QcReportAcc
+impl core::marker::Unpin for reed_stats::summary::report::QcReportAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::QcReportAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::QcReportAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::QcReportAcc
+pub struct reed_stats::summary::report::QualAcc
+pub reed_stats::summary::report::QualAcc::indel: reed_stats::summary::histogram::QualDist
+pub reed_stats::summary::report::QualAcc::snv: reed_stats::summary::histogram::QualDist
+pub reed_stats::summary::report::QualAcc::snv_ts: reed_stats::summary::histogram::QualDist
+pub reed_stats::summary::report::QualAcc::snv_tv: reed_stats::summary::histogram::QualDist
+impl core::clone::Clone for reed_stats::summary::report::QualAcc
+pub fn reed_stats::summary::report::QualAcc::clone(&self) -> reed_stats::summary::report::QualAcc
+impl core::fmt::Debug for reed_stats::summary::report::QualAcc
+pub fn reed_stats::summary::report::QualAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for reed_stats::summary::report::QualAcc
+pub fn reed_stats::summary::report::QualAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::QualAcc
+impl core::marker::Send for reed_stats::summary::report::QualAcc
+impl core::marker::Sync for reed_stats::summary::report::QualAcc
+impl core::marker::Unpin for reed_stats::summary::report::QualAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::QualAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::QualAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::QualAcc
+pub struct reed_stats::summary::report::SiSAcc
+pub reed_stats::summary::report::SiSAcc::allele_count: u64
+pub reed_stats::summary::report::SiSAcc::n_indels: u64
+pub reed_stats::summary::report::SiSAcc::n_snps: u64
+pub reed_stats::summary::report::SiSAcc::ts: u64
+pub reed_stats::summary::report::SiSAcc::tv: u64
+impl core::clone::Clone for reed_stats::summary::report::SiSAcc
+pub fn reed_stats::summary::report::SiSAcc::clone(&self) -> reed_stats::summary::report::SiSAcc
+impl core::default::Default for reed_stats::summary::report::SiSAcc
+pub fn reed_stats::summary::report::SiSAcc::default() -> reed_stats::summary::report::SiSAcc
+impl core::fmt::Debug for reed_stats::summary::report::SiSAcc
+pub fn reed_stats::summary::report::SiSAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::summary::report::SiSAcc
+impl serde_core::ser::Serialize for reed_stats::summary::report::SiSAcc
+pub fn reed_stats::summary::report::SiSAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::SiSAcc
+impl core::marker::Send for reed_stats::summary::report::SiSAcc
+impl core::marker::Sync for reed_stats::summary::report::SiSAcc
+impl core::marker::Unpin for reed_stats::summary::report::SiSAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::SiSAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::SiSAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::SiSAcc
+pub struct reed_stats::summary::report::SummaryAcc
+pub reed_stats::summary::report::SummaryAcc::n_indel: u64
+pub reed_stats::summary::report::SummaryAcc::n_mnv: u64
+pub reed_stats::summary::report::SummaryAcc::n_multiallelic: u64
+pub reed_stats::summary::report::SummaryAcc::n_multiallelic_snv: u64
+pub reed_stats::summary::report::SummaryAcc::n_records: u64
+pub reed_stats::summary::report::SummaryAcc::n_ref: u64
+pub reed_stats::summary::report::SummaryAcc::n_snv: u64
+pub reed_stats::summary::report::SummaryAcc::n_symbolic: u64
+impl reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::merge(&mut self, &Self)
+impl core::clone::Clone for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::clone(&self) -> reed_stats::summary::report::SummaryAcc
+impl core::cmp::Eq for reed_stats::summary::report::SummaryAcc
+impl core::cmp::PartialEq for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::eq(&self, &reed_stats::summary::report::SummaryAcc) -> bool
+impl core::default::Default for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::default() -> reed_stats::summary::report::SummaryAcc
+impl core::fmt::Debug for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::summary::report::SummaryAcc
+impl core::marker::StructuralPartialEq for reed_stats::summary::report::SummaryAcc
+impl serde_core::ser::Serialize for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::SummaryAcc
+impl core::marker::Send for reed_stats::summary::report::SummaryAcc
+impl core::marker::Sync for reed_stats::summary::report::SummaryAcc
+impl core::marker::Unpin for reed_stats::summary::report::SummaryAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::SummaryAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::SummaryAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::SummaryAcc
+pub struct reed_stats::summary::report::TstvAcc
+pub reed_stats::summary::report::TstvAcc::ts: u64
+pub reed_stats::summary::report::TstvAcc::ts_alt1: u64
+pub reed_stats::summary::report::TstvAcc::tv: u64
+pub reed_stats::summary::report::TstvAcc::tv_alt1: u64
+impl core::clone::Clone for reed_stats::summary::report::TstvAcc
+pub fn reed_stats::summary::report::TstvAcc::clone(&self) -> reed_stats::summary::report::TstvAcc
+impl core::default::Default for reed_stats::summary::report::TstvAcc
+pub fn reed_stats::summary::report::TstvAcc::default() -> reed_stats::summary::report::TstvAcc
+impl core::fmt::Debug for reed_stats::summary::report::TstvAcc
+pub fn reed_stats::summary::report::TstvAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::summary::report::TstvAcc
+impl serde_core::ser::Serialize for reed_stats::summary::report::TstvAcc
+pub fn reed_stats::summary::report::TstvAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::TstvAcc
+impl core::marker::Send for reed_stats::summary::report::TstvAcc
+impl core::marker::Sync for reed_stats::summary::report::TstvAcc
+impl core::marker::Unpin for reed_stats::summary::report::TstvAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::TstvAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::TstvAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::TstvAcc
+pub fn reed_stats::summary::report::acgt(u8) -> core::option::Option<u8>
+pub fn reed_stats::summary::report::alt_class(&[u8], &[u8]) -> reed_core::site::VariantClass
+pub fn reed_stats::summary::report::is_transition(u8, u8) -> bool
+pub fn reed_stats::summary::report::subst_index(u8, u8) -> core::option::Option<usize>
+pub struct reed_stats::summary::SummaryAcc
+pub reed_stats::summary::SummaryAcc::n_indel: u64
+pub reed_stats::summary::SummaryAcc::n_mnv: u64
+pub reed_stats::summary::SummaryAcc::n_multiallelic: u64
+pub reed_stats::summary::SummaryAcc::n_multiallelic_snv: u64
+pub reed_stats::summary::SummaryAcc::n_records: u64
+pub reed_stats::summary::SummaryAcc::n_ref: u64
+pub reed_stats::summary::SummaryAcc::n_snv: u64
+pub reed_stats::summary::SummaryAcc::n_symbolic: u64
+impl reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::merge(&mut self, &Self)
+impl core::clone::Clone for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::clone(&self) -> reed_stats::summary::report::SummaryAcc
+impl core::cmp::Eq for reed_stats::summary::report::SummaryAcc
+impl core::cmp::PartialEq for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::eq(&self, &reed_stats::summary::report::SummaryAcc) -> bool
+impl core::default::Default for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::default() -> reed_stats::summary::report::SummaryAcc
+impl core::fmt::Debug for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::summary::report::SummaryAcc
+impl core::marker::StructuralPartialEq for reed_stats::summary::report::SummaryAcc
+impl serde_core::ser::Serialize for reed_stats::summary::report::SummaryAcc
+pub fn reed_stats::summary::report::SummaryAcc::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for reed_stats::summary::report::SummaryAcc
+impl core::marker::Send for reed_stats::summary::report::SummaryAcc
+impl core::marker::Sync for reed_stats::summary::report::SummaryAcc
+impl core::marker::Unpin for reed_stats::summary::report::SummaryAcc
+impl core::marker::UnsafeUnpin for reed_stats::summary::report::SummaryAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::summary::report::SummaryAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::summary::report::SummaryAcc
+pub mod reed_stats::tajima
+pub struct reed_stats::tajima::TajimaAcc
+impl reed_stats::tajima::TajimaAcc
+pub fn reed_stats::tajima::TajimaAcc::compact(&mut self)
+pub fn reed_stats::tajima::TajimaAcc::d_stdev(&self) -> core::option::Option<f64>
+pub fn reed_stats::tajima::TajimaAcc::merge(&mut self, &Self)
+pub const fn reed_stats::tajima::TajimaAcc::n_chrom(&self) -> u64
+pub fn reed_stats::tajima::TajimaAcc::new(usize, u32) -> core::option::Option<Self>
+pub const fn reed_stats::tajima::TajimaAcc::pi_sum(&self) -> &reed_core::math::sum::NeumaierSum
+pub fn reed_stats::tajima::TajimaAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::tajima::TajimaAcc::raw_pi(&self) -> f64
+pub fn reed_stats::tajima::TajimaAcc::raw_theta(&self) -> f64
+pub const fn reed_stats::tajima::TajimaAcc::segregating(&self) -> u64
+pub const fn reed_stats::tajima::TajimaAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::tajima::TajimaAcc::value(&self, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::tajima::TajimaAcc
+pub fn reed_stats::tajima::TajimaAcc::clone(&self) -> reed_stats::tajima::TajimaAcc
+impl core::fmt::Debug for reed_stats::tajima::TajimaAcc
+pub fn reed_stats::tajima::TajimaAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::tajima::TajimaAcc
+impl core::marker::Send for reed_stats::tajima::TajimaAcc
+impl core::marker::Sync for reed_stats::tajima::TajimaAcc
+impl core::marker::Unpin for reed_stats::tajima::TajimaAcc
+impl core::marker::UnsafeUnpin for reed_stats::tajima::TajimaAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::tajima::TajimaAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::tajima::TajimaAcc
+pub mod reed_stats::theta
+pub struct reed_stats::theta::ThetaAcc
+impl reed_stats::theta::ThetaAcc
+pub fn reed_stats::theta::ThetaAcc::compact(&mut self)
+pub fn reed_stats::theta::ThetaAcc::merge(&mut self, &Self)
+pub const fn reed_stats::theta::ThetaAcc::n_chrom(&self) -> u64
+pub fn reed_stats::theta::ThetaAcc::n_mutations(&self) -> u64
+pub const fn reed_stats::theta::ThetaAcc::n_sites(&self) -> u64
+pub const fn reed_stats::theta::ThetaAcc::n_var_sites(&self) -> u64
+pub fn reed_stats::theta::ThetaAcc::new(usize, u32) -> core::option::Option<Self>
+pub fn reed_stats::theta::ThetaAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::theta::ThetaAcc::raw_theta(&self) -> f64
+pub const fn reed_stats::theta::ThetaAcc::segregating(&self) -> u64
+pub const fn reed_stats::theta::ThetaAcc::site_tally(&self) -> (u64, u64)
+pub const fn reed_stats::theta::ThetaAcc::total_allele_count(&self) -> u64
+pub fn reed_stats::theta::ThetaAcc::value_avg(&self) -> core::option::Option<f64>
+pub fn reed_stats::theta::ThetaAcc::value_per_bp(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::theta::ThetaAcc::value_variant_only(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::theta::ThetaAcc::weighted_no_sites(&self) -> f64
+impl core::clone::Clone for reed_stats::theta::ThetaAcc
+pub fn reed_stats::theta::ThetaAcc::clone(&self) -> reed_stats::theta::ThetaAcc
+impl core::fmt::Debug for reed_stats::theta::ThetaAcc
+pub fn reed_stats::theta::ThetaAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::theta::ThetaAcc
+impl core::marker::Send for reed_stats::theta::ThetaAcc
+impl core::marker::Sync for reed_stats::theta::ThetaAcc
+impl core::marker::Unpin for reed_stats::theta::ThetaAcc
+impl core::marker::UnsafeUnpin for reed_stats::theta::ThetaAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::theta::ThetaAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::theta::ThetaAcc
+pub mod reed_stats::window
+pub struct reed_stats::window::BpBinning
+impl reed_stats::window::BpBinning
+pub const fn reed_stats::window::BpBinning::bin_of(&self, u64) -> u64
+pub fn reed_stats::window::BpBinning::from_grid(&reed_core::grid::WindowGrid) -> core::option::Option<Self>
+pub const fn reed_stats::window::BpBinning::new(u64) -> Self
+pub const fn reed_stats::window::BpBinning::width(&self) -> u64
+impl core::clone::Clone for reed_stats::window::BpBinning
+pub fn reed_stats::window::BpBinning::clone(&self) -> reed_stats::window::BpBinning
+impl core::cmp::Eq for reed_stats::window::BpBinning
+impl core::cmp::PartialEq for reed_stats::window::BpBinning
+pub fn reed_stats::window::BpBinning::eq(&self, &reed_stats::window::BpBinning) -> bool
+impl core::fmt::Debug for reed_stats::window::BpBinning
+pub fn reed_stats::window::BpBinning::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::window::BpBinning
+impl core::marker::StructuralPartialEq for reed_stats::window::BpBinning
+impl core::marker::Freeze for reed_stats::window::BpBinning
+impl core::marker::Send for reed_stats::window::BpBinning
+impl core::marker::Sync for reed_stats::window::BpBinning
+impl core::marker::Unpin for reed_stats::window::BpBinning
+impl core::marker::UnsafeUnpin for reed_stats::window::BpBinning
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::window::BpBinning
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::window::BpBinning
+pub struct reed_stats::window::ContigBins
+impl reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::any_bin_in(&self, core::ops::range::Range<u64>) -> bool
+pub fn reed_stats::window::ContigBins::drop_bins_below(&mut self, u64)
+pub fn reed_stats::window::ContigBins::finish_bins(&self, core::ops::range::Range<u64>) -> alloc::vec::Vec<reed_stats::request::StatAcc>
+pub fn reed_stats::window::ContigBins::finish_bins_into(&self, core::ops::range::Range<u64>, &mut alloc::vec::Vec<reed_stats::request::StatAcc>)
+pub fn reed_stats::window::ContigBins::finish_window(&self, &reed_core::grid::BpWindow) -> alloc::vec::Vec<reed_stats::request::StatAcc>
+pub fn reed_stats::window::ContigBins::fold(&self, &mut [reed_stats::request::StatAcc])
+pub fn reed_stats::window::ContigBins::merge_bins(&mut self, &mut Self)
+pub const fn reed_stats::window::ContigBins::n_sites(&self) -> u64
+pub fn reed_stats::window::ContigBins::new(reed_stats::window::BpBinning, &[reed_stats::request::StatAcc]) -> Self
+pub fn reed_stats::window::ContigBins::next_bin_at_or_after(&self, u64) -> core::option::Option<u64>
+pub fn reed_stats::window::ContigBins::push_site(&mut self, u64, &[reed_core::count::SiteGroupCounts], bool)
+impl core::clone::Clone for reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::clone(&self) -> reed_stats::window::ContigBins
+impl core::default::Default for reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::default() -> reed_stats::window::ContigBins
+impl core::fmt::Debug for reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::window::ContigBins
+impl core::marker::Send for reed_stats::window::ContigBins
+impl core::marker::Sync for reed_stats::window::ContigBins
+impl core::marker::Unpin for reed_stats::window::ContigBins
+impl core::marker::UnsafeUnpin for reed_stats::window::ContigBins
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::window::ContigBins
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::window::ContigBins
+pub struct reed_stats::window::RegionAccs
+impl reed_stats::window::RegionAccs
+pub fn reed_stats::window::RegionAccs::accs(&self, usize) -> &[reed_stats::request::StatAcc]
+pub fn reed_stats::window::RegionAccs::fold(&self, &mut [reed_stats::request::StatAcc])
+pub fn reed_stats::window::RegionAccs::merge_regions(&mut self, &Self)
+pub const fn reed_stats::window::RegionAccs::n_sites(&self) -> u64
+pub fn reed_stats::window::RegionAccs::new(alloc::sync::Arc<reed_core::grid::RegionSet>, &[reed_stats::request::StatAcc]) -> Self
+pub fn reed_stats::window::RegionAccs::push_site(&mut self, u64, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::window::RegionAccs::regions(&self) -> &reed_core::grid::RegionSet
+pub fn reed_stats::window::RegionAccs::touched(&self, usize) -> bool
+impl core::clone::Clone for reed_stats::window::RegionAccs
+pub fn reed_stats::window::RegionAccs::clone(&self) -> reed_stats::window::RegionAccs
+impl core::fmt::Debug for reed_stats::window::RegionAccs
+pub fn reed_stats::window::RegionAccs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::window::RegionAccs
+impl core::marker::Send for reed_stats::window::RegionAccs
+impl core::marker::Sync for reed_stats::window::RegionAccs
+impl core::marker::Unpin for reed_stats::window::RegionAccs
+impl core::marker::UnsafeUnpin for reed_stats::window::RegionAccs
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::window::RegionAccs
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::window::RegionAccs
+pub enum reed_stats::FstKind
+pub reed_stats::FstKind::Hudson
+pub reed_stats::FstKind::WeirCockerham84
+impl reed_stats::fst::FstKind
+pub const fn reed_stats::fst::FstKind::id(self) -> &'static str
+impl core::clone::Clone for reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstKind::clone(&self) -> reed_stats::fst::FstKind
+impl core::cmp::Eq for reed_stats::fst::FstKind
+impl core::cmp::PartialEq for reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstKind::eq(&self, &reed_stats::fst::FstKind) -> bool
+impl core::fmt::Debug for reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::fst::FstKind
+impl core::marker::StructuralPartialEq for reed_stats::fst::FstKind
+impl core::marker::Freeze for reed_stats::fst::FstKind
+impl core::marker::Send for reed_stats::fst::FstKind
+impl core::marker::Sync for reed_stats::fst::FstKind
+impl core::marker::Unpin for reed_stats::fst::FstKind
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstKind
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstKind
+pub enum reed_stats::StatAcc
+pub reed_stats::StatAcc::Dxy(reed_stats::dxy::DxyAcc)
+pub reed_stats::StatAcc::Fst(reed_stats::fst::FstAcc)
+pub reed_stats::StatAcc::FstGlobal(reed_stats::fst::WcMultiAcc)
+pub reed_stats::StatAcc::Pbs(reed_stats::pbs::PbsAcc)
+pub reed_stats::StatAcc::Pi(reed_stats::pi::PiAcc)
+pub reed_stats::StatAcc::Sfs(reed_stats::sfs::SfsAcc)
+pub reed_stats::StatAcc::Tajima(reed_stats::tajima::TajimaAcc)
+pub reed_stats::StatAcc::Theta(reed_stats::theta::ThetaAcc)
+impl reed_stats::request::StatAcc
+pub fn reed_stats::request::StatAcc::compacted(&self) -> Self
+pub fn reed_stats::request::StatAcc::fst_columns(&self, &reed_stats::request::StatKind) -> core::option::Option<(core::option::Option<f64>, u64)>
+pub fn reed_stats::request::StatAcc::fst_global_columns(&self, &reed_stats::request::StatKind) -> core::option::Option<(core::option::Option<f64>, u64)>
+pub fn reed_stats::request::StatAcc::merge(&mut self, &Self)
+pub const fn reed_stats::request::StatAcc::n_present(&self) -> core::option::Option<u64>
+pub const fn reed_stats::request::StatAcc::pair_counts(&self) -> core::option::Option<(u64, u64, u64)>
+pub fn reed_stats::request::StatAcc::pbs_columns(&self, &reed_stats::request::StatKind) -> core::option::Option<reed_stats::request::PbsColumns>
+pub fn reed_stats::request::StatAcc::push(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::request::StatAcc::sfs_bins(&self) -> core::option::Option<&[u64]>
+pub fn reed_stats::request::StatAcc::tajima_columns(&self) -> core::option::Option<reed_stats::request::TajimaColumns>
+pub fn reed_stats::request::StatAcc::theta_columns(&self) -> core::option::Option<(f64, u64, u64, f64)>
+pub fn reed_stats::request::StatAcc::value(&self, &reed_stats::request::StatKind, u64) -> core::option::Option<f64>
+pub fn reed_stats::request::StatAcc::value_variant_only(&self, &reed_stats::request::StatKind, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::request::StatAcc
+pub fn reed_stats::request::StatAcc::clone(&self) -> reed_stats::request::StatAcc
+impl core::fmt::Debug for reed_stats::request::StatAcc
+pub fn reed_stats::request::StatAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::request::StatAcc
+impl core::marker::Send for reed_stats::request::StatAcc
+impl core::marker::Sync for reed_stats::request::StatAcc
+impl core::marker::Unpin for reed_stats::request::StatAcc
+impl core::marker::UnsafeUnpin for reed_stats::request::StatAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatAcc
+pub enum reed_stats::StatKind
+pub reed_stats::StatKind::Dxy
+pub reed_stats::StatKind::Dxy::a: usize
+pub reed_stats::StatKind::Dxy::b: usize
+pub reed_stats::StatKind::Dxy::per_bp: bool
+pub reed_stats::StatKind::Fst
+pub reed_stats::StatKind::Fst::a: usize
+pub reed_stats::StatKind::Fst::b: usize
+pub reed_stats::StatKind::Fst::kind: reed_stats::fst::FstKind
+pub reed_stats::StatKind::FstGlobal
+pub reed_stats::StatKind::Pbs
+pub reed_stats::StatKind::Pbs::a: usize
+pub reed_stats::StatKind::Pbs::b: usize
+pub reed_stats::StatKind::Pbs::c: usize
+pub reed_stats::StatKind::Pbs::kind: reed_stats::pbs::PbsKind
+pub reed_stats::StatKind::Pi
+pub reed_stats::StatKind::Pi::group: usize
+pub reed_stats::StatKind::Pi::per_bp: bool
+pub reed_stats::StatKind::Sfs
+pub reed_stats::StatKind::Sfs::folded: bool
+pub reed_stats::StatKind::Sfs::group: usize
+pub reed_stats::StatKind::TajimaD
+pub reed_stats::StatKind::TajimaD::group: usize
+pub reed_stats::StatKind::TajimaD::min_sites: u64
+pub reed_stats::StatKind::ThetaW
+pub reed_stats::StatKind::ThetaW::group: usize
+pub reed_stats::StatKind::ThetaW::per_bp: bool
+impl reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::build(&self, &[u32]) -> core::result::Result<reed_stats::request::StatAcc, reed_core::error::CoreError>
+pub fn reed_stats::request::StatKind::key(&self) -> reed_stats::request::StatKey
+impl core::clone::Clone for reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::clone(&self) -> reed_stats::request::StatKind
+impl core::cmp::Eq for reed_stats::request::StatKind
+impl core::cmp::PartialEq for reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::eq(&self, &reed_stats::request::StatKind) -> bool
+impl core::fmt::Debug for reed_stats::request::StatKind
+pub fn reed_stats::request::StatKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_stats::request::StatKind
+impl core::marker::Freeze for reed_stats::request::StatKind
+impl core::marker::Send for reed_stats::request::StatKind
+impl core::marker::Sync for reed_stats::request::StatKind
+impl core::marker::Unpin for reed_stats::request::StatKind
+impl core::marker::UnsafeUnpin for reed_stats::request::StatKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatKind
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatKind
+pub struct reed_stats::BlockJackknife
+impl reed_stats::jackknife::BlockJackknife
+pub fn reed_stats::jackknife::BlockJackknife::accept(&mut self, &reed_stats::jackknife::BlockPartial)
+pub fn reed_stats::jackknife::BlockJackknife::estimate(&self) -> core::option::Option<f64>
+pub fn reed_stats::jackknife::BlockJackknife::jackknife(&self) -> core::option::Option<(f64, f64, alloc::vec::Vec<f64>)>
+pub fn reed_stats::jackknife::BlockJackknife::jackknife_sum(&self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BlockJackknife::n_blocks(&self) -> usize
+pub fn reed_stats::jackknife::BlockJackknife::new(u64) -> Self
+pub fn reed_stats::jackknife::BlockJackknife::push(&mut self, f64, f64)
+pub const fn reed_stats::jackknife::BlockJackknife::totals(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+impl core::clone::Clone for reed_stats::jackknife::BlockJackknife
+pub fn reed_stats::jackknife::BlockJackknife::clone(&self) -> reed_stats::jackknife::BlockJackknife
+impl core::fmt::Debug for reed_stats::jackknife::BlockJackknife
+pub fn reed_stats::jackknife::BlockJackknife::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::jackknife::BlockJackknife
+impl core::marker::Send for reed_stats::jackknife::BlockJackknife
+impl core::marker::Sync for reed_stats::jackknife::BlockJackknife
+impl core::marker::Unpin for reed_stats::jackknife::BlockJackknife
+impl core::marker::UnsafeUnpin for reed_stats::jackknife::BlockJackknife
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::jackknife::BlockJackknife
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::jackknife::BlockJackknife
+pub struct reed_stats::BlockPartial
+pub reed_stats::BlockPartial::values: alloc::vec::Vec<(f64, f64)>
+impl core::clone::Clone for reed_stats::jackknife::BlockPartial
+pub fn reed_stats::jackknife::BlockPartial::clone(&self) -> reed_stats::jackknife::BlockPartial
+impl core::default::Default for reed_stats::jackknife::BlockPartial
+pub fn reed_stats::jackknife::BlockPartial::default() -> reed_stats::jackknife::BlockPartial
+impl core::fmt::Debug for reed_stats::jackknife::BlockPartial
+pub fn reed_stats::jackknife::BlockPartial::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::jackknife::BlockPartial
+impl core::marker::Send for reed_stats::jackknife::BlockPartial
+impl core::marker::Sync for reed_stats::jackknife::BlockPartial
+impl core::marker::Unpin for reed_stats::jackknife::BlockPartial
+impl core::marker::UnsafeUnpin for reed_stats::jackknife::BlockPartial
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::jackknife::BlockPartial
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::jackknife::BlockPartial
+pub struct reed_stats::BpBinning
+impl reed_stats::window::BpBinning
+pub const fn reed_stats::window::BpBinning::bin_of(&self, u64) -> u64
+pub fn reed_stats::window::BpBinning::from_grid(&reed_core::grid::WindowGrid) -> core::option::Option<Self>
+pub const fn reed_stats::window::BpBinning::new(u64) -> Self
+pub const fn reed_stats::window::BpBinning::width(&self) -> u64
+impl core::clone::Clone for reed_stats::window::BpBinning
+pub fn reed_stats::window::BpBinning::clone(&self) -> reed_stats::window::BpBinning
+impl core::cmp::Eq for reed_stats::window::BpBinning
+impl core::cmp::PartialEq for reed_stats::window::BpBinning
+pub fn reed_stats::window::BpBinning::eq(&self, &reed_stats::window::BpBinning) -> bool
+impl core::fmt::Debug for reed_stats::window::BpBinning
+pub fn reed_stats::window::BpBinning::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::window::BpBinning
+impl core::marker::StructuralPartialEq for reed_stats::window::BpBinning
+impl core::marker::Freeze for reed_stats::window::BpBinning
+impl core::marker::Send for reed_stats::window::BpBinning
+impl core::marker::Sync for reed_stats::window::BpBinning
+impl core::marker::Unpin for reed_stats::window::BpBinning
+impl core::marker::UnsafeUnpin for reed_stats::window::BpBinning
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::window::BpBinning
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::window::BpBinning
+pub struct reed_stats::BpBlockJackknife
+impl reed_stats::jackknife::BpBlockJackknife
+pub fn reed_stats::jackknife::BpBlockJackknife::estimate(&self) -> core::option::Option<f64>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife(&self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife_shared(&self, &Self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife_sum(&self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::jackknife_sum_shared(&self, &Self) -> core::option::Option<(f64, f64, usize)>
+pub fn reed_stats::jackknife::BpBlockJackknife::merge_grid(&mut self, &Self)
+pub fn reed_stats::jackknife::BpBlockJackknife::merge_shared(&mut self, &Self, &Self)
+pub fn reed_stats::jackknife::BpBlockJackknife::n_blocks(&self) -> usize
+pub fn reed_stats::jackknife::BpBlockJackknife::n_blocks_shared(&self, &Self) -> usize
+pub fn reed_stats::jackknife::BpBlockJackknife::n_sites(&self) -> u64
+pub fn reed_stats::jackknife::BpBlockJackknife::new(u64) -> Self
+pub fn reed_stats::jackknife::BpBlockJackknife::push(&mut self, &[u8], u64, f64, f64)
+pub fn reed_stats::jackknife::BpBlockJackknife::push_usable(&mut self, &[u8], u64, f64, f64, bool)
+pub fn reed_stats::jackknife::BpBlockJackknife::share_grid(&mut self)
+impl core::clone::Clone for reed_stats::jackknife::BpBlockJackknife
+pub fn reed_stats::jackknife::BpBlockJackknife::clone(&self) -> reed_stats::jackknife::BpBlockJackknife
+impl core::fmt::Debug for reed_stats::jackknife::BpBlockJackknife
+pub fn reed_stats::jackknife::BpBlockJackknife::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::Send for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::Sync for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::Unpin for reed_stats::jackknife::BpBlockJackknife
+impl core::marker::UnsafeUnpin for reed_stats::jackknife::BpBlockJackknife
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::jackknife::BpBlockJackknife
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::jackknife::BpBlockJackknife
+pub struct reed_stats::ContigBins
+impl reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::any_bin_in(&self, core::ops::range::Range<u64>) -> bool
+pub fn reed_stats::window::ContigBins::drop_bins_below(&mut self, u64)
+pub fn reed_stats::window::ContigBins::finish_bins(&self, core::ops::range::Range<u64>) -> alloc::vec::Vec<reed_stats::request::StatAcc>
+pub fn reed_stats::window::ContigBins::finish_bins_into(&self, core::ops::range::Range<u64>, &mut alloc::vec::Vec<reed_stats::request::StatAcc>)
+pub fn reed_stats::window::ContigBins::finish_window(&self, &reed_core::grid::BpWindow) -> alloc::vec::Vec<reed_stats::request::StatAcc>
+pub fn reed_stats::window::ContigBins::fold(&self, &mut [reed_stats::request::StatAcc])
+pub fn reed_stats::window::ContigBins::merge_bins(&mut self, &mut Self)
+pub const fn reed_stats::window::ContigBins::n_sites(&self) -> u64
+pub fn reed_stats::window::ContigBins::new(reed_stats::window::BpBinning, &[reed_stats::request::StatAcc]) -> Self
+pub fn reed_stats::window::ContigBins::next_bin_at_or_after(&self, u64) -> core::option::Option<u64>
+pub fn reed_stats::window::ContigBins::push_site(&mut self, u64, &[reed_core::count::SiteGroupCounts], bool)
+impl core::clone::Clone for reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::clone(&self) -> reed_stats::window::ContigBins
+impl core::default::Default for reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::default() -> reed_stats::window::ContigBins
+impl core::fmt::Debug for reed_stats::window::ContigBins
+pub fn reed_stats::window::ContigBins::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::window::ContigBins
+impl core::marker::Send for reed_stats::window::ContigBins
+impl core::marker::Sync for reed_stats::window::ContigBins
+impl core::marker::Unpin for reed_stats::window::ContigBins
+impl core::marker::UnsafeUnpin for reed_stats::window::ContigBins
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::window::ContigBins
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::window::ContigBins
+pub struct reed_stats::ContigMatrix
+impl reed_stats::matrix::ContigMatrix
+pub fn reed_stats::matrix::ContigMatrix::contig(&self) -> &[u8]
+pub fn reed_stats::matrix::ContigMatrix::layout(&self) -> &reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::ContigMatrix::n_sites(&self) -> usize
+pub fn reed_stats::matrix::ContigMatrix::new(alloc::vec::Vec<u8>, alloc::sync::Arc<reed_stats::matrix::SampleLayout>) -> Self
+pub fn reed_stats::matrix::ContigMatrix::planes(&self, usize) -> [&[u64]; 4]
+pub fn reed_stats::matrix::ContigMatrix::pos0(&self) -> &[u64]
+pub fn reed_stats::matrix::ContigMatrix::push_run(&mut self, alloc::vec::Vec<u64>, alloc::vec::Vec<u64>)
+pub fn reed_stats::matrix::ContigMatrix::size_bytes(&self) -> u64
+impl core::clone::Clone for reed_stats::matrix::ContigMatrix
+pub fn reed_stats::matrix::ContigMatrix::clone(&self) -> reed_stats::matrix::ContigMatrix
+impl core::fmt::Debug for reed_stats::matrix::ContigMatrix
+pub fn reed_stats::matrix::ContigMatrix::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::matrix::ContigMatrix
+impl core::marker::Send for reed_stats::matrix::ContigMatrix
+impl core::marker::Sync for reed_stats::matrix::ContigMatrix
+impl core::marker::Unpin for reed_stats::matrix::ContigMatrix
+impl core::marker::UnsafeUnpin for reed_stats::matrix::ContigMatrix
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::matrix::ContigMatrix
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::matrix::ContigMatrix
+pub struct reed_stats::DxyAcc
+impl reed_stats::dxy::DxyAcc
+pub const fn reed_stats::dxy::DxyAcc::counts(&self) -> &reed_stats::pi::PairAcc
+pub fn reed_stats::dxy::DxyAcc::merge(&mut self, &Self)
+pub const fn reed_stats::dxy::DxyAcc::n_present(&self) -> u64
+pub const fn reed_stats::dxy::DxyAcc::n_present_file(&self) -> u64
+pub fn reed_stats::dxy::DxyAcc::new(usize, usize, u32, u32) -> Self
+pub fn reed_stats::dxy::DxyAcc::push(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::dxy::DxyAcc::value_accessible_bp(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::dxy::DxyAcc::value_per_pair(&self) -> core::option::Option<f64>
+pub fn reed_stats::dxy::DxyAcc::value_variant_only(&self, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::dxy::DxyAcc
+pub fn reed_stats::dxy::DxyAcc::clone(&self) -> reed_stats::dxy::DxyAcc
+impl core::fmt::Debug for reed_stats::dxy::DxyAcc
+pub fn reed_stats::dxy::DxyAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::dxy::DxyAcc
+impl core::marker::Send for reed_stats::dxy::DxyAcc
+impl core::marker::Sync for reed_stats::dxy::DxyAcc
+impl core::marker::Unpin for reed_stats::dxy::DxyAcc
+impl core::marker::UnsafeUnpin for reed_stats::dxy::DxyAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::dxy::DxyAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::dxy::DxyAcc
+pub struct reed_stats::F2Acc
+impl reed_stats::patterson::F2Acc
+pub fn reed_stats::patterson::F2Acc::merge(&mut self, &Self)
+pub fn reed_stats::patterson::F2Acc::new(usize, usize) -> Self
+pub fn reed_stats::patterson::F2Acc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::patterson::F2Acc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::patterson::F2Acc::value(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::patterson::F2Acc
+pub fn reed_stats::patterson::F2Acc::clone(&self) -> reed_stats::patterson::F2Acc
+impl core::fmt::Debug for reed_stats::patterson::F2Acc
+pub fn reed_stats::patterson::F2Acc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::patterson::F2Acc
+impl core::marker::Send for reed_stats::patterson::F2Acc
+impl core::marker::Sync for reed_stats::patterson::F2Acc
+impl core::marker::Unpin for reed_stats::patterson::F2Acc
+impl core::marker::UnsafeUnpin for reed_stats::patterson::F2Acc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::patterson::F2Acc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::patterson::F2Acc
+pub struct reed_stats::F3Acc
+impl reed_stats::patterson::F3Acc
+pub fn reed_stats::patterson::F3Acc::merge(&mut self, &Self)
+pub fn reed_stats::patterson::F3Acc::new(usize, usize, usize) -> Self
+pub fn reed_stats::patterson::F3Acc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::patterson::F3Acc::site_tally(&self) -> (u64, u64)
+pub const fn reed_stats::patterson::F3Acc::sums(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+pub fn reed_stats::patterson::F3Acc::value(&self) -> core::option::Option<f64>
+pub fn reed_stats::patterson::F3Acc::value_normalized(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::patterson::F3Acc
+pub fn reed_stats::patterson::F3Acc::clone(&self) -> reed_stats::patterson::F3Acc
+impl core::fmt::Debug for reed_stats::patterson::F3Acc
+pub fn reed_stats::patterson::F3Acc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::patterson::F3Acc
+impl core::marker::Send for reed_stats::patterson::F3Acc
+impl core::marker::Sync for reed_stats::patterson::F3Acc
+impl core::marker::Unpin for reed_stats::patterson::F3Acc
+impl core::marker::UnsafeUnpin for reed_stats::patterson::F3Acc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::patterson::F3Acc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::patterson::F3Acc
+pub struct reed_stats::F4Acc
+impl reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::F4Acc::merge(&mut self, &Self)
+pub fn reed_stats::patterson::F4Acc::new(usize, usize, usize, usize) -> Self
+pub fn reed_stats::patterson::F4Acc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::patterson::F4Acc::site_tally(&self) -> (u64, u64)
+pub const fn reed_stats::patterson::F4Acc::sums(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+pub fn reed_stats::patterson::F4Acc::value_d(&self) -> core::option::Option<f64>
+pub fn reed_stats::patterson::F4Acc::value_f4(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::F4Acc::clone(&self) -> reed_stats::patterson::F4Acc
+impl core::fmt::Debug for reed_stats::patterson::F4Acc
+pub fn reed_stats::patterson::F4Acc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::patterson::F4Acc
+impl core::marker::Send for reed_stats::patterson::F4Acc
+impl core::marker::Sync for reed_stats::patterson::F4Acc
+impl core::marker::Unpin for reed_stats::patterson::F4Acc
+impl core::marker::UnsafeUnpin for reed_stats::patterson::F4Acc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::patterson::F4Acc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::patterson::F4Acc
+pub struct reed_stats::FstAcc
+impl reed_stats::fst::FstAcc
+pub const fn reed_stats::fst::FstAcc::audit(&self) -> (&reed_stats::pi::PairAcc, &reed_stats::pi::PairAcc, &reed_stats::pi::PairAcc)
+pub fn reed_stats::fst::FstAcc::merge(&mut self, &Self)
+pub const fn reed_stats::fst::FstAcc::n_sites(&self) -> u64
+pub fn reed_stats::fst::FstAcc::new(usize, usize) -> Self
+pub fn reed_stats::fst::FstAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::fst::FstAcc::push_with_variant(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub fn reed_stats::fst::FstAcc::value(&self, reed_stats::fst::FstKind) -> core::option::Option<f64>
+pub fn reed_stats::fst::FstAcc::value_hudson(&self) -> core::option::Option<f64>
+pub fn reed_stats::fst::FstAcc::value_wc84(&self) -> core::option::Option<f64>
+pub fn reed_stats::fst::FstAcc::wc_components(&self) -> (f64, f64, f64)
+pub const fn reed_stats::fst::FstAcc::wc_tally(&self) -> (u64, u64)
+impl core::clone::Clone for reed_stats::fst::FstAcc
+pub fn reed_stats::fst::FstAcc::clone(&self) -> reed_stats::fst::FstAcc
+impl core::fmt::Debug for reed_stats::fst::FstAcc
+pub fn reed_stats::fst::FstAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::FstAcc
+impl core::marker::Send for reed_stats::fst::FstAcc
+impl core::marker::Sync for reed_stats::fst::FstAcc
+impl core::marker::Unpin for reed_stats::fst::FstAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstAcc
+pub struct reed_stats::FstMatrixAcc
+impl reed_stats::fst::FstMatrixAcc
+pub fn reed_stats::fst::FstMatrixAcc::entries(&self) -> alloc::vec::Vec<reed_stats::fst::FstMatrixEntry>
+pub const fn reed_stats::fst::FstMatrixAcc::kind(&self) -> reed_stats::fst::FstKind
+pub fn reed_stats::fst::FstMatrixAcc::merge(&mut self, &Self)
+pub fn reed_stats::fst::FstMatrixAcc::new(usize, reed_stats::fst::FstKind) -> Self
+pub fn reed_stats::fst::FstMatrixAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+impl core::clone::Clone for reed_stats::fst::FstMatrixAcc
+pub fn reed_stats::fst::FstMatrixAcc::clone(&self) -> reed_stats::fst::FstMatrixAcc
+impl core::fmt::Debug for reed_stats::fst::FstMatrixAcc
+pub fn reed_stats::fst::FstMatrixAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::FstMatrixAcc
+impl core::marker::Send for reed_stats::fst::FstMatrixAcc
+impl core::marker::Sync for reed_stats::fst::FstMatrixAcc
+impl core::marker::Unpin for reed_stats::fst::FstMatrixAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstMatrixAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstMatrixAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstMatrixAcc
+pub struct reed_stats::FstMatrixEntry
+pub reed_stats::FstMatrixEntry::i: usize
+pub reed_stats::FstMatrixEntry::j: usize
+pub reed_stats::FstMatrixEntry::value: core::option::Option<f64>
+impl core::clone::Clone for reed_stats::fst::FstMatrixEntry
+pub fn reed_stats::fst::FstMatrixEntry::clone(&self) -> reed_stats::fst::FstMatrixEntry
+impl core::fmt::Debug for reed_stats::fst::FstMatrixEntry
+pub fn reed_stats::fst::FstMatrixEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::FstMatrixEntry
+impl core::marker::Send for reed_stats::fst::FstMatrixEntry
+impl core::marker::Sync for reed_stats::fst::FstMatrixEntry
+impl core::marker::Unpin for reed_stats::fst::FstMatrixEntry
+impl core::marker::UnsafeUnpin for reed_stats::fst::FstMatrixEntry
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::FstMatrixEntry
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::FstMatrixEntry
+pub struct reed_stats::IndividualFAcc
+pub reed_stats::IndividualFAcc::hetero_expected: alloc::vec::Vec<reed_core::math::sum::NeumaierSum>
+pub reed_stats::IndividualFAcc::n_called: alloc::vec::Vec<u64>
+pub reed_stats::IndividualFAcc::o_hom: alloc::vec::Vec<u64>
+impl reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::f_values(&self) -> alloc::vec::Vec<core::option::Option<f64>>
+pub fn reed_stats::het::IndividualFAcc::merge(&mut self, &Self)
+pub fn reed_stats::het::IndividualFAcc::new(usize) -> Self
+pub fn reed_stats::het::IndividualFAcc::push_site(&mut self, &reed_core::genotype::planes::PlaneBlock, usize, &reed_core::sample::SampleMask, f64)
+impl core::clone::Clone for reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::clone(&self) -> reed_stats::het::IndividualFAcc
+impl core::default::Default for reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::default() -> reed_stats::het::IndividualFAcc
+impl core::fmt::Debug for reed_stats::het::IndividualFAcc
+pub fn reed_stats::het::IndividualFAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::het::IndividualFAcc
+impl core::marker::Send for reed_stats::het::IndividualFAcc
+impl core::marker::Sync for reed_stats::het::IndividualFAcc
+impl core::marker::Unpin for reed_stats::het::IndividualFAcc
+impl core::marker::UnsafeUnpin for reed_stats::het::IndividualFAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::het::IndividualFAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::het::IndividualFAcc
+pub struct reed_stats::LdDecayAcc
+impl reed_stats::ld::LdDecayAcc
+pub fn reed_stats::ld::LdDecayAcc::bin_index(&self, u64) -> core::option::Option<usize>
+pub fn reed_stats::ld::LdDecayAcc::counts(&self) -> &[u64]
+pub fn reed_stats::ld::LdDecayAcc::mean_r2(&self) -> alloc::vec::Vec<core::option::Option<f64>>
+pub fn reed_stats::ld::LdDecayAcc::merge(&mut self, &Self)
+pub fn reed_stats::ld::LdDecayAcc::new(alloc::vec::Vec<u64>) -> Self
+pub fn reed_stats::ld::LdDecayAcc::push(&mut self, u64, f64)
+pub fn reed_stats::ld::LdDecayAcc::push_bin(&mut self, core::option::Option<usize>, f64)
+impl core::clone::Clone for reed_stats::ld::LdDecayAcc
+pub fn reed_stats::ld::LdDecayAcc::clone(&self) -> reed_stats::ld::LdDecayAcc
+impl core::fmt::Debug for reed_stats::ld::LdDecayAcc
+pub fn reed_stats::ld::LdDecayAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::ld::LdDecayAcc
+impl core::marker::Send for reed_stats::ld::LdDecayAcc
+impl core::marker::Sync for reed_stats::ld::LdDecayAcc
+impl core::marker::Unpin for reed_stats::ld::LdDecayAcc
+impl core::marker::UnsafeUnpin for reed_stats::ld::LdDecayAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::LdDecayAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::LdDecayAcc
+pub struct reed_stats::LdDecaySet
+pub reed_stats::LdDecaySet::cohort: reed_stats::ld::LdDecayAcc
+pub reed_stats::LdDecaySet::groups: alloc::vec::Vec<reed_stats::ld::LdDecayAcc>
+pub reed_stats::LdDecaySet::pairs: alloc::vec::Vec<reed_stats::matrix::LdPairRow>
+impl reed_stats::matrix::LdDecaySet
+pub fn reed_stats::matrix::LdDecaySet::merge(&mut self, &Self)
+pub fn reed_stats::matrix::LdDecaySet::new(&[u64], usize) -> Self
+impl core::clone::Clone for reed_stats::matrix::LdDecaySet
+pub fn reed_stats::matrix::LdDecaySet::clone(&self) -> reed_stats::matrix::LdDecaySet
+impl core::fmt::Debug for reed_stats::matrix::LdDecaySet
+pub fn reed_stats::matrix::LdDecaySet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::matrix::LdDecaySet
+impl core::marker::Send for reed_stats::matrix::LdDecaySet
+impl core::marker::Sync for reed_stats::matrix::LdDecaySet
+impl core::marker::Unpin for reed_stats::matrix::LdDecaySet
+impl core::marker::UnsafeUnpin for reed_stats::matrix::LdDecaySet
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::matrix::LdDecaySet
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::matrix::LdDecaySet
+pub struct reed_stats::LdPruner
+impl reed_stats::ld::LdPruner
+pub fn reed_stats::ld::LdPruner::finish_contig(&mut self)
+pub fn reed_stats::ld::LdPruner::kept_sites(&self) -> alloc::vec::Vec<usize>
+pub fn reed_stats::ld::LdPruner::new(f64, reed_stats::ld::LdWindow, usize, usize, usize) -> Self
+pub fn reed_stats::ld::LdPruner::pruned_sites(&self) -> alloc::vec::Vec<usize>
+pub fn reed_stats::ld::LdPruner::push(&mut self, usize, u64, [&[u64]; 4], reed_stats::ld::SitePruneStats) -> bool
+pub fn reed_stats::ld::LdPruner::push_ex(&mut self, usize, u64, [&[u64]; 4], reed_stats::ld::SitePruneStats, &[u64]) -> bool
+impl core::clone::Clone for reed_stats::ld::LdPruner
+pub fn reed_stats::ld::LdPruner::clone(&self) -> reed_stats::ld::LdPruner
+impl core::fmt::Debug for reed_stats::ld::LdPruner
+pub fn reed_stats::ld::LdPruner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::ld::LdPruner
+impl core::marker::Send for reed_stats::ld::LdPruner
+impl core::marker::Sync for reed_stats::ld::LdPruner
+impl core::marker::Unpin for reed_stats::ld::LdPruner
+impl core::marker::UnsafeUnpin for reed_stats::ld::LdPruner
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::LdPruner
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::LdPruner
+pub struct reed_stats::PairSums
+pub reed_stats::PairSums::n: i64
+pub reed_stats::PairSums::sum_x: i64
+pub reed_stats::PairSums::sum_x2: i64
+pub reed_stats::PairSums::sum_xy: i64
+pub reed_stats::PairSums::sum_y: i64
+pub reed_stats::PairSums::sum_y2: i64
+impl reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::add_assign(&mut self, &Self)
+pub fn reed_stats::ld::PairSums::covariance(&self) -> core::option::Option<f64>
+pub fn reed_stats::ld::PairSums::r2(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::clone(&self) -> reed_stats::ld::PairSums
+impl core::cmp::Eq for reed_stats::ld::PairSums
+impl core::cmp::PartialEq for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::eq(&self, &reed_stats::ld::PairSums) -> bool
+impl core::default::Default for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::default() -> reed_stats::ld::PairSums
+impl core::fmt::Debug for reed_stats::ld::PairSums
+pub fn reed_stats::ld::PairSums::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_stats::ld::PairSums
+impl core::marker::StructuralPartialEq for reed_stats::ld::PairSums
+impl core::marker::Freeze for reed_stats::ld::PairSums
+impl core::marker::Send for reed_stats::ld::PairSums
+impl core::marker::Sync for reed_stats::ld::PairSums
+impl core::marker::Unpin for reed_stats::ld::PairSums
+impl core::marker::UnsafeUnpin for reed_stats::ld::PairSums
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::ld::PairSums
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::ld::PairSums
+pub struct reed_stats::PbsAcc
+impl reed_stats::pbs::PbsAcc
+pub fn reed_stats::pbs::PbsAcc::merge(&mut self, &Self)
+pub const fn reed_stats::pbs::PbsAcc::n_sites(&self) -> u64
+pub fn reed_stats::pbs::PbsAcc::new(usize, usize, usize) -> Self
+pub fn reed_stats::pbs::PbsAcc::pair_fsts(&self) -> (core::option::Option<f64>, core::option::Option<f64>, core::option::Option<f64>)
+pub fn reed_stats::pbs::PbsAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::pbs::PbsAcc::push_with_variant(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub const fn reed_stats::pbs::PbsAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::pbs::PbsAcc::value(&self, reed_stats::pbs::PbsKind) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::pbs::PbsAcc
+pub fn reed_stats::pbs::PbsAcc::clone(&self) -> reed_stats::pbs::PbsAcc
+impl core::fmt::Debug for reed_stats::pbs::PbsAcc
+pub fn reed_stats::pbs::PbsAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::pbs::PbsAcc
+impl core::marker::Send for reed_stats::pbs::PbsAcc
+impl core::marker::Sync for reed_stats::pbs::PbsAcc
+impl core::marker::Unpin for reed_stats::pbs::PbsAcc
+impl core::marker::UnsafeUnpin for reed_stats::pbs::PbsAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::pbs::PbsAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::pbs::PbsAcc
+pub struct reed_stats::PiAcc
+impl reed_stats::pi::PiAcc
+pub const fn reed_stats::pi::PiAcc::counts(&self) -> &reed_stats::pi::PairAcc
+pub fn reed_stats::pi::PiAcc::merge(&mut self, &Self)
+pub const fn reed_stats::pi::PiAcc::n_chrom(&self) -> u64
+pub const fn reed_stats::pi::PiAcc::n_present(&self) -> u64
+pub const fn reed_stats::pi::PiAcc::n_present_file(&self) -> u64
+pub fn reed_stats::pi::PiAcc::new(usize, u32) -> Self
+pub fn reed_stats::pi::PiAcc::push(&mut self, &[reed_core::count::SiteGroupCounts], bool)
+pub const fn reed_stats::pi::PiAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::pi::PiAcc::value_accessible_bp(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::pi::PiAcc::value_per_pair(&self) -> core::option::Option<f64>
+pub fn reed_stats::pi::PiAcc::value_variant_only(&self, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::pi::PiAcc
+pub fn reed_stats::pi::PiAcc::clone(&self) -> reed_stats::pi::PiAcc
+impl core::fmt::Debug for reed_stats::pi::PiAcc
+pub fn reed_stats::pi::PiAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::pi::PiAcc
+impl core::marker::Send for reed_stats::pi::PiAcc
+impl core::marker::Sync for reed_stats::pi::PiAcc
+impl core::marker::Unpin for reed_stats::pi::PiAcc
+impl core::marker::UnsafeUnpin for reed_stats::pi::PiAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::pi::PiAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::pi::PiAcc
+pub struct reed_stats::ProjectedSfsAcc
+impl reed_stats::sfs::ProjectedSfsAcc
+pub fn reed_stats::sfs::ProjectedSfsAcc::bins(&self) -> &[reed_core::math::sum::NeumaierSum]
+pub const fn reed_stats::sfs::ProjectedSfsAcc::folded(&self) -> bool
+pub fn reed_stats::sfs::ProjectedSfsAcc::merge(&mut self, &Self)
+pub const fn reed_stats::sfs::ProjectedSfsAcc::n(&self) -> u32
+pub fn reed_stats::sfs::ProjectedSfsAcc::new(u32, bool) -> core::option::Option<Self>
+pub fn reed_stats::sfs::ProjectedSfsAcc::pi(&self) -> f64
+pub fn reed_stats::sfs::ProjectedSfsAcc::push_weighted(&mut self, core::option::Option<&[(u32, f64)]>)
+pub fn reed_stats::sfs::ProjectedSfsAcc::segregating(&self) -> f64
+pub const fn reed_stats::sfs::ProjectedSfsAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::sfs::ProjectedSfsAcc::spectrum(&self) -> alloc::vec::Vec<f64>
+pub fn reed_stats::sfs::ProjectedSfsAcc::tajima_d(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::sfs::ProjectedSfsAcc::theta_w(&self) -> core::option::Option<f64>
+pub fn reed_stats::sfs::ProjectedSfsAcc::xi(&self, u32) -> f64
+impl core::clone::Clone for reed_stats::sfs::ProjectedSfsAcc
+pub fn reed_stats::sfs::ProjectedSfsAcc::clone(&self) -> reed_stats::sfs::ProjectedSfsAcc
+impl core::fmt::Debug for reed_stats::sfs::ProjectedSfsAcc
+pub fn reed_stats::sfs::ProjectedSfsAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::Send for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::Sync for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::Unpin for reed_stats::sfs::ProjectedSfsAcc
+impl core::marker::UnsafeUnpin for reed_stats::sfs::ProjectedSfsAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::ProjectedSfsAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::ProjectedSfsAcc
+pub struct reed_stats::ProjectionCache
+impl reed_stats::sfs::ProjectionCache
+pub const fn reed_stats::sfs::ProjectionCache::n(&self) -> u32
+pub fn reed_stats::sfs::ProjectionCache::new(u32) -> Self
+pub fn reed_stats::sfs::ProjectionCache::weights(&mut self, u32, u32) -> reed_stats::sfs::WeightsArc
+impl core::clone::Clone for reed_stats::sfs::ProjectionCache
+pub fn reed_stats::sfs::ProjectionCache::clone(&self) -> reed_stats::sfs::ProjectionCache
+impl core::default::Default for reed_stats::sfs::ProjectionCache
+pub fn reed_stats::sfs::ProjectionCache::default() -> reed_stats::sfs::ProjectionCache
+impl core::fmt::Debug for reed_stats::sfs::ProjectionCache
+pub fn reed_stats::sfs::ProjectionCache::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::ProjectionCache
+impl core::marker::Send for reed_stats::sfs::ProjectionCache
+impl core::marker::Sync for reed_stats::sfs::ProjectionCache
+impl core::marker::Unpin for reed_stats::sfs::ProjectionCache
+impl core::marker::UnsafeUnpin for reed_stats::sfs::ProjectionCache
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::ProjectionCache
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::ProjectionCache
+pub struct reed_stats::SampleLayout
+impl reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::SampleLayout::bit_of(&self, usize) -> core::option::Option<usize>
+pub fn reed_stats::matrix::SampleLayout::dest(&self) -> &[u32]
+pub fn reed_stats::matrix::SampleLayout::from_assignments(&[core::option::Option<u32>], usize, core::option::Option<&[bool]>) -> Self
+pub const fn reed_stats::matrix::SampleLayout::n_groups(&self) -> usize
+pub const fn reed_stats::matrix::SampleLayout::w(&self) -> usize
+impl core::clone::Clone for reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::SampleLayout::clone(&self) -> reed_stats::matrix::SampleLayout
+impl core::fmt::Debug for reed_stats::matrix::SampleLayout
+pub fn reed_stats::matrix::SampleLayout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::matrix::SampleLayout
+impl core::marker::Send for reed_stats::matrix::SampleLayout
+impl core::marker::Sync for reed_stats::matrix::SampleLayout
+impl core::marker::Unpin for reed_stats::matrix::SampleLayout
+impl core::marker::UnsafeUnpin for reed_stats::matrix::SampleLayout
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::matrix::SampleLayout
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::matrix::SampleLayout
+pub struct reed_stats::SfsAcc
+impl reed_stats::sfs::SfsAcc
+pub fn reed_stats::sfs::SfsAcc::bins(&self) -> &[u64]
+pub fn reed_stats::sfs::SfsAcc::merge(&mut self, &Self)
+pub const fn reed_stats::sfs::SfsAcc::n_chrom(&self) -> u64
+pub fn reed_stats::sfs::SfsAcc::new(usize, u32, bool) -> core::result::Result<Self, reed_core::error::CoreError>
+pub fn reed_stats::sfs::SfsAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::sfs::SfsAcc::site_tally(&self) -> (u64, u64)
+impl core::clone::Clone for reed_stats::sfs::SfsAcc
+pub fn reed_stats::sfs::SfsAcc::clone(&self) -> reed_stats::sfs::SfsAcc
+impl core::fmt::Debug for reed_stats::sfs::SfsAcc
+pub fn reed_stats::sfs::SfsAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::sfs::SfsAcc
+impl core::marker::Send for reed_stats::sfs::SfsAcc
+impl core::marker::Sync for reed_stats::sfs::SfsAcc
+impl core::marker::Unpin for reed_stats::sfs::SfsAcc
+impl core::marker::UnsafeUnpin for reed_stats::sfs::SfsAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::sfs::SfsAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::sfs::SfsAcc
+pub struct reed_stats::StatKey(pub alloc::string::String)
+impl reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::as_str(&self) -> &str
+impl core::clone::Clone for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::clone(&self) -> reed_stats::request::StatKey
+impl core::cmp::Eq for reed_stats::request::StatKey
+impl core::cmp::Ord for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::cmp(&self, &reed_stats::request::StatKey) -> core::cmp::Ordering
+impl core::cmp::PartialEq for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::eq(&self, &reed_stats::request::StatKey) -> bool
+impl core::cmp::PartialOrd for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::partial_cmp(&self, &reed_stats::request::StatKey) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for reed_stats::request::StatKey
+pub fn reed_stats::request::StatKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for reed_stats::request::StatKey
+impl core::marker::Freeze for reed_stats::request::StatKey
+impl core::marker::Send for reed_stats::request::StatKey
+impl core::marker::Sync for reed_stats::request::StatKey
+impl core::marker::Unpin for reed_stats::request::StatKey
+impl core::marker::UnsafeUnpin for reed_stats::request::StatKey
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::request::StatKey
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::request::StatKey
+pub struct reed_stats::TajimaAcc
+impl reed_stats::tajima::TajimaAcc
+pub fn reed_stats::tajima::TajimaAcc::compact(&mut self)
+pub fn reed_stats::tajima::TajimaAcc::d_stdev(&self) -> core::option::Option<f64>
+pub fn reed_stats::tajima::TajimaAcc::merge(&mut self, &Self)
+pub const fn reed_stats::tajima::TajimaAcc::n_chrom(&self) -> u64
+pub fn reed_stats::tajima::TajimaAcc::new(usize, u32) -> core::option::Option<Self>
+pub const fn reed_stats::tajima::TajimaAcc::pi_sum(&self) -> &reed_core::math::sum::NeumaierSum
+pub fn reed_stats::tajima::TajimaAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::tajima::TajimaAcc::raw_pi(&self) -> f64
+pub fn reed_stats::tajima::TajimaAcc::raw_theta(&self) -> f64
+pub const fn reed_stats::tajima::TajimaAcc::segregating(&self) -> u64
+pub const fn reed_stats::tajima::TajimaAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::tajima::TajimaAcc::value(&self, u64) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::tajima::TajimaAcc
+pub fn reed_stats::tajima::TajimaAcc::clone(&self) -> reed_stats::tajima::TajimaAcc
+impl core::fmt::Debug for reed_stats::tajima::TajimaAcc
+pub fn reed_stats::tajima::TajimaAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::tajima::TajimaAcc
+impl core::marker::Send for reed_stats::tajima::TajimaAcc
+impl core::marker::Sync for reed_stats::tajima::TajimaAcc
+impl core::marker::Unpin for reed_stats::tajima::TajimaAcc
+impl core::marker::UnsafeUnpin for reed_stats::tajima::TajimaAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::tajima::TajimaAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::tajima::TajimaAcc
+pub struct reed_stats::ThetaAcc
+impl reed_stats::theta::ThetaAcc
+pub fn reed_stats::theta::ThetaAcc::compact(&mut self)
+pub fn reed_stats::theta::ThetaAcc::merge(&mut self, &Self)
+pub const fn reed_stats::theta::ThetaAcc::n_chrom(&self) -> u64
+pub fn reed_stats::theta::ThetaAcc::n_mutations(&self) -> u64
+pub const fn reed_stats::theta::ThetaAcc::n_sites(&self) -> u64
+pub const fn reed_stats::theta::ThetaAcc::n_var_sites(&self) -> u64
+pub fn reed_stats::theta::ThetaAcc::new(usize, u32) -> core::option::Option<Self>
+pub fn reed_stats::theta::ThetaAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub fn reed_stats::theta::ThetaAcc::raw_theta(&self) -> f64
+pub const fn reed_stats::theta::ThetaAcc::segregating(&self) -> u64
+pub const fn reed_stats::theta::ThetaAcc::site_tally(&self) -> (u64, u64)
+pub const fn reed_stats::theta::ThetaAcc::total_allele_count(&self) -> u64
+pub fn reed_stats::theta::ThetaAcc::value_avg(&self) -> core::option::Option<f64>
+pub fn reed_stats::theta::ThetaAcc::value_per_bp(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::theta::ThetaAcc::value_variant_only(&self, u64) -> core::option::Option<f64>
+pub fn reed_stats::theta::ThetaAcc::weighted_no_sites(&self) -> f64
+impl core::clone::Clone for reed_stats::theta::ThetaAcc
+pub fn reed_stats::theta::ThetaAcc::clone(&self) -> reed_stats::theta::ThetaAcc
+impl core::fmt::Debug for reed_stats::theta::ThetaAcc
+pub fn reed_stats::theta::ThetaAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::theta::ThetaAcc
+impl core::marker::Send for reed_stats::theta::ThetaAcc
+impl core::marker::Sync for reed_stats::theta::ThetaAcc
+impl core::marker::Unpin for reed_stats::theta::ThetaAcc
+impl core::marker::UnsafeUnpin for reed_stats::theta::ThetaAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::theta::ThetaAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::theta::ThetaAcc
+pub struct reed_stats::WcMultiAcc
+impl reed_stats::fst::WcMultiAcc
+pub const fn reed_stats::fst::WcMultiAcc::components(&self) -> (&reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum, &reed_core::math::sum::NeumaierSum)
+pub fn reed_stats::fst::WcMultiAcc::merge(&mut self, &Self)
+pub fn reed_stats::fst::WcMultiAcc::new(alloc::vec::Vec<usize>) -> Self
+pub fn reed_stats::fst::WcMultiAcc::push(&mut self, &[reed_core::count::SiteGroupCounts])
+pub const fn reed_stats::fst::WcMultiAcc::site_tally(&self) -> (u64, u64)
+pub fn reed_stats::fst::WcMultiAcc::value(&self) -> core::option::Option<f64>
+impl core::clone::Clone for reed_stats::fst::WcMultiAcc
+pub fn reed_stats::fst::WcMultiAcc::clone(&self) -> reed_stats::fst::WcMultiAcc
+impl core::fmt::Debug for reed_stats::fst::WcMultiAcc
+pub fn reed_stats::fst::WcMultiAcc::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_stats::fst::WcMultiAcc
+impl core::marker::Send for reed_stats::fst::WcMultiAcc
+impl core::marker::Sync for reed_stats::fst::WcMultiAcc
+impl core::marker::Unpin for reed_stats::fst::WcMultiAcc
+impl core::marker::UnsafeUnpin for reed_stats::fst::WcMultiAcc
+impl core::panic::unwind_safe::RefUnwindSafe for reed_stats::fst::WcMultiAcc
+impl core::panic::unwind_safe::UnwindSafe for reed_stats::fst::WcMultiAcc
+pub fn reed_stats::build_accs(&[reed_stats::request::StatKind], &[u32]) -> core::result::Result<alloc::vec::Vec<reed_stats::request::StatAcc>, reed_core::error::CoreError>
+pub fn reed_stats::decay_range(&reed_stats::matrix::ContigMatrix, core::ops::range::Range<usize>, u64, &[u64], bool) -> reed_stats::matrix::LdDecaySet
+pub fn reed_stats::f4_ratio(&reed_stats::patterson::F4Acc, &reed_stats::patterson::F4Acc) -> core::option::Option<f64>
+pub fn reed_stats::merge_zip_eq<T>(&'static str, &mut [T], &[T], impl core::ops::function::Fn(&mut T, &T))
+pub fn reed_stats::pair_sums([&[u64]; 4], [&[u64]; 4], usize) -> reed_stats::ld::PairSums
+pub fn reed_stats::projection_weights(u32, u32, u32) -> alloc::vec::Vec<(u32, f64)>
+pub type reed_stats::LdPairRow = (u64, u64, f64)

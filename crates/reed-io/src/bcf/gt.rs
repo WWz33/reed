@@ -21,6 +21,7 @@ use super::record::{BcfRecordRef, Cursor, FormatTable, malformed, type_width, va
 use super::render::fmt_gt;
 use crate::error::{IoError, Locus};
 use crate::vcf::genotype_scan::{LocusSource, decode_gt_text};
+use reed_core::coord::Pos1;
 
 /// The shared-block header fields a numeric consumer needs (hts-specs
 /// §6.3.1): everything before the ID string.
@@ -58,6 +59,18 @@ pub fn site_header(record: &BcfRecordRef<'_>) -> Result<SiteHeader, IoError> {
         n_sample: header.n_sample,
         n_fmt: header.n_fmt,
     })
+}
+
+impl SiteHeader {
+    /// The record's 1-based `POS`, with the telomere sentinel applied
+    /// (doc_v30 R03; the rule lives in [`super::record::pos1_from_pos0`]).
+    ///
+    /// # Errors
+    ///
+    /// [`IoError::MalformedRecord`] for `pos0 < -1`.
+    pub fn pos1(&self) -> Result<Pos1, IoError> {
+        super::record::pos1_from_pos0(self.pos0)
+    }
 }
 
 /// The entry's policies reject this pair; the decoder re-runs the text path

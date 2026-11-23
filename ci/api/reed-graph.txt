@@ -1,0 +1,241 @@
+pub mod reed_graph
+pub mod reed_graph::bootstrap
+pub enum reed_graph::bootstrap::TreeMethod
+pub reed_graph::bootstrap::TreeMethod::Nj
+pub reed_graph::bootstrap::TreeMethod::Upgma
+impl reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::parse(&str) -> core::result::Result<Self, alloc::string::String>
+pub fn reed_graph::bootstrap::TreeMethod::rooted(self) -> bool
+impl core::clone::Clone for reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::clone(&self) -> reed_graph::bootstrap::TreeMethod
+impl core::cmp::Eq for reed_graph::bootstrap::TreeMethod
+impl core::cmp::PartialEq for reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::eq(&self, &reed_graph::bootstrap::TreeMethod) -> bool
+impl core::fmt::Debug for reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_graph::bootstrap::TreeMethod
+impl core::marker::StructuralPartialEq for reed_graph::bootstrap::TreeMethod
+impl core::marker::Freeze for reed_graph::bootstrap::TreeMethod
+impl core::marker::Send for reed_graph::bootstrap::TreeMethod
+impl core::marker::Sync for reed_graph::bootstrap::TreeMethod
+impl core::marker::Unpin for reed_graph::bootstrap::TreeMethod
+impl core::marker::UnsafeUnpin for reed_graph::bootstrap::TreeMethod
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::bootstrap::TreeMethod
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::bootstrap::TreeMethod
+pub struct reed_graph::bootstrap::BootstrapConfig
+pub reed_graph::bootstrap::BootstrapConfig::cutoff: f64
+pub reed_graph::bootstrap::BootstrapConfig::replicates: usize
+pub reed_graph::bootstrap::BootstrapConfig::seed: u64
+impl core::clone::Clone for reed_graph::bootstrap::BootstrapConfig
+pub fn reed_graph::bootstrap::BootstrapConfig::clone(&self) -> reed_graph::bootstrap::BootstrapConfig
+impl core::default::Default for reed_graph::bootstrap::BootstrapConfig
+pub fn reed_graph::bootstrap::BootstrapConfig::default() -> Self
+impl core::fmt::Debug for reed_graph::bootstrap::BootstrapConfig
+pub fn reed_graph::bootstrap::BootstrapConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::Send for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::Sync for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::Unpin for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::UnsafeUnpin for reed_graph::bootstrap::BootstrapConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::bootstrap::BootstrapConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::bootstrap::BootstrapConfig
+pub struct reed_graph::bootstrap::BootstrapReport
+pub reed_graph::bootstrap::BootstrapReport::replicates: usize
+pub reed_graph::bootstrap::BootstrapReport::support: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_graph::bootstrap::BootstrapReport
+pub fn reed_graph::bootstrap::BootstrapReport::clone(&self) -> reed_graph::bootstrap::BootstrapReport
+impl core::fmt::Debug for reed_graph::bootstrap::BootstrapReport
+pub fn reed_graph::bootstrap::BootstrapReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_graph::bootstrap::BootstrapReport
+impl core::marker::Send for reed_graph::bootstrap::BootstrapReport
+impl core::marker::Sync for reed_graph::bootstrap::BootstrapReport
+impl core::marker::Unpin for reed_graph::bootstrap::BootstrapReport
+impl core::marker::UnsafeUnpin for reed_graph::bootstrap::BootstrapReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::bootstrap::BootstrapReport
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::bootstrap::BootstrapReport
+pub fn reed_graph::bootstrap::support(&reed_graph::tree::Tree, &reed_core::linalg::Mat, reed_graph::bootstrap::TreeMethod, impl core::ops::function::Fn(&reed_core::linalg::Mat) -> reed_core::linalg::Mat, &reed_graph::bootstrap::BootstrapConfig) -> core::result::Result<reed_graph::bootstrap::BootstrapReport, reed_graph::error::GraphError>
+pub mod reed_graph::error
+pub enum reed_graph::error::GraphError
+pub reed_graph::error::GraphError::Asymmetric
+pub reed_graph::error::GraphError::Asymmetric::col: usize
+pub reed_graph::error::GraphError::Asymmetric::row: usize
+pub reed_graph::error::GraphError::BadBranchLength
+pub reed_graph::error::GraphError::BadBranchLength::edge: usize
+pub reed_graph::error::GraphError::NonFiniteDistance
+pub reed_graph::error::GraphError::NonFiniteDistance::col: usize
+pub reed_graph::error::GraphError::NonFiniteDistance::row: usize
+pub reed_graph::error::GraphError::NonZeroDiagonal
+pub reed_graph::error::GraphError::NonZeroDiagonal::index: usize
+pub reed_graph::error::GraphError::NotSquare
+pub reed_graph::error::GraphError::NotSquare::cols: usize
+pub reed_graph::error::GraphError::NotSquare::rows: usize
+pub reed_graph::error::GraphError::TooFewTaxa
+pub reed_graph::error::GraphError::TooFewTaxa::got: usize
+pub reed_graph::error::GraphError::TooFewTaxa::need: usize
+pub reed_graph::error::GraphError::TreeTooDeep
+pub reed_graph::error::GraphError::TreeTooDeep::depth: usize
+impl core::clone::Clone for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::clone(&self) -> reed_graph::error::GraphError
+impl core::cmp::PartialEq for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::eq(&self, &reed_graph::error::GraphError) -> bool
+impl core::error::Error for reed_graph::error::GraphError
+impl core::fmt::Debug for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_graph::error::GraphError
+impl core::marker::Freeze for reed_graph::error::GraphError
+impl core::marker::Send for reed_graph::error::GraphError
+impl core::marker::Sync for reed_graph::error::GraphError
+impl core::marker::Unpin for reed_graph::error::GraphError
+impl core::marker::UnsafeUnpin for reed_graph::error::GraphError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::error::GraphError
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::error::GraphError
+pub mod reed_graph::newick
+pub fn reed_graph::newick::to_newick(&reed_graph::tree::Tree, usize) -> core::result::Result<alloc::string::String, reed_graph::error::GraphError>
+pub mod reed_graph::tree
+pub struct reed_graph::tree::Tree
+pub reed_graph::tree::Tree::edges: alloc::vec::Vec<(u32, u32)>
+pub reed_graph::tree::Tree::lengths: alloc::vec::Vec<f64>
+pub reed_graph::tree::Tree::node_labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub reed_graph::tree::Tree::rooted: bool
+pub reed_graph::tree::Tree::tip_labels: alloc::vec::Vec<alloc::string::String>
+impl reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::max_node_id(&self) -> u32
+pub fn reed_graph::tree::Tree::n_internal(&self) -> usize
+pub fn reed_graph::tree::Tree::n_tips(&self) -> usize
+pub fn reed_graph::tree::Tree::root(&self) -> core::option::Option<u32>
+impl core::clone::Clone for reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::clone(&self) -> reed_graph::tree::Tree
+impl core::cmp::PartialEq for reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::eq(&self, &reed_graph::tree::Tree) -> bool
+impl core::fmt::Debug for reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_graph::tree::Tree
+impl core::marker::Freeze for reed_graph::tree::Tree
+impl core::marker::Send for reed_graph::tree::Tree
+impl core::marker::Sync for reed_graph::tree::Tree
+impl core::marker::Unpin for reed_graph::tree::Tree
+impl core::marker::UnsafeUnpin for reed_graph::tree::Tree
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::tree::Tree
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::tree::Tree
+pub fn reed_graph::tree::nj(&reed_core::linalg::Mat) -> core::result::Result<reed_graph::tree::Tree, reed_graph::error::GraphError>
+pub fn reed_graph::tree::upgma(&reed_core::linalg::Mat) -> core::result::Result<reed_graph::tree::Tree, reed_graph::error::GraphError>
+pub enum reed_graph::GraphError
+pub reed_graph::GraphError::Asymmetric
+pub reed_graph::GraphError::Asymmetric::col: usize
+pub reed_graph::GraphError::Asymmetric::row: usize
+pub reed_graph::GraphError::BadBranchLength
+pub reed_graph::GraphError::BadBranchLength::edge: usize
+pub reed_graph::GraphError::NonFiniteDistance
+pub reed_graph::GraphError::NonFiniteDistance::col: usize
+pub reed_graph::GraphError::NonFiniteDistance::row: usize
+pub reed_graph::GraphError::NonZeroDiagonal
+pub reed_graph::GraphError::NonZeroDiagonal::index: usize
+pub reed_graph::GraphError::NotSquare
+pub reed_graph::GraphError::NotSquare::cols: usize
+pub reed_graph::GraphError::NotSquare::rows: usize
+pub reed_graph::GraphError::TooFewTaxa
+pub reed_graph::GraphError::TooFewTaxa::got: usize
+pub reed_graph::GraphError::TooFewTaxa::need: usize
+pub reed_graph::GraphError::TreeTooDeep
+pub reed_graph::GraphError::TreeTooDeep::depth: usize
+impl core::clone::Clone for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::clone(&self) -> reed_graph::error::GraphError
+impl core::cmp::PartialEq for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::eq(&self, &reed_graph::error::GraphError) -> bool
+impl core::error::Error for reed_graph::error::GraphError
+impl core::fmt::Debug for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_graph::error::GraphError
+pub fn reed_graph::error::GraphError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_graph::error::GraphError
+impl core::marker::Freeze for reed_graph::error::GraphError
+impl core::marker::Send for reed_graph::error::GraphError
+impl core::marker::Sync for reed_graph::error::GraphError
+impl core::marker::Unpin for reed_graph::error::GraphError
+impl core::marker::UnsafeUnpin for reed_graph::error::GraphError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::error::GraphError
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::error::GraphError
+pub enum reed_graph::TreeMethod
+pub reed_graph::TreeMethod::Nj
+pub reed_graph::TreeMethod::Upgma
+impl reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::parse(&str) -> core::result::Result<Self, alloc::string::String>
+pub fn reed_graph::bootstrap::TreeMethod::rooted(self) -> bool
+impl core::clone::Clone for reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::clone(&self) -> reed_graph::bootstrap::TreeMethod
+impl core::cmp::Eq for reed_graph::bootstrap::TreeMethod
+impl core::cmp::PartialEq for reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::eq(&self, &reed_graph::bootstrap::TreeMethod) -> bool
+impl core::fmt::Debug for reed_graph::bootstrap::TreeMethod
+pub fn reed_graph::bootstrap::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_graph::bootstrap::TreeMethod
+impl core::marker::StructuralPartialEq for reed_graph::bootstrap::TreeMethod
+impl core::marker::Freeze for reed_graph::bootstrap::TreeMethod
+impl core::marker::Send for reed_graph::bootstrap::TreeMethod
+impl core::marker::Sync for reed_graph::bootstrap::TreeMethod
+impl core::marker::Unpin for reed_graph::bootstrap::TreeMethod
+impl core::marker::UnsafeUnpin for reed_graph::bootstrap::TreeMethod
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::bootstrap::TreeMethod
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::bootstrap::TreeMethod
+pub struct reed_graph::BootstrapConfig
+pub reed_graph::BootstrapConfig::cutoff: f64
+pub reed_graph::BootstrapConfig::replicates: usize
+pub reed_graph::BootstrapConfig::seed: u64
+impl core::clone::Clone for reed_graph::bootstrap::BootstrapConfig
+pub fn reed_graph::bootstrap::BootstrapConfig::clone(&self) -> reed_graph::bootstrap::BootstrapConfig
+impl core::default::Default for reed_graph::bootstrap::BootstrapConfig
+pub fn reed_graph::bootstrap::BootstrapConfig::default() -> Self
+impl core::fmt::Debug for reed_graph::bootstrap::BootstrapConfig
+pub fn reed_graph::bootstrap::BootstrapConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::Send for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::Sync for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::Unpin for reed_graph::bootstrap::BootstrapConfig
+impl core::marker::UnsafeUnpin for reed_graph::bootstrap::BootstrapConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::bootstrap::BootstrapConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::bootstrap::BootstrapConfig
+pub struct reed_graph::BootstrapReport
+pub reed_graph::BootstrapReport::replicates: usize
+pub reed_graph::BootstrapReport::support: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_graph::bootstrap::BootstrapReport
+pub fn reed_graph::bootstrap::BootstrapReport::clone(&self) -> reed_graph::bootstrap::BootstrapReport
+impl core::fmt::Debug for reed_graph::bootstrap::BootstrapReport
+pub fn reed_graph::bootstrap::BootstrapReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_graph::bootstrap::BootstrapReport
+impl core::marker::Send for reed_graph::bootstrap::BootstrapReport
+impl core::marker::Sync for reed_graph::bootstrap::BootstrapReport
+impl core::marker::Unpin for reed_graph::bootstrap::BootstrapReport
+impl core::marker::UnsafeUnpin for reed_graph::bootstrap::BootstrapReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::bootstrap::BootstrapReport
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::bootstrap::BootstrapReport
+pub struct reed_graph::Tree
+pub reed_graph::Tree::edges: alloc::vec::Vec<(u32, u32)>
+pub reed_graph::Tree::lengths: alloc::vec::Vec<f64>
+pub reed_graph::Tree::node_labels: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub reed_graph::Tree::rooted: bool
+pub reed_graph::Tree::tip_labels: alloc::vec::Vec<alloc::string::String>
+impl reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::max_node_id(&self) -> u32
+pub fn reed_graph::tree::Tree::n_internal(&self) -> usize
+pub fn reed_graph::tree::Tree::n_tips(&self) -> usize
+pub fn reed_graph::tree::Tree::root(&self) -> core::option::Option<u32>
+impl core::clone::Clone for reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::clone(&self) -> reed_graph::tree::Tree
+impl core::cmp::PartialEq for reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::eq(&self, &reed_graph::tree::Tree) -> bool
+impl core::fmt::Debug for reed_graph::tree::Tree
+pub fn reed_graph::tree::Tree::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_graph::tree::Tree
+impl core::marker::Freeze for reed_graph::tree::Tree
+impl core::marker::Send for reed_graph::tree::Tree
+impl core::marker::Sync for reed_graph::tree::Tree
+impl core::marker::Unpin for reed_graph::tree::Tree
+impl core::marker::UnsafeUnpin for reed_graph::tree::Tree
+impl core::panic::unwind_safe::RefUnwindSafe for reed_graph::tree::Tree
+impl core::panic::unwind_safe::UnwindSafe for reed_graph::tree::Tree
+pub fn reed_graph::nj(&reed_core::linalg::Mat) -> core::result::Result<reed_graph::tree::Tree, reed_graph::error::GraphError>
+pub fn reed_graph::support(&reed_graph::tree::Tree, &reed_core::linalg::Mat, reed_graph::bootstrap::TreeMethod, impl core::ops::function::Fn(&reed_core::linalg::Mat) -> reed_core::linalg::Mat, &reed_graph::bootstrap::BootstrapConfig) -> core::result::Result<reed_graph::bootstrap::BootstrapReport, reed_graph::error::GraphError>
+pub fn reed_graph::to_newick(&reed_graph::tree::Tree, usize) -> core::result::Result<alloc::string::String, reed_graph::error::GraphError>
+pub fn reed_graph::upgma(&reed_core::linalg::Mat) -> core::result::Result<reed_graph::tree::Tree, reed_graph::error::GraphError>

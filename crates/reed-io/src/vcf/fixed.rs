@@ -8,43 +8,41 @@ use crate::error::IoError;
 /// feeds the error locus, which is built when the error actually happens
 /// (A6-11: no per-record `String` on the happy path).
 ///
+/// The value grammar lives in `reed_core::vcf::fixed` (doc_v30 R12); this
+/// wrapper only attaches the located error.
+///
 /// # Errors
 ///
 /// [`IoError::MalformedRecord`] on empty or non-digit text.
 pub fn parse_pos1(text: &[u8], contig_name: &[u8]) -> Result<u64, IoError> {
-    let locus = || crate::Locus {
-        contig_name: String::from_utf8_lossy(contig_name).into_owned(),
-        pos1: 0,
+    if let Some(pos1) = reed_core::vcf::fixed::parse_pos1_number(text) {
+        return Ok(pos1);
+    }
+    let reason = if text.is_empty() || text.len() > 19 {
+        "POS is empty or too long"
+    } else {
+        "POS contains a non-digit"
     };
-    if text.is_empty() || text.len() > 19 {
-        return Err(IoError::MalformedRecord {
-            locus: locus(),
-            reason: "POS is empty or too long".to_string(),
-        });
-    }
-    let mut pos1: u64 = 0;
-    for &b in text {
-        if !b.is_ascii_digit() {
-            return Err(IoError::MalformedRecord {
-                locus: locus(),
-                reason: "POS contains a non-digit".to_string(),
-            });
-        }
-        pos1 = pos1 * 10 + u64::from(b - b'0');
-    }
-    Ok(pos1)
+    Err(IoError::MalformedRecord {
+        locus: crate::Locus {
+            contig_name: String::from_utf8_lossy(contig_name).into_owned(),
+            pos1: 0,
+        },
+        reason: reason.to_string(),
+    })
 }
 
 /// Parses the QUAL column; `.` is no quality score. `locus` is the record's
 /// already-parsed `(contig, POS)` pair, borrowed for the error path only.
 ///
+/// The value grammar lives in `reed_core::vcf::fixed` (doc_v30 R12); this
+/// wrapper only attaches the located error the transport reports.
+///
 /// # Errors
 ///
 /// [`IoError::MalformedRecord`] when the text is neither `.` nor a float.
 pub fn parse_qual(text: &[u8], locus: (&[u8], u64)) -> Result<Option<f32>, IoError> {
-    if text == b"." || text.is_empty() {
-        return Ok(None);
-    }
+    use reed_core::vcf::fixed::QualValue;
     let err = |reason: &'static str| IoError::MalformedRecord {
         locus: crate::Locus {
             contig_name: String::from_utf8_lossy(locus.0).into_owned(),
@@ -52,10 +50,12 @@ pub fn parse_qual(text: &[u8], locus: (&[u8], u64)) -> Result<Option<f32>, IoErr
         },
         reason: reason.to_string(),
     };
-    let s = std::str::from_utf8(text).map_err(|_| err("QUAL is not ASCII"))?;
-    s.parse::<f32>()
-        .map(Some)
-        .map_err(|_| err("QUAL is not a number"))
+    match reed_core::vcf::fixed::parse_qual(text) {
+        QualValue::Missing => Ok(None),
+        QualValue::Value(value) => Ok(Some(value)),
+        QualValue::Malformed if std::str::from_utf8(text).is_err() => Err(err("QUAL is not ASCII")),
+        QualValue::Malformed => Err(err("QUAL is not a number")),
+    }
 }
 
 /// Whether the FILTER column passes (`PASS`, byte-exact).

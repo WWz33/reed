@@ -5,7 +5,7 @@
 //! avoids the "two parsers drift apart" failure mode.
 
 use reed_core::ChunkId;
-use reed_engine::abort::Abort;
+use reed_engine::abort::AbortSignal;
 use reed_engine::budget::ThreadBudget;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::{ChunkJob, OrderedSink};
@@ -94,6 +94,15 @@ pub(crate) struct PcaJob {
     pub(crate) keep: Vec<bool>,
     /// Only biallelic records contribute; multiallelic sites are skipped.
     pub(crate) allow_multiallelic: bool,
+    /// Keep monomorphic (all-REF) biallelic sites in the matrix.
+    ///
+    /// PCA and the GRM drop them: a degenerate column standardizes to zero,
+    /// so it cannot contribute. plink's `--genome` instead counts them in
+    /// each pair's `nn` (a monomorphic site is IBS2 for every pair), and
+    /// dropping them shifts PI_HAT by up to 0.40 on a fixture with
+    /// monomorphic sites (doc_v30 §4.3, N-2). `distance` keeps them;
+    /// nothing else does.
+    pub(crate) keep_monomorphic: bool,
     /// The input's BCF dictionary, when the input is BCF and the native
     /// record hook is active (doc_v28 V28-15).
     pub(crate) bcf_input: Option<std::sync::Arc<reed_io::bcf::BcfDict>>,
@@ -131,7 +140,8 @@ impl PcaJob {
             let contig = dict
                 .contig(header.chrom)
                 .ok_or_else(|| EngineError::job("BCF contig index is not in the dictionary"))?;
-            let pos1 = u64::try_from(header.pos0).unwrap_or(0) + 1;
+            // doc_v30 R03: the telomere sentinel is decoded in one place.
+            let pos1 = header.pos1().map_err(EngineError::from)?.0;
             let field = reed_io::bcf::gt_field(
                 &rec,
                 &header,
@@ -288,16 +298,19 @@ impl ChunkJob for PcaJob {
                 continue;
             }
             // Skip sites with no variation at all: they contribute nothing and
-            // would make the standardization degenerate.
-            let mut any_alt = false;
-            for v in &scratch.values {
-                if !v.is_nan() && *v > 0.0 {
-                    any_alt = true;
-                    break;
+            // would make the standardization degenerate. `distance` keeps
+            // them so PI_HAT's `nn` matches plink (doc_v30 §4.3, N-2).
+            if !self.keep_monomorphic {
+                let mut any_alt = false;
+                for v in &scratch.values {
+                    if !v.is_nan() && *v > 0.0 {
+                        any_alt = true;
+                        break;
+                    }
                 }
-            }
-            if !any_alt {
-                continue;
+                if !any_alt {
+                    continue;
+                }
             }
             out.n_sites += 1;
             out.dosages.extend_from_slice(&scratch.values);
@@ -350,15 +363,20 @@ impl ChunkJob for PcaJob {
                 .values
                 .push(dosage_from_column(line, column, gt_index, n_alt)?);
         }
-        let mut any_alt = false;
-        for v in &scratch.values {
-            if !v.is_nan() && *v > 0.0 {
-                any_alt = true;
-                break;
-            }
-        }
-        if scratch.values.is_empty() || !any_alt {
+        if scratch.values.is_empty() {
             return Ok(out);
+        }
+        if !self.keep_monomorphic {
+            let mut any_alt = false;
+            for v in &scratch.values {
+                if !v.is_nan() && *v > 0.0 {
+                    any_alt = true;
+                    break;
+                }
+            }
+            if !any_alt {
+                return Ok(out);
+            }
         }
         out.n_sites += 1;
         out.dosages.extend_from_slice(&scratch.values);
@@ -415,11 +433,11 @@ impl OrderedSink<GenotypeBlock> for CollectSink {
 }
 
 pub(crate) fn collect_via_engine(
-    opened: &mut crate::OpenedInput,
+    opened: crate::OpenedInput,
     job: PcaJob,
     sink: CollectSink,
     budget: &ThreadBudget,
-    abort: &Abort,
+    abort: &AbortSignal,
 ) -> Result<GenotypeBlock, crate::Error> {
     // The engine's sink consumes the accumulator, so stash the result in a
     // shared cell while `finish` runs.
@@ -454,15 +472,16 @@ pub(crate) fn collect_via_engine(
     let wrapped = if job.bcf_input.is_some() {
         crate::bcf_input::InputJob::with_bcf_records(
             job,
-            opened,
+            &opened,
             abort,
             budget,
             PcaJob::run_bcf_records,
         )
     } else {
-        crate::bcf_input::InputJob::new(job, opened, abort, budget)
+        crate::bcf_input::InputJob::new(job, &opened, abort, budget)
     };
-    let report = reed_engine::pipeline::run(opened.source_mut(), &wrapped, stash, budget, abort)
+    let (mut source, _facts, _meta) = opened.into_parts();
+    let report = reed_engine::pipeline::run(source.as_mut(), &wrapped, stash, budget, abort)
         .map_err(crate::Error::from)?;
     wrapped
         .finish(report.n_chunks, true)
@@ -485,6 +504,7 @@ mod tests {
             n_samples,
             keep: vec![true; n_samples],
             allow_multiallelic: false,
+            keep_monomorphic: false,
             bcf_input: None,
         }
     }

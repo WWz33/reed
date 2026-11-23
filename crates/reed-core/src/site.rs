@@ -40,6 +40,22 @@ impl VariantClass {
     }
 }
 
+/// Number of ALT alleles in a textual ALT column (`"."`/empty = 0).
+///
+/// The one ALT-count rule for the filter rules, the expression layer and the
+/// expression `N_ALT` (doc_v30 R01/R12): bcftools' `filters_set_nalt`
+/// returns `n_allele - 1`, so an invariant site carries zero ALTs. Counting
+/// commas without the `.` case made `-m 2`/`-M 1` disagree with bcftools on
+/// invariant sites.
+#[must_use]
+pub fn count_alts(alts: &[u8]) -> u32 {
+    if alts.is_empty() || alts == b"." {
+        return 0;
+    }
+    let commas = memchr::memchr_iter(b',', alts).count();
+    u32::try_from(commas + 1).unwrap_or(u32::MAX)
+}
+
 /// Classifies one REF/ALT allele pair.
 ///
 /// `alt_allele` must be a single allele (commas already split by the caller).

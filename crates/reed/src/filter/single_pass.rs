@@ -9,13 +9,13 @@ use reed_core::math::hwe::HweCache;
 use reed_core::sample::SampleMask;
 use reed_engine::error::EngineError;
 use reed_engine::pipeline::ChunkJob;
-use reed_filter::eval::edit_plan::fill_info_set;
+use reed_filter::eval::edit_plan::{SurvivorEdit, fill_info_set};
 use reed_filter::funnel::FunnelPartial;
 use reed_filter::plan::FilterPlan;
 use reed_io::bcf::{BcfDict, record_ref, render_record};
 use reed_io::bcf::{BcfEncoder, NativeEncoder};
 use reed_io::vcf::line::LineRef;
-use reed_io::vcf::line_edit::{EditPlan, InfoValueOut, edit_vcf_line};
+use reed_io::vcf::line_edit::{InfoValueOut, edit_vcf_line};
 use reed_io::write::block_writer::{BlockWriter, ChunkOutput, IndexKey};
 
 use super::job_err;
@@ -358,12 +358,13 @@ impl FilterJob {
         let masked = view.masked;
         let site = view.site;
         let pos1 = view.pos1;
-        let edit_plan = EditPlan {
+        let edit = SurvivorEdit {
             keep_samples: self.keep_mask.as_ref(),
             mask_gt: Some(masked),
             info_remove: stale_record.as_slice(),
             info_set: emit.info_set,
         };
+        let edit_plan = edit.edit_plan();
         view.funnel.n_output += 1;
         // Block boundaries are byte-based, not record-based (htslib): the
         // record's index entry anchors at the block and offset where its

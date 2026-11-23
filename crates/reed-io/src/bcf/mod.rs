@@ -56,6 +56,7 @@ pub use gt::{
 };
 pub use record::{
     BcfRecordRef, FormatTable, FrameStep, SharedHeader, VirtualMap, declared_len, frame_chunk,
-    record_boundary, record_len, record_ref, record_site, type_width,
+    pos0_from_pos1, pos1_from_pos0, record_boundary, record_len, record_ref, record_site,
+    type_width,
 };
 pub use render::{render_record, render_sample_part, render_site_line, render_site_part};

@@ -13,7 +13,7 @@
 //! natively (the E step simply skips unobserved entries).
 
 use crate::backend::sym_eig;
-use reed_core::linalg::{dist2, Mat};
+use reed_core::linalg::{Mat, dist2};
 use reed_core::rng::Rng;
 
 /// Errors from t-SNE.
@@ -41,7 +41,10 @@ impl std::fmt::Display for TsneError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PerplexityBelowOne { perplexity } => {
-                write!(f, "perplexity {perplexity} is below 1, the smallest any probability distribution can realize")
+                write!(
+                    f,
+                    "perplexity {perplexity} is below 1, the smallest any probability distribution can realize"
+                )
             }
             Self::PerplexityTooLarge { perplexity, n } => write!(
                 f,
@@ -328,12 +331,18 @@ fn tsne_kl_cost(pj: &Mat, y: &Mat) -> f64 {
     cost
 }
 
+/// t-SNE hyper-parameters.
 #[derive(Clone, Debug)]
 pub struct TsneConfig {
+    /// Perplexity of the input affinities.
     pub perplexity: f64,
+    /// Embedding dimensions.
     pub n_components: usize,
+    /// Gradient-descent iterations.
     pub n_iter: usize,
+    /// Learning rate.
     pub learning_rate: f64,
+    /// Seed for the initial embedding.
     pub seed: u64,
 }
 

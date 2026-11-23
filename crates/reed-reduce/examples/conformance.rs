@@ -13,6 +13,13 @@
 //! flashpca --bfile X --ndim k --standx binom  --div p   # = 2x the binom2 values
 //! ```
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::map_unwrap_or,
+    clippy::uninlined_format_args,
+    clippy::unreadable_literal,
+    clippy::cloned_instead_of_copied
+)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
@@ -26,8 +33,8 @@
 #![allow(clippy::useless_vec)]
 #![allow(clippy::redundant_closure)]
 
-use reed_reduce::pca::{pca_dense_pairwise_with, pca_dense_with, standardize, Grm, Stand};
-use reed_reduce::{lanczos_top_k, Mat, StreamConfig};
+use reed_reduce::pca::{Grm, Stand, pca_dense_pairwise_with, pca_dense_with, standardize};
+use reed_reduce::{Mat, StreamConfig, lanczos_top_k};
 use std::time::Instant;
 
 fn read_matrix(path: &str) -> Mat {

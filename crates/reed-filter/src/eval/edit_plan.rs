@@ -6,11 +6,45 @@
 // Casts in this file are bounded by construction: INFO Float values are f32 by the VCF header type.
 #![allow(clippy::cast_possible_truncation)]
 
+use reed_core::Bitset;
 use reed_core::count::SiteCounts;
 use reed_core::math::hwe::HweCache;
-use reed_io::vcf::line_edit::InfoValueOut;
+use reed_core::sample::SampleMask;
+use reed_core::vcf::line_edit::{EditPlan, InfoValueOut};
 
 use crate::plan::RecomputeFlags;
+
+/// One survivor's edits as a pure value (doc_v30 R14): the INFO tags to
+/// drop, the recomputed values to write, and the sample keep/mask planes.
+///
+/// The three emit paths (single pass, sketch emit, filtered passthrough)
+/// used to assemble `EditPlan { .. }` inline with the same four fields;
+/// this value is the single constructor, so a field added to the edit
+/// cannot be forgotten in one path.
+#[derive(Debug)]
+pub struct SurvivorEdit<'a> {
+    /// `None` = keep every sample column.
+    pub keep_samples: Option<&'a SampleMask>,
+    /// Samples whose GT subfield becomes `./.`.
+    pub mask_gt: Option<&'a Bitset>,
+    /// Stale INFO tags to drop from this record.
+    pub info_remove: &'a [&'a [u8]],
+    /// Recomputed tags (fill order).
+    pub info_set: &'a [(&'a [u8], InfoValueOut)],
+}
+
+impl<'a> SurvivorEdit<'a> {
+    /// The byte-level edit to apply.
+    #[must_use]
+    pub fn edit_plan(&self) -> EditPlan<'a> {
+        EditPlan {
+            keep_samples: self.keep_samples,
+            mask_gt: self.mask_gt,
+            info_remove: self.info_remove,
+            info_set: self.info_set,
+        }
+    }
+}
 
 /// Fills the worker's reusable `info_set` with this site's recomputed
 /// values (fill-tags order: AC, AN, NS, MAF, HWE). `L_tags` compares
@@ -36,23 +70,8 @@ pub fn fill_info_set(
     if !counts.has_gt {
         return;
     }
-    if recompute.ac {
-        info_set.push((b"AC".as_slice(), InfoValueOut::Int(counts.ac as i64)));
-    }
-    if recompute.an {
-        info_set.push((b"AN".as_slice(), InfoValueOut::Int(counts.an as i64)));
-    }
-    if recompute.ns {
-        info_set.push((b"NS".as_slice(), InfoValueOut::Int(counts.ns as i64)));
-    }
-    if recompute.maf {
-        info_set.push((b"MAF".as_slice(), InfoValueOut::Float(counts.maf() as f32)));
-    }
-    if recompute.hwe {
-        let p = counts
-            .hwe_test_input()
-            .map_or(1.0, |(n, mac, het)| hwe.p_exact(n, mac, het));
-        info_set.push((b"HWE".as_slice(), InfoValueOut::Float(p as f32)));
+    for tag in &recompute.tags {
+        info_set.push((tag.name.as_bytes(), (tag.compute)(counts, hwe)));
     }
 }
 
@@ -100,4 +119,28 @@ pub fn stale_for_record<'s, 'a>(
             .filter(|t| !auto_update.iter().any(|a| a == t))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// doc_v30 R14: the value carries exactly the four edit planes through
+    /// to `EditPlan` — no field is dropped or reordered on the way.
+    #[test]
+    fn survivor_edit_maps_every_plane_to_the_edit_plan() {
+        let set = [(b"AC".as_slice(), InfoValueOut::Int(2))];
+        let remove: [&[u8]; 1] = [b"DP".as_slice()];
+        let edit = SurvivorEdit {
+            keep_samples: None,
+            mask_gt: None,
+            info_remove: &remove,
+            info_set: &set,
+        };
+        let plan = edit.edit_plan();
+        assert_eq!(plan.info_set, &set);
+        assert_eq!(plan.info_remove, &remove);
+        assert!(plan.keep_samples.is_none());
+        assert!(plan.mask_gt.is_none());
+    }
 }

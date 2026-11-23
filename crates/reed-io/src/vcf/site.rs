@@ -15,23 +15,9 @@ use crate::vcf::fixed::{parse_pos1, parse_qual};
 use crate::vcf::info::info_fragments;
 use crate::vcf::line::LineRef;
 
-/// Number of ALT alleles in an ALT column: `.` (no variant) and the empty
-/// column are zero, else the comma count plus one. An empty ALT used to
-/// count as one allele (doc_v23 V23-30).
-///
-/// This is the single implementation of the rule (doc_v12 D12-10): the head
-/// rules and the expression layer used to count commas without the `.`
-/// special case, so `-m 2`/`-M 1`/`N_ALT=0` disagreed with bcftools on
-/// invariant sites (`filters_set_nalt` returns `n_allele - 1`,
-/// filter.c:1453-1456).
-#[must_use]
-pub fn count_alts(alts: &[u8]) -> u32 {
-    if alts.is_empty() || alts == b"." {
-        return 0;
-    }
-    let commas = memchr::memchr_iter(b',', alts).count();
-    u32::try_from(commas + 1).unwrap_or(u32::MAX)
-}
+/// The ALT-count rule lives in L0 (doc_v30 R12); re-exported so the text
+/// layer keeps its historical path.
+pub use reed_core::site::count_alts;
 
 /// Contig-name to `tid` table with a last-hit cache (records from one contig
 /// arrive in runs).

@@ -1,52 +1,71 @@
 #!/bin/bash
-# Publish the public subset of reed to origin/main.
+# Publish the public subset of the exact commit at origin/dev to origin/main.
 #
-# Internal paths (docs/rounds/v1/design.md, docs/, bench/) are commit-only — never pushed.
-# This script builds a scrubbed tree via a temporary index (no branch
-# switching, working tree untouched), then force-updates origin/main.
-#
+# Internal paths (docs/, docsite/, gold/, bench/, and crate tests) are excluded.
 # Usage: ci/publish.sh ["commit message"]
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-# The public subset: source, manifests, tool config and CI. Kept
-# in sync with origin/main's tree (LICENSE-*, .github/, the lint configs).
-PUB_PATHS=".gitignore .github Cargo.toml Cargo.lock LICENSE-APACHE LICENSE-MIT \
-README.md README.zh-CN.md clippy.toml deny.toml rustfmt.toml crates ci"
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+if [[ "$branch" != dev ]]; then
+    echo "publish.sh: run from the dev branch" >&2
+    exit 1
+fi
 
-# Safety net: never let an internal path into the published tree.
-for p in docs/rounds/v1/design.md docs bench; do
-    if [[ "$PUB_PATHS" == *"$p"* ]]; then
-        echo "publish.sh: internal path '$p' found in PUB_PATHS" >&2
-        exit 1
-    fi
+status="$(git status --short --untracked-files=all)"
+if [[ -n "$status" ]]; then
+    printf 'publish.sh: worktree must be clean before publishing:\n%s\n' "$status" >&2
+    exit 1
+fi
+
+source_commit="$(git rev-parse --verify 'HEAD^{commit}')"
+remote_dev="$(git ls-remote origin refs/heads/dev | awk '$2 == "refs/heads/dev" { print $1; exit }')"
+if [[ -z "$remote_dev" || "$source_commit" != "$remote_dev" ]]; then
+    echo "publish.sh: push and sync this exact commit to origin/dev before publishing" >&2
+    exit 1
+fi
+
+PUB_PATHS=(
+    .gitignore .github Cargo.toml Cargo.lock LICENSE-APACHE LICENSE-MIT
+    README.md README.zh-CN.md clippy.toml deny.toml rustfmt.toml crates ci
+)
+
+# Safety net: never allow an internal root into the public path list.
+for p in docs docsite gold bench; do
+    for public_path in "${PUB_PATHS[@]}"; do
+        if [[ "$public_path" == "$p" ]]; then
+            echo "publish.sh: internal path '$p' found in PUB_PATHS" >&2
+            exit 1
+        fi
+    done
 done
 
-# Stage the public subset into a temporary index (leave the real index alone).
-idx="$(mktemp -u /tmp/reed-pub-idx.XXXXXX)"
-export GIT_INDEX_FILE="$idx"
-trap 'rm -f "$GIT_INDEX_FILE"' EXIT
+# Build the index from committed objects, never from files in the worktree.
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/reed-pub.XXXXXX")"
+export GIT_INDEX_FILE="$tmp_dir/index"
+trap 'rm -rf -- "$tmp_dir"' EXIT
 git read-tree --empty
-# The Pages workflow needs docsite/, which is not part of the public subset.
-# `crates/reed/.gitignore` un-ignores `tests/support/` (shared integration
-# fixtures), so the explicit exclude is what keeps the whole test tree out.
-# The trailing slash matters: `:!crates/*/tests` does not exclude a staged
-# file under it, only `:!crates/*/tests/` does.
-git add -- $PUB_PATHS ':!.github/workflows/docs.yml' ':!crates/*/tests/'
+git reset --quiet "$source_commit" -- "${PUB_PATHS[@]}"
+while IFS= read -r -d '' path; do
+    git update-index --force-remove -- "$path"
+done < <(git ls-files -z -- ':(glob)crates/**/tests/**' .github/workflows/docs.yml)
 tree="$(git write-tree)"
 
-if git ls-tree -r --name-only "$tree" | grep -qE '^(DESIGN\.md|docs/|bench/)|/tests/'; then
+if git ls-tree -r --name-only "$tree" | grep -E '^(DESIGN\.md|docs/|docsite/|gold/|bench/|tests/)|/tests/|^\.github/workflows/docs\.yml$' >/dev/null; then
     echo "publish.sh: internal path leaked into publish tree" >&2
     exit 1
 fi
 
-parent="$(git ls-remote origin refs/heads/main | cut -f1)"
+parent="$(git ls-remote origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1; exit }')"
+message="${1:-publish: sync public subset}"
 if [[ -n "$parent" ]]; then
-    commit="$(git commit-tree "$tree" -p "$parent" -m "${1:-publish: sync public subset}")"
+    commit="$(git commit-tree "$tree" -p "$parent" -m "$message" -m "Source-Commit: $source_commit")"
 else
-    commit="$(git commit-tree "$tree" -m "${1:-reed v0.1: initial public import}")"
+    commit="$(git commit-tree "$tree" -m "${1:-reed v0.1: initial public import}" -m "Source-Commit: $source_commit")"
 fi
 
-git push --force origin "$commit:refs/heads/main"
-echo "published: $commit -> origin/main"
+# The new snapshot is a child of the observed main tip. A concurrent update
+# makes this a non-fast-forward push, which Git rejects without overwriting it.
+git push origin "$commit:refs/heads/main"
+echo "published: $commit -> origin/main (source $source_commit)"
