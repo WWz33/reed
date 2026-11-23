@@ -4,10 +4,10 @@
 //! 2 per population), which the parity script cross-checks on real data;
 //! here they are pinned as literals.
 
-use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     InvariantMode, Levels, PopgenRequest, Populations, StatKind, WindowLayoutOptions, run_popgen,
 };
+use reed::{MemBudget, ThreadBudget};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2

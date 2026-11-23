@@ -30,6 +30,7 @@ crate 根每个子命令导出一个 `run_*`（`_opened` 变体接收已打开�
 | `run_convert` | `ConvertRequest` | `ConvertReport` |
 | `run_pca` | `PcaRequest` | `PcaReport` |
 | `run_dapc` | `DapcRequest` | `DapcReport` |
+| `run_distance` | `DistanceRequest` | `DistanceReport` |
 
 签名模式统一：`fn run_*(input: Option<&Path>, request: &XxxRequest, ctx: &RunContext<'_>) -> Result<XxxReport>`。`RunContext`（`reed::RunContext`）借用本次运行的 `ThreadBudget` 与 `AbortSignal`：有取消源时用 `RunContext::new(&budget, &abort.signal)`（`Abort` 来自 `reed::abort_for(&budget)`），没有时用 `RunContext::idle(&budget)`。`ThreadBudget::default()` 即"全部核 + 物理内存一半"，与 CLI 缺省一致。这些名字也可用 `use reed::prelude::*;` 一次导入；prelude 只再导出根项（`run_*` 入口、请求、报告、错误、预算与 `RunContext`）。
 

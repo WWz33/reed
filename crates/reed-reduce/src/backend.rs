@@ -67,11 +67,15 @@ impl Parallel {
 /// assert that the fast path was actually taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
+    /// The `faer` implementation (default feature).
     Faer,
+    /// The dependency-free fallback.
     Fallback,
 }
 
 impl Backend {
+    /// The backend's name (`faer` or `fallback`).
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Backend::Faer => "faer",
@@ -89,9 +93,11 @@ pub const COMPILED_BACKEND: Backend = if cfg!(feature = "faer-backend") {
 
 /// Symmetric eigendecomposition, eigenvalues ascending.
 pub struct SymEigResult {
+    /// Eigenvalues, ascending.
     pub values: Vec<f64>,
     /// Eigenvectors as columns (n x n).
     pub vectors: Mat,
+    /// Which implementation served the call.
     pub backend: Backend,
 }
 

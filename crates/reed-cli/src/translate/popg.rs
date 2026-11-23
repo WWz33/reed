@@ -186,7 +186,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             files.push(path.clone());
         }
         if let Some(ld_report) = &report.ld {
-            files.extend(reed::frontend::ld::write_ld(
+            files.extend(reed::frontend::write_ld(
                 Path::new(&prefix),
                 ld_report,
                 &group_names,
@@ -194,14 +194,14 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
             )?);
         }
         if let Some(fstats_report) = &report.fstats {
-            files.extend(reed::frontend::fstats::write_fstats(
+            files.extend(reed::frontend::write_fstats(
                 Path::new(&prefix),
                 &group_names,
                 fstats_report,
             )?);
         }
         if let Some(sfs_report) = &report.sfs {
-            files.extend(reed::frontend::sfs::write_projected_sfs(
+            files.extend(reed::frontend::write_projected_sfs(
                 Path::new(&prefix),
                 &group_names,
                 sfs_report,
@@ -210,7 +210,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         }
         // A bare `--sfs` has no window rows to write.
         if !kinds.is_empty() && report.window_files.is_empty() {
-            files.extend(reed::frontend::windows::write(
+            files.extend(reed::frontend::write_windows(
                 Path::new(&prefix),
                 &report,
                 &group_names,
@@ -226,7 +226,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         if report.window_files.is_empty() {
             // SFS/f-statistics/LD-only routes have no window-output session,
             // but they still own a run log (doc_v27 V27-26).
-            let path = reed::frontend::windows::write_popg_log(
+            let path = reed::frontend::write_popg_log(
                 Path::new(&prefix),
                 &report,
                 &kinds,
@@ -328,7 +328,7 @@ pub(crate) fn run_popg_cli(args: PopgCli) -> Result<(), reed::Error> {
         eprintln!("n_windows\t{}", report.n_windows);
         print_engine_metrics(&report.metrics);
     }
-    let text = reed::frontend::windows::render_tsv(
+    let text = reed::render_tsv(
         &report.windows,
         &kinds,
         layout.invariant == reed::InvariantMode::VariantOnly,
@@ -393,7 +393,7 @@ fn parse_pbs_triples(
 /// The shared, already-parsed pieces a windowed request needs (the caller
 /// resolved them from the region/sample/site flags before this point).
 pub(crate) struct WindowedContext {
-    pub regions: Vec<reed::frontend::chunk::region::Region>,
+    pub regions: Vec<reed::Region>,
     pub select: reed::spec::region::SiteSelector,
     pub keep_samples: Option<Vec<bool>>,
     pub site: Option<reed::spec::FilterSpec>,

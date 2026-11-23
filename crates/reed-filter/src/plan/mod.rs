@@ -263,7 +263,7 @@ pub enum TailRule {
     /// Minor-allele-count upper bound.
     MaxMac(u32),
     /// HWE exact-test p lower bound.
-    MinHweP(f64),
+    MinHweP(f64, crate::spec::HweMode),
     /// One genotype-class site rule (bcftools `-g/--genotype`); a record
     /// carrying several must satisfy every one of them.
     GtClass(crate::spec::GtClassRule),
@@ -282,7 +282,7 @@ impl TailRule {
             Self::MaxMaf(_) => "after_mask.max_maf".to_string(),
             Self::MinMac(_) => "after_mask.mac".to_string(),
             Self::MaxMac(_) => "after_mask.max_mac".to_string(),
-            Self::MinHweP(_) => "after_mask.hwe".to_string(),
+            Self::MinHweP(..) => "after_mask.hwe".to_string(),
             Self::GtClass(rule) => format!("after_mask.gt_class.{}", rule.id()),
         }
     }

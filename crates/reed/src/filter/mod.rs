@@ -257,8 +257,7 @@ pub fn run_filter(
     let mut timing_phases: Vec<(&'static str, f64)> = Vec::new();
     // The engine metrics of every `run` this driver makes (pass0 + pass1)
     // are summed; `chunks` stays the final pass's count (doc_v3 O10).
-    let mut timing_engine = reed_engine::metrics::StageMetrics::default();
-    let timing_chunks: u64;
+    let timing_engine = reed_engine::metrics::StageMetrics::default();
     // Indexed regions come from the spec (`-r/-R`) or, for library callers,
     // from `FilterOptions.regions`. The spec is the CLI spelling and is
     // resolved here against the header's contig vocabulary, so both the
@@ -303,7 +302,7 @@ pub fn run_filter(
     // (doc_v30 R05). The first open doubles as pass0's source when nothing
     // consumes it before pass1. ----
     let needs_multi_pass = spec.mind.is_some() || spec.ld_prune.is_some();
-    let mut first: Option<crate::input::OpenedInput>;
+    let first: Option<crate::input::OpenedInput>;
     let capability: crate::input::InputCapability;
     if let Some(probe) = pending.take() {
         let mut opened = probe.into_opened(&seek_regions).map_err(io_err)?;
@@ -332,6 +331,69 @@ pub fn run_filter(
         }
     }
     timing_phases.push(("open", t0.elapsed().as_secs_f64()));
+    run_filter_from_first(
+        first,
+        capability,
+        seek_regions,
+        spec,
+        opts,
+        ctx,
+        t0,
+        timing_phases,
+        timing_engine,
+    )
+}
+
+/// Runs the filter over an already-opened input (the opener owns the input
+/// capability and any region seek).
+///
+/// The input must already be restricted to the intended regions: this entry
+/// point cannot apply `spec.targets.indexed` or `FilterOptions.regions`.
+///
+/// # Errors
+///
+/// A usage error when the request still carries regions, and the same
+/// spec/transport/job/sink failures as [`run_filter`].
+pub fn run_filter_opened(
+    mut opened: crate::input::OpenedInput,
+    spec: &FilterSpec,
+    opts: &FilterOptions,
+    ctx: &RunContext<'_>,
+) -> Result<FilterReport, crate::error::Error> {
+    if !opts.regions.is_empty() || !spec.targets.indexed.is_empty() {
+        return Err(crate::error::Error::usage(
+            "run_filter_opened cannot apply -r/-R: open the input with the regions and pass it",
+        ));
+    }
+    let capability = opened.take_capability();
+    run_filter_from_first(
+        Some(opened),
+        capability,
+        Vec::new(),
+        spec,
+        opts,
+        ctx,
+        Instant::now(),
+        Vec::new(),
+        reed_engine::metrics::StageMetrics::default(),
+    )
+}
+
+/// The common body of [`run_filter`] and [`run_filter_opened`]: the input is
+/// already opened and its capability is known.
+#[allow(clippy::too_many_arguments)]
+fn run_filter_from_first(
+    mut first: Option<crate::input::OpenedInput>,
+    capability: crate::input::InputCapability,
+    seek_regions: Vec<reed_io::chunk::region::Region>,
+    spec: &FilterSpec,
+    opts: &FilterOptions,
+    ctx: &RunContext<'_>,
+    t0: Instant,
+    mut timing_phases: Vec<(&'static str, f64)>,
+    mut timing_engine: reed_engine::metrics::StageMetrics,
+) -> Result<FilterReport, crate::error::Error> {
+    let timing_chunks: u64;
     let facts = first
         .as_ref()
         .expect("invariant: the input was just opened")

@@ -50,14 +50,14 @@ fn _error_is_classified_not_matched(e: &reed::Error) -> reed::ErrorKind {
 
 /// A BGZF fixture writer using only the facade's re-exported helpers.
 fn bgzf(text: &str) -> Vec<u8> {
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level 6");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level 6");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(64) {
         deflater
             .deflate_block(block, &mut out)
             .expect("invariant: block fits");
     }
-    out.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    out.extend_from_slice(&reed::frontend::EOF_BLOCK);
     out
 }
 
@@ -145,7 +145,7 @@ fn readme_library_example_compiles_and_runs() {
     )
     .expect("invariant: run");
     // The borrow survives the call: this line is the A11-2 regression.
-    let tsv = reed::frontend::windows::render_tsv(&report.windows, &request.kinds, false);
+    let tsv = reed::render_tsv(&report.windows, &request.kinds, false);
     assert!(tsv.starts_with("contig\tstart\tend"));
     assert!(tsv.lines().count() > 1, "expected data rows:\n{tsv}");
 }
@@ -245,8 +245,8 @@ fn in_memory_assignment_matches_the_file_form() {
         .expect("invariant: file run");
     let kinds = from_memory.kinds.clone();
     assert_eq!(
-        reed::frontend::windows::render_tsv(&a.windows, &kinds, false),
-        reed::frontend::windows::render_tsv(&b.windows, &kinds, false),
+        reed::render_tsv(&a.windows, &kinds, false),
+        reed::render_tsv(&b.windows, &kinds, false),
         "in-memory and file assignments must produce the same table"
     );
 }
@@ -267,6 +267,36 @@ fn run_reports_is_reachable_from_the_root() {
     assert_eq!(outcome.files.len(), 1);
 }
 
+/// P2-1: `run_filter_opened` accepts an already-opened input, so a caller
+/// that owns the open (and any replayed capability) can drive the filter the
+/// same way as the other `_opened` drivers. A region request cannot be
+/// applied after the fact and is refused.
+#[test]
+fn run_filter_opened_drives_an_opened_input() {
+    let vcf = fixture("filter_opened.vcf.gz");
+    let out = vcf.parent().expect("invariant: dir").join("filtered.vcf");
+    let opened = reed::open_regions(Some(&vcf), &[]).expect("invariant: open");
+    let opts = reed::FilterOptions {
+        output: Some(out.clone()),
+        ..reed::FilterOptions::default()
+    };
+    let budget = budget();
+    let ctx = reed::RunContext::idle(&budget);
+    let report = reed::run_filter_opened(opened, &reed::spec::FilterSpec::default(), &opts, &ctx)
+        .expect("invariant: opened filter");
+    assert_eq!(report.n_input_records, 2);
+    assert!(out.exists(), "the filtered output must be written");
+
+    // The same input with a region spec is a usage error: the opener already
+    // fixed the seek list.
+    let opened = reed::open_regions(Some(&vcf), &[]).expect("invariant: open");
+    let mut spec = reed::spec::FilterSpec::default();
+    spec.targets.indexed.push("chr1:1-100".to_string());
+    let err = reed::run_filter_opened(opened, &spec, &opts, &ctx)
+        .expect_err("a region spec cannot be applied by the opened entry");
+    assert_eq!(err.kind(), reed::ErrorKind::Usage, "{err}");
+}
+
 // ---- doc_v26 V26-10: no third-party header type in the facade surface ----
 //
 // `HeaderFacts` used to expose `noodles::vcf::Header` as a public field. This
@@ -278,7 +308,7 @@ fn run_reports_is_reachable_from_the_root() {
 fn _header_is_opaque() {
     // `HeaderFacts` is reachable and its field has reed's type.
     let facts: reed::HeaderFacts = unreachable_header_fixture();
-    let header: &reed::frontend::header::VcfHeader = &facts.header;
+    let header: &reed::VcfHeader = &facts.header;
     let _ = header.n_samples();
     let _ = header.sample_names();
     let _ = header.contig_names();
@@ -287,10 +317,10 @@ fn _header_is_opaque() {
     let _ = header.format_keys();
     // The operations a command performs are on the opaque value.
     let pruned = header.with_samples_pruned(&[true]);
-    let added = pruned.with_info_definitions(&[reed::frontend::header::InfoDefinition {
+    let added = pruned.with_info_definitions(&[reed::InfoDefinition {
         id: "AC",
-        number: reed::frontend::header::InfoNumber::A,
-        ty: reed::frontend::header::InfoType::Integer,
+        number: reed::InfoNumber::A,
+        ty: reed::InfoType::Integer,
         description: "d",
     }]);
     let _ = added.with_pass_filter();
@@ -298,8 +328,7 @@ fn _header_is_opaque() {
     let _: Result<Vec<u8>, reed::Error> = added.to_bcf_file_header().map_err(reed::Error::from);
     // A `noodles::vcf::Header` would not satisfy these calls, and no noodles
     // path is exported: the facade's `header` module is the whole surface.
-    let _: fn(&reed::frontend::header::VcfHeader) -> reed::TagTable =
-        reed::frontend::header::tag_table;
+    let _: fn(&reed::VcfHeader) -> reed::TagTable = reed::frontend::tag_table;
 }
 
 /// A `HeaderFacts` value for the compile gate above (never called: the gate

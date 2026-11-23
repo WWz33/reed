@@ -6,11 +6,11 @@
 
 use std::path::Path;
 
-use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     ConvertRequest, ConvertTarget, PhyloFormats, PhyloOptions, PopgenRequest, Populations,
     SfsRequest, run_convert, run_popgen,
 };
+use reed::{MemBudget, ThreadBudget};
 
 /// The phylogenetic fixture: 20 records over 8 samples, covering biallelic
 /// and multiallelic SNPs, MNPs, indels, `*`/`<NON_REF>`/`.` ALT values,
@@ -1463,7 +1463,7 @@ fn convert_sfs_equals_stats_sfs() {
         &reed::RunContext::idle(&budget()),
     )
     .expect("stats");
-    let mut stats_files = reed::frontend::sfs::write_projected_sfs(
+    let mut stats_files = reed::frontend::write_projected_sfs(
         &stats_dir.join("out"),
         &["pop1".to_string()],
         stats_report.sfs.as_ref().expect("sfs report"),

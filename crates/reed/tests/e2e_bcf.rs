@@ -126,8 +126,8 @@ fn stats_output_is_identical_across_formats() {
     // rendered with the variant-only denominators (as the old sink did).
     let kinds = reed::window_kinds(2, true, true, true, false, None, None);
     assert_eq!(
-        reed::frontend::windows::render_tsv(&bcf.windows, &kinds, true),
-        reed::frontend::windows::render_tsv(&vcf.windows, &kinds, true)
+        reed::render_tsv(&bcf.windows, &kinds, true),
+        reed::render_tsv(&vcf.windows, &kinds, true)
     );
     assert_eq!(bcf.n_records, vcf.n_records);
 }
@@ -138,7 +138,7 @@ fn reports_are_identical_across_formats() {
     let dir = dir("reports");
     let bcf_prefix = dir.join("b");
     let vcf_prefix = dir.join("v");
-    let request = |prefix: &Path| reed::frontend::reports::StatsReportRequest {
+    let request = |prefix: &Path| reed::StatsReportRequest {
         freq: true,
         hardy: true,
         het: true,
@@ -152,13 +152,13 @@ fn reports_are_identical_across_formats() {
         select: reed::spec::region::SiteSelector::default(),
         prefix: prefix.to_path_buf(),
     };
-    reed::frontend::reports::run_stats(
+    reed::run_stats(
         Some(&fixture("fix.bcf")),
         &request(&bcf_prefix),
         &reed::RunContext::idle(&budget()),
     )
     .expect("invariant: bcf reports");
-    reed::frontend::reports::run_stats(
+    reed::run_stats(
         Some(&fixture("fix.vcf.gz")),
         &request(&vcf_prefix),
         &reed::RunContext::idle(&budget()),
@@ -918,14 +918,14 @@ fn m1_genotype_matrix_is_format_independent() {
     let bcf = fixture("fix.bcf");
     let budget = budget();
     let (from_vcf, ids_vcf) = reed::read_genotype_matrix(
-        reed::frontend::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"),
+        reed::open_regions(Some(&vcf), &[]).expect("invariant: vcf opens"),
         None,
         &reed::RunContext::idle(&budget),
         reed::MatrixUse::Plain,
     )
     .expect("VCF input");
     let (from_bcf, ids_bcf) = reed::read_genotype_matrix(
-        reed::frontend::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"),
+        reed::open_regions(Some(&bcf), &[]).expect("invariant: bcf opens"),
         None,
         &reed::RunContext::idle(&budget),
         reed::MatrixUse::Plain,

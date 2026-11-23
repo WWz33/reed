@@ -72,6 +72,11 @@ Windowed population-genetics statistics. One run can compute several statistics 
                             missing is an error, nothing is invented
 ```
 
+Window coordinates are base-pair (`--window/--step`) or BED intervals
+(`--bed-file`). Windows defined by a **site count** are not implemented: the
+`WindowGrid::Sites` request is rejected with a usage error rather than being
+silently reinterpreted as base pairs.
+
 ### Invariant sites
 
 ```

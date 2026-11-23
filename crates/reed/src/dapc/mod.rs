@@ -19,9 +19,9 @@
 use std::io::Write as _;
 
 use crate::context::RunContext;
+use crate::options::{MissingPolicy, PcaSolver, Stand, XvalResultMode};
 use reed_reduce::Mat;
 use reed_reduce::lda::{self, LdaError};
-use reed_reduce::pca::Stand;
 
 use crate::pca::read_genotype_matrix;
 
@@ -34,12 +34,12 @@ pub struct DapcRequest {
     pub n_da: Option<usize>,
     /// `sample<TAB>population` rows (no header).
     pub populations: String,
-    /// `binom2` (default) or `binom`.
-    pub stand: String,
-    /// `pairwise` (default) or `meanimpute`.
-    pub missing: String,
-    /// `auto`, `dense` or `stream`.
-    pub solver: String,
+    /// Genotype standardization: `binom2` (default) or `binom`.
+    pub stand: Stand,
+    /// Missing-genotype policy: `pairwise` (default) or `meanimpute`.
+    pub missing: MissingPolicy,
+    /// Solver: `auto` (default), `dense` or `stream`.
+    pub solver: PcaSolver,
     /// Output prefix: writes `.dapc.ind`, `.dapc.eig`, `.dapc.var`.
     pub prefix: String,
     /// Optional sample keep mask (header order).
@@ -59,7 +59,7 @@ pub struct XvalRequest {
     /// Training fraction (reduced automatically for small groups).
     pub training_set: f64,
     /// `overall` or `group-mean`.
-    pub result: String,
+    pub result: XvalResultMode,
     /// Seed for the per-repetition sub-streams.
     pub seed: u64,
     /// Candidate component counts; `None` uses the `adegenet` rule.
@@ -71,7 +71,7 @@ impl Default for XvalRequest {
         Self {
             n_rep: 30,
             training_set: 0.9,
-            result: "overall".into(),
+            result: XvalResultMode::Overall,
             seed: 42,
             n_pca: None,
         }
@@ -84,9 +84,9 @@ impl Default for DapcRequest {
             n_pca: None,
             n_da: None,
             populations: String::new(),
-            stand: "binom2".into(),
-            missing: "pairwise".into(),
-            solver: "auto".into(),
+            stand: Stand::Binom2,
+            missing: MissingPolicy::Pairwise,
+            solver: PcaSolver::Auto,
             prefix: "out".into(),
             keep_samples: None,
             force_samples: false,
@@ -157,19 +157,9 @@ pub fn run_dapc_opened(
     ctx: &RunContext<'_>,
 ) -> Result<DapcReport, crate::Error> {
     let budget = ctx.budget;
-    let stand = Stand::parse(&request.stand).map_err(crate::Error::usage)?;
-    let missing = request.missing.as_str();
-    if !matches!(missing, "pairwise" | "meanimpute") {
-        return Err(crate::Error::usage(format!(
-            "--missing {missing:?} is not supported (pairwise|meanimpute)"
-        )));
-    }
-    let solver = request.solver.as_str();
-    if !matches!(solver, "auto" | "dense" | "stream") {
-        return Err(crate::Error::usage(format!(
-            "--solver {solver:?} is not supported (auto|dense|stream)"
-        )));
-    }
+    let stand = request.stand;
+    let missing = request.missing;
+    let solver = request.solver;
     // doc_v21 M11: charge the resolved solver's real peak (dense GRM
     // included) before the matrix is built.
     let n_kept = match &request.keep_samples {
@@ -292,8 +282,7 @@ pub fn run_dapc_opened(
         let cfg = reed_reduce::xval::XvalConfig {
             training_set: xr.training_set,
             n_rep: xr.n_rep,
-            result: reed_reduce::xval::XvalResult::parse(&xr.result)
-                .map_err(crate::Error::usage)?,
+            result: xr.result.lower(),
             seed: xr.seed,
         };
         let candidates = match &xr.n_pca {

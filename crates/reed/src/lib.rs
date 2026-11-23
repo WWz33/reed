@@ -89,11 +89,13 @@
 mod bcf_input;
 mod context;
 mod convert;
+mod distance;
 mod error;
 mod filter;
 mod filtered;
 mod index;
 mod input;
+mod options;
 mod rename;
 mod spill;
 mod stats;
@@ -111,11 +113,18 @@ pub use crate::context::RunContext;
 pub use crate::dapc::{
     DapcReport, DapcRequest, XvalOutcome, XvalRequest, run_dapc, run_dapc_opened,
 };
+/// The individual-by-individual matrix family (doc_v30 P1-5).
+pub use crate::distance::{DistanceReport, DistanceRequest, run_distance, run_distance_opened};
 pub use crate::error::{Error, ErrorKind};
-pub use crate::filter::{FilterOptions, WriteIndex, run_filter};
+pub use crate::filter::{FilterOptions, WriteIndex, run_filter, run_filter_opened};
 pub use crate::index::{IndexOutcome, run_index};
 pub use crate::input::{
-    Framing, InputCapability, InputMeta, OpenedInput, ReplayableInput, SeekableInput, StreamedInput,
+    Framing, InputCapability, InputMeta, OpenedInput, ReplayableInput, SeekableInput,
+    StreamedInput, open_regions,
+};
+/// The typed option vocabularies the requests use (doc_v30 P1-6).
+pub use crate::options::{
+    DistanceFormat, DistanceKind, MissingPolicy, PcaSolver, Stand, TreeMethod, XvalResultMode,
 };
 pub use crate::pca::{
     MatrixUse, PcaReport, PcaRequest, read_genotype_matrix, run_pca, run_pca_opened,
@@ -188,29 +197,40 @@ pub use reed_core::grid::{ContigRegions, WindowGrid};
 pub use reed_core::tag_table::{TagNumber, TagTable, TagType};
 /// The VCF header as an opaque value (doc_v26 V26-10): the operations a
 /// downstream user needs, without a third-party type in the surface.
-pub use reed_io::header::{HeaderFacts, VcfHeader};
+pub use reed_io::header::{HeaderFacts, InfoDefinition, InfoNumber, InfoType, VcfHeader};
 
-/// The in-repo front end's escape hatch (doc_v30 P3): everything `reed-cli`
-/// and the integration tests need that is not part of the designed library
-/// API — the output writers, the build-time plan, the expression parser, the
-/// distance/graph/reduce crates, BGZF fixture helpers, the one-shot input
-/// openers and the atomic-output primitives.
+/// The in-repo front end's escape hatch (doc_v30 P3/P1-8): the curated
+/// items `reed-cli` needs beyond the designed library API — the output
+/// writers, the build-time strategy enum, the expression parser and the
+/// atomic-output primitives. It is a flat, item-level list: no lower crate
+/// or whole writer module is re-exported under an alias, so external code
+/// cannot reach `reed_distance`/`reed_graph`/`reed_reduce` wholesale
+/// (doc_v30 T03).
 ///
 /// `#[doc(hidden)]`: not part of the documented surface and not covered by
 /// the semver promise (ADR `api-contract` §2). External callers should use
 /// the `run_*` entry points and the request/report types at the root.
 #[doc(hidden)]
 pub mod frontend {
-    pub use crate::input::{PendingInput, open_regions};
-    pub use crate::stats::writers::{fstats, histogram, ld, reports, sfs, summary, windows};
-    pub use reed_distance as distance;
-    pub use reed_engine::{budget, metrics};
-    pub use reed_filter::{expr, funnel, plan};
-    pub use reed_graph as graph;
-    pub use reed_io::header;
+    pub use crate::input::PendingInput;
+    pub use crate::stats::writers::fstats::write_fstats;
+    pub use crate::stats::writers::histogram::{
+        HistKind, HistMetric, HistOut, HistStats, render_hist,
+    };
+    pub use crate::stats::writers::ld::{PAIRS_HEADER, render_pair_row, write_ld};
+    pub use crate::stats::writers::sfs::write_projected_sfs;
+    pub use crate::stats::writers::summary::{render_bcftools_stats, write_bcftools_stats};
+    pub use crate::stats::writers::windows::{write as write_windows, write_popg_log};
+    pub use reed_engine::budget::{MemMiB, Threads};
+    pub use reed_engine::metrics::StageMetrics;
+    pub use reed_filter::expr::{Expr, parse as parse_expr};
+    pub use reed_filter::funnel::FilterReport;
+    pub use reed_filter::plan::ExecStrategy;
+    pub use reed_io::chunk::region::Region;
     pub use reed_io::header::tag_table;
-    pub use reed_io::write::atomic as atomic_file;
     pub use reed_io::write::atomic::write_atomic;
-    pub use reed_io::{bgzf, chunk};
-    pub use reed_reduce as reduce;
+    // BGZF fixture helpers for the integration tests (`crates/*/tests`).
+    pub use reed_io::bgzf::block::{EOF_BLOCK, is_eof_block, parse_block_size};
+    pub use reed_io::bgzf::deflate::Deflater;
+    pub use reed_io::bgzf::inflate::Inflater;
 }

@@ -10,3 +10,6 @@ description = "Individual-by-individual matrices for VCF data: allele-count dist
 [dependencies]
 reed-core.workspace = true
 rayon.workspace = true
+
+[lints]
+workspace = true

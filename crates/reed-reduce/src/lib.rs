@@ -48,6 +48,16 @@
 #![allow(clippy::manual_memcpy)]
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::if_same_then_else)]
+// doc_v30 P2-2: the crate now inherits the workspace lints. These are
+// style-only classes that the numeric code predates; `manual_midpoint` in
+// particular would change rounding, so the arithmetic stays as written.
+#![allow(clippy::manual_midpoint)]
+#![allow(clippy::explicit_iter_loop)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::float_cmp)]
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::assert_is_empty)]
+#![allow(clippy::bool_to_int_with_if)]
 
 pub mod backend;
 pub mod eig;

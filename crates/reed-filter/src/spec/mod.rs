@@ -254,7 +254,7 @@ pub struct TailRules {
     /// HWE exact-test p lower bound (`0`/absent = off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_hwe_p: Option<f64>,
-    /// HWE test flavour (`exact` only for M5; `midp` is M7).
+    /// HWE test flavour: `exact` (default) or the `midp` adjustment.
     #[serde(default)]
     pub hwe_mode: HweMode,
     /// Genotype-class rules (`-g/--genotype [^](hom|het|miss)`): the record
@@ -353,7 +353,7 @@ pub enum HweMode {
     #[default]
     #[serde(rename = "exact")]
     Exact,
-    /// Mid-p adjustment (M7).
+    /// Mid-p adjustment: exact p minus half the observed probability.
     #[serde(rename = "midp")]
     MidP,
 }

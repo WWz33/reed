@@ -1,52 +1,12 @@
 //! `reed distance`: the individual-by-individual matrix family (doc_v17).
-
-use std::io::Write as _;
+//!
+//! The pipeline itself lives in [`reed::run_distance_opened`] (doc_v30
+//! P1-5); this front end only translates flags, opens the input once to
+//! resolve the sample names, and renders the summary.
 
 use reed::ThreadBudget;
-use reed::frontend::distance::matrices::{
-    AjkOptions, DiscordanceMode, DiscordanceOptions, DistanceOptions, MatrixKind, MatrixResult,
-    MissingPolicy, PiHatOptions, PiHatResult, ajk, allele_ct_distance, discordance, genome_columns,
-    grm, ibs, king, one_minus_ibs, phi, pi_hat,
-};
-use reed::frontend::distance::output::is_matrix_kind;
-use reed::frontend::distance::{MatrixFormat, Stand, standardize};
-use reed::frontend::graph;
 
 use crate::cli::DistanceCli;
-
-/// Which matrix the user asked for.
-/// Exit-code classification for graph failures (doc_v25 V25-08): a request
-/// the command line can fix is usage; a matrix the data made unusable
-/// (NaN/asymmetric distances, non-finite branches, too-deep trees) is
-/// runtime, so a retry loop does not spin on exit 2.
-fn graph_error(e: reed::frontend::graph::error::GraphError) -> reed::Error {
-    use reed::frontend::graph::error::GraphError as G;
-    match e {
-        G::NotSquare { .. } | G::TooFewTaxa { .. } => reed::Error::usage(e.to_string()),
-        _ => reed::Error::foreign(e),
-    }
-}
-
-fn parse_kind(s: &str) -> Result<MatrixKind, String> {
-    Ok(match s {
-        "allele-ct" | "dist" => MatrixKind::AlleleCountDistance,
-        "ibs" => MatrixKind::Ibs,
-        "1-ibs" => MatrixKind::OneMinusIbs,
-        "grm" | "rel" => MatrixKind::Grm,
-        "cov" => MatrixKind::Covariance,
-        "king" => MatrixKind::King,
-        "pihat" | "genome" => MatrixKind::PiHat,
-        "phi" | "relatedness2" => MatrixKind::Phi,
-        "ajk" | "relatedness" => MatrixKind::Ajk,
-        "discordance" | "gtcheck" => MatrixKind::Discordance,
-        other => {
-            return Err(format!(
-                "unknown --type {other:?} \
-                 (allele-ct|ibs|1-ibs|grm|cov|king|pihat|phi|ajk|discordance)"
-            ));
-        }
-    })
-}
 
 /// Runs `reed distance`.
 ///
@@ -56,21 +16,21 @@ fn parse_kind(s: &str) -> Result<MatrixKind, String> {
 pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     // doc_v21 S34: distance had no --verbosity, so scripts could not silence it.
     args.verbosity.init_tracing();
-    let kind = parse_kind(&args.matrix_type).map_err(reed::Error::usage)?;
-    // doc_v23 V23-32: `--format` only means something for the four matrix
-    // kinds. Silently ignoring it on `.genome`/`.relatedness2`/… let a
-    // script "configure" a layout that was never used.
-    if !is_matrix_kind(kind) && args.format.is_some() {
+    let kind = reed::DistanceKind::parse(&args.matrix_type).map_err(reed::Error::usage)?;
+    // doc_v23 V23-32: `--format` only means something for the matrix kinds.
+    // Silently ignoring it on `.genome`/`.relatedness2`/… let a script
+    // "configure" a layout that was never used.
+    if !kind.is_matrix() && args.format.is_some() {
         return Err(reed::Error::usage(format!(
             "--format applies to matrix --type values; {} is a per-pair table",
             args.matrix_type
         )));
     }
     let format = match &args.format {
-        Some(text) => MatrixFormat::parse(text).map_err(reed::Error::usage)?,
-        None => MatrixFormat::Triangle,
+        Some(text) => reed::DistanceFormat::parse(text).map_err(reed::Error::usage)?,
+        None => reed::DistanceFormat::Triangle,
     };
-    let stand = Stand::parse(&args.stand).map_err(reed::Error::usage)?;
+    let stand = reed::Stand::parse(&args.stand).map_err(reed::Error::usage)?;
     let Some(prefix) = args.output.as_deref() else {
         return Err(reed::Error::usage(
             "-o PREFIX is required: distance writes PREFIX.<suffix>",
@@ -81,7 +41,7 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     super::common::require_output_prefix(prefix, "reed distance")?;
 
     let path = crate::units::input_path(&args.input);
-    let opened = reed::frontend::open_regions(path.as_deref(), &[])?;
+    let opened = reed::open_regions(path.as_deref(), &[])?;
     let sample_names = opened.facts().sample_names.clone();
     if sample_names.is_empty() {
         return Err(reed::Error::usage(
@@ -95,412 +55,57 @@ pub(crate) fn run_distance_cli(args: DistanceCli) -> Result<(), reed::Error> {
     let abort = reed::abort_for(&budget);
     let ctx = reed::RunContext::new(&budget, &abort.signal);
 
-    // doc_v20 S37: R13's reed-distance estimators join whatever rayon pool
-    // is ambient, so `--threads` takes effect only through a scoped pool
-    // installed around the estimator and bootstrap calls — the same
-    // throwaway-pool pattern the stats/filter stages use via
-    // `run_auxiliary`; unlike those, the estimators are unconditionally
-    // parallel, so the pool is installed even for a single thread.
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(budget.threads)
-        .build()
-        .map_err(|e| reed::Error::usage(format!("--threads {}: {e}", budget.threads)))?;
-
-    let (x, ids) =
-        reed::read_genotype_matrix(opened, keep.as_deref(), &ctx, reed::MatrixUse::Plain)?;
-    if x.rows == 0 || x.cols == 0 {
-        return Err(reed::Error::usage("no biallelic sites with a diploid GT"));
-    }
-    let st = standardize(&x, stand);
-
-    // doc_v20 S37: built once from the user's flags so the primary matrix
-    // and every bootstrap replicate below score the same metric — the
-    // replicate closure used to pass `DiscordanceOptions::default()`
-    // (probability mode, error 40), silently ignoring
-    // `--mismatch-count`/`--error-probability` and reporting support for a
-    // different metric than the tree.
-    let discordance_opts = DiscordanceOptions {
-        mode: if args.mismatch_count {
-            DiscordanceMode::Count
+    let request = reed::DistanceRequest {
+        kind,
+        format,
+        stand,
+        missing: if args.mean_impute {
+            reed::MissingPolicy::MeanImpute
         } else {
-            DiscordanceMode::Probability
+            reed::MissingPolicy::Pairwise
         },
+        unbounded: args.unbounded,
+        nudge: args.nudge,
+        mismatch_count: args.mismatch_count,
         error_probability: args.error_probability,
+        tree: args
+            .tree
+            .as_deref()
+            .map(reed::TreeMethod::parse)
+            .transpose()
+            .map_err(reed::Error::usage)?,
+        bootstrap: args.bootstrap,
+        bootstrap_seed: args.bootstrap_seed,
+        bootstrap_cutoff: args.bootstrap_cutoff,
+        digits: args.digits,
+        prefix: prefix.to_string(),
+        keep_samples: keep,
     };
-
-    let (mut result, aux) = pool.install(|| match kind {
-        MatrixKind::AlleleCountDistance => {
-            (allele_ct_distance(&st, &DistanceOptions::default()), None)
-        }
-        MatrixKind::Ibs => (ibs(&st, &DistanceOptions::default()), None),
-        MatrixKind::OneMinusIbs => (one_minus_ibs(&st, &DistanceOptions::default()), None),
-        MatrixKind::Grm | MatrixKind::Covariance => {
-            let policy = if args.mean_impute {
-                MissingPolicy::MeanImpute
-            } else {
-                MissingPolicy::Pairwise
-            };
-            (grm(&st, policy, kind == MatrixKind::Grm), None)
-        }
-        MatrixKind::King => {
-            let (m, _counts) = king(&st);
-            (m, None)
-        }
-        MatrixKind::PiHat => {
-            let opts = PiHatOptions {
-                unbounded: args.unbounded,
-                nudge: args.nudge,
-            };
-            let (m, _res) = pi_hat(&st, &opts);
-            (m, None)
-        }
-        MatrixKind::Phi => {
-            let (m, a) = phi(&st);
-            (m, Some(a))
-        }
-        MatrixKind::Ajk => (ajk(&st, &AjkOptions::default()), None),
-        MatrixKind::Discordance => {
-            let (m, a) = discordance(&st, &discordance_opts);
-            (m, Some(a))
-        }
-    });
-    result.ids.clone_from(&ids);
-    // `pi_hat` fills its own aux (the Z triplet); only overwrite when the
-    // estimator returned one explicitly.
-    if aux.is_some() {
-        result.aux = aux;
-    }
-
-    // `--tree` builds a tree from the matrix and writes PREFIX.nwk instead
-    // of the matrix file itself.
-    if let Some(method) = args.tree.as_deref() {
-        // A tree needs a distance matrix: d(i,i) = 0 and d(i,j) >= 0. Several
-        // `--type` values are *similarities* instead (GRM, KING, IBS, phi,
-        // pihat), whose diagonal is the self-relatedness rather than zero.
-        // Building a tree from those without a conversion would silently
-        // produce a tree over meaningless edge weights, so refuse instead of
-        // guessing which transform the user meant.
-        for i in 0..result.n {
-            let d = result.values[i * result.n + i];
-            if d.abs() > 1e-9 {
-                return Err(reed::Error::usage(format!(
-                    "--type {} is a similarity, not a distance (d({i},{i}) = {d:.6}); \
-                     --tree needs a zero diagonal. Use --type 1-ibs, allele-ct, \
-                     ajk or discordance",
-                    args.matrix_type
-                )));
-            }
-        }
-        if args.digits == 0 {
-            return Err(reed::Error::usage(
-                "--digits must be at least 1; 0 rounds every branch length to zero",
-            ));
-        }
-        let mut d = reed::Mat::zeros(result.n, result.n);
-        for i in 0..result.n {
-            for j in 0..result.n {
-                d.set(i, j, result.values[i * result.n + j]);
-            }
-        }
-        let built = match method {
-            "upgma" => graph::upgma(&d),
-            "nj" => graph::nj(&d),
-            other => {
-                return Err(reed::Error::usage(format!(
-                    "unknown --tree {other:?} (upgma|nj)"
-                )));
-            }
-        };
-        let tree = built.map_err(graph_error)?;
-        let mut tree = tree;
-        tree.tip_labels.clone_from(&ids);
-
-        if let Some(reps) = args.bootstrap {
-            if reps == 0 {
-                return Err(reed::Error::usage("--bootstrap must be at least 1"));
-            }
-            let tree_method = graph::TreeMethod::parse(method).map_err(reed::Error::usage)?;
-            // The bootstrap rebuilds the matrix from resampled loci, so it
-            // needs the same matrix kind the tree used. Capture the kind and
-            // the options; the closure re-runs the estimator on each
-            // replicate. doc_v20 S37: `discordance_opts` is the very struct
-            // the primary matrix above was built from, so the replicates
-            // score the user's metric, not the defaults.
-            let opts = DistanceOptions::default();
-            let dist_fn = |m: &reed::Mat| -> reed::Mat {
-                let st = standardize(m, stand);
-                let r = match kind {
-                    MatrixKind::OneMinusIbs => one_minus_ibs(&st, &opts),
-                    MatrixKind::Ajk => ajk(&st, &AjkOptions::default()),
-                    MatrixKind::Discordance => discordance(&st, &discordance_opts).0,
-                    // `allele-ct`, plus every kind the zero-diagonal gate
-                    // above already rejected, falls back to allele counts.
-                    _ => allele_ct_distance(&st, &opts),
-                };
-                let n = r.n;
-                let mut out = reed::Mat::zeros(n, n);
-                for i in 0..n {
-                    for j in 0..n {
-                        out.set(i, j, r.values[i * n + j]);
-                    }
-                }
-                out
-            };
-            let cfg = graph::BootstrapConfig {
-                replicates: reps,
-                seed: args.bootstrap_seed,
-                cutoff: args.bootstrap_cutoff,
-            };
-            // doc_v20 S37: the replicates' estimator calls join the scoped
-            // pool too, so `--threads` bounds the bootstrap as well.
-            let report = pool
-                .install(|| graph::support(&tree, &x, tree_method, dist_fn, &cfg))
-                .map_err(graph_error)?;
-            // Support is per internal node, ascending id; `to_newick` writes
-            // node labels in that order.
-            tree.node_labels = Some(
-                report
-                    .support
-                    .iter()
-                    .map(|v| {
-                        if v.is_nan() {
-                            String::new()
-                        } else {
-                            format!("{v:.0}")
-                        }
-                    })
-                    .collect(),
-            );
-            if args.verbosity.shows_summary() {
-                eprintln!(
-                    "reed distance --tree --bootstrap: {} replicates, {} internal nodes",
-                    report.replicates,
-                    report.support.len()
-                );
-            }
-        }
-
-        let nwk = graph::to_newick(&tree, args.digits).map_err(graph_error)?;
-        reed::frontend::write_atomic(std::path::Path::new(&format!("{prefix}.nwk")), nwk)
-            .map_err(reed::Error::from)?;
-        if args.verbosity.shows_summary() {
-            eprintln!(
-                "reed distance --tree: {} samples, {} sites, method={method}",
-                x.rows, x.cols
-            );
-        }
-        return Ok(());
-    }
-
-    let suffix = kind.suffix();
-    let out_path = std::path::PathBuf::from(format!("{prefix}.{suffix}"));
-
-    // doc_v26 V26-08: the matrix/table and its `.id` sidecar are each
-    // published atomically (a failure while rendering leaves the previous
-    // file untouched); both are complete before either is published.
-    let id_path = std::path::PathBuf::from(format!("{prefix}.{suffix}.id"));
-    // doc_v28 V28-23: reed-io's AtomicWriter owns create→flush→close; both
-    // files are finished before either is published.
-    let mut matrix_out =
-        reed::frontend::atomic_file::AtomicWriter::with_capacity(&out_path, 1 << 16)?;
-    let mut id_out = if is_matrix_kind(kind) {
-        Some(reed::frontend::atomic_file::AtomicWriter::with_capacity(
-            &id_path,
-            1 << 16,
-        )?)
-    } else {
-        None
-    };
-    if is_matrix_kind(kind) {
-        reed::frontend::distance::output::write_matrix_to(&mut matrix_out, &result, format)
-            .map_err(reed::Error::from)?;
-        matrix_out.flush().map_err(reed::Error::from)?;
-        let matrix_out = matrix_out.finish()?;
-        if let Some(mut id_out) = id_out.take() {
-            reed::frontend::distance::output::write_ids_to(&mut id_out, &ids)
-                .map_err(reed::Error::from)?;
-            id_out.flush().map_err(reed::Error::from)?;
-            let id_out = id_out.finish()?;
-            matrix_out.commit()?;
-            id_out.commit()?;
-        }
-    } else {
-        write_table_to(&mut matrix_out, &result)?;
-        matrix_out.flush().map_err(reed::Error::from)?;
-        matrix_out.finish()?.commit()?;
-    }
+    let report = reed::run_distance_opened(opened, &request, &ctx)?;
 
     if args.verbosity.shows_summary() {
-        eprintln!(
-            "reed distance: {} samples, {} sites, type={}, format={}",
-            x.rows,
-            x.cols,
-            args.matrix_type,
-            format.name()
-        );
+        if let Some(method) = request.tree {
+            if let Some(reps) = request.bootstrap {
+                eprintln!(
+                    "reed distance --tree --bootstrap: {} replicates, {} internal nodes",
+                    reps,
+                    report.bootstrap_support.as_ref().map_or(0, Vec::len)
+                );
+            }
+            eprintln!(
+                "reed distance --tree: {} samples, {} sites, method={method}",
+                report.n_samples, report.n_sites
+            );
+        } else {
+            eprintln!(
+                "reed distance: {} samples, {} sites, type={}, format={}",
+                report.n_samples,
+                report.n_sites,
+                report.kind.name(),
+                report.format.name()
+            );
+        }
     }
+    let _ = report.files;
     Ok(())
-}
-
-/// Writes `NA` for a missing `.genome` column value, or the formatted number.
-fn write_na_or<W: std::io::Write>(f: &mut W, value: Option<String>) -> Result<(), reed::Error> {
-    match value {
-        Some(text) => f.write_all(text.as_bytes()).map_err(reed::Error::from),
-        None => f.write_all(b"NA").map_err(reed::Error::from),
-    }
-}
-
-/// Writes the per-pair table formats (`.genome`, `.relatedness2`,
-/// `.relatedness`, `.gtcheck`) with the reference tools' exact headers.
-fn write_table_to<W: std::io::Write>(f: &mut W, m: &MatrixResult) -> Result<(), reed::Error> {
-    let n = m.n;
-    match m.kind {
-        MatrixKind::Phi => {
-            writeln!(
-                f,
-                "INDV1\tINDV2\tN_AaAa\tN_AAaa\tN1_Aa\tN2_Aa\tRELATEDNESS_PHI"
-            )
-            .map_err(reed::Error::from)?;
-            let aux = m.aux.as_ref();
-            // vcftools emits the full ordered matrix, both directions.
-            for i in 0..n {
-                for j in 0..n {
-                    let hethet = aux.map_or(0, |a| a.n_hethet[i * n + j]);
-                    let opp = aux.map_or(0, |a| a.n_opposite_hom[i * n + j]);
-                    // N_Aa[i] is the marginal het count; recover it from the
-                    // diagonal of n_hethet is wrong, so recompute from phi's
-                    // denominator is not possible here. Write the pair counts
-                    // that vcftools reports and the phi value.
-                    let phi_v = m.values[i * n + j];
-                    let n1 = aux.map_or(0, |a| a.n_het.get(i).copied().unwrap_or(0));
-                    let n2 = aux.map_or(0, |a| a.n_het.get(j).copied().unwrap_or(0));
-                    writeln!(
-                        f,
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{:.9}",
-                        m.ids[i], m.ids[j], hethet, opp, n1, n2, phi_v
-                    )
-                    .map_err(reed::Error::from)?;
-                }
-            }
-        }
-        MatrixKind::Ajk => {
-            writeln!(f, "INDV1\tINDV2\tRELATEDNESS_AJK").map_err(reed::Error::from)?;
-            for i in 0..n {
-                for j in i..n {
-                    writeln!(f, "{}\t{}\t{:.9}", m.ids[i], m.ids[j], m.values[i * n + j])
-                        .map_err(reed::Error::from)?;
-                }
-            }
-        }
-        MatrixKind::Discordance => {
-            writeln!(
-                f,
-                "#DCv2\t[2]Query Sample\t[3]Genotyped Sample\t[4]Discordance\t\
-                 [5]Average -log P(HWE)\t[6]Number of sites compared\t\
-                 [7]Number of matching genotypes"
-            )
-            .map_err(reed::Error::from)?;
-            let aux = m.aux.as_ref();
-            for i in 0..n {
-                for j in 0..i {
-                    let cmp = aux.map_or(0, |a| a.n_compared[i * n + j]);
-                    let mt = aux.map_or(0, |a| a.n_matching[i * n + j]);
-                    writeln!(
-                        f,
-                        "DCv2\t{}\t{}\t{:.9e}\t0\t{}\t{}",
-                        m.ids[i],
-                        m.ids[j],
-                        m.values[i * n + j],
-                        cmp,
-                        mt
-                    )
-                    .map_err(reed::Error::from)?;
-                }
-            }
-        }
-        MatrixKind::PiHat => {
-            writeln!(
-                f,
-                "FID1\tIID1\tFID2\tIID2\tRT\tEZ\tZ0\tZ1\tZ2\tPI_HAT\tPHE\tDST\tPPC\tRATIO"
-            )
-            .map_err(reed::Error::from)?;
-            let aux = m.aux.as_ref();
-            // plink writes FID and IID as separate columns; reed's ids are
-            // single sample names. Writing the name in both columns keeps a
-            // name containing `_` intact instead of guessing a FID/IID
-            // boundary (doc_v25 V25-08, R14).
-            let split = |id: &str| -> (String, String) { (id.to_string(), id.to_string()) };
-            for i in 0..n {
-                for j in 0..i {
-                    let (f1, i1) = split(&m.ids[i]);
-                    let (f2, i2) = split(&m.ids[j]);
-                    let z0 = aux.map_or(f64::NAN, |a| a.z0[i * n + j]);
-                    let z1 = aux.map_or(f64::NAN, |a| a.z1[i * n + j]);
-                    let z2 = aux.map_or(f64::NAN, |a| a.z2[i * n + j]);
-                    // DST used to be a hard zero, so any downstream filter on it
-                    // silently kept nothing (doc_v30 N-3). It now follows
-                    // plink's formula; PPC/RATIO stay NA (see
-                    // `genome_columns` for why they are not reproducible).
-                    let cols = aux.map(|a| {
-                        genome_columns(&PiHatResult {
-                            z0: a.z0[i * n + j],
-                            z1: a.z1[i * n + j],
-                            z2: a.z2[i * n + j],
-                            pi_hat: m.values[i * n + j],
-                            n_valid: a.n_valid[i * n + j],
-                            ibs1: a.n_ibs1[i * n + j],
-                            ibs0: a.n_ibs0[i * n + j],
-                        })
-                    });
-                    let (dst, ppc, ratio) = cols.unwrap_or((None, None, None));
-                    write!(
-                        f,
-                        "{f1}\t{i1}\t{f2}\t{i2}\tOT\tNA\t{z0:.4}\t{z1:.4}\t{z2:.4}\t{:.4}\t-9\t",
-                        m.values[i * n + j]
-                    )
-                    .map_err(reed::Error::from)?;
-                    write_na_or(f, dst.map(|v| format!("{v:.6}")))?;
-                    write!(f, "\t").map_err(reed::Error::from)?;
-                    write_na_or(f, ppc.map(|v| format!("{v:.4}")))?;
-                    write!(f, "\t").map_err(reed::Error::from)?;
-                    write_na_or(f, ratio.map(|v| format!("{v:.4}")))?;
-                    writeln!(f).map_err(reed::Error::from)?;
-                }
-            }
-        }
-        _ => unreachable!("is_matrix_kind covers the rest"),
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use reed::ErrorKind;
-    use reed::frontend::graph::error::GraphError;
-
-    /// doc_v25 V25-08: the exit class is decided by the shape of the failure,
-    /// not by the crate that produced it. A NaN/asymmetric distance or an
-    /// unusable tree is data-driven (runtime, exit 1); a too-small or
-    /// non-square request is command-line-fixable (usage, exit 2).
-    #[test]
-    fn graph_failures_split_into_usage_and_runtime() {
-        let usage = [
-            GraphError::TooFewTaxa { got: 1, need: 3 },
-            GraphError::NotSquare { rows: 2, cols: 3 },
-        ];
-        for err in usage {
-            assert_eq!(graph_error(err.clone()).kind(), ErrorKind::Usage, "{err}");
-        }
-        let runtime = [
-            GraphError::NonFiniteDistance { row: 0, col: 1 },
-            GraphError::Asymmetric { row: 0, col: 1 },
-            GraphError::NonZeroDiagonal { index: 0 },
-            GraphError::BadBranchLength { edge: 0 },
-            GraphError::TreeTooDeep { depth: 10_001 },
-        ];
-        for err in runtime {
-            assert_eq!(graph_error(err.clone()).kind(), ErrorKind::Runtime, "{err}");
-        }
-    }
 }

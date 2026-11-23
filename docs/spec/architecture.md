@@ -170,7 +170,7 @@ dxy/Fst，100 kb 窗）≤ 30 s；QC 全报告 ≤ 30 s。估算依据见 §17.1
 L5  reed-cli        二进制 `reed`：filter / stats / popg / convert / rename / index /
                     distance / pca 子命令（clap），只做参数 → 请求类型的翻译
 L4  reed            门面库：把 L3 的纯策略接到 L2 引擎上的 driver（run_filter / run_popgen /
-                    run_stats / run_convert / run_rename / run_pca / run_dapc / run_index），
+                    run_stats / run_convert / run_rename / run_pca / run_dapc / run_distance / run_index），
                     以及对外 re-export。下游 Rust 用户只依赖这一个 crate。
 L3  reed-stats      群体遗传统计：封死估计器、可加累加器、窗口网格        （纯：无 I/O、无线程）
                     QC 报告（bcftools stats 风格）作为 `summary` 模块留在这里，不再是独立 crate。

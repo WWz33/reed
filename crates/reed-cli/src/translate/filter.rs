@@ -154,7 +154,7 @@ pub(crate) fn site_spec(
         .map(|t| (t, true))
         .chain(cli.exclude.iter().map(|t| (t, false)))
     {
-        let expr = reed::frontend::expr::parse(text)
+        let expr = reed::frontend::parse_expr(text)
             .map_err(|e| format!("{} {text:?}: {e}", if include { "-i" } else { "-e" }))?;
         let genotype_derived = expr.references_genotypes();
         match (include, genotype_derived) {
@@ -376,9 +376,9 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
     let strategy = strategy
         .as_deref()
         .map(|s| match s {
-            "single_pass" => Ok(reed::frontend::plan::ExecStrategy::SinglePass),
-            "two_pass_reparse" => Ok(reed::frontend::plan::ExecStrategy::TwoPassReparse),
-            "sketch_then_emit" => Ok(reed::frontend::plan::ExecStrategy::SketchThenEmit),
+            "single_pass" => Ok(reed::frontend::ExecStrategy::SinglePass),
+            "two_pass_reparse" => Ok(reed::frontend::ExecStrategy::TwoPassReparse),
+            "sketch_then_emit" => Ok(reed::frontend::ExecStrategy::SketchThenEmit),
             other => Err(reed::Error::usage(format!("unknown strategy {other:?}"))),
         })
         .transpose()?;
@@ -491,7 +491,7 @@ pub(crate) fn run_filter_cli(cli: FilterCli) -> Result<(), reed::Error> {
 
 /// The human summary (`--verbosity 1`): one line plus the funnel table
 /// (doc_v4 03 §3.3). Moved out of the driver so the library never prints.
-fn eprint_report(report: &reed::frontend::funnel::FilterReport) {
+fn eprint_report(report: &reed::FilterReport) {
     eprintln!(
         "reed filter: {} -> {} records ({} of {} samples), strategy {}, {:.1}s",
         report.n_input_records,

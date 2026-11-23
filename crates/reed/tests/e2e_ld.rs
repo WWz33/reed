@@ -5,10 +5,10 @@
 
 use std::fmt::Write as _;
 
-use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     InvariantMode, LdRequest, Levels, PopgenRequest, Populations, WindowLayoutOptions, run_popgen,
 };
+use reed::{MemBudget, ThreadBudget};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -760,7 +760,7 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
     // compare with what the sink streamed.
     let mut expected = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
     for (contig, a, b, r2) in &accumulated.pairs {
-        reed::frontend::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+        reed::frontend::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     let got = std::fs::read_to_string(prefix.with_extension("ld")).expect("invariant: .ld written");
     assert_eq!(
@@ -773,7 +773,7 @@ fn streamed_pairs_file_is_byte_identical_to_the_accumulated_report() {
     let mut report = accumulated.clone();
     report.pairs.clear();
     let files =
-        reed::frontend::ld::write_ld(&decay_prefix, &report, &[], false).expect("invariant: write");
+        reed::frontend::write_ld(&decay_prefix, &report, &[], false).expect("invariant: write");
     assert!(
         files.iter().all(|p| !p.to_string_lossy().ends_with(".ld")),
         "-.ld must not be written when the rows were streamed: {files:?}"
@@ -814,7 +814,7 @@ fn streamed_pairs_file_is_header_only_without_pairs() {
     .expect("invariant: run");
     assert_eq!(
         std::fs::read_to_string(&path).expect("invariant: pair table"),
-        String::from_utf8_lossy(reed::frontend::ld::PAIRS_HEADER),
+        String::from_utf8_lossy(reed::frontend::PAIRS_HEADER),
         "no pair means a valid header-only .ld, never a stale previous table"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -880,7 +880,7 @@ chr2\t2\t.\tA\tG\t50\tPASS\t.\tGT\t0/0\t0/1
     assert_eq!(streamed.pairs.len(), 0, "streamed rows stay out of memory");
     let mut expected = String::from("#CHROM_A\tPOS_A\tID_A\tCHROM_B\tPOS_B\tID_B\tUNPHASED_R2\n");
     for (contig, a, b, r2) in &accumulated.pairs {
-        reed::frontend::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+        reed::frontend::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     assert_eq!(
         std::fs::read_to_string(&path).expect("the later contig creates the file"),
@@ -950,7 +950,7 @@ fn failed_run_leaves_the_previous_ld_untouched() {
     let mut raw = Vec::new();
     {
         let bytes = std::fs::read(&good).expect("invariant: read bcf");
-        let mut inflater = reed::frontend::bgzf::inflate::Inflater::new();
+        let mut inflater = reed::frontend::Inflater::new();
         let mut pos = 0;
         while pos + 18 <= bytes.len() {
             // `inflate_block` wants exactly one member: slice by BSIZE.
@@ -959,7 +959,7 @@ fn failed_run_leaves_the_previous_ld_untouched() {
                 break;
             }
             let block = &bytes[pos..pos + bsize];
-            if reed::frontend::bgzf::block::is_eof_block(block) {
+            if reed::frontend::is_eof_block(block) {
                 break;
             }
             inflater
@@ -970,12 +970,12 @@ fn failed_run_leaves_the_previous_ld_untouched() {
     }
     assert!(raw.len() > 32, "the BCF payload must be non-trivial");
 
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut truncated = Vec::new();
     deflater
         .deflate_block(&raw[..raw.len() - 8], &mut truncated)
         .expect("invariant: deflate");
-    truncated.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    truncated.extend_from_slice(&reed::frontend::EOF_BLOCK);
     let cut = dir.join("cut.bcf");
     std::fs::write(&cut, &truncated).expect("invariant: write cut bcf");
 
@@ -1004,9 +1004,9 @@ fn failed_run_leaves_the_previous_ld_untouched() {
         !accumulated.pairs.is_empty(),
         "the fixture must yield one pair"
     );
-    let mut expected = String::from_utf8_lossy(reed::frontend::ld::PAIRS_HEADER).into_owned();
+    let mut expected = String::from_utf8_lossy(reed::frontend::PAIRS_HEADER).into_owned();
     for (contig, a, b, r2) in &accumulated.pairs {
-        reed::frontend::ld::render_pair_row(&mut expected, contig, *a, *b, *r2);
+        reed::frontend::render_pair_row(&mut expected, contig, *a, *b, *r2);
     }
     std::fs::write(&pairs_path, &expected).expect("invariant: seed the old .ld");
 
@@ -1104,7 +1104,7 @@ fn an_empty_ld_run_publishes_header_only_pairs_and_zero_decay() {
     .expect("invariant: empty LD run");
     assert_eq!(
         std::fs::read_to_string(&path).expect("invariant: pair table"),
-        String::from_utf8_lossy(reed::frontend::ld::PAIRS_HEADER)
+        String::from_utf8_lossy(reed::frontend::PAIRS_HEADER)
     );
     assert_eq!(report.pairs_path, Some(path));
     let ld = report.ld.expect("invariant: LD report");
@@ -1114,7 +1114,7 @@ fn an_empty_ld_run_publishes_header_only_pairs_and_zero_decay() {
             .iter()
             .all(|&(_, _, n, mean)| n == 0 && mean.is_none())
     );
-    let files = reed::frontend::ld::write_ld(&dir.join("out"), &ld, &["all".into()], false)
+    let files = reed::frontend::write_ld(&dir.join("out"), &ld, &["all".into()], false)
         .expect("invariant: decay writer");
     assert!(files.iter().any(|p| p.ends_with("out.ld.decay")));
     assert!(

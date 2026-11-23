@@ -88,6 +88,8 @@ Matrix outputs (dist, mibs, mdist, rel, king) carry a `PREFIX.<suffix>.id` sidec
 
 `.genome`'s `DST` column is plink's IBS distance, `1 − (IBS1 + 2·IBS0)/(2·nn)`, and matches plink 1.9 to every printed digit. `PPC` and `RATIO` are written as `NA`: plink derives them from `HOMHOM`/`HETHET` counters that accumulate over its last genotype window only, not over all sites (on a 3,000-site fixture plink prints `HOMHOM=0 HETHET=2` for every pair), so they are a property of plink's internal blocking and cannot be reproduced from whole-site counts. Use `PI_HAT` or `DST` to rank pairs.
 
+This is a **partial** `.genome` compatibility, not a column-for-column clone: `RT`/`EZ`/`PHE` are also placeholders (`OT`, `NA`, `-9`) because plink derives them from pedigree and relationship inference reed does not implement. The columns guaranteed to match are `Z0`, `Z1`, `Z2`, `PI_HAT` and `DST`.
+
 ## Output layout
 
 `--format` applies to matrix outputs only:

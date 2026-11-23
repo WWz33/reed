@@ -45,6 +45,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bcftools
       - name: formatting
         run: cargo fmt --all --check
+      - name: publish safety
+        run: bash ci/test-publish.sh
       - name: build (release, all targets)
         run: cargo build --release --locked --workspace --all-targets
       - name: test (debug)

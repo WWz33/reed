@@ -19,14 +19,14 @@ fn fixture() -> Vec<u8> {
     for i in 0..10_u32 {
         let _ = writeln!(text, "Chr01\t{}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0", i + 1);
     }
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut out)
             .expect("invariant: block");
     }
-    out.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    out.extend_from_slice(&reed::frontend::EOF_BLOCK);
     out
 }
 
@@ -880,14 +880,14 @@ fn gzipped_hapmap_on_stdin_decodes() {
                rs1\tA/T\tchr1\t100\t+\tNA\tNA\tNA\tNA\tNA\tNN\tAA\tAT\n\
                rs2\tC/G\tchr1\t200\t+\tNA\tNA\tNA\tNA\tNA\tNN\tCC\tCG\n";
     // BGZF is gzip-compatible: the stdin sniff only looks for the magic.
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut compressed = Vec::new();
     for block in hmp.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut compressed)
             .expect("invariant: block");
     }
-    compressed.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    compressed.extend_from_slice(&reed::frontend::EOF_BLOCK);
 
     let out_path = dir.join("out.vcf");
     let mut child = Command::new(env!("CARGO_BIN_EXE_reed"))
@@ -1112,24 +1112,24 @@ fn r5_index_refuses_output_equal_to_input() {
 
 /// Compresses `text` into a BGZF file at `path`.
 fn write_bgzf(path: &std::path::Path, text: &str) {
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut out = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut out)
             .expect("invariant: block");
     }
-    out.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    out.extend_from_slice(&reed::frontend::EOF_BLOCK);
     std::fs::write(path, out).expect("invariant: write");
 }
 
 /// Reads a BGZF file back as text.
 fn read_bgzf(path: &std::path::Path) -> String {
     let bytes = std::fs::read(path).expect("invariant: read");
-    let mut inflater = reed::frontend::bgzf::inflate::Inflater::new();
+    let mut inflater = reed::frontend::Inflater::new();
     let mut text = Vec::new();
     let mut rest = &bytes[..];
-    while let Some(total) = reed::frontend::bgzf::block::parse_block_size(rest) {
+    while let Some(total) = reed::frontend::parse_block_size(rest) {
         inflater
             .inflate_block(&rest[..total], &mut text)
             .expect("invariant: inflate");
@@ -1543,14 +1543,14 @@ fn region_flag_combinations_match_bcftools() {
          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts0\n\
          chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
          chr2\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut compressed = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut compressed)
             .expect("invariant: block");
     }
-    compressed.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    compressed.extend_from_slice(&reed::frontend::EOF_BLOCK);
     std::fs::write(&vcf, compressed).expect("invariant: write");
     let out = run(&["index", vcf.to_str().expect("invariant: utf8")]);
     assert!(
@@ -1740,14 +1740,14 @@ fn hla_contig_regions_use_the_header_vocabulary() {
          HLA-A*01:01\t20\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
          HLA-A*01:01\t30\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n\
          chr1\t10\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\n";
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut compressed = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut compressed)
             .expect("invariant: block");
     }
-    compressed.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    compressed.extend_from_slice(&reed::frontend::EOF_BLOCK);
     std::fs::write(&vcf, compressed).expect("invariant: write");
     let inp = vcf.to_str().expect("invariant: utf8");
     let out = run(&["index", inp]);
@@ -2283,14 +2283,14 @@ fn popg_and_stats_intersect_the_site_families() {
          chr1\t300\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
          chr1\t400\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n\
          chr1\t500\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/1\t0/0\n";
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut compressed = Vec::new();
     for block in text.as_bytes().chunks(4096) {
         deflater
             .deflate_block(block, &mut compressed)
             .expect("invariant: block");
     }
-    compressed.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    compressed.extend_from_slice(&reed::frontend::EOF_BLOCK);
     std::fs::write(&vcf, compressed).expect("invariant: write");
     let indexed = run(&["index", vcf.to_str().expect("utf8"), "-c"]);
     assert!(
@@ -2611,14 +2611,14 @@ fn sparse_windows_accept_sorted_sites_across_a_real_chunk_seam() {
         writeln!(text, "chr1\t{pos}\t{id}\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0")
             .expect("invariant: write to String");
     }
-    let mut deflater = reed::frontend::bgzf::deflate::Deflater::new(6).expect("invariant: level");
+    let mut deflater = reed::frontend::Deflater::new(6).expect("invariant: level");
     let mut compressed = Vec::new();
     for block in text.as_bytes().chunks(65_000) {
         deflater
             .deflate_block(block, &mut compressed)
             .expect("invariant: block");
     }
-    compressed.extend_from_slice(&reed::frontend::bgzf::block::EOF_BLOCK);
+    compressed.extend_from_slice(&reed::frontend::EOF_BLOCK);
     assert!(compressed.len() > 1 << 20, "fixture must span input chunks");
     std::fs::write(&vcf, compressed).expect("invariant: write");
     let pops = dir.join("pops.txt");

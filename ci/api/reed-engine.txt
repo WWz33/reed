@@ -1,0 +1,456 @@
+pub mod reed_engine
+pub mod reed_engine::abort
+pub struct reed_engine::abort::Abort
+pub reed_engine::abort::Abort::handle: reed_engine::abort::AbortHandle
+pub reed_engine::abort::Abort::signal: reed_engine::abort::AbortSignal
+impl core::clone::Clone for reed_engine::abort::Abort
+pub fn reed_engine::abort::Abort::clone(&self) -> reed_engine::abort::Abort
+impl core::fmt::Debug for reed_engine::abort::Abort
+pub fn reed_engine::abort::Abort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::abort::Abort
+impl core::marker::Send for reed_engine::abort::Abort
+impl core::marker::Sync for reed_engine::abort::Abort
+impl core::marker::Unpin for reed_engine::abort::Abort
+impl core::marker::UnsafeUnpin for reed_engine::abort::Abort
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::abort::Abort
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::abort::Abort
+pub struct reed_engine::abort::AbortHandle
+impl reed_engine::abort::AbortHandle
+pub fn reed_engine::abort::AbortHandle::register(&self, &alloc::sync::Arc<reed_engine::budget::BytePermits>)
+pub fn reed_engine::abort::AbortHandle::trigger(&self)
+impl core::clone::Clone for reed_engine::abort::AbortHandle
+pub fn reed_engine::abort::AbortHandle::clone(&self) -> reed_engine::abort::AbortHandle
+impl core::fmt::Debug for reed_engine::abort::AbortHandle
+pub fn reed_engine::abort::AbortHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::abort::AbortHandle
+impl core::marker::Send for reed_engine::abort::AbortHandle
+impl core::marker::Sync for reed_engine::abort::AbortHandle
+impl core::marker::Unpin for reed_engine::abort::AbortHandle
+impl core::marker::UnsafeUnpin for reed_engine::abort::AbortHandle
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::abort::AbortHandle
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::abort::AbortHandle
+pub struct reed_engine::abort::AbortSignal
+impl reed_engine::abort::AbortSignal
+pub fn reed_engine::abort::AbortSignal::idle() -> &'static Self
+pub fn reed_engine::abort::AbortSignal::is_aborted(&self) -> bool
+pub fn reed_engine::abort::AbortSignal::raced_by_abort(&self, &crossbeam_channel::channel::Receiver<()>) -> bool
+pub const fn reed_engine::abort::AbortSignal::receiver(&self) -> &crossbeam_channel::channel::Receiver<()>
+pub const fn reed_engine::abort::AbortSignal::trigger_handle(&self) -> core::option::Option<&reed_engine::abort::AbortHandle>
+impl core::clone::Clone for reed_engine::abort::AbortSignal
+pub fn reed_engine::abort::AbortSignal::clone(&self) -> reed_engine::abort::AbortSignal
+impl core::fmt::Debug for reed_engine::abort::AbortSignal
+pub fn reed_engine::abort::AbortSignal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::abort::AbortSignal
+impl core::marker::Send for reed_engine::abort::AbortSignal
+impl core::marker::Sync for reed_engine::abort::AbortSignal
+impl core::marker::Unpin for reed_engine::abort::AbortSignal
+impl core::marker::UnsafeUnpin for reed_engine::abort::AbortSignal
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::abort::AbortSignal
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::abort::AbortSignal
+pub struct reed_engine::abort::FirstError
+impl reed_engine::abort::FirstError
+pub fn reed_engine::abort::FirstError::failed(&self) -> bool
+pub fn reed_engine::abort::FirstError::new(reed_engine::abort::AbortHandle) -> Self
+pub fn reed_engine::abort::FirstError::record(&self, reed_engine::error::EngineError)
+pub fn reed_engine::abort::FirstError::take(self) -> core::option::Option<reed_engine::error::EngineError>
+pub fn reed_engine::abort::FirstError::take_shared(&alloc::sync::Arc<Self>) -> core::option::Option<reed_engine::error::EngineError>
+impl core::fmt::Debug for reed_engine::abort::FirstError
+pub fn reed_engine::abort::FirstError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for reed_engine::abort::FirstError
+impl core::marker::Send for reed_engine::abort::FirstError
+impl core::marker::Sync for reed_engine::abort::FirstError
+impl core::marker::Unpin for reed_engine::abort::FirstError
+impl core::marker::UnsafeUnpin for reed_engine::abort::FirstError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::abort::FirstError
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::abort::FirstError
+pub fn reed_engine::abort::abort() -> reed_engine::abort::Abort
+pub fn reed_engine::abort::abort_channel() -> (reed_engine::abort::AbortHandle, reed_engine::abort::AbortSignal)
+pub fn reed_engine::abort::abort_channel_for(usize) -> (reed_engine::abort::AbortHandle, reed_engine::abort::AbortSignal)
+pub fn reed_engine::abort::abort_for(&reed_engine::budget::ThreadBudget) -> reed_engine::abort::Abort
+pub mod reed_engine::budget
+pub struct reed_engine::budget::BytePermits
+impl reed_engine::budget::BytePermits
+pub fn reed_engine::budget::BytePermits::acquire(&self, u64, &reed_engine::abort::AbortSignal) -> bool
+pub fn reed_engine::budget::BytePermits::new(u64) -> Self
+pub fn reed_engine::budget::BytePermits::notify_abort(&self)
+pub fn reed_engine::budget::BytePermits::release(&self, u64)
+impl core::fmt::Debug for reed_engine::budget::BytePermits
+pub fn reed_engine::budget::BytePermits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for reed_engine::budget::BytePermits
+impl core::marker::Send for reed_engine::budget::BytePermits
+impl core::marker::Sync for reed_engine::budget::BytePermits
+impl core::marker::Unpin for reed_engine::budget::BytePermits
+impl core::marker::UnsafeUnpin for reed_engine::budget::BytePermits
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::budget::BytePermits
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::budget::BytePermits
+pub struct reed_engine::budget::MemBudget
+pub reed_engine::budget::MemBudget::bytes: u64
+impl reed_engine::budget::MemBudget
+pub fn reed_engine::budget::MemBudget::default_half_memory() -> Self
+pub const fn reed_engine::budget::MemBudget::estimate(&self, u64) -> u64
+pub const fn reed_engine::budget::MemBudget::from_bytes(u64) -> Self
+impl core::clone::Clone for reed_engine::budget::MemBudget
+pub fn reed_engine::budget::MemBudget::clone(&self) -> reed_engine::budget::MemBudget
+impl core::fmt::Debug for reed_engine::budget::MemBudget
+pub fn reed_engine::budget::MemBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_engine::budget::MemBudget
+impl core::marker::Freeze for reed_engine::budget::MemBudget
+impl core::marker::Send for reed_engine::budget::MemBudget
+impl core::marker::Sync for reed_engine::budget::MemBudget
+impl core::marker::Unpin for reed_engine::budget::MemBudget
+impl core::marker::UnsafeUnpin for reed_engine::budget::MemBudget
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::budget::MemBudget
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::budget::MemBudget
+pub struct reed_engine::budget::MemMiB(_)
+impl reed_engine::budget::MemMiB
+pub const fn reed_engine::budget::MemMiB::bytes(self) -> u64
+pub const fn reed_engine::budget::MemMiB::get(self) -> u32
+impl core::clone::Clone for reed_engine::budget::MemMiB
+pub fn reed_engine::budget::MemMiB::clone(&self) -> reed_engine::budget::MemMiB
+impl core::cmp::Eq for reed_engine::budget::MemMiB
+impl core::cmp::PartialEq for reed_engine::budget::MemMiB
+pub fn reed_engine::budget::MemMiB::eq(&self, &reed_engine::budget::MemMiB) -> bool
+impl core::fmt::Debug for reed_engine::budget::MemMiB
+pub fn reed_engine::budget::MemMiB::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_engine::budget::MemMiB
+pub fn reed_engine::budget::MemMiB::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_engine::budget::MemMiB
+impl core::marker::StructuralPartialEq for reed_engine::budget::MemMiB
+impl core::str::traits::FromStr for reed_engine::budget::MemMiB
+pub type reed_engine::budget::MemMiB::Err = alloc::string::String
+pub fn reed_engine::budget::MemMiB::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed_engine::budget::MemMiB
+impl core::marker::Send for reed_engine::budget::MemMiB
+impl core::marker::Sync for reed_engine::budget::MemMiB
+impl core::marker::Unpin for reed_engine::budget::MemMiB
+impl core::marker::UnsafeUnpin for reed_engine::budget::MemMiB
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::budget::MemMiB
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::budget::MemMiB
+pub struct reed_engine::budget::ThreadBudget
+pub reed_engine::budget::ThreadBudget::mem: reed_engine::budget::MemBudget
+pub reed_engine::budget::ThreadBudget::threads: usize
+impl reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::all() -> Self
+pub fn reed_engine::budget::ThreadBudget::auxiliary(&self) -> usize
+pub fn reed_engine::budget::ThreadBudget::from_cli(core::option::Option<reed_engine::budget::Threads>, core::option::Option<reed_engine::budget::MemMiB>) -> Self
+pub const fn reed_engine::budget::ThreadBudget::is_sequential(&self) -> bool
+pub fn reed_engine::budget::ThreadBudget::tickets(&self) -> usize
+pub fn reed_engine::budget::ThreadBudget::workers(&self) -> usize
+impl core::clone::Clone for reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::clone(&self) -> reed_engine::budget::ThreadBudget
+impl core::default::Default for reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::default() -> Self
+impl core::fmt::Debug for reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_engine::budget::ThreadBudget
+impl core::marker::Freeze for reed_engine::budget::ThreadBudget
+impl core::marker::Send for reed_engine::budget::ThreadBudget
+impl core::marker::Sync for reed_engine::budget::ThreadBudget
+impl core::marker::Unpin for reed_engine::budget::ThreadBudget
+impl core::marker::UnsafeUnpin for reed_engine::budget::ThreadBudget
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::budget::ThreadBudget
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::budget::ThreadBudget
+pub struct reed_engine::budget::Threads(_)
+impl reed_engine::budget::Threads
+pub const fn reed_engine::budget::Threads::get(self) -> usize
+impl core::clone::Clone for reed_engine::budget::Threads
+pub fn reed_engine::budget::Threads::clone(&self) -> reed_engine::budget::Threads
+impl core::cmp::Eq for reed_engine::budget::Threads
+impl core::cmp::PartialEq for reed_engine::budget::Threads
+pub fn reed_engine::budget::Threads::eq(&self, &reed_engine::budget::Threads) -> bool
+impl core::fmt::Debug for reed_engine::budget::Threads
+pub fn reed_engine::budget::Threads::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_engine::budget::Threads
+pub fn reed_engine::budget::Threads::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_engine::budget::Threads
+impl core::marker::StructuralPartialEq for reed_engine::budget::Threads
+impl core::str::traits::FromStr for reed_engine::budget::Threads
+pub type reed_engine::budget::Threads::Err = alloc::string::String
+pub fn reed_engine::budget::Threads::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed_engine::budget::Threads
+impl core::marker::Send for reed_engine::budget::Threads
+impl core::marker::Sync for reed_engine::budget::Threads
+impl core::marker::Unpin for reed_engine::budget::Threads
+impl core::marker::UnsafeUnpin for reed_engine::budget::Threads
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::budget::Threads
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::budget::Threads
+pub const reed_engine::budget::MAX_THREADS: usize
+pub const reed_engine::budget::MEM_FACTOR: u64
+pub const reed_engine::budget::TICKETS_PER_WORKER: usize
+pub fn reed_engine::budget::parse_mem_mib(&str) -> core::result::Result<reed_engine::budget::MemMiB, alloc::string::String>
+pub fn reed_engine::budget::parse_threads(&str) -> core::result::Result<reed_engine::budget::Threads, alloc::string::String>
+pub fn reed_engine::budget::run_auxiliary<T, F>(&reed_engine::budget::ThreadBudget, F) -> core::result::Result<T, alloc::string::String> where F: core::ops::function::FnOnce(bool) -> T + core::marker::Send, T: core::marker::Send
+pub mod reed_engine::error
+#[non_exhaustive] pub enum reed_engine::error::EngineError
+pub reed_engine::error::EngineError::Aborted
+pub reed_engine::error::EngineError::Input(reed_io::error::IoError)
+pub reed_engine::error::EngineError::Io(std::io::error::Error)
+pub reed_engine::error::EngineError::Job(alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>)
+pub reed_engine::error::EngineError::MemBudgetExceeded
+pub reed_engine::error::EngineError::MemBudgetExceeded::budget_bytes: u64
+pub reed_engine::error::EngineError::MemBudgetExceeded::peak_bytes: u64
+pub reed_engine::error::EngineError::ReaderPanicked
+pub reed_engine::error::EngineError::ReaderPanicked::message: alloc::string::String
+pub reed_engine::error::EngineError::ReducerPanicked
+pub reed_engine::error::EngineError::ReducerPanicked::chunk: reed_core::id::ChunkId
+pub reed_engine::error::EngineError::ReducerPanicked::message: alloc::string::String
+pub reed_engine::error::EngineError::Usage(alloc::string::String)
+pub reed_engine::error::EngineError::WorkerPanicked
+pub reed_engine::error::EngineError::WorkerPanicked::chunk: reed_core::id::ChunkId
+pub reed_engine::error::EngineError::WorkerPanicked::message: alloc::string::String
+impl reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::job(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn reed_engine::error::EngineError::usage(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<reed_core::error::CoreError> for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::from(reed_core::error::CoreError) -> Self
+impl core::convert::From<reed_io::error::IoError> for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::from(reed_io::error::IoError) -> Self
+impl core::convert::From<std::io::error::Error> for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::from(std::io::error::Error) -> Self
+impl core::error::Error for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::error::EngineError
+impl core::marker::Send for reed_engine::error::EngineError
+impl core::marker::Sync for reed_engine::error::EngineError
+impl core::marker::Unpin for reed_engine::error::EngineError
+impl core::marker::UnsafeUnpin for reed_engine::error::EngineError
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_engine::error::EngineError
+impl !core::panic::unwind_safe::UnwindSafe for reed_engine::error::EngineError
+pub mod reed_engine::frame_chain
+pub struct reed_engine::frame_chain::Carried
+pub reed_engine::frame_chain::Carried::head: alloc::vec::Vec<u8>
+pub reed_engine::frame_chain::Carried::prefix_len: u64
+pub reed_engine::frame_chain::Carried::voff: u64
+impl reed_engine::frame_chain::Carried
+pub fn reed_engine::frame_chain::Carried::is_empty(&self) -> bool
+impl core::clone::Clone for reed_engine::frame_chain::Carried
+pub fn reed_engine::frame_chain::Carried::clone(&self) -> reed_engine::frame_chain::Carried
+impl core::default::Default for reed_engine::frame_chain::Carried
+pub fn reed_engine::frame_chain::Carried::default() -> reed_engine::frame_chain::Carried
+impl core::fmt::Debug for reed_engine::frame_chain::Carried
+pub fn reed_engine::frame_chain::Carried::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::frame_chain::Carried
+impl core::marker::Send for reed_engine::frame_chain::Carried
+impl core::marker::Sync for reed_engine::frame_chain::Carried
+impl core::marker::Unpin for reed_engine::frame_chain::Carried
+impl core::marker::UnsafeUnpin for reed_engine::frame_chain::Carried
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::frame_chain::Carried
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::frame_chain::Carried
+pub struct reed_engine::frame_chain::FrameChain
+impl reed_engine::frame_chain::FrameChain
+pub fn reed_engine::frame_chain::FrameChain::finish(&self)
+pub fn reed_engine::frame_chain::FrameChain::new(reed_engine::abort::AbortSignal) -> Self
+pub fn reed_engine::frame_chain::FrameChain::peek(&self, u64) -> core::option::Option<reed_engine::frame_chain::Carried>
+pub fn reed_engine::frame_chain::FrameChain::poison(&self)
+pub fn reed_engine::frame_chain::FrameChain::publish(&self, u64, reed_engine::frame_chain::Carried)
+pub fn reed_engine::frame_chain::FrameChain::wait(&self, u64) -> core::result::Result<reed_engine::frame_chain::Carried, reed_engine::error::EngineError>
+pub fn reed_engine::frame_chain::FrameChain::wait_time(&self) -> core::time::Duration
+impl reed_engine::frame_chain::FrameChain
+pub const fn reed_engine::frame_chain::FrameChain::publish_guard(&self, u64) -> reed_engine::frame_chain::PublishGuard<'_>
+impl !core::marker::Freeze for reed_engine::frame_chain::FrameChain
+impl core::marker::Send for reed_engine::frame_chain::FrameChain
+impl core::marker::Sync for reed_engine::frame_chain::FrameChain
+impl core::marker::Unpin for reed_engine::frame_chain::FrameChain
+impl core::marker::UnsafeUnpin for reed_engine::frame_chain::FrameChain
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::frame_chain::FrameChain
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::frame_chain::FrameChain
+pub struct reed_engine::frame_chain::PublishGuard<'a>
+impl reed_engine::frame_chain::PublishGuard<'_>
+pub fn reed_engine::frame_chain::PublishGuard<'_>::publish(&mut self, reed_engine::frame_chain::Carried)
+impl core::ops::drop::Drop for reed_engine::frame_chain::PublishGuard<'_>
+pub fn reed_engine::frame_chain::PublishGuard<'_>::drop(&mut self)
+impl<'a> core::marker::Freeze for reed_engine::frame_chain::PublishGuard<'a>
+impl<'a> core::marker::Send for reed_engine::frame_chain::PublishGuard<'a>
+impl<'a> core::marker::Sync for reed_engine::frame_chain::PublishGuard<'a>
+impl<'a> core::marker::Unpin for reed_engine::frame_chain::PublishGuard<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_engine::frame_chain::PublishGuard<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_engine::frame_chain::PublishGuard<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_engine::frame_chain::PublishGuard<'a>
+pub type reed_engine::frame_chain::SharedChain = alloc::sync::Arc<reed_engine::frame_chain::FrameChain>
+pub mod reed_engine::metrics
+pub struct reed_engine::metrics::StageMetrics
+pub reed_engine::metrics::StageMetrics::chain_wait: core::time::Duration
+pub reed_engine::metrics::StageMetrics::deflate_time: core::time::Duration
+pub reed_engine::metrics::StageMetrics::in_flight_final_bytes: u64
+pub reed_engine::metrics::StageMetrics::in_flight_peak_bytes: u64
+pub reed_engine::metrics::StageMetrics::inflate_time: core::time::Duration
+pub reed_engine::metrics::StageMetrics::job_time: core::time::Duration
+pub reed_engine::metrics::StageMetrics::n_chunks_read: u64
+pub reed_engine::metrics::StageMetrics::reader_time: core::time::Duration
+pub reed_engine::metrics::StageMetrics::reader_wait: core::time::Duration
+pub reed_engine::metrics::StageMetrics::reduce_time: core::time::Duration
+pub reed_engine::metrics::StageMetrics::reducer_wait: core::time::Duration
+pub reed_engine::metrics::StageMetrics::worker_busy: core::time::Duration
+impl reed_engine::metrics::StageMetrics
+pub fn reed_engine::metrics::StageMetrics::merge(&mut self, &Self)
+pub fn reed_engine::metrics::StageMetrics::render_tsv(&self) -> alloc::string::String
+impl core::clone::Clone for reed_engine::metrics::StageMetrics
+pub fn reed_engine::metrics::StageMetrics::clone(&self) -> reed_engine::metrics::StageMetrics
+impl core::default::Default for reed_engine::metrics::StageMetrics
+pub fn reed_engine::metrics::StageMetrics::default() -> reed_engine::metrics::StageMetrics
+impl core::fmt::Debug for reed_engine::metrics::StageMetrics
+pub fn reed_engine::metrics::StageMetrics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_engine::metrics::StageMetrics
+impl core::marker::Freeze for reed_engine::metrics::StageMetrics
+impl core::marker::Send for reed_engine::metrics::StageMetrics
+impl core::marker::Sync for reed_engine::metrics::StageMetrics
+impl core::marker::Unpin for reed_engine::metrics::StageMetrics
+impl core::marker::UnsafeUnpin for reed_engine::metrics::StageMetrics
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::metrics::StageMetrics
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::metrics::StageMetrics
+pub mod reed_engine::pipeline
+pub struct reed_engine::pipeline::ChunkOutput<P>
+pub reed_engine::pipeline::ChunkOutput::head: core::option::Option<alloc::vec::Vec<u8>>
+pub reed_engine::pipeline::ChunkOutput::id: reed_core::id::ChunkId
+pub reed_engine::pipeline::ChunkOutput::partial: P
+pub reed_engine::pipeline::ChunkOutput::tail: core::option::Option<alloc::vec::Vec<u8>>
+impl<P> core::marker::Freeze for reed_engine::pipeline::ChunkOutput<P> where P: core::marker::Freeze
+impl<P> core::marker::Send for reed_engine::pipeline::ChunkOutput<P> where P: core::marker::Send
+impl<P> core::marker::Sync for reed_engine::pipeline::ChunkOutput<P> where P: core::marker::Sync
+impl<P> core::marker::Unpin for reed_engine::pipeline::ChunkOutput<P> where P: core::marker::Unpin
+impl<P> core::marker::UnsafeUnpin for reed_engine::pipeline::ChunkOutput<P> where P: core::marker::UnsafeUnpin
+impl<P> core::panic::unwind_safe::RefUnwindSafe for reed_engine::pipeline::ChunkOutput<P> where P: core::panic::unwind_safe::RefUnwindSafe
+impl<P> core::panic::unwind_safe::UnwindSafe for reed_engine::pipeline::ChunkOutput<P> where P: core::panic::unwind_safe::UnwindSafe
+pub struct reed_engine::pipeline::NewlineStitcher
+impl reed_engine::pipeline::NewlineStitcher
+pub fn reed_engine::pipeline::NewlineStitcher::finish(self) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn reed_engine::pipeline::NewlineStitcher::push_head(&mut self, core::option::Option<&[u8]>) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, reed_engine::error::EngineError>
+pub fn reed_engine::pipeline::NewlineStitcher::push_tail(&mut self, core::option::Option<&[u8]>) -> core::result::Result<(), reed_engine::error::EngineError>
+pub fn reed_engine::pipeline::NewlineStitcher::with_ceiling(usize) -> Self
+impl core::default::Default for reed_engine::pipeline::NewlineStitcher
+pub fn reed_engine::pipeline::NewlineStitcher::default() -> Self
+impl core::marker::Freeze for reed_engine::pipeline::NewlineStitcher
+impl core::marker::Send for reed_engine::pipeline::NewlineStitcher
+impl core::marker::Sync for reed_engine::pipeline::NewlineStitcher
+impl core::marker::Unpin for reed_engine::pipeline::NewlineStitcher
+impl core::marker::UnsafeUnpin for reed_engine::pipeline::NewlineStitcher
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::pipeline::NewlineStitcher
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::pipeline::NewlineStitcher
+pub struct reed_engine::pipeline::RunReport
+pub reed_engine::pipeline::RunReport::elapsed: core::time::Duration
+pub reed_engine::pipeline::RunReport::metrics: reed_engine::metrics::StageMetrics
+pub reed_engine::pipeline::RunReport::n_chunks: u64
+pub reed_engine::pipeline::RunReport::sink_report: u64
+impl core::clone::Clone for reed_engine::pipeline::RunReport
+pub fn reed_engine::pipeline::RunReport::clone(&self) -> reed_engine::pipeline::RunReport
+impl core::fmt::Debug for reed_engine::pipeline::RunReport
+pub fn reed_engine::pipeline::RunReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::pipeline::RunReport
+impl core::marker::Send for reed_engine::pipeline::RunReport
+impl core::marker::Sync for reed_engine::pipeline::RunReport
+impl core::marker::Unpin for reed_engine::pipeline::RunReport
+impl core::marker::UnsafeUnpin for reed_engine::pipeline::RunReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::pipeline::RunReport
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::pipeline::RunReport
+pub const reed_engine::pipeline::MAX_RECORD_BYTES: usize
+pub const reed_engine::pipeline::TRUNCATED_INPUT: &str
+pub trait reed_engine::pipeline::ChunkJob: core::marker::Sync
+pub type reed_engine::pipeline::ChunkJob::Partial: core::marker::Send + core::default::Default
+pub type reed_engine::pipeline::ChunkJob::Scratch: core::marker::Send + core::default::Default
+pub fn reed_engine::pipeline::ChunkJob::framing(&self) -> reed_io::chunk::framing::RecordFraming
+pub fn reed_engine::pipeline::ChunkJob::run_chunk(&self, &reed_io::chunk::ChunkBytes, &[u8], &mut Self::Scratch) -> core::result::Result<Self::Partial, reed_engine::error::EngineError>
+pub fn reed_engine::pipeline::ChunkJob::run_seam(&self, reed_core::id::ChunkId, &[u8], &mut Self::Scratch) -> core::result::Result<Self::Partial, reed_engine::error::EngineError>
+pub fn reed_engine::pipeline::ChunkJob::wait_time(&self) -> core::time::Duration
+pub trait reed_engine::pipeline::OrderedSink<P>: core::marker::Send
+pub fn reed_engine::pipeline::OrderedSink::accept(&mut self, reed_core::id::ChunkId, &mut P) -> core::result::Result<(), reed_engine::error::EngineError>
+pub fn reed_engine::pipeline::OrderedSink::deflate_time(&self) -> core::time::Duration
+pub fn reed_engine::pipeline::OrderedSink::finish(self) -> core::result::Result<u64, reed_engine::error::EngineError>
+pub fn reed_engine::pipeline::record_ceiling(&reed_engine::budget::ThreadBudget) -> usize
+pub fn reed_engine::pipeline::run<J, S>(&mut dyn reed_io::chunk::ChunkSource, &J, S, &reed_engine::budget::ThreadBudget, &reed_engine::abort::AbortSignal) -> core::result::Result<reed_engine::pipeline::RunReport, reed_engine::error::EngineError> where J: reed_engine::pipeline::ChunkJob + 'static, S: reed_engine::pipeline::OrderedSink<<J as reed_engine::pipeline::ChunkJob>::Partial> + 'static
+pub mod reed_engine::reorder
+pub struct reed_engine::reorder::ReorderBuffer<T>
+impl<T> reed_engine::reorder::ReorderBuffer<T>
+pub fn reed_engine::reorder::ReorderBuffer<T>::capacity(&self) -> usize
+pub const fn reed_engine::reorder::ReorderBuffer<T>::expected(&self) -> u64
+pub fn reed_engine::reorder::ReorderBuffer<T>::insert(&mut self, reed_core::id::ChunkId, T)
+pub fn reed_engine::reorder::ReorderBuffer<T>::new(usize) -> Self
+pub fn reed_engine::reorder::ReorderBuffer<T>::ready(&self) -> bool
+pub fn reed_engine::reorder::ReorderBuffer<T>::take_ready(&mut self) -> core::option::Option<(reed_core::id::ChunkId, T)>
+impl<T: core::fmt::Debug> core::fmt::Debug for reed_engine::reorder::ReorderBuffer<T>
+pub fn reed_engine::reorder::ReorderBuffer<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::marker::Freeze for reed_engine::reorder::ReorderBuffer<T>
+impl<T> core::marker::Send for reed_engine::reorder::ReorderBuffer<T> where T: core::marker::Send
+impl<T> core::marker::Sync for reed_engine::reorder::ReorderBuffer<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for reed_engine::reorder::ReorderBuffer<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for reed_engine::reorder::ReorderBuffer<T>
+impl<T> core::panic::unwind_safe::RefUnwindSafe for reed_engine::reorder::ReorderBuffer<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for reed_engine::reorder::ReorderBuffer<T> where T: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub enum reed_engine::EngineError
+pub reed_engine::EngineError::Aborted
+pub reed_engine::EngineError::Input(reed_io::error::IoError)
+pub reed_engine::EngineError::Io(std::io::error::Error)
+pub reed_engine::EngineError::Job(alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>)
+pub reed_engine::EngineError::MemBudgetExceeded
+pub reed_engine::EngineError::MemBudgetExceeded::budget_bytes: u64
+pub reed_engine::EngineError::MemBudgetExceeded::peak_bytes: u64
+pub reed_engine::EngineError::ReaderPanicked
+pub reed_engine::EngineError::ReaderPanicked::message: alloc::string::String
+pub reed_engine::EngineError::ReducerPanicked
+pub reed_engine::EngineError::ReducerPanicked::chunk: reed_core::id::ChunkId
+pub reed_engine::EngineError::ReducerPanicked::message: alloc::string::String
+pub reed_engine::EngineError::Usage(alloc::string::String)
+pub reed_engine::EngineError::WorkerPanicked
+pub reed_engine::EngineError::WorkerPanicked::chunk: reed_core::id::ChunkId
+pub reed_engine::EngineError::WorkerPanicked::message: alloc::string::String
+impl reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::job(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn reed_engine::error::EngineError::usage(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<reed_core::error::CoreError> for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::from(reed_core::error::CoreError) -> Self
+impl core::convert::From<reed_io::error::IoError> for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::from(reed_io::error::IoError) -> Self
+impl core::convert::From<std::io::error::Error> for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::from(std::io::error::Error) -> Self
+impl core::error::Error for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_engine::error::EngineError
+pub fn reed_engine::error::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_engine::error::EngineError
+impl core::marker::Send for reed_engine::error::EngineError
+impl core::marker::Sync for reed_engine::error::EngineError
+impl core::marker::Unpin for reed_engine::error::EngineError
+impl core::marker::UnsafeUnpin for reed_engine::error::EngineError
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_engine::error::EngineError
+impl !core::panic::unwind_safe::UnwindSafe for reed_engine::error::EngineError
+pub struct reed_engine::ThreadBudget
+pub reed_engine::ThreadBudget::mem: reed_engine::budget::MemBudget
+pub reed_engine::ThreadBudget::threads: usize
+impl reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::all() -> Self
+pub fn reed_engine::budget::ThreadBudget::auxiliary(&self) -> usize
+pub fn reed_engine::budget::ThreadBudget::from_cli(core::option::Option<reed_engine::budget::Threads>, core::option::Option<reed_engine::budget::MemMiB>) -> Self
+pub const fn reed_engine::budget::ThreadBudget::is_sequential(&self) -> bool
+pub fn reed_engine::budget::ThreadBudget::tickets(&self) -> usize
+pub fn reed_engine::budget::ThreadBudget::workers(&self) -> usize
+impl core::clone::Clone for reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::clone(&self) -> reed_engine::budget::ThreadBudget
+impl core::default::Default for reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::default() -> Self
+impl core::fmt::Debug for reed_engine::budget::ThreadBudget
+pub fn reed_engine::budget::ThreadBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_engine::budget::ThreadBudget
+impl core::marker::Freeze for reed_engine::budget::ThreadBudget
+impl core::marker::Send for reed_engine::budget::ThreadBudget
+impl core::marker::Sync for reed_engine::budget::ThreadBudget
+impl core::marker::Unpin for reed_engine::budget::ThreadBudget
+impl core::marker::UnsafeUnpin for reed_engine::budget::ThreadBudget
+impl core::panic::unwind_safe::RefUnwindSafe for reed_engine::budget::ThreadBudget
+impl core::panic::unwind_safe::UnwindSafe for reed_engine::budget::ThreadBudget
+pub trait reed_engine::ChunkJob: core::marker::Sync
+pub type reed_engine::ChunkJob::Partial: core::marker::Send + core::default::Default
+pub type reed_engine::ChunkJob::Scratch: core::marker::Send + core::default::Default
+pub fn reed_engine::ChunkJob::framing(&self) -> reed_io::chunk::framing::RecordFraming
+pub fn reed_engine::ChunkJob::run_chunk(&self, &reed_io::chunk::ChunkBytes, &[u8], &mut Self::Scratch) -> core::result::Result<Self::Partial, reed_engine::error::EngineError>
+pub fn reed_engine::ChunkJob::run_seam(&self, reed_core::id::ChunkId, &[u8], &mut Self::Scratch) -> core::result::Result<Self::Partial, reed_engine::error::EngineError>
+pub fn reed_engine::ChunkJob::wait_time(&self) -> core::time::Duration
+pub trait reed_engine::OrderedSink<P>: core::marker::Send
+pub fn reed_engine::OrderedSink::accept(&mut self, reed_core::id::ChunkId, &mut P) -> core::result::Result<(), reed_engine::error::EngineError>
+pub fn reed_engine::OrderedSink::deflate_time(&self) -> core::time::Duration
+pub fn reed_engine::OrderedSink::finish(self) -> core::result::Result<u64, reed_engine::error::EngineError>
+pub fn reed_engine::run<J, S>(&mut dyn reed_io::chunk::ChunkSource, &J, S, &reed_engine::budget::ThreadBudget, &reed_engine::abort::AbortSignal) -> core::result::Result<reed_engine::pipeline::RunReport, reed_engine::error::EngineError> where J: reed_engine::pipeline::ChunkJob + 'static, S: reed_engine::pipeline::OrderedSink<<J as reed_engine::pipeline::ChunkJob>::Partial> + 'static

@@ -17,9 +17,11 @@ use std::io::Write as _;
 
 use reed_engine::budget::ThreadBudget;
 
+use crate::options::{MissingPolicy, PcaSolver, Stand};
+
 use crate::context::RunContext;
 use crate::genotype::{CollectSink, GenotypeBlock, PcaJob, collect_via_engine};
-use reed_reduce::pca::{Stand, pca_dense_pairwise_with_par, pca_dense_with_par};
+use reed_reduce::pca::{pca_dense_pairwise_with_par, pca_dense_with_par};
 use reed_reduce::{Mat, StreamConfig, lanczos_top_k};
 
 /// How the caller will consume the dosage matrix, for the `--memory` gate
@@ -99,15 +101,15 @@ impl MatrixUse {
 /// alone, and `solve` makes the authoritative decision once the site count is
 /// known.
 pub(crate) fn chosen_solver(
-    solver: &str,
+    solver: PcaSolver,
     n_kept: usize,
     n_sites: Option<usize>,
     budget: &ThreadBudget,
 ) -> &'static str {
     match solver {
-        "dense" => "dense",
-        "stream" => "stream",
-        _ => {
+        PcaSolver::Dense => "dense",
+        PcaSolver::Stream => "stream",
+        PcaSolver::Auto => {
             let dense_peak = match n_sites {
                 Some(n_sites) => {
                     MatrixUse::DenseMeanImpute.peak_bytes(n_kept as u64, n_sites as u64)
@@ -126,10 +128,10 @@ pub(crate) fn chosen_solver(
 }
 
 /// The gate class for a resolved PCA solver.
-pub(crate) fn matrix_use(solver: &str, missing: &str) -> MatrixUse {
+pub(crate) fn matrix_use(solver: &str, missing: MissingPolicy) -> MatrixUse {
     if solver == "stream" {
         MatrixUse::Stream
-    } else if missing == "pairwise" {
+    } else if matches!(missing, MissingPolicy::Pairwise) {
         MatrixUse::DensePairwise
     } else {
         MatrixUse::DenseMeanImpute
@@ -250,12 +252,12 @@ pub fn read_genotype_matrix(
 pub struct PcaRequest {
     /// Number of principal components.
     pub pcs: usize,
-    /// `binom2` (default) or `binom`.
-    pub stand: String,
-    /// `pairwise` (default) or `meanimpute`.
-    pub missing: String,
-    /// `auto`, `dense` or `stream`.
-    pub solver: String,
+    /// Genotype standardization: `binom2` (default) or `binom`.
+    pub stand: Stand,
+    /// Missing-genotype policy: `pairwise` (default) or `meanimpute`.
+    pub missing: MissingPolicy,
+    /// Solver: `auto` (default), `dense` or `stream`.
+    pub solver: PcaSolver,
     /// Output prefix; writes `.eigenvec`, `.eigenval`, `.pve`.
     pub prefix: String,
     /// Optional sample keep mask (header order); `None` keeps every sample.
@@ -266,9 +268,9 @@ impl Default for PcaRequest {
     fn default() -> Self {
         Self {
             pcs: 10,
-            stand: "binom2".into(),
-            missing: "pairwise".into(),
-            solver: "auto".into(),
+            stand: Stand::Binom2,
+            missing: MissingPolicy::Pairwise,
+            solver: PcaSolver::Auto,
             prefix: "out".into(),
             keep_samples: None,
         }
@@ -324,19 +326,9 @@ pub fn run_pca_opened(
     if request.pcs == 0 {
         return Err(crate::Error::usage("--pcs must be at least 1"));
     }
-    let stand = Stand::parse(&request.stand).map_err(crate::Error::usage)?;
-    let missing = request.missing.as_str();
-    if !matches!(missing, "pairwise" | "meanimpute") {
-        return Err(crate::Error::usage(format!(
-            "--missing {missing:?} is not supported (pairwise|meanimpute)"
-        )));
-    }
-    let solver = request.solver.as_str();
-    if !matches!(solver, "auto" | "dense" | "stream") {
-        return Err(crate::Error::usage(format!(
-            "--solver {solver:?} is not supported (auto|dense|stream)"
-        )));
-    }
+    let stand = request.stand;
+    let missing = request.missing;
+    let solver = request.solver;
 
     // doc_v20 review of R10: decide the solver refusal before reading the
     // input. `n_kept` is known from the header and the keep mask, so an
@@ -350,7 +342,7 @@ pub fn run_pca_opened(
             None => n_samples,
         };
         let will_stream = chosen_solver(solver, n_kept, None, budget) == "stream";
-        if will_stream && missing == "pairwise" {
+        if will_stream && matches!(missing, MissingPolicy::Pairwise) {
             return Err(crate::Error::usage(
                 "--missing pairwise needs the dense solver; \
                  pick --solver dense, --missing meanimpute, or raise --memory",
@@ -443,8 +435,8 @@ pub(crate) fn solve(
     x: &Mat,
     k: usize,
     stand: Stand,
-    missing: &str,
-    solver: &str,
+    missing: MissingPolicy,
+    solver: PcaSolver,
     budget: &ThreadBudget,
 ) -> Result<Components, crate::Error> {
     let n = x.rows;
@@ -455,7 +447,7 @@ pub(crate) fn solve(
     // The stream solver has no pairwise-complete estimator: it mean-imputes
     // through `standardize`. Refuse the combination instead of downgrading
     // the policy silently (doc_v20 R10).
-    if chosen == "stream" && missing == "pairwise" {
+    if chosen == "stream" && matches!(missing, MissingPolicy::Pairwise) {
         return Err(crate::Error::usage(
             "--missing pairwise needs the dense solver; \
              pick --solver dense, --missing meanimpute, or raise --memory",
@@ -475,7 +467,7 @@ pub(crate) fn solve(
     };
 
     if chosen == "stream" {
-        let st = reed_reduce::pca::standardize(x, stand);
+        let st = reed_reduce::pca::standardize(x, stand.lower());
         let cfg = StreamConfig {
             k,
             tol: 1e-10,
@@ -516,10 +508,10 @@ pub(crate) fn solve(
             max_residual: Some(r.max_residual),
         })
     } else {
-        let p = if missing == "pairwise" {
-            pca_dense_pairwise_with_par(x, k, stand, par)
+        let p = if matches!(missing, MissingPolicy::Pairwise) {
+            pca_dense_pairwise_with_par(x, k, stand.lower(), par)
         } else {
-            pca_dense_with_par(x, k, stand, par)
+            pca_dense_with_par(x, k, stand.lower(), par)
         };
         Ok(Components {
             values: p.values,
@@ -704,8 +696,15 @@ mod tests {
                 threads,
                 mem: MemBudget::from_bytes(u64::MAX),
             };
-            solve(&x, 4, Stand::Binom2, "meanimpute", "dense", &budget)
-                .expect("invariant: dense solve")
+            solve(
+                &x,
+                4,
+                Stand::Binom2,
+                MissingPolicy::MeanImpute,
+                PcaSolver::Dense,
+                &budget,
+            )
+            .expect("invariant: dense solve")
         };
         let serial = run(1);
         let two = run(2);
@@ -727,8 +726,15 @@ mod tests {
             threads: 8,
             mem: MemBudget::from_bytes(u64::MAX),
         };
-        let streamed = solve(&x, 2, Stand::Binom2, "meanimpute", "stream", &budget)
-            .expect("invariant: stream solve");
+        let streamed = solve(
+            &x,
+            2,
+            Stand::Binom2,
+            MissingPolicy::MeanImpute,
+            PcaSolver::Stream,
+            &budget,
+        )
+        .expect("invariant: stream solve");
         assert_eq!(streamed.solver, "stream");
         assert_eq!(streamed.values.len(), 2);
     }
@@ -838,8 +844,8 @@ mod tests {
         let input = write_fixture(&dir, 6, 12);
         let request = PcaRequest {
             pcs: 2,
-            missing: "pairwise".into(),
-            solver: "stream".into(),
+            missing: MissingPolicy::Pairwise,
+            solver: PcaSolver::Stream,
             prefix: dir.join("out").to_string_lossy().into_owned(),
             ..PcaRequest::default()
         };
@@ -877,8 +883,8 @@ mod tests {
         let input = write_fixture(&dir, 100, 12);
         let request = PcaRequest {
             pcs: 2,
-            missing: "pairwise".into(),
-            solver: "auto".into(),
+            missing: MissingPolicy::Pairwise,
+            solver: PcaSolver::Auto,
             prefix: dir.join("out").to_string_lossy().into_owned(),
             ..PcaRequest::default()
         };
@@ -971,14 +977,26 @@ mod tests {
             mem: MemBudget::from_bytes(u64::MAX),
         };
         let n_kept = usize::try_from(n).expect("invariant: fits");
-        assert_eq!(chosen_solver("dense", n_kept, None, &budget), "dense");
-        assert_eq!(chosen_solver("stream", n_kept, None, &budget), "stream");
         assert_eq!(
-            matrix_use("dense", "meanimpute"),
+            chosen_solver(PcaSolver::Dense, n_kept, None, &budget),
+            "dense"
+        );
+        assert_eq!(
+            chosen_solver(PcaSolver::Stream, n_kept, None, &budget),
+            "stream"
+        );
+        assert_eq!(
+            matrix_use("dense", MissingPolicy::MeanImpute),
             MatrixUse::DenseMeanImpute
         );
-        assert_eq!(matrix_use("dense", "pairwise"), MatrixUse::DensePairwise);
-        assert_eq!(matrix_use("stream", "meanimpute"), MatrixUse::Stream);
+        assert_eq!(
+            matrix_use("dense", MissingPolicy::Pairwise),
+            MatrixUse::DensePairwise
+        );
+        assert_eq!(
+            matrix_use("stream", MissingPolicy::MeanImpute),
+            MatrixUse::Stream
+        );
     }
 
     /// doc_v26 V26-20: the dense estimate must cover every object the solve
@@ -1013,7 +1031,7 @@ mod tests {
         assert!(grm <= budget.mem.bytes && real > budget.mem.bytes);
         assert_eq!(
             chosen_solver(
-                "auto",
+                PcaSolver::Auto,
                 n_kept,
                 Some(usize::try_from(m).expect("invariant")),
                 &budget
@@ -1023,7 +1041,10 @@ mod tests {
         );
         // Before the site count is known the rule is the conservative square
         // form (used only by the pre-read refusal).
-        assert_eq!(chosen_solver("auto", n_kept, None, &budget), "dense");
+        assert_eq!(
+            chosen_solver(PcaSolver::Auto, n_kept, None, &budget),
+            "dense"
+        );
         // A budget that covers the real peak still picks dense.
         let roomy = ThreadBudget {
             threads: 4,
@@ -1031,7 +1052,7 @@ mod tests {
         };
         assert_eq!(
             chosen_solver(
-                "auto",
+                PcaSolver::Auto,
                 n_kept,
                 Some(usize::try_from(m).expect("invariant")),
                 &roomy
@@ -1071,8 +1092,8 @@ mod tests {
         std::fs::write(&input, fixture_text(20, 5)).expect("invariant: fixture");
         let request = PcaRequest {
             pcs: 8,
-            missing: "meanimpute".into(),
-            solver: "stream".into(),
+            missing: MissingPolicy::MeanImpute,
+            solver: PcaSolver::Stream,
             prefix: dir.join("out").to_string_lossy().into_owned(),
             ..PcaRequest::default()
         };

@@ -331,12 +331,18 @@ fn tsne_kl_cost(pj: &Mat, y: &Mat) -> f64 {
     cost
 }
 
+/// t-SNE hyper-parameters.
 #[derive(Clone, Debug)]
 pub struct TsneConfig {
+    /// Perplexity of the input affinities.
     pub perplexity: f64,
+    /// Embedding dimensions.
     pub n_components: usize,
+    /// Gradient-descent iterations.
     pub n_iter: usize,
+    /// Learning rate.
     pub learning_rate: f64,
+    /// Seed for the initial embedding.
     pub seed: u64,
 }
 

@@ -29,7 +29,7 @@ use crate::spec::FilterSpec;
 ///
 /// [`FilterError::Spec`] on validation failures: unknown tags, non-numeric
 /// types, `Number` outside {1, A}, a missing quantifier where one is
-/// required, thresholds out of range, or the M7 `midp` HWE mode.
+/// required or thresholds out of range.
 pub fn compile(
     spec: &FilterSpec,
     tags: &TagTable,

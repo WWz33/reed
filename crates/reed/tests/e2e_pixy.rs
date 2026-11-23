@@ -190,7 +190,7 @@ fn writer_emits_pixy_columns_with_na_for_empty_windows() {
     .expect("invariant: run");
     let prefix = path.parent().expect("invariant: temp dir path").join("out");
     let kinds = window_kinds(2, true, true, false, false, None, None);
-    reed::frontend::windows::write(
+    reed::frontend::write_windows(
         &prefix,
         &report,
         &["pop1".to_string(), "pop2".to_string()],

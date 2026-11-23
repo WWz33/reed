@@ -119,7 +119,7 @@ File Operations / Miscellaneous 五组列出命令；命令路径本身不变（
 | `--geno X` | 位点缺失率 ≤ X（§4.1 精确式） | 缺失等位 / 2N |
 | `--maf X` / `--max-maf X` | `min(ac, an−ac)/an ≥ X` / `≤ X` | 次等位 / 已调用等位 |
 | `--mac C` / `--max-mac C` | `min(ac, an−ac) ≥ C` / `≤ C` | 次等位计数 |
-| `--hwe P [midp]` | 精确检验 `p ≥ P`。**本版 `midp` 在 spec 编译期即拒绝**（exit 2，消息含 `midp`）；精确检验是唯一实现的模式（doc_v21 D1）。第二个 token 若不是 `midp` 也报用法错 | 双等位位点 |
+| `--hwe P [midp]` | HWE 检验 `p ≥ P`。默认是 Wigginton 精确检验；第二个 token `midp` 使用 mid-p 值（精确 p 减去观测构型概率的一半）。第二个 token 若不是 `midp` 报用法错 | 双等位位点 |
 | **`--indep-pairwise W[kb] [S] R2`**（裁决 2026-10-10） | LD 剪枝：按 plink2 的算法选出保留位点，**本命令直接输出剪枝后的 VCF/BCF**（位点清单形式的产物不在本轮范围内）。`W` 裸数字=位点个数、`S` 也是位点个数；`W` 带长度后缀=区间（此时 `S` 必须为 1，`50kb 5 0.2` 报用法错） | 掩码后的基因型；r² 只取两位点都已调用的样本（05 §3.4） |
 
 `-q/-Q` 与 `--maf` 的区别写在 `--help`：前者"非参考等位频率、优先用 INFO"，后者"次等位频率、总是按基因型重算"。

@@ -59,6 +59,10 @@ reed popg [OPTIONS] --pop FILE --pi --fst ... -o PREFIX <INPUT>
                             名字<TAB>长度 文件补长度；仍缺失则报错，不编造
 ```
 
+窗口坐标只支持碱基对（`--window/--step`）或 BED 区间（`--bed-file`）。
+**按位点数**定义的窗口尚未实现：`WindowGrid::Sites` 请求会返回 usage error，
+不会被静默解释成碱基窗口。
+
 ### 不变位点
 
 ```

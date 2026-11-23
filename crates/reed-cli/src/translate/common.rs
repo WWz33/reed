@@ -12,7 +12,7 @@ use crate::units::input_path;
 /// Prints the engine's stage metrics (doc_v4 03 A4-5): the reader, reducer
 /// and frame-chain cumulative times without which "reader-bound" is only an
 /// inference.
-pub(crate) fn print_engine_metrics(m: &reed::frontend::metrics::StageMetrics) {
+pub(crate) fn print_engine_metrics(m: &reed::StageMetrics) {
     // One renderer for every command (doc_v25 V25-08b).
     eprint!("{}", m.render_tsv());
 }
@@ -28,10 +28,7 @@ pub(crate) fn site_spec_is_empty(spec: &reed::spec::FilterSpec) -> bool {
 /// The parsed region flags: indexed regions as a seek request, plus the
 /// `SiteSelector` holding the three record-level families that AND
 /// (doc_v27 V27-14/V27-15).
-type ParsedRegions = (
-    Vec<reed::frontend::chunk::region::Region>,
-    reed::spec::region::SiteSelector,
-);
+type ParsedRegions = (Vec<reed::Region>, reed::spec::region::SiteSelector);
 
 /// Canonicalizes one line of a region/target file (`-r/-R/-t/-T`, bcftools
 /// accepts a plain region list *or* a BED) into region spellings the spec
@@ -137,7 +134,7 @@ fn parse_regions(
                     reed::spec::region::parse_regions_strict(std::slice::from_ref(&token), contigs)
                         .map_err(|e| format!("invalid region {token:?}: {e}"))?
                         .remove(0);
-                regions.push(reed::frontend::chunk::region::Region {
+                regions.push(reed::Region {
                     contig: contig.clone(),
                     start1,
                     end1,
@@ -335,7 +332,7 @@ pub(crate) fn parse_sample_keep(
 pub(crate) struct Prelude {
     /// `-r/-R` as a seek request (`select.indexed` carries the same ranges
     /// as the record predicate).
-    pub regions: Vec<reed::frontend::chunk::region::Region>,
+    pub regions: Vec<reed::Region>,
     /// The record-level site selection: `-r/-R` ∧ `-t/-T` ∧
     /// `--sites-file` (doc_v27 V27-14/V27-15).
     pub select: reed::spec::region::SiteSelector,
@@ -366,8 +363,8 @@ pub(crate) fn prelude(
     site_args: &crate::cli::filter_flags::SiteFilterArgs,
     sites_file: Option<&str>,
     contig_lengths_arg: Option<&str>,
-    threads_arg: Option<reed::frontend::budget::Threads>,
-    memory_arg: Option<reed::frontend::budget::MemMiB>,
+    threads_arg: Option<reed::frontend::Threads>,
+    memory_arg: Option<reed::frontend::MemMiB>,
 ) -> Result<Prelude, reed::Error> {
     let started = std::time::Instant::now();
     let input_file = input_path(input);
@@ -398,7 +395,7 @@ pub(crate) fn prelude(
         let opened = Some(probe.into_opened(&regions)?);
         (opened, regions, select)
     } else {
-        let opened = Some(reed::frontend::open_regions(open_path.as_deref(), &[])?);
+        let opened = Some(reed::open_regions(open_path.as_deref(), &[])?);
         let contigs = opened
             .as_ref()
             .expect("invariant: just opened")

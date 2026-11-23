@@ -193,7 +193,7 @@ fn windows_match_hand_computation_and_thread_counts_agree() {
             &reed::RunContext::idle(&budget),
         )
         .expect("invariant: fixture run succeeds");
-        let tsv = reed::frontend::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+        let tsv = reed::render_tsv(&report.windows, &KINDS_TEST, false);
         assert_eq!(tsv, expected, "threads = {threads}");
         assert_eq!(report.n_windows, 3);
         assert_eq!(report.n_records, 3);
@@ -247,7 +247,7 @@ chr1\t1\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\t0/0
         }),
     )
     .expect("invariant: variant-only wide run");
-    let text = reed::frontend::windows::render_tsv(&report.windows, &request.kinds, true);
+    let text = reed::render_tsv(&report.windows, &request.kinds, true);
     assert!(
         text.contains("\t0.01\t0.01\t1\t0.01\n"),
         "{text}\nkind={:?} outputs={:?} accs={:?}",
@@ -279,7 +279,7 @@ fn skip_empty_drops_window_rows_only() {
         &reed::RunContext::idle(&budget),
     )
     .expect("invariant: fixture run succeeds");
-    let tsv = reed::frontend::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+    let tsv = reed::render_tsv(&report.windows, &KINDS_TEST, false);
     let got = rows(&tsv);
     assert_eq!(got.len(), 2, "the empty middle window is skipped");
     assert_eq!(got[0][..3], ["chr1", "1", "100"]);
@@ -321,7 +321,7 @@ fn contig_and_genome_levels_aggregate_the_bins() {
     )
     .expect("invariant: fixture run succeeds");
 
-    let tsv = reed::frontend::windows::render_tsv(&report.windows, &KINDS_TEST, false);
+    let tsv = reed::render_tsv(&report.windows, &KINDS_TEST, false);
     let got = rows(&tsv);
     assert_eq!(got.len(), 5, "3 window rows + contig row + genome row");
     // Window order is preserved, then the contig row, then the genome row.
@@ -561,8 +561,8 @@ chr1\t250\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\t0/0\t0/1
         per_bp: true,
     }];
     assert_eq!(
-        reed::frontend::windows::render_tsv(&with_file.windows, &kinds, false),
-        reed::frontend::windows::render_tsv(&reference.windows, &kinds, false),
+        reed::render_tsv(&with_file.windows, &kinds, false),
+        reed::render_tsv(&reference.windows, &kinds, false),
         "supplemented lengths must match a header-declared run"
     );
     let _ = std::fs::remove_dir_all(path.parent().expect("invariant: temp dir path"));
@@ -970,7 +970,7 @@ fn multiple_pbs_triples_get_their_own_files() {
     // Two triples: one file each, each header naming its own groups.
     let prefix = dir.join("multi");
     let files =
-        reed::frontend::windows::write(&prefix, &report, &names, &kinds, layout, "test", "0")
+        reed::frontend::write_windows(&prefix, &report, &names, &kinds, layout, "test", "0")
             .expect("invariant: write");
     let base: Vec<String> = files
         .iter()
@@ -1015,7 +1015,7 @@ fn multiple_pbs_triples_get_their_own_files() {
     // One triple: the documented single-file name, unchanged layout.
     let single = dir.join("single");
     let files =
-        reed::frontend::windows::write(&single, &report, &names, &kinds[..1], layout, "test", "0")
+        reed::frontend::write_windows(&single, &report, &names, &kinds[..1], layout, "test", "0")
             .expect("invariant: write");
     let base: Vec<String> = files
         .iter()

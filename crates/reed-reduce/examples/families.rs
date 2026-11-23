@@ -9,6 +9,13 @@
 //!
 //! Usage: `cargo run --release --example families -- [small|medium]`
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::map_unwrap_or,
+    clippy::uninlined_format_args,
+    clippy::unreadable_literal,
+    clippy::cloned_instead_of_copied
+)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]

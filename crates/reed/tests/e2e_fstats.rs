@@ -3,11 +3,11 @@
 //! 3-population fixture; the parity script cross-checks them on real data
 //! (`gold/popgen/run_allel_fstats.sh`).
 
-use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{
     FStatTest, FStatsRequest, InvariantMode, Levels, PopgenRequest, Populations,
     WindowLayoutOptions, run_popgen,
 };
+use reed::{MemBudget, ThreadBudget};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -283,7 +283,7 @@ fn genome_wide_fstats_need_no_lengths_and_keep_empty_rows() {
         "no jackknife blocks means no SE"
     );
     assert_eq!(fstats.rows[0].n_sites, 0);
-    let text = reed::frontend::fstats::write_fstats(
+    let text = reed::frontend::write_fstats(
         &dir.join("out"),
         &["A".into(), "B".into(), "C".into()],
         &fstats,

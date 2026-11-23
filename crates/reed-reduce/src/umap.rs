@@ -24,16 +24,27 @@ const MIN_K_DIST_SCALE: f64 = 1e-3;
 /// UMAP hyper-parameters with the umap-learn defaults.
 #[derive(Clone, Debug)]
 pub struct UmapConfig {
+    /// Nearest neighbours per point.
     pub n_neighbors: usize,
+    /// Embedding dimensions.
     pub n_components: usize,
+    /// Training epochs.
     pub n_epochs: usize,
+    /// Minimum distance between embedded points.
     pub min_dist: f64,
+    /// Effective scale of the embedded points.
     pub spread: f64,
+    /// Negative samples per positive edge.
     pub negative_sample_rate: usize,
+    /// Learning rate.
     pub learning_rate: f64,
+    /// Local connectivity (fractional neighbour count).
     pub local_connectivity: f64,
+    /// Fuzzy-set union/intersection mix.
     pub set_op_mix_ratio: f64,
+    /// Repulsion strength.
     pub gamma: f64,
+    /// Seed for the negative sampling.
     pub seed: u64,
 }
 
@@ -106,8 +117,8 @@ fn smooth_knn_dist(knn_dists: &Mat, k: f64, local_connectivity: f64) -> (Vec<f64
             } else {
                 rho[i] = interpolation * non_zero[0];
             }
-        } else if !non_zero.is_empty() {
-            rho[i] = *non_zero.last().unwrap();
+        } else if let Some(&last) = non_zero.last() {
+            rho[i] = last;
         }
 
         for _ in 0..64 {
@@ -156,8 +167,11 @@ fn smooth_knn_dist(knn_dists: &Mat, k: f64, local_connectivity: f64) -> (Vec<f64
 
 /// The fuzzy simplicial set: a dense symmetric membership matrix.
 pub struct FuzzyGraph {
+    /// Symmetric membership weights (`n x n`).
     pub weights: Mat,
+    /// Per-point neighbour indices.
     pub knn_indices: Vec<Vec<usize>>,
+    /// Per-point neighbour distances.
     pub knn_dists: Mat,
 }
 
@@ -527,7 +541,7 @@ mod tests {
         // The last executed epoch is initial/n_epochs, and the schedule's
         // endpoint is exactly zero.
         assert!((sgd_alpha(initial, 199, n_epochs) - initial / n_epochs as f64).abs() < 1e-12);
-        assert!(sgd_alpha(initial, n_epochs, n_epochs) == 0.0);
+        assert_eq!(sgd_alpha(initial, n_epochs, n_epochs), 0.0);
     }
 
     #[test]

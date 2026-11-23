@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
-use reed::frontend::budget::{MemBudget, ThreadBudget};
 use reed::{Levels, PopgenRequest, Populations, SfsRequest, run_popgen};
+use reed::{MemBudget, ThreadBudget};
 
 const VCF: &str = "\
 ##fileformat=VCFv4.2
@@ -108,9 +108,8 @@ fn projected_sfs_matches_the_hand_computed_spectrum() {
 
     // The dadi/fastsimcoal2 files: header, values and mask.
     let prefix = dir.join("out");
-    let files =
-        reed::frontend::sfs::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
-            .expect("invariant: write");
+    let files = reed::frontend::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
+        .expect("invariant: write");
     assert_eq!(files.len(), 2);
     let dadi = std::fs::read_to_string(format!("{}_sfs/dadi/pop1-6.sfs", prefix.display()))
         .expect("invariant: dadi file");
@@ -156,9 +155,8 @@ fn folded_spectrum_pads_the_upper_half_and_masks_it() {
     }
 
     let prefix = dir.join("out");
-    let files =
-        reed::frontend::sfs::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
-            .expect("invariant: write");
+    let files = reed::frontend::write_projected_sfs(&prefix, &["pop1".to_string()], &sfs, false)
+        .expect("invariant: write");
     assert!(
         files
             .iter()
@@ -278,7 +276,7 @@ fn joint_spectrum_matches_easysfs() {
 
     // Files: dadi `<A>-<B>.sfs` and the transposed fastsimcoal2 layout.
     let prefix = dir.join("out");
-    let files = reed::frontend::sfs::write_projected_sfs(
+    let files = reed::frontend::write_projected_sfs(
         &prefix,
         &["popA".to_string(), "popB".to_string()],
         &sfs,
@@ -358,7 +356,7 @@ fn sfs_group_names_cannot_escape_the_output_directory() {
     let prefix = dir.join("nested/out");
     std::fs::create_dir_all(dir.join("nested")).expect("invariant: nested");
     let files =
-        reed::frontend::sfs::write_projected_sfs(&prefix, std::slice::from_ref(&name), &sfs, false)
+        reed::frontend::write_projected_sfs(&prefix, std::slice::from_ref(&name), &sfs, false)
             .expect("invariant: write");
     assert_eq!(files.len(), 2);
 
@@ -414,7 +412,7 @@ fn sfs_one_dimensional_and_joint_names_cannot_collide() {
     let sfs = report.sfs.expect("invariant: SFS requested");
 
     let prefix = dir.join("out");
-    let err = reed::frontend::sfs::write_projected_sfs(
+    let err = reed::frontend::write_projected_sfs(
         &prefix,
         &["A".to_string(), "4".to_string()],
         &sfs,
@@ -482,7 +480,7 @@ fn an_empty_sfs_run_returns_and_writes_a_zero_spectrum() {
     .expect("invariant: first run")
     .sfs
     .expect("invariant: first SFS");
-    reed::frontend::sfs::write_projected_sfs(&prefix, &["all".to_string()], &first, false)
+    reed::frontend::write_projected_sfs(&prefix, &["all".to_string()], &first, false)
         .expect("invariant: first write");
     let dadi = dir.join("out_sfs/dadi/all-6.sfs");
     assert!(
@@ -507,7 +505,7 @@ fn an_empty_sfs_run_returns_and_writes_a_zero_spectrum() {
         .expect("invariant: an empty run still has an SFS");
     assert_eq!(sfs.n_sites, vec![0]);
     assert_eq!(sfs.spectra, vec![vec![0.0; 7]]);
-    reed::frontend::sfs::write_projected_sfs(&prefix, &["all".to_string()], &sfs, false)
+    reed::frontend::write_projected_sfs(&prefix, &["all".to_string()], &sfs, false)
         .expect("invariant: zero write");
     let text = std::fs::read_to_string(&dadi).expect("invariant: replacement");
     assert_eq!(text, "7 unfolded\n0 0 0 0 0 0 0\n1 0 0 0 0 0 1\n");

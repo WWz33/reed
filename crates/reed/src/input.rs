@@ -355,6 +355,10 @@ pub fn open_regions(path: Option<&Path>, regions: &[Region]) -> Result<OpenedInp
 /// once to read the header and again for the seek.
 pub struct PendingInput {
     file: std::fs::File,
+    /// The source built by the probe's header scan. `into_opened(&[])`
+    /// returns it unchanged, so the header is inflated and parsed once even
+    /// though the probe and the reader are the same open (doc_v30 IO).
+    source: Option<Box<dyn ChunkSource>>,
     format: Format,
     facts: HeaderFacts,
     path: PathBuf,
@@ -373,12 +377,16 @@ impl PendingInput {
         let (prefix, inflated) = sniff(&mut file)?;
         let format = Format::detect(&prefix, inflated.as_deref())?;
         file.seek(SeekFrom::Start(0))?;
-        let facts = read_facts(format, file.try_clone()?)?;
-        // `try_clone` shares the file offset: the header scan leaves the
-        // original at EOF, so rewind before the source reads it.
-        file.seek(SeekFrom::Start(0))?;
+        // Build the real source once. `try_clone` shares the file offset, so
+        // the probe and the eventual reader are one open; the source keeps
+        // the bytes after the header, and `into_opened` returns it for the
+        // no-region case instead of re-inflating and re-parsing the header.
+        let (source, facts) = build_source(format, file.try_clone()?)?;
+        // A region source seeks to an index offset before reading, so the
+        // shared offset left after the header scan is irrelevant there.
         Ok(Self {
             file,
+            source: Some(source),
             format,
             facts,
             path: path.to_path_buf(),
@@ -398,9 +406,13 @@ impl PendingInput {
     ///
     /// [`IoError::Capability`] when `regions` needs BGZF framing or an index
     /// the input lacks; transport failures building the source.
-    pub fn into_opened(self, regions: &[Region]) -> Result<StreamedInput, IoError> {
+    pub fn into_opened(mut self, regions: &[Region]) -> Result<StreamedInput, IoError> {
         if regions.is_empty() {
-            let (source, facts) = build_source(self.format, self.file)?;
+            let source = self
+                .source
+                .take()
+                .expect("invariant: the probe built the source");
+            let facts = self.facts;
             let meta = InputMeta::new(self.format, &facts.text)?;
             return Ok(StreamedInput {
                 source,
@@ -413,6 +425,9 @@ impl PendingInput {
                 }),
             });
         }
+        // The region source seeks to the index's first span; the probe's
+        // source (and its buffered position) is dropped with `self.source`.
+        drop(self.source.take());
         // The capability check reads the framing, not the format: the two agree
         // today, but the framing is the property regions actually need (BGZF
         // blocks a seek can land on), and routing the check through it gives
@@ -539,19 +554,6 @@ impl StdinSpill {
     #[must_use]
     pub fn path(&self) -> &Path {
         self.spill.path()
-    }
-}
-
-/// Reads the header of `reader` under the source the format names, without
-/// keeping the source.
-fn read_facts(format: Format, reader: impl Read + Send + 'static) -> Result<HeaderFacts, IoError> {
-    match format {
-        Format::VcfBgzf | Format::Bcf => BgzfChunkSource::open(reader).map(|(_, facts)| facts),
-        Format::Vcf => PlainChunkSource::open_vcf(reader).map(|(_, facts)| facts),
-        Format::VcfGzip => {
-            warn_serial_gzip();
-            PlainChunkSource::open_gzip(reader).map(|(_, facts)| facts)
-        }
     }
 }
 

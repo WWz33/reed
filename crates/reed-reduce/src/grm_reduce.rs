@@ -170,8 +170,7 @@ fn knn_from_distances(d: &Mat, k: usize) -> Mat {
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let sigma = order
             .get(k.min(order.len().saturating_sub(1)))
-            .map(|&(v, _)| v)
-            .unwrap_or(1.0)
+            .map_or(1.0, |&(v, _)| v)
             .max(1e-12);
         let gamma = 1.0 / (sigma * sigma);
         for &(dist, j) in order.iter().take(k) {
@@ -451,7 +450,7 @@ mod tests {
         for (name, m) in stoch {
             assert_eq!(m.rows, st.w.rows, "{name}: wrong sample count");
             assert!(m.cols >= 2, "{name}: need at least 2 components");
-            let spread = m.data.iter().cloned().fold(0.0f64, |a, v| a.max(v.abs()));
+            let spread = m.data.iter().copied().fold(0.0f64, |a, v| a.max(v.abs()));
             assert!(
                 spread.is_finite() && spread > 1e-6,
                 "{name}: degenerate output"

@@ -37,6 +37,14 @@
 #![allow(clippy::manual_memcpy)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::if_same_then_else)]
+// doc_v30 P2-2: inherited workspace lints. The estimators predate these
+// style-only classes; `manual_midpoint` would change rounding, so the
+// arithmetic stays as written.
+#![allow(clippy::manual_midpoint)]
+#![allow(clippy::explicit_iter_loop)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::float_cmp)]
+#![allow(clippy::unreadable_literal)]
 
 pub mod grm;
 pub mod matrices;

@@ -11,6 +11,9 @@ pub use reed::FilterSpec
 pub use reed::Format
 pub use reed::FstKind
 pub use reed::HeaderFacts
+pub use reed::InfoDefinition
+pub use reed::InfoNumber
+pub use reed::InfoType
 pub use reed::Interval0
 pub use reed::IoError
 pub use reed::Mat
@@ -110,6 +113,76 @@ impl core::marker::Unpin for reed::ConvertTarget
 impl core::marker::UnsafeUnpin for reed::ConvertTarget
 impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertTarget
 impl core::panic::unwind_safe::UnwindSafe for reed::ConvertTarget
+pub enum reed::prelude::DistanceFormat
+pub reed::prelude::DistanceFormat::Bin
+pub reed::prelude::DistanceFormat::Square
+pub reed::prelude::DistanceFormat::Square0
+pub reed::prelude::DistanceFormat::Triangle
+impl reed::DistanceFormat
+pub const fn reed::DistanceFormat::name(self) -> &'static str
+pub fn reed::DistanceFormat::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::DistanceFormat
+pub fn reed::DistanceFormat::clone(&self) -> reed::DistanceFormat
+impl core::cmp::Eq for reed::DistanceFormat
+impl core::cmp::PartialEq for reed::DistanceFormat
+pub fn reed::DistanceFormat::eq(&self, &reed::DistanceFormat) -> bool
+impl core::default::Default for reed::DistanceFormat
+pub fn reed::DistanceFormat::default() -> reed::DistanceFormat
+impl core::fmt::Debug for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceFormat
+impl core::marker::StructuralPartialEq for reed::DistanceFormat
+impl core::str::traits::FromStr for reed::DistanceFormat
+pub type reed::DistanceFormat::Err = alloc::string::String
+pub fn reed::DistanceFormat::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceFormat
+impl core::marker::Send for reed::DistanceFormat
+impl core::marker::Sync for reed::DistanceFormat
+impl core::marker::Unpin for reed::DistanceFormat
+impl core::marker::UnsafeUnpin for reed::DistanceFormat
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceFormat
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceFormat
+pub enum reed::prelude::DistanceKind
+pub reed::prelude::DistanceKind::Ajk
+pub reed::prelude::DistanceKind::AlleleCountDistance
+pub reed::prelude::DistanceKind::Covariance
+pub reed::prelude::DistanceKind::Discordance
+pub reed::prelude::DistanceKind::Grm
+pub reed::prelude::DistanceKind::Ibs
+pub reed::prelude::DistanceKind::King
+pub reed::prelude::DistanceKind::OneMinusIbs
+pub reed::prelude::DistanceKind::Phi
+pub reed::prelude::DistanceKind::PiHat
+impl reed::DistanceKind
+pub const fn reed::DistanceKind::is_matrix(self) -> bool
+pub const fn reed::DistanceKind::name(self) -> &'static str
+pub fn reed::DistanceKind::parse(&str) -> core::result::Result<Self, alloc::string::String>
+pub fn reed::DistanceKind::suffix(self) -> &'static str
+impl core::clone::Clone for reed::DistanceKind
+pub fn reed::DistanceKind::clone(&self) -> reed::DistanceKind
+impl core::cmp::Eq for reed::DistanceKind
+impl core::cmp::PartialEq for reed::DistanceKind
+pub fn reed::DistanceKind::eq(&self, &reed::DistanceKind) -> bool
+impl core::default::Default for reed::DistanceKind
+pub fn reed::DistanceKind::default() -> reed::DistanceKind
+impl core::fmt::Debug for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceKind
+impl core::marker::StructuralPartialEq for reed::DistanceKind
+impl core::str::traits::FromStr for reed::DistanceKind
+pub type reed::DistanceKind::Err = alloc::string::String
+pub fn reed::DistanceKind::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceKind
+impl core::marker::Send for reed::DistanceKind
+impl core::marker::Sync for reed::DistanceKind
+impl core::marker::Unpin for reed::DistanceKind
+impl core::marker::UnsafeUnpin for reed::DistanceKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceKind
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceKind
 pub enum reed::prelude::ErrorKind
 pub reed::prelude::ErrorKind::Runtime
 pub reed::prelude::ErrorKind::Usage
@@ -212,6 +285,65 @@ impl core::marker::Unpin for reed::MatrixUse
 impl core::marker::UnsafeUnpin for reed::MatrixUse
 impl core::panic::unwind_safe::RefUnwindSafe for reed::MatrixUse
 impl core::panic::unwind_safe::UnwindSafe for reed::MatrixUse
+pub enum reed::prelude::MissingPolicy
+pub reed::prelude::MissingPolicy::MeanImpute
+pub reed::prelude::MissingPolicy::Pairwise
+impl reed::MissingPolicy
+pub const fn reed::MissingPolicy::name(self) -> &'static str
+pub fn reed::MissingPolicy::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::MissingPolicy
+pub fn reed::MissingPolicy::clone(&self) -> reed::MissingPolicy
+impl core::cmp::Eq for reed::MissingPolicy
+impl core::cmp::PartialEq for reed::MissingPolicy
+pub fn reed::MissingPolicy::eq(&self, &reed::MissingPolicy) -> bool
+impl core::default::Default for reed::MissingPolicy
+pub fn reed::MissingPolicy::default() -> reed::MissingPolicy
+impl core::fmt::Debug for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::MissingPolicy
+impl core::marker::StructuralPartialEq for reed::MissingPolicy
+impl core::str::traits::FromStr for reed::MissingPolicy
+pub type reed::MissingPolicy::Err = alloc::string::String
+pub fn reed::MissingPolicy::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::MissingPolicy
+impl core::marker::Send for reed::MissingPolicy
+impl core::marker::Sync for reed::MissingPolicy
+impl core::marker::Unpin for reed::MissingPolicy
+impl core::marker::UnsafeUnpin for reed::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed::MissingPolicy
+pub enum reed::prelude::PcaSolver
+pub reed::prelude::PcaSolver::Auto
+pub reed::prelude::PcaSolver::Dense
+pub reed::prelude::PcaSolver::Stream
+impl reed::PcaSolver
+pub const fn reed::PcaSolver::name(self) -> &'static str
+pub fn reed::PcaSolver::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::PcaSolver
+pub fn reed::PcaSolver::clone(&self) -> reed::PcaSolver
+impl core::cmp::Eq for reed::PcaSolver
+impl core::cmp::PartialEq for reed::PcaSolver
+pub fn reed::PcaSolver::eq(&self, &reed::PcaSolver) -> bool
+impl core::default::Default for reed::PcaSolver
+pub fn reed::PcaSolver::default() -> reed::PcaSolver
+impl core::fmt::Debug for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::PcaSolver
+impl core::marker::StructuralPartialEq for reed::PcaSolver
+impl core::str::traits::FromStr for reed::PcaSolver
+pub type reed::PcaSolver::Err = alloc::string::String
+pub fn reed::PcaSolver::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::PcaSolver
+impl core::marker::Send for reed::PcaSolver
+impl core::marker::Sync for reed::PcaSolver
+impl core::marker::Unpin for reed::PcaSolver
+impl core::marker::UnsafeUnpin for reed::PcaSolver
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaSolver
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaSolver
 pub enum reed::prelude::Populations
 pub reed::prelude::Populations::All
 pub reed::prelude::Populations::Assignment(alloc::vec::Vec<(alloc::string::String, alloc::string::String)>)
@@ -235,6 +367,93 @@ impl core::marker::Unpin for reed::Populations
 impl core::marker::UnsafeUnpin for reed::Populations
 impl core::panic::unwind_safe::RefUnwindSafe for reed::Populations
 impl core::panic::unwind_safe::UnwindSafe for reed::Populations
+pub enum reed::prelude::Stand
+pub reed::prelude::Stand::Binom
+pub reed::prelude::Stand::Binom2
+impl reed::Stand
+pub const fn reed::Stand::name(self) -> &'static str
+pub fn reed::Stand::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::Stand
+pub fn reed::Stand::clone(&self) -> reed::Stand
+impl core::cmp::Eq for reed::Stand
+impl core::cmp::PartialEq for reed::Stand
+pub fn reed::Stand::eq(&self, &reed::Stand) -> bool
+impl core::default::Default for reed::Stand
+pub fn reed::Stand::default() -> reed::Stand
+impl core::fmt::Debug for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Stand
+impl core::marker::StructuralPartialEq for reed::Stand
+impl core::str::traits::FromStr for reed::Stand
+pub type reed::Stand::Err = alloc::string::String
+pub fn reed::Stand::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::Stand
+impl core::marker::Send for reed::Stand
+impl core::marker::Sync for reed::Stand
+impl core::marker::Unpin for reed::Stand
+impl core::marker::UnsafeUnpin for reed::Stand
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Stand
+impl core::panic::unwind_safe::UnwindSafe for reed::Stand
+pub enum reed::prelude::TreeMethod
+pub reed::prelude::TreeMethod::Nj
+pub reed::prelude::TreeMethod::Upgma
+impl reed::TreeMethod
+pub const fn reed::TreeMethod::name(self) -> &'static str
+pub fn reed::TreeMethod::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::TreeMethod
+pub fn reed::TreeMethod::clone(&self) -> reed::TreeMethod
+impl core::cmp::Eq for reed::TreeMethod
+impl core::cmp::PartialEq for reed::TreeMethod
+pub fn reed::TreeMethod::eq(&self, &reed::TreeMethod) -> bool
+impl core::default::Default for reed::TreeMethod
+pub fn reed::TreeMethod::default() -> reed::TreeMethod
+impl core::fmt::Debug for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::TreeMethod
+impl core::marker::StructuralPartialEq for reed::TreeMethod
+impl core::str::traits::FromStr for reed::TreeMethod
+pub type reed::TreeMethod::Err = alloc::string::String
+pub fn reed::TreeMethod::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::TreeMethod
+impl core::marker::Send for reed::TreeMethod
+impl core::marker::Sync for reed::TreeMethod
+impl core::marker::Unpin for reed::TreeMethod
+impl core::marker::UnsafeUnpin for reed::TreeMethod
+impl core::panic::unwind_safe::RefUnwindSafe for reed::TreeMethod
+impl core::panic::unwind_safe::UnwindSafe for reed::TreeMethod
+pub enum reed::prelude::XvalResultMode
+pub reed::prelude::XvalResultMode::GroupMean
+pub reed::prelude::XvalResultMode::Overall
+impl reed::XvalResultMode
+pub const fn reed::XvalResultMode::name(self) -> &'static str
+pub fn reed::XvalResultMode::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::XvalResultMode
+pub fn reed::XvalResultMode::clone(&self) -> reed::XvalResultMode
+impl core::cmp::Eq for reed::XvalResultMode
+impl core::cmp::PartialEq for reed::XvalResultMode
+pub fn reed::XvalResultMode::eq(&self, &reed::XvalResultMode) -> bool
+impl core::default::Default for reed::XvalResultMode
+pub fn reed::XvalResultMode::default() -> reed::XvalResultMode
+impl core::fmt::Debug for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::XvalResultMode
+impl core::marker::StructuralPartialEq for reed::XvalResultMode
+impl core::str::traits::FromStr for reed::XvalResultMode
+pub type reed::XvalResultMode::Err = alloc::string::String
+pub fn reed::XvalResultMode::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::XvalResultMode
+impl core::marker::Send for reed::XvalResultMode
+impl core::marker::Sync for reed::XvalResultMode
+impl core::marker::Unpin for reed::XvalResultMode
+impl core::marker::UnsafeUnpin for reed::XvalResultMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalResultMode
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalResultMode
 pub struct reed::prelude::ConvertCounters
 pub reed::prelude::ConvertCounters::accepted: u64
 pub reed::prelude::ConvertCounters::biallelic_for_bin: u64
@@ -330,13 +549,13 @@ impl core::panic::unwind_safe::UnwindSafe for reed::DapcReport
 pub struct reed::prelude::DapcRequest
 pub reed::prelude::DapcRequest::force_samples: bool
 pub reed::prelude::DapcRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
-pub reed::prelude::DapcRequest::missing: alloc::string::String
+pub reed::prelude::DapcRequest::missing: reed::MissingPolicy
 pub reed::prelude::DapcRequest::n_da: core::option::Option<usize>
 pub reed::prelude::DapcRequest::n_pca: core::option::Option<usize>
 pub reed::prelude::DapcRequest::populations: alloc::string::String
 pub reed::prelude::DapcRequest::prefix: alloc::string::String
-pub reed::prelude::DapcRequest::solver: alloc::string::String
-pub reed::prelude::DapcRequest::stand: alloc::string::String
+pub reed::prelude::DapcRequest::solver: reed::PcaSolver
+pub reed::prelude::DapcRequest::stand: reed::Stand
 pub reed::prelude::DapcRequest::xval: core::option::Option<reed::XvalRequest>
 impl core::clone::Clone for reed::DapcRequest
 pub fn reed::DapcRequest::clone(&self) -> reed::DapcRequest
@@ -351,6 +570,54 @@ impl core::marker::Unpin for reed::DapcRequest
 impl core::marker::UnsafeUnpin for reed::DapcRequest
 impl core::panic::unwind_safe::RefUnwindSafe for reed::DapcRequest
 impl core::panic::unwind_safe::UnwindSafe for reed::DapcRequest
+pub struct reed::prelude::DistanceReport
+pub reed::prelude::DistanceReport::bootstrap_support: core::option::Option<alloc::vec::Vec<f64>>
+pub reed::prelude::DistanceReport::elapsed: core::time::Duration
+pub reed::prelude::DistanceReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::prelude::DistanceReport::format: reed::DistanceFormat
+pub reed::prelude::DistanceReport::kind: reed::DistanceKind
+pub reed::prelude::DistanceReport::n_samples: usize
+pub reed::prelude::DistanceReport::n_sites: usize
+impl core::clone::Clone for reed::DistanceReport
+pub fn reed::DistanceReport::clone(&self) -> reed::DistanceReport
+impl core::fmt::Debug for reed::DistanceReport
+pub fn reed::DistanceReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceReport
+impl core::marker::Send for reed::DistanceReport
+impl core::marker::Sync for reed::DistanceReport
+impl core::marker::Unpin for reed::DistanceReport
+impl core::marker::UnsafeUnpin for reed::DistanceReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceReport
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceReport
+pub struct reed::prelude::DistanceRequest
+pub reed::prelude::DistanceRequest::bootstrap: core::option::Option<usize>
+pub reed::prelude::DistanceRequest::bootstrap_cutoff: f64
+pub reed::prelude::DistanceRequest::bootstrap_seed: u64
+pub reed::prelude::DistanceRequest::digits: usize
+pub reed::prelude::DistanceRequest::error_probability: u32
+pub reed::prelude::DistanceRequest::format: reed::DistanceFormat
+pub reed::prelude::DistanceRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::prelude::DistanceRequest::kind: reed::DistanceKind
+pub reed::prelude::DistanceRequest::mismatch_count: bool
+pub reed::prelude::DistanceRequest::missing: reed::MissingPolicy
+pub reed::prelude::DistanceRequest::nudge: bool
+pub reed::prelude::DistanceRequest::prefix: alloc::string::String
+pub reed::prelude::DistanceRequest::stand: reed::Stand
+pub reed::prelude::DistanceRequest::tree: core::option::Option<reed::TreeMethod>
+pub reed::prelude::DistanceRequest::unbounded: bool
+impl core::clone::Clone for reed::DistanceRequest
+pub fn reed::DistanceRequest::clone(&self) -> reed::DistanceRequest
+impl core::default::Default for reed::DistanceRequest
+pub fn reed::DistanceRequest::default() -> Self
+impl core::fmt::Debug for reed::DistanceRequest
+pub fn reed::DistanceRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceRequest
+impl core::marker::Send for reed::DistanceRequest
+impl core::marker::Sync for reed::DistanceRequest
+impl core::marker::Unpin for reed::DistanceRequest
+impl core::marker::UnsafeUnpin for reed::DistanceRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceRequest
 pub struct reed::prelude::Error(_)
 impl reed::Error
 pub fn reed::Error::foreign(impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
@@ -569,11 +836,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaReport
 impl core::panic::unwind_safe::UnwindSafe for reed::PcaReport
 pub struct reed::prelude::PcaRequest
 pub reed::prelude::PcaRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
-pub reed::prelude::PcaRequest::missing: alloc::string::String
+pub reed::prelude::PcaRequest::missing: reed::MissingPolicy
 pub reed::prelude::PcaRequest::pcs: usize
 pub reed::prelude::PcaRequest::prefix: alloc::string::String
-pub reed::prelude::PcaRequest::solver: alloc::string::String
-pub reed::prelude::PcaRequest::stand: alloc::string::String
+pub reed::prelude::PcaRequest::solver: reed::PcaSolver
+pub reed::prelude::PcaRequest::stand: reed::Stand
 impl core::clone::Clone for reed::PcaRequest
 pub fn reed::PcaRequest::clone(&self) -> reed::PcaRequest
 impl core::default::Default for reed::PcaRequest
@@ -930,7 +1197,7 @@ impl core::panic::unwind_safe::UnwindSafe for reed::XvalOutcome
 pub struct reed::prelude::XvalRequest
 pub reed::prelude::XvalRequest::n_pca: core::option::Option<alloc::vec::Vec<usize>>
 pub reed::prelude::XvalRequest::n_rep: usize
-pub reed::prelude::XvalRequest::result: alloc::string::String
+pub reed::prelude::XvalRequest::result: reed::XvalResultMode
 pub reed::prelude::XvalRequest::seed: u64
 pub reed::prelude::XvalRequest::training_set: f64
 impl core::clone::Clone for reed::XvalRequest
@@ -950,7 +1217,10 @@ pub fn reed::prelude::run_convert(core::option::Option<&std::path::Path>, &reed:
 pub fn reed::prelude::run_convert_opened(reed::OpenedInput, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
 pub fn reed::prelude::run_dapc(core::option::Option<&std::path::Path>, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
 pub fn reed::prelude::run_dapc_opened(reed::OpenedInput, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
+pub fn reed::prelude::run_distance(core::option::Option<&std::path::Path>, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
+pub fn reed::prelude::run_distance_opened(reed::OpenedInput, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
 pub fn reed::prelude::run_filter(core::option::Option<&std::path::Path>, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
+pub fn reed::prelude::run_filter_opened(reed::OpenedInput, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
 pub fn reed::prelude::run_index(&std::path::Path, reed_io::write::index::WriteIndex, core::option::Option<&std::path::Path>, &reed::RunContext<'_>) -> core::result::Result<reed::IndexOutcome, reed::Error>
 pub fn reed::prelude::run_pca(core::option::Option<&std::path::Path>, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
 pub fn reed::prelude::run_pca_opened(reed::OpenedInput, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
@@ -1021,6 +1291,76 @@ impl core::marker::Unpin for reed::ConvertTarget
 impl core::marker::UnsafeUnpin for reed::ConvertTarget
 impl core::panic::unwind_safe::RefUnwindSafe for reed::ConvertTarget
 impl core::panic::unwind_safe::UnwindSafe for reed::ConvertTarget
+pub enum reed::DistanceFormat
+pub reed::DistanceFormat::Bin
+pub reed::DistanceFormat::Square
+pub reed::DistanceFormat::Square0
+pub reed::DistanceFormat::Triangle
+impl reed::DistanceFormat
+pub const fn reed::DistanceFormat::name(self) -> &'static str
+pub fn reed::DistanceFormat::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::DistanceFormat
+pub fn reed::DistanceFormat::clone(&self) -> reed::DistanceFormat
+impl core::cmp::Eq for reed::DistanceFormat
+impl core::cmp::PartialEq for reed::DistanceFormat
+pub fn reed::DistanceFormat::eq(&self, &reed::DistanceFormat) -> bool
+impl core::default::Default for reed::DistanceFormat
+pub fn reed::DistanceFormat::default() -> reed::DistanceFormat
+impl core::fmt::Debug for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceFormat
+pub fn reed::DistanceFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceFormat
+impl core::marker::StructuralPartialEq for reed::DistanceFormat
+impl core::str::traits::FromStr for reed::DistanceFormat
+pub type reed::DistanceFormat::Err = alloc::string::String
+pub fn reed::DistanceFormat::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceFormat
+impl core::marker::Send for reed::DistanceFormat
+impl core::marker::Sync for reed::DistanceFormat
+impl core::marker::Unpin for reed::DistanceFormat
+impl core::marker::UnsafeUnpin for reed::DistanceFormat
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceFormat
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceFormat
+pub enum reed::DistanceKind
+pub reed::DistanceKind::Ajk
+pub reed::DistanceKind::AlleleCountDistance
+pub reed::DistanceKind::Covariance
+pub reed::DistanceKind::Discordance
+pub reed::DistanceKind::Grm
+pub reed::DistanceKind::Ibs
+pub reed::DistanceKind::King
+pub reed::DistanceKind::OneMinusIbs
+pub reed::DistanceKind::Phi
+pub reed::DistanceKind::PiHat
+impl reed::DistanceKind
+pub const fn reed::DistanceKind::is_matrix(self) -> bool
+pub const fn reed::DistanceKind::name(self) -> &'static str
+pub fn reed::DistanceKind::parse(&str) -> core::result::Result<Self, alloc::string::String>
+pub fn reed::DistanceKind::suffix(self) -> &'static str
+impl core::clone::Clone for reed::DistanceKind
+pub fn reed::DistanceKind::clone(&self) -> reed::DistanceKind
+impl core::cmp::Eq for reed::DistanceKind
+impl core::cmp::PartialEq for reed::DistanceKind
+pub fn reed::DistanceKind::eq(&self, &reed::DistanceKind) -> bool
+impl core::default::Default for reed::DistanceKind
+pub fn reed::DistanceKind::default() -> reed::DistanceKind
+impl core::fmt::Debug for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::DistanceKind
+pub fn reed::DistanceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::DistanceKind
+impl core::marker::StructuralPartialEq for reed::DistanceKind
+impl core::str::traits::FromStr for reed::DistanceKind
+pub type reed::DistanceKind::Err = alloc::string::String
+pub fn reed::DistanceKind::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::DistanceKind
+impl core::marker::Send for reed::DistanceKind
+impl core::marker::Sync for reed::DistanceKind
+impl core::marker::Unpin for reed::DistanceKind
+impl core::marker::UnsafeUnpin for reed::DistanceKind
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceKind
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceKind
 pub enum reed::ErrorKind
 pub reed::ErrorKind::Runtime
 pub reed::ErrorKind::Usage
@@ -1162,6 +1502,65 @@ impl core::marker::Unpin for reed::MatrixUse
 impl core::marker::UnsafeUnpin for reed::MatrixUse
 impl core::panic::unwind_safe::RefUnwindSafe for reed::MatrixUse
 impl core::panic::unwind_safe::UnwindSafe for reed::MatrixUse
+pub enum reed::MissingPolicy
+pub reed::MissingPolicy::MeanImpute
+pub reed::MissingPolicy::Pairwise
+impl reed::MissingPolicy
+pub const fn reed::MissingPolicy::name(self) -> &'static str
+pub fn reed::MissingPolicy::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::MissingPolicy
+pub fn reed::MissingPolicy::clone(&self) -> reed::MissingPolicy
+impl core::cmp::Eq for reed::MissingPolicy
+impl core::cmp::PartialEq for reed::MissingPolicy
+pub fn reed::MissingPolicy::eq(&self, &reed::MissingPolicy) -> bool
+impl core::default::Default for reed::MissingPolicy
+pub fn reed::MissingPolicy::default() -> reed::MissingPolicy
+impl core::fmt::Debug for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::MissingPolicy
+pub fn reed::MissingPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::MissingPolicy
+impl core::marker::StructuralPartialEq for reed::MissingPolicy
+impl core::str::traits::FromStr for reed::MissingPolicy
+pub type reed::MissingPolicy::Err = alloc::string::String
+pub fn reed::MissingPolicy::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::MissingPolicy
+impl core::marker::Send for reed::MissingPolicy
+impl core::marker::Sync for reed::MissingPolicy
+impl core::marker::Unpin for reed::MissingPolicy
+impl core::marker::UnsafeUnpin for reed::MissingPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for reed::MissingPolicy
+impl core::panic::unwind_safe::UnwindSafe for reed::MissingPolicy
+pub enum reed::PcaSolver
+pub reed::PcaSolver::Auto
+pub reed::PcaSolver::Dense
+pub reed::PcaSolver::Stream
+impl reed::PcaSolver
+pub const fn reed::PcaSolver::name(self) -> &'static str
+pub fn reed::PcaSolver::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::PcaSolver
+pub fn reed::PcaSolver::clone(&self) -> reed::PcaSolver
+impl core::cmp::Eq for reed::PcaSolver
+impl core::cmp::PartialEq for reed::PcaSolver
+pub fn reed::PcaSolver::eq(&self, &reed::PcaSolver) -> bool
+impl core::default::Default for reed::PcaSolver
+pub fn reed::PcaSolver::default() -> reed::PcaSolver
+impl core::fmt::Debug for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::PcaSolver
+pub fn reed::PcaSolver::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::PcaSolver
+impl core::marker::StructuralPartialEq for reed::PcaSolver
+impl core::str::traits::FromStr for reed::PcaSolver
+pub type reed::PcaSolver::Err = alloc::string::String
+pub fn reed::PcaSolver::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::PcaSolver
+impl core::marker::Send for reed::PcaSolver
+impl core::marker::Sync for reed::PcaSolver
+impl core::marker::Unpin for reed::PcaSolver
+impl core::marker::UnsafeUnpin for reed::PcaSolver
+impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaSolver
+impl core::panic::unwind_safe::UnwindSafe for reed::PcaSolver
 pub enum reed::Populations
 pub reed::Populations::All
 pub reed::Populations::Assignment(alloc::vec::Vec<(alloc::string::String, alloc::string::String)>)
@@ -1185,6 +1584,93 @@ impl core::marker::Unpin for reed::Populations
 impl core::marker::UnsafeUnpin for reed::Populations
 impl core::panic::unwind_safe::RefUnwindSafe for reed::Populations
 impl core::panic::unwind_safe::UnwindSafe for reed::Populations
+pub enum reed::Stand
+pub reed::Stand::Binom
+pub reed::Stand::Binom2
+impl reed::Stand
+pub const fn reed::Stand::name(self) -> &'static str
+pub fn reed::Stand::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::Stand
+pub fn reed::Stand::clone(&self) -> reed::Stand
+impl core::cmp::Eq for reed::Stand
+impl core::cmp::PartialEq for reed::Stand
+pub fn reed::Stand::eq(&self, &reed::Stand) -> bool
+impl core::default::Default for reed::Stand
+pub fn reed::Stand::default() -> reed::Stand
+impl core::fmt::Debug for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::Stand
+pub fn reed::Stand::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::Stand
+impl core::marker::StructuralPartialEq for reed::Stand
+impl core::str::traits::FromStr for reed::Stand
+pub type reed::Stand::Err = alloc::string::String
+pub fn reed::Stand::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::Stand
+impl core::marker::Send for reed::Stand
+impl core::marker::Sync for reed::Stand
+impl core::marker::Unpin for reed::Stand
+impl core::marker::UnsafeUnpin for reed::Stand
+impl core::panic::unwind_safe::RefUnwindSafe for reed::Stand
+impl core::panic::unwind_safe::UnwindSafe for reed::Stand
+pub enum reed::TreeMethod
+pub reed::TreeMethod::Nj
+pub reed::TreeMethod::Upgma
+impl reed::TreeMethod
+pub const fn reed::TreeMethod::name(self) -> &'static str
+pub fn reed::TreeMethod::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::TreeMethod
+pub fn reed::TreeMethod::clone(&self) -> reed::TreeMethod
+impl core::cmp::Eq for reed::TreeMethod
+impl core::cmp::PartialEq for reed::TreeMethod
+pub fn reed::TreeMethod::eq(&self, &reed::TreeMethod) -> bool
+impl core::default::Default for reed::TreeMethod
+pub fn reed::TreeMethod::default() -> reed::TreeMethod
+impl core::fmt::Debug for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::TreeMethod
+pub fn reed::TreeMethod::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::TreeMethod
+impl core::marker::StructuralPartialEq for reed::TreeMethod
+impl core::str::traits::FromStr for reed::TreeMethod
+pub type reed::TreeMethod::Err = alloc::string::String
+pub fn reed::TreeMethod::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::TreeMethod
+impl core::marker::Send for reed::TreeMethod
+impl core::marker::Sync for reed::TreeMethod
+impl core::marker::Unpin for reed::TreeMethod
+impl core::marker::UnsafeUnpin for reed::TreeMethod
+impl core::panic::unwind_safe::RefUnwindSafe for reed::TreeMethod
+impl core::panic::unwind_safe::UnwindSafe for reed::TreeMethod
+pub enum reed::XvalResultMode
+pub reed::XvalResultMode::GroupMean
+pub reed::XvalResultMode::Overall
+impl reed::XvalResultMode
+pub const fn reed::XvalResultMode::name(self) -> &'static str
+pub fn reed::XvalResultMode::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed::XvalResultMode
+pub fn reed::XvalResultMode::clone(&self) -> reed::XvalResultMode
+impl core::cmp::Eq for reed::XvalResultMode
+impl core::cmp::PartialEq for reed::XvalResultMode
+pub fn reed::XvalResultMode::eq(&self, &reed::XvalResultMode) -> bool
+impl core::default::Default for reed::XvalResultMode
+pub fn reed::XvalResultMode::default() -> reed::XvalResultMode
+impl core::fmt::Debug for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed::XvalResultMode
+pub fn reed::XvalResultMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed::XvalResultMode
+impl core::marker::StructuralPartialEq for reed::XvalResultMode
+impl core::str::traits::FromStr for reed::XvalResultMode
+pub type reed::XvalResultMode::Err = alloc::string::String
+pub fn reed::XvalResultMode::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl core::marker::Freeze for reed::XvalResultMode
+impl core::marker::Send for reed::XvalResultMode
+impl core::marker::Sync for reed::XvalResultMode
+impl core::marker::Unpin for reed::XvalResultMode
+impl core::marker::UnsafeUnpin for reed::XvalResultMode
+impl core::panic::unwind_safe::RefUnwindSafe for reed::XvalResultMode
+impl core::panic::unwind_safe::UnwindSafe for reed::XvalResultMode
 pub struct reed::ConvertCounters
 pub reed::ConvertCounters::accepted: u64
 pub reed::ConvertCounters::biallelic_for_bin: u64
@@ -1280,13 +1766,13 @@ impl core::panic::unwind_safe::UnwindSafe for reed::DapcReport
 pub struct reed::DapcRequest
 pub reed::DapcRequest::force_samples: bool
 pub reed::DapcRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
-pub reed::DapcRequest::missing: alloc::string::String
+pub reed::DapcRequest::missing: reed::MissingPolicy
 pub reed::DapcRequest::n_da: core::option::Option<usize>
 pub reed::DapcRequest::n_pca: core::option::Option<usize>
 pub reed::DapcRequest::populations: alloc::string::String
 pub reed::DapcRequest::prefix: alloc::string::String
-pub reed::DapcRequest::solver: alloc::string::String
-pub reed::DapcRequest::stand: alloc::string::String
+pub reed::DapcRequest::solver: reed::PcaSolver
+pub reed::DapcRequest::stand: reed::Stand
 pub reed::DapcRequest::xval: core::option::Option<reed::XvalRequest>
 impl core::clone::Clone for reed::DapcRequest
 pub fn reed::DapcRequest::clone(&self) -> reed::DapcRequest
@@ -1301,6 +1787,54 @@ impl core::marker::Unpin for reed::DapcRequest
 impl core::marker::UnsafeUnpin for reed::DapcRequest
 impl core::panic::unwind_safe::RefUnwindSafe for reed::DapcRequest
 impl core::panic::unwind_safe::UnwindSafe for reed::DapcRequest
+pub struct reed::DistanceReport
+pub reed::DistanceReport::bootstrap_support: core::option::Option<alloc::vec::Vec<f64>>
+pub reed::DistanceReport::elapsed: core::time::Duration
+pub reed::DistanceReport::files: alloc::vec::Vec<std::path::PathBuf>
+pub reed::DistanceReport::format: reed::DistanceFormat
+pub reed::DistanceReport::kind: reed::DistanceKind
+pub reed::DistanceReport::n_samples: usize
+pub reed::DistanceReport::n_sites: usize
+impl core::clone::Clone for reed::DistanceReport
+pub fn reed::DistanceReport::clone(&self) -> reed::DistanceReport
+impl core::fmt::Debug for reed::DistanceReport
+pub fn reed::DistanceReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceReport
+impl core::marker::Send for reed::DistanceReport
+impl core::marker::Sync for reed::DistanceReport
+impl core::marker::Unpin for reed::DistanceReport
+impl core::marker::UnsafeUnpin for reed::DistanceReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceReport
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceReport
+pub struct reed::DistanceRequest
+pub reed::DistanceRequest::bootstrap: core::option::Option<usize>
+pub reed::DistanceRequest::bootstrap_cutoff: f64
+pub reed::DistanceRequest::bootstrap_seed: u64
+pub reed::DistanceRequest::digits: usize
+pub reed::DistanceRequest::error_probability: u32
+pub reed::DistanceRequest::format: reed::DistanceFormat
+pub reed::DistanceRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
+pub reed::DistanceRequest::kind: reed::DistanceKind
+pub reed::DistanceRequest::mismatch_count: bool
+pub reed::DistanceRequest::missing: reed::MissingPolicy
+pub reed::DistanceRequest::nudge: bool
+pub reed::DistanceRequest::prefix: alloc::string::String
+pub reed::DistanceRequest::stand: reed::Stand
+pub reed::DistanceRequest::tree: core::option::Option<reed::TreeMethod>
+pub reed::DistanceRequest::unbounded: bool
+impl core::clone::Clone for reed::DistanceRequest
+pub fn reed::DistanceRequest::clone(&self) -> reed::DistanceRequest
+impl core::default::Default for reed::DistanceRequest
+pub fn reed::DistanceRequest::default() -> Self
+impl core::fmt::Debug for reed::DistanceRequest
+pub fn reed::DistanceRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed::DistanceRequest
+impl core::marker::Send for reed::DistanceRequest
+impl core::marker::Sync for reed::DistanceRequest
+impl core::marker::Unpin for reed::DistanceRequest
+impl core::marker::UnsafeUnpin for reed::DistanceRequest
+impl core::panic::unwind_safe::RefUnwindSafe for reed::DistanceRequest
+impl core::panic::unwind_safe::UnwindSafe for reed::DistanceRequest
 pub struct reed::Error(_)
 impl reed::Error
 pub fn reed::Error::foreign(impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
@@ -1534,11 +2068,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for reed::PcaReport
 impl core::panic::unwind_safe::UnwindSafe for reed::PcaReport
 pub struct reed::PcaRequest
 pub reed::PcaRequest::keep_samples: core::option::Option<alloc::vec::Vec<bool>>
-pub reed::PcaRequest::missing: alloc::string::String
+pub reed::PcaRequest::missing: reed::MissingPolicy
 pub reed::PcaRequest::pcs: usize
 pub reed::PcaRequest::prefix: alloc::string::String
-pub reed::PcaRequest::solver: alloc::string::String
-pub reed::PcaRequest::stand: alloc::string::String
+pub reed::PcaRequest::solver: reed::PcaSolver
+pub reed::PcaRequest::stand: reed::Stand
 impl core::clone::Clone for reed::PcaRequest
 pub fn reed::PcaRequest::clone(&self) -> reed::PcaRequest
 impl core::default::Default for reed::PcaRequest
@@ -1937,7 +2471,7 @@ impl core::panic::unwind_safe::UnwindSafe for reed::XvalOutcome
 pub struct reed::XvalRequest
 pub reed::XvalRequest::n_pca: core::option::Option<alloc::vec::Vec<usize>>
 pub reed::XvalRequest::n_rep: usize
-pub reed::XvalRequest::result: alloc::string::String
+pub reed::XvalRequest::result: reed::XvalResultMode
 pub reed::XvalRequest::seed: u64
 pub reed::XvalRequest::training_set: f64
 impl core::clone::Clone for reed::XvalRequest
@@ -1956,13 +2490,17 @@ impl core::panic::unwind_safe::UnwindSafe for reed::XvalRequest
 pub fn reed::assign_groups(&std::path::Path, &[alloc::string::String], bool) -> core::result::Result<(alloc::vec::Vec<core::option::Option<u32>>, alloc::vec::Vec<alloc::string::String>), reed::Error>
 pub fn reed::assign_groups_in_memory(&[(alloc::string::String, alloc::string::String)], &[alloc::string::String], bool) -> core::result::Result<(alloc::vec::Vec<core::option::Option<u32>>, alloc::vec::Vec<alloc::string::String>), reed::Error>
 pub fn reed::default_kinds(usize) -> alloc::vec::Vec<reed_stats::request::StatKind>
+pub fn reed::open_regions(core::option::Option<&std::path::Path>, &[reed_io::chunk::region::Region]) -> core::result::Result<reed::OpenedInput, reed_io::error::IoError>
 pub fn reed::read_genotype_matrix(reed::OpenedInput, core::option::Option<&[bool]>, &reed::RunContext<'_>, reed::MatrixUse) -> core::result::Result<(reed_core::linalg::Mat, alloc::vec::Vec<alloc::string::String>), reed::Error>
 pub fn reed::render_tsv(&[reed::WindowRow], &[reed_stats::request::StatKind], bool) -> alloc::string::String
 pub fn reed::run_convert(core::option::Option<&std::path::Path>, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
 pub fn reed::run_convert_opened(reed::OpenedInput, &reed::ConvertRequest, &reed::RunContext<'_>) -> core::result::Result<reed::ConvertReport, reed::Error>
 pub fn reed::run_dapc(core::option::Option<&std::path::Path>, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
 pub fn reed::run_dapc_opened(reed::OpenedInput, &reed::DapcRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DapcReport, reed::Error>
+pub fn reed::run_distance(core::option::Option<&std::path::Path>, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
+pub fn reed::run_distance_opened(reed::OpenedInput, &reed::DistanceRequest, &reed::RunContext<'_>) -> core::result::Result<reed::DistanceReport, reed::Error>
 pub fn reed::run_filter(core::option::Option<&std::path::Path>, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
+pub fn reed::run_filter_opened(reed::OpenedInput, &reed_filter::spec::FilterSpec, &reed::FilterOptions, &reed::RunContext<'_>) -> core::result::Result<reed_filter::funnel::FilterReport, reed::Error>
 pub fn reed::run_index(&std::path::Path, reed_io::write::index::WriteIndex, core::option::Option<&std::path::Path>, &reed::RunContext<'_>) -> core::result::Result<reed::IndexOutcome, reed::Error>
 pub fn reed::run_pca(core::option::Option<&std::path::Path>, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>
 pub fn reed::run_pca_opened(reed::OpenedInput, &reed::PcaRequest, &reed::RunContext<'_>) -> core::result::Result<reed::PcaReport, reed::Error>

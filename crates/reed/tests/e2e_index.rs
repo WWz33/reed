@@ -281,9 +281,9 @@ fn open_regions_consumes_its_own_index() {
     )
     .expect("invariant: index builds");
 
-    let opened = reed::frontend::open_regions(
+    let opened = reed::open_regions(
         Some(&vcf),
-        &[reed::frontend::chunk::region::Region {
+        &[reed::Region {
             contig: "chr1".into(),
             start1: Some(50),
             end1: Some(300),

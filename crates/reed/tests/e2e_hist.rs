@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use reed::frontend::histogram::{HistKind, HistMetric, render_hist};
-use reed::frontend::reports::{StatsReportRequest, run_stats};
+use reed::frontend::{HistKind, HistMetric, render_hist};
+use reed::{StatsReportRequest, run_stats};
 use reed_engine::budget::ThreadBudget;
 
 /// A VCF with GT/DP/GQ and an INFO/DP, so every histogram path has data.
@@ -181,7 +181,7 @@ fn hist_is_deterministic_across_threads() {
 /// allele; every site in this fixture has one ALT copy, so each is an `S`.
 #[test]
 fn singletons_match_the_vcftools_layout() {
-    use reed::frontend::reports::{StatsReportRequest, run_stats};
+    use reed::{StatsReportRequest, run_stats};
     let d = dir("singletons");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -209,7 +209,7 @@ fn singletons_match_the_vcftools_layout() {
 /// s1 in popB, so each group sees one sample.
 #[test]
 fn pop_stratifies_freq_missing_and_singletons() {
-    use reed::frontend::reports::{StatsReportRequest, run_stats};
+    use reed::{StatsReportRequest, run_stats};
     let d = dir("pop");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -295,7 +295,7 @@ fn pop_stratifies_freq_missing_and_singletons() {
 /// `--force-samples`, a skip with it (the popg rule, doc_v14 02 §2.2).
 #[test]
 fn pop_unknown_samples_follow_the_force_rule() {
-    use reed::frontend::reports::{StatsReportRequest, run_stats};
+    use reed::{StatsReportRequest, run_stats};
     let d = dir("popforce");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -338,7 +338,7 @@ fn pop_unknown_samples_follow_the_force_rule() {
 /// ordered sink merges the rendered rows in chunk order).
 #[test]
 fn pop_reports_are_deterministic_across_threads() {
-    use reed::frontend::reports::{StatsReportRequest, run_stats};
+    use reed::{StatsReportRequest, run_stats};
     let d = dir("popthreads");
     let vcf = d.join("in.vcf");
     write_vcf(&vcf);
@@ -377,11 +377,11 @@ fn pop_reports_are_deterministic_across_threads() {
 /// The renderer's own contract: the TSV shape and the `#missing` line.
 #[test]
 fn render_hist_shape() {
-    let out = reed::frontend::histogram::HistOut {
+    let out = reed::frontend::HistOut {
         metric: HistMetric::Dp,
         int_bins: vec![(1, 3), (2, 1)],
         overflow: None,
-        stats: Some(reed::frontend::histogram::HistStats {
+        stats: Some(reed::frontend::HistStats {
             mean: 1.25,
             median: 1,
             p95: 2,

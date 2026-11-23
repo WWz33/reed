@@ -1,0 +1,1631 @@
+pub mod reed_io
+pub mod reed_io::bcf
+pub mod reed_io::bcf::columns
+pub fn reed_io::bcf::columns::decode_format_columns(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::dict::BcfDict, &[reed_core::vcf::format_layout::IntSpec], &[&[u8]], &mut [alloc::vec::Vec<u32>], &mut [alloc::vec::Vec<f32>]) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::columns::decode_format_columns_with_table(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::dict::BcfDict, &reed_io::bcf::record::FormatTable, &[reed_core::vcf::format_layout::IntSpec], &[&[u8]], &mut [alloc::vec::Vec<u32>], &mut [alloc::vec::Vec<f32>]) -> core::result::Result<(), reed_io::error::IoError>
+pub mod reed_io::bcf::dict
+pub struct reed_io::bcf::dict::BcfDict
+impl reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::contig(&self, i32) -> core::option::Option<&[u8]>
+pub fn reed_io::bcf::dict::BcfDict::from_header(&[u8]) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::bcf::dict::BcfDict::key_of(&self, &[u8]) -> core::option::Option<u32>
+pub fn reed_io::bcf::dict::BcfDict::n_contigs(&self) -> usize
+pub fn reed_io::bcf::dict::BcfDict::tag(&self, u32) -> core::option::Option<&[u8]>
+pub const fn reed_io::bcf::dict::BcfDict::vcf44(&self) -> bool
+impl core::clone::Clone for reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::clone(&self) -> reed_io::bcf::dict::BcfDict
+impl core::default::Default for reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::default() -> reed_io::bcf::dict::BcfDict
+impl core::fmt::Debug for reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::bcf::dict::BcfDict
+impl core::marker::Send for reed_io::bcf::dict::BcfDict
+impl core::marker::Sync for reed_io::bcf::dict::BcfDict
+impl core::marker::Unpin for reed_io::bcf::dict::BcfDict
+impl core::marker::UnsafeUnpin for reed_io::bcf::dict::BcfDict
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::dict::BcfDict
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::dict::BcfDict
+pub mod reed_io::bcf::encode_native
+pub struct reed_io::bcf::encode_native::NativeEncoder
+impl reed_io::bcf::encode_native::NativeEncoder
+pub fn reed_io::bcf::encode_native::NativeEncoder::encode_bcf(&mut self, &reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &reed_core::vcf::line_edit::EditPlan<'_>, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::encode_native::NativeEncoder::encode_text(&mut self, &reed_core::vcf::line::LineRef<'_>, &reed_io::vcf::site::SiteView<'_>, usize, &reed_core::vcf::line_edit::EditPlan<'_>, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::encode_native::NativeEncoder::new(&noodles_vcf::header::Header) -> core::result::Result<Self, reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::Send for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::Sync for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::Unpin for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::UnsafeUnpin for reed_io::bcf::encode_native::NativeEncoder
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::encode_native::NativeEncoder
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::encode_native::NativeEncoder
+pub mod reed_io::bcf::encode_noodles
+pub struct reed_io::bcf::encode_noodles::BcfEncoder
+impl reed_io::bcf::encode_noodles::BcfEncoder
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::encode_record(&mut self, &noodles_vcf::header::Header, &[u8], &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::new() -> Self
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::write_header(&mut self, &noodles_vcf::header::Header) -> core::result::Result<(), reed_io::error::IoError>
+impl core::default::Default for reed_io::bcf::encode_noodles::BcfEncoder
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::default() -> Self
+impl core::marker::Freeze for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::Send for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::Sync for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::Unpin for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::UnsafeUnpin for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::encode_noodles::BcfEncoder
+pub fn reed_io::bcf::encode_noodles::bcf_file_header(&noodles_vcf::header::Header) -> core::result::Result<alloc::vec::Vec<u8>, reed_io::error::IoError>
+pub fn reed_io::bcf::encode_noodles::bcf_header_text(&noodles_vcf::header::Header) -> core::result::Result<alloc::vec::Vec<u8>, reed_io::error::IoError>
+pub mod reed_io::bcf::gt
+pub struct reed_io::bcf::gt::GtQuery<'a>
+pub reed_io::bcf::gt::GtQuery::contig_name: &'a [u8]
+pub reed_io::bcf::gt::GtQuery::gt_key: core::option::Option<u32>
+pub reed_io::bcf::gt::GtQuery::n_samples: usize
+pub reed_io::bcf::gt::GtQuery::pos1: u64
+pub reed_io::bcf::gt::GtQuery::vcf44: bool
+impl<'a> core::clone::Clone for reed_io::bcf::gt::GtQuery<'a>
+pub fn reed_io::bcf::gt::GtQuery<'a>::clone(&self) -> reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::fmt::Debug for reed_io::bcf::gt::GtQuery<'a>
+pub fn reed_io::bcf::gt::GtQuery<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Freeze for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Send for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::gt::GtQuery<'a>
+pub struct reed_io::bcf::gt::GtTable
+impl reed_io::bcf::gt::GtTable
+pub fn reed_io::bcf::gt::GtTable::decode_pair<S: reed_io::vcf::genotype_scan::LocusSource>(&self, u8, u8, &S, usize, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<reed_core::genotype::gt_code::GtCode, reed_io::error::IoError>
+pub fn reed_io::bcf::gt::GtTable::new(reed_core::genotype::policy::GenotypePolicies) -> Self
+pub const fn reed_io::bcf::gt::GtTable::policies(&self) -> &reed_core::genotype::policy::GenotypePolicies
+impl core::marker::Freeze for reed_io::bcf::gt::GtTable
+impl core::marker::Send for reed_io::bcf::gt::GtTable
+impl core::marker::Sync for reed_io::bcf::gt::GtTable
+impl core::marker::Unpin for reed_io::bcf::gt::GtTable
+impl core::marker::UnsafeUnpin for reed_io::bcf::gt::GtTable
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::gt::GtTable
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::gt::GtTable
+pub struct reed_io::bcf::gt::SiteHeader
+pub reed_io::bcf::gt::SiteHeader::chrom: i32
+pub reed_io::bcf::gt::SiteHeader::n_allele: usize
+pub reed_io::bcf::gt::SiteHeader::n_fmt: usize
+pub reed_io::bcf::gt::SiteHeader::n_sample: usize
+pub reed_io::bcf::gt::SiteHeader::pos0: i32
+impl reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::pos1(&self) -> core::result::Result<reed_core::coord::Pos1, reed_io::error::IoError>
+impl core::clone::Clone for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::clone(&self) -> reed_io::bcf::gt::SiteHeader
+impl core::cmp::Eq for reed_io::bcf::gt::SiteHeader
+impl core::cmp::PartialEq for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::eq(&self, &reed_io::bcf::gt::SiteHeader) -> bool
+impl core::fmt::Debug for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::bcf::gt::SiteHeader
+impl core::marker::StructuralPartialEq for reed_io::bcf::gt::SiteHeader
+impl core::marker::Freeze for reed_io::bcf::gt::SiteHeader
+impl core::marker::Send for reed_io::bcf::gt::SiteHeader
+impl core::marker::Sync for reed_io::bcf::gt::SiteHeader
+impl core::marker::Unpin for reed_io::bcf::gt::SiteHeader
+impl core::marker::UnsafeUnpin for reed_io::bcf::gt::SiteHeader
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::gt::SiteHeader
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::decode_record_gt(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::gt::GtQuery<'_>, &reed_io::bcf::gt::GtTable, &mut alloc::vec::Vec<reed_core::genotype::gt_code::GtCode>, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<bool, reed_io::error::IoError>
+pub fn reed_io::bcf::gt::decode_record_gt_masked(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::gt::GtQuery<'_>, &reed_io::bcf::gt::GtTable, &reed_core::sample::KeepMask, &mut alloc::vec::Vec<reed_core::genotype::gt_code::GtCode>, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<bool, reed_io::error::IoError>
+pub fn reed_io::bcf::gt::decode_record_gt_with_format(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::gt::GtQuery<'_>, &reed_io::bcf::gt::GtTable, &mut alloc::vec::Vec<reed_core::genotype::gt_code::GtCode>, &mut reed_core::genotype::policy::PolicyCounters, core::option::Option<&mut reed_io::bcf::record::FormatTable>) -> core::result::Result<bool, reed_io::error::IoError>
+pub fn reed_io::bcf::gt::format_key(&reed_io::bcf::dict::BcfDict, &[u8]) -> core::option::Option<u32>
+pub fn reed_io::bcf::gt::gt_field(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, core::option::Option<u32>, core::option::Option<&mut reed_io::bcf::record::FormatTable>) -> core::result::Result<core::option::Option<(u8, usize, usize)>, reed_io::error::IoError>
+pub fn reed_io::bcf::gt::gt_raw_alleles(u8, usize, &[u8], usize, &[u8], u64) -> core::result::Result<([core::option::Option<u16>; 2], usize), reed_io::error::IoError>
+pub fn reed_io::bcf::gt::site_header(&reed_io::bcf::record::BcfRecordRef<'_>) -> core::result::Result<reed_io::bcf::gt::SiteHeader, reed_io::error::IoError>
+pub mod reed_io::bcf::record
+pub mod reed_io::bcf::record::value_type
+pub const reed_io::bcf::record::value_type::CHAR: u8
+pub const reed_io::bcf::record::value_type::FLOAT: u8
+pub const reed_io::bcf::record::value_type::INT16: u8
+pub const reed_io::bcf::record::value_type::INT32: u8
+pub const reed_io::bcf::record::value_type::INT8: u8
+pub const reed_io::bcf::record::value_type::NULL: u8
+pub enum reed_io::bcf::record::FrameStep
+pub reed_io::bcf::record::FrameStep::Complete
+pub reed_io::bcf::record::FrameStep::Complete::body_end: usize
+pub reed_io::bcf::record::FrameStep::Complete::body_start: usize
+pub reed_io::bcf::record::FrameStep::PrefixIncomplete
+pub reed_io::bcf::record::FrameStep::Spans
+pub reed_io::bcf::record::FrameStep::Spans::total: usize
+impl core::clone::Clone for reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::record::FrameStep::clone(&self) -> reed_io::bcf::record::FrameStep
+impl core::cmp::Eq for reed_io::bcf::record::FrameStep
+impl core::cmp::PartialEq for reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::record::FrameStep::eq(&self, &reed_io::bcf::record::FrameStep) -> bool
+impl core::fmt::Debug for reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::record::FrameStep::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::bcf::record::FrameStep
+impl core::marker::StructuralPartialEq for reed_io::bcf::record::FrameStep
+impl core::marker::Freeze for reed_io::bcf::record::FrameStep
+impl core::marker::Send for reed_io::bcf::record::FrameStep
+impl core::marker::Sync for reed_io::bcf::record::FrameStep
+impl core::marker::Unpin for reed_io::bcf::record::FrameStep
+impl core::marker::UnsafeUnpin for reed_io::bcf::record::FrameStep
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::FrameStep
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::FrameStep
+pub struct reed_io::bcf::record::BcfRecordRef<'a>
+pub reed_io::bcf::record::BcfRecordRef::indiv: &'a [u8]
+pub reed_io::bcf::record::BcfRecordRef::shared: &'a [u8]
+impl<'a> core::clone::Clone for reed_io::bcf::record::BcfRecordRef<'a>
+pub fn reed_io::bcf::record::BcfRecordRef<'a>::clone(&self) -> reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::fmt::Debug for reed_io::bcf::record::BcfRecordRef<'a>
+pub fn reed_io::bcf::record::BcfRecordRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Freeze for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Send for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::BcfRecordRef<'a>
+pub struct reed_io::bcf::record::Cursor<'a>
+impl<'a> reed_io::bcf::record::Cursor<'a>
+pub fn reed_io::bcf::record::Cursor<'a>::f32(&mut self) -> core::result::Result<f32, reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::i32(&mut self) -> core::result::Result<i32, reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::int_value(&mut self, u8) -> core::result::Result<i64, reed_io::error::IoError>
+pub const fn reed_io::bcf::record::Cursor<'a>::new(&'a [u8]) -> Self
+pub const fn reed_io::bcf::record::Cursor<'a>::remaining(&self) -> usize
+pub fn reed_io::bcf::record::Cursor<'a>::take(&mut self, usize) -> core::result::Result<&'a [u8], reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::typed(&mut self) -> core::result::Result<(u8, usize), reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::typed_int(&mut self) -> core::result::Result<i64, reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::typed_string(&mut self) -> core::result::Result<&'a [u8], reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::u32(&mut self) -> core::result::Result<u32, reed_io::error::IoError>
+pub fn reed_io::bcf::record::Cursor<'a>::u8(&mut self) -> core::result::Result<u8, reed_io::error::IoError>
+impl<'a> core::marker::Freeze for reed_io::bcf::record::Cursor<'a>
+impl<'a> core::marker::Send for reed_io::bcf::record::Cursor<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::record::Cursor<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::record::Cursor<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::record::Cursor<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::Cursor<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::Cursor<'a>
+pub struct reed_io::bcf::record::FormatTable
+impl reed_io::bcf::record::FormatTable
+pub fn reed_io::bcf::record::FormatTable::fields(&self) -> &[(u32, u8, usize, usize)]
+pub fn reed_io::bcf::record::FormatTable::new() -> Self
+pub fn reed_io::bcf::record::FormatTable::rebuild(&mut self, &reed_io::bcf::record::BcfRecordRef<'_>, usize, usize) -> core::result::Result<(), reed_io::error::IoError>
+impl core::default::Default for reed_io::bcf::record::FormatTable
+pub fn reed_io::bcf::record::FormatTable::default() -> reed_io::bcf::record::FormatTable
+impl core::fmt::Debug for reed_io::bcf::record::FormatTable
+pub fn reed_io::bcf::record::FormatTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::bcf::record::FormatTable
+impl core::marker::Send for reed_io::bcf::record::FormatTable
+impl core::marker::Sync for reed_io::bcf::record::FormatTable
+impl core::marker::Unpin for reed_io::bcf::record::FormatTable
+impl core::marker::UnsafeUnpin for reed_io::bcf::record::FormatTable
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::FormatTable
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::FormatTable
+pub struct reed_io::bcf::record::SharedHeader
+pub reed_io::bcf::record::SharedHeader::chrom: i32
+pub reed_io::bcf::record::SharedHeader::n_allele: usize
+pub reed_io::bcf::record::SharedHeader::n_fmt: usize
+pub reed_io::bcf::record::SharedHeader::n_info: usize
+pub reed_io::bcf::record::SharedHeader::n_sample: usize
+pub reed_io::bcf::record::SharedHeader::pos0: i32
+pub reed_io::bcf::record::SharedHeader::qual: u32
+pub reed_io::bcf::record::SharedHeader::rlen: i32
+impl reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::parse(&[u8]) -> core::result::Result<(Self, reed_io::bcf::record::Cursor<'_>), reed_io::error::IoError>
+pub fn reed_io::bcf::record::SharedHeader::pos1(&self) -> core::result::Result<reed_core::coord::Pos1, reed_io::error::IoError>
+impl core::clone::Clone for reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::clone(&self) -> reed_io::bcf::record::SharedHeader
+impl core::cmp::Eq for reed_io::bcf::record::SharedHeader
+impl core::cmp::PartialEq for reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::eq(&self, &reed_io::bcf::record::SharedHeader) -> bool
+impl core::fmt::Debug for reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::bcf::record::SharedHeader
+impl core::marker::StructuralPartialEq for reed_io::bcf::record::SharedHeader
+impl core::marker::Freeze for reed_io::bcf::record::SharedHeader
+impl core::marker::Send for reed_io::bcf::record::SharedHeader
+impl core::marker::Sync for reed_io::bcf::record::SharedHeader
+impl core::marker::Unpin for reed_io::bcf::record::SharedHeader
+impl core::marker::UnsafeUnpin for reed_io::bcf::record::SharedHeader
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::SharedHeader
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::SharedHeader
+pub struct reed_io::bcf::record::VirtualMap<'a>
+pub reed_io::bcf::record::VirtualMap::blocks: &'a [(u32, u32)]
+pub reed_io::bcf::record::VirtualMap::chunk_start: u64
+impl reed_io::bcf::record::VirtualMap<'_>
+pub fn reed_io::bcf::record::VirtualMap<'_>::voff(&self, usize) -> u64
+impl<'a> core::clone::Clone for reed_io::bcf::record::VirtualMap<'a>
+pub fn reed_io::bcf::record::VirtualMap<'a>::clone(&self) -> reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::fmt::Debug for reed_io::bcf::record::VirtualMap<'a>
+pub fn reed_io::bcf::record::VirtualMap<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Freeze for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Send for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::VirtualMap<'a>
+pub const reed_io::bcf::record::FLOAT_MISSING: u32
+pub const reed_io::bcf::record::FLOAT_VECTOR_END: u32
+pub const reed_io::bcf::record::INT16_MAX_VALUE: i64
+pub const reed_io::bcf::record::INT16_MIN_VALUE: i64
+pub const reed_io::bcf::record::INT32_MAX_VALUE: i64
+pub const reed_io::bcf::record::INT32_MIN_VALUE: i64
+pub const reed_io::bcf::record::INT8_MAX_VALUE: i64
+pub const reed_io::bcf::record::INT8_MIN_VALUE: i64
+pub fn reed_io::bcf::record::declared_len(&[u8]) -> core::option::Option<usize>
+pub fn reed_io::bcf::record::field_bytes(u8, usize, usize) -> core::result::Result<usize, reed_io::error::IoError>
+pub fn reed_io::bcf::record::frame_chunk(&[u8], usize, &[u8], usize) -> reed_io::bcf::record::FrameStep
+pub const fn reed_io::bcf::record::int_sentinels(u8) -> (i64, i64)
+pub fn reed_io::bcf::record::malformed(&'static str) -> reed_io::error::IoError
+pub fn reed_io::bcf::record::pos0_from_pos1(u64) -> core::option::Option<i32>
+pub fn reed_io::bcf::record::pos1_from_pos0(i32) -> core::result::Result<reed_core::coord::Pos1, reed_io::error::IoError>
+pub fn reed_io::bcf::record::record_boundary(&[u8], usize) -> usize
+pub fn reed_io::bcf::record::record_len(&[u8]) -> core::option::Option<usize>
+pub fn reed_io::bcf::record::record_ref(&[u8]) -> core::result::Result<reed_io::bcf::record::BcfRecordRef<'_>, reed_io::error::IoError>
+pub fn reed_io::bcf::record::record_site(&[u8]) -> core::result::Result<(i32, i32, i32), reed_io::error::IoError>
+pub const fn reed_io::bcf::record::type_width(u8) -> usize
+pub mod reed_io::bcf::render
+pub fn reed_io::bcf::render::render_record(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::render::render_sample_part(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, usize, usize, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::render::render_site_line(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::render::render_site_part(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &mut alloc::vec::Vec<u8>) -> core::result::Result<(usize, usize), reed_io::error::IoError>
+pub enum reed_io::bcf::FrameStep
+pub reed_io::bcf::FrameStep::Complete
+pub reed_io::bcf::FrameStep::Complete::body_end: usize
+pub reed_io::bcf::FrameStep::Complete::body_start: usize
+pub reed_io::bcf::FrameStep::PrefixIncomplete
+pub reed_io::bcf::FrameStep::Spans
+pub reed_io::bcf::FrameStep::Spans::total: usize
+impl core::clone::Clone for reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::record::FrameStep::clone(&self) -> reed_io::bcf::record::FrameStep
+impl core::cmp::Eq for reed_io::bcf::record::FrameStep
+impl core::cmp::PartialEq for reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::record::FrameStep::eq(&self, &reed_io::bcf::record::FrameStep) -> bool
+impl core::fmt::Debug for reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::record::FrameStep::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::bcf::record::FrameStep
+impl core::marker::StructuralPartialEq for reed_io::bcf::record::FrameStep
+impl core::marker::Freeze for reed_io::bcf::record::FrameStep
+impl core::marker::Send for reed_io::bcf::record::FrameStep
+impl core::marker::Sync for reed_io::bcf::record::FrameStep
+impl core::marker::Unpin for reed_io::bcf::record::FrameStep
+impl core::marker::UnsafeUnpin for reed_io::bcf::record::FrameStep
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::FrameStep
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::FrameStep
+pub struct reed_io::bcf::BcfDict
+impl reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::contig(&self, i32) -> core::option::Option<&[u8]>
+pub fn reed_io::bcf::dict::BcfDict::from_header(&[u8]) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::bcf::dict::BcfDict::key_of(&self, &[u8]) -> core::option::Option<u32>
+pub fn reed_io::bcf::dict::BcfDict::n_contigs(&self) -> usize
+pub fn reed_io::bcf::dict::BcfDict::tag(&self, u32) -> core::option::Option<&[u8]>
+pub const fn reed_io::bcf::dict::BcfDict::vcf44(&self) -> bool
+impl core::clone::Clone for reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::clone(&self) -> reed_io::bcf::dict::BcfDict
+impl core::default::Default for reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::default() -> reed_io::bcf::dict::BcfDict
+impl core::fmt::Debug for reed_io::bcf::dict::BcfDict
+pub fn reed_io::bcf::dict::BcfDict::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::bcf::dict::BcfDict
+impl core::marker::Send for reed_io::bcf::dict::BcfDict
+impl core::marker::Sync for reed_io::bcf::dict::BcfDict
+impl core::marker::Unpin for reed_io::bcf::dict::BcfDict
+impl core::marker::UnsafeUnpin for reed_io::bcf::dict::BcfDict
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::dict::BcfDict
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::dict::BcfDict
+pub struct reed_io::bcf::BcfEncoder
+impl reed_io::bcf::encode_noodles::BcfEncoder
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::encode_record(&mut self, &noodles_vcf::header::Header, &[u8], &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::new() -> Self
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::write_header(&mut self, &noodles_vcf::header::Header) -> core::result::Result<(), reed_io::error::IoError>
+impl core::default::Default for reed_io::bcf::encode_noodles::BcfEncoder
+pub fn reed_io::bcf::encode_noodles::BcfEncoder::default() -> Self
+impl core::marker::Freeze for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::Send for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::Sync for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::Unpin for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::marker::UnsafeUnpin for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::encode_noodles::BcfEncoder
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::encode_noodles::BcfEncoder
+pub struct reed_io::bcf::BcfRecordRef<'a>
+pub reed_io::bcf::BcfRecordRef::indiv: &'a [u8]
+pub reed_io::bcf::BcfRecordRef::shared: &'a [u8]
+impl<'a> core::clone::Clone for reed_io::bcf::record::BcfRecordRef<'a>
+pub fn reed_io::bcf::record::BcfRecordRef<'a>::clone(&self) -> reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::fmt::Debug for reed_io::bcf::record::BcfRecordRef<'a>
+pub fn reed_io::bcf::record::BcfRecordRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Freeze for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Send for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::BcfRecordRef<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::BcfRecordRef<'a>
+pub struct reed_io::bcf::FormatTable
+impl reed_io::bcf::record::FormatTable
+pub fn reed_io::bcf::record::FormatTable::fields(&self) -> &[(u32, u8, usize, usize)]
+pub fn reed_io::bcf::record::FormatTable::new() -> Self
+pub fn reed_io::bcf::record::FormatTable::rebuild(&mut self, &reed_io::bcf::record::BcfRecordRef<'_>, usize, usize) -> core::result::Result<(), reed_io::error::IoError>
+impl core::default::Default for reed_io::bcf::record::FormatTable
+pub fn reed_io::bcf::record::FormatTable::default() -> reed_io::bcf::record::FormatTable
+impl core::fmt::Debug for reed_io::bcf::record::FormatTable
+pub fn reed_io::bcf::record::FormatTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::bcf::record::FormatTable
+impl core::marker::Send for reed_io::bcf::record::FormatTable
+impl core::marker::Sync for reed_io::bcf::record::FormatTable
+impl core::marker::Unpin for reed_io::bcf::record::FormatTable
+impl core::marker::UnsafeUnpin for reed_io::bcf::record::FormatTable
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::FormatTable
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::FormatTable
+pub struct reed_io::bcf::GtQuery<'a>
+pub reed_io::bcf::GtQuery::contig_name: &'a [u8]
+pub reed_io::bcf::GtQuery::gt_key: core::option::Option<u32>
+pub reed_io::bcf::GtQuery::n_samples: usize
+pub reed_io::bcf::GtQuery::pos1: u64
+pub reed_io::bcf::GtQuery::vcf44: bool
+impl<'a> core::clone::Clone for reed_io::bcf::gt::GtQuery<'a>
+pub fn reed_io::bcf::gt::GtQuery<'a>::clone(&self) -> reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::fmt::Debug for reed_io::bcf::gt::GtQuery<'a>
+pub fn reed_io::bcf::gt::GtQuery<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Freeze for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Send for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::gt::GtQuery<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::gt::GtQuery<'a>
+pub struct reed_io::bcf::GtTable
+impl reed_io::bcf::gt::GtTable
+pub fn reed_io::bcf::gt::GtTable::decode_pair<S: reed_io::vcf::genotype_scan::LocusSource>(&self, u8, u8, &S, usize, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<reed_core::genotype::gt_code::GtCode, reed_io::error::IoError>
+pub fn reed_io::bcf::gt::GtTable::new(reed_core::genotype::policy::GenotypePolicies) -> Self
+pub const fn reed_io::bcf::gt::GtTable::policies(&self) -> &reed_core::genotype::policy::GenotypePolicies
+impl core::marker::Freeze for reed_io::bcf::gt::GtTable
+impl core::marker::Send for reed_io::bcf::gt::GtTable
+impl core::marker::Sync for reed_io::bcf::gt::GtTable
+impl core::marker::Unpin for reed_io::bcf::gt::GtTable
+impl core::marker::UnsafeUnpin for reed_io::bcf::gt::GtTable
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::gt::GtTable
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::gt::GtTable
+pub struct reed_io::bcf::NativeEncoder
+impl reed_io::bcf::encode_native::NativeEncoder
+pub fn reed_io::bcf::encode_native::NativeEncoder::encode_bcf(&mut self, &reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &reed_core::vcf::line_edit::EditPlan<'_>, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::encode_native::NativeEncoder::encode_text(&mut self, &reed_core::vcf::line::LineRef<'_>, &reed_io::vcf::site::SiteView<'_>, usize, &reed_core::vcf::line_edit::EditPlan<'_>, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::encode_native::NativeEncoder::new(&noodles_vcf::header::Header) -> core::result::Result<Self, reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::Send for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::Sync for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::Unpin for reed_io::bcf::encode_native::NativeEncoder
+impl core::marker::UnsafeUnpin for reed_io::bcf::encode_native::NativeEncoder
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::encode_native::NativeEncoder
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::encode_native::NativeEncoder
+pub struct reed_io::bcf::SharedHeader
+pub reed_io::bcf::SharedHeader::chrom: i32
+pub reed_io::bcf::SharedHeader::n_allele: usize
+pub reed_io::bcf::SharedHeader::n_fmt: usize
+pub reed_io::bcf::SharedHeader::n_info: usize
+pub reed_io::bcf::SharedHeader::n_sample: usize
+pub reed_io::bcf::SharedHeader::pos0: i32
+pub reed_io::bcf::SharedHeader::qual: u32
+pub reed_io::bcf::SharedHeader::rlen: i32
+impl reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::parse(&[u8]) -> core::result::Result<(Self, reed_io::bcf::record::Cursor<'_>), reed_io::error::IoError>
+pub fn reed_io::bcf::record::SharedHeader::pos1(&self) -> core::result::Result<reed_core::coord::Pos1, reed_io::error::IoError>
+impl core::clone::Clone for reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::clone(&self) -> reed_io::bcf::record::SharedHeader
+impl core::cmp::Eq for reed_io::bcf::record::SharedHeader
+impl core::cmp::PartialEq for reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::eq(&self, &reed_io::bcf::record::SharedHeader) -> bool
+impl core::fmt::Debug for reed_io::bcf::record::SharedHeader
+pub fn reed_io::bcf::record::SharedHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::bcf::record::SharedHeader
+impl core::marker::StructuralPartialEq for reed_io::bcf::record::SharedHeader
+impl core::marker::Freeze for reed_io::bcf::record::SharedHeader
+impl core::marker::Send for reed_io::bcf::record::SharedHeader
+impl core::marker::Sync for reed_io::bcf::record::SharedHeader
+impl core::marker::Unpin for reed_io::bcf::record::SharedHeader
+impl core::marker::UnsafeUnpin for reed_io::bcf::record::SharedHeader
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::SharedHeader
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::SharedHeader
+pub struct reed_io::bcf::SiteHeader
+pub reed_io::bcf::SiteHeader::chrom: i32
+pub reed_io::bcf::SiteHeader::n_allele: usize
+pub reed_io::bcf::SiteHeader::n_fmt: usize
+pub reed_io::bcf::SiteHeader::n_sample: usize
+pub reed_io::bcf::SiteHeader::pos0: i32
+impl reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::pos1(&self) -> core::result::Result<reed_core::coord::Pos1, reed_io::error::IoError>
+impl core::clone::Clone for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::clone(&self) -> reed_io::bcf::gt::SiteHeader
+impl core::cmp::Eq for reed_io::bcf::gt::SiteHeader
+impl core::cmp::PartialEq for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::eq(&self, &reed_io::bcf::gt::SiteHeader) -> bool
+impl core::fmt::Debug for reed_io::bcf::gt::SiteHeader
+pub fn reed_io::bcf::gt::SiteHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::bcf::gt::SiteHeader
+impl core::marker::StructuralPartialEq for reed_io::bcf::gt::SiteHeader
+impl core::marker::Freeze for reed_io::bcf::gt::SiteHeader
+impl core::marker::Send for reed_io::bcf::gt::SiteHeader
+impl core::marker::Sync for reed_io::bcf::gt::SiteHeader
+impl core::marker::Unpin for reed_io::bcf::gt::SiteHeader
+impl core::marker::UnsafeUnpin for reed_io::bcf::gt::SiteHeader
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::gt::SiteHeader
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bcf::gt::SiteHeader
+pub struct reed_io::bcf::VirtualMap<'a>
+pub reed_io::bcf::VirtualMap::blocks: &'a [(u32, u32)]
+pub reed_io::bcf::VirtualMap::chunk_start: u64
+impl reed_io::bcf::record::VirtualMap<'_>
+pub fn reed_io::bcf::record::VirtualMap<'_>::voff(&self, usize) -> u64
+impl<'a> core::clone::Clone for reed_io::bcf::record::VirtualMap<'a>
+pub fn reed_io::bcf::record::VirtualMap<'a>::clone(&self) -> reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::fmt::Debug for reed_io::bcf::record::VirtualMap<'a>
+pub fn reed_io::bcf::record::VirtualMap<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Freeze for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Send for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Sync for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::Unpin for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bcf::record::VirtualMap<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bcf::record::VirtualMap<'a>
+pub fn reed_io::bcf::bcf_file_header(&noodles_vcf::header::Header) -> core::result::Result<alloc::vec::Vec<u8>, reed_io::error::IoError>
+pub fn reed_io::bcf::bcf_header_text(&noodles_vcf::header::Header) -> core::result::Result<alloc::vec::Vec<u8>, reed_io::error::IoError>
+pub fn reed_io::bcf::declared_len(&[u8]) -> core::option::Option<usize>
+pub fn reed_io::bcf::decode_format_columns(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::dict::BcfDict, &[reed_core::vcf::format_layout::IntSpec], &[&[u8]], &mut [alloc::vec::Vec<u32>], &mut [alloc::vec::Vec<f32>]) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::decode_format_columns_with_table(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::dict::BcfDict, &reed_io::bcf::record::FormatTable, &[reed_core::vcf::format_layout::IntSpec], &[&[u8]], &mut [alloc::vec::Vec<u32>], &mut [alloc::vec::Vec<f32>]) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::decode_record_gt(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::gt::GtQuery<'_>, &reed_io::bcf::gt::GtTable, &mut alloc::vec::Vec<reed_core::genotype::gt_code::GtCode>, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<bool, reed_io::error::IoError>
+pub fn reed_io::bcf::decode_record_gt_masked(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::gt::GtQuery<'_>, &reed_io::bcf::gt::GtTable, &reed_core::sample::KeepMask, &mut alloc::vec::Vec<reed_core::genotype::gt_code::GtCode>, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<bool, reed_io::error::IoError>
+pub fn reed_io::bcf::decode_record_gt_with_format(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, &reed_io::bcf::gt::GtQuery<'_>, &reed_io::bcf::gt::GtTable, &mut alloc::vec::Vec<reed_core::genotype::gt_code::GtCode>, &mut reed_core::genotype::policy::PolicyCounters, core::option::Option<&mut reed_io::bcf::record::FormatTable>) -> core::result::Result<bool, reed_io::error::IoError>
+pub fn reed_io::bcf::format_key(&reed_io::bcf::dict::BcfDict, &[u8]) -> core::option::Option<u32>
+pub fn reed_io::bcf::frame_chunk(&[u8], usize, &[u8], usize) -> reed_io::bcf::record::FrameStep
+pub fn reed_io::bcf::gt_field(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::gt::SiteHeader, core::option::Option<u32>, core::option::Option<&mut reed_io::bcf::record::FormatTable>) -> core::result::Result<core::option::Option<(u8, usize, usize)>, reed_io::error::IoError>
+pub fn reed_io::bcf::gt_raw_alleles(u8, usize, &[u8], usize, &[u8], u64) -> core::result::Result<([core::option::Option<u16>; 2], usize), reed_io::error::IoError>
+pub fn reed_io::bcf::pos0_from_pos1(u64) -> core::option::Option<i32>
+pub fn reed_io::bcf::pos1_from_pos0(i32) -> core::result::Result<reed_core::coord::Pos1, reed_io::error::IoError>
+pub fn reed_io::bcf::record_boundary(&[u8], usize) -> usize
+pub fn reed_io::bcf::record_len(&[u8]) -> core::option::Option<usize>
+pub fn reed_io::bcf::record_ref(&[u8]) -> core::result::Result<reed_io::bcf::record::BcfRecordRef<'_>, reed_io::error::IoError>
+pub fn reed_io::bcf::record_site(&[u8]) -> core::result::Result<(i32, i32, i32), reed_io::error::IoError>
+pub fn reed_io::bcf::render_record(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::render_sample_part(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, usize, usize, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::render_site_line(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::bcf::render_site_part(&reed_io::bcf::record::BcfRecordRef<'_>, &reed_io::bcf::dict::BcfDict, &mut alloc::vec::Vec<u8>) -> core::result::Result<(usize, usize), reed_io::error::IoError>
+pub fn reed_io::bcf::site_header(&reed_io::bcf::record::BcfRecordRef<'_>) -> core::result::Result<reed_io::bcf::gt::SiteHeader, reed_io::error::IoError>
+pub const fn reed_io::bcf::type_width(u8) -> usize
+pub mod reed_io::bgzf
+pub mod reed_io::bgzf::address
+pub struct reed_io::bgzf::address::BlockTable<'a>
+impl<'a> reed_io::bgzf::address::BlockTable<'a>
+pub const fn reed_io::bgzf::address::BlockTable<'a>::new(&'a [reed_io::bgzf::address::BlockEntry]) -> Self
+pub fn reed_io::bgzf::address::BlockTable<'a>::voff(&self, u64, usize) -> reed_io::bgzf::address::VirtualOffset
+impl<'a> core::clone::Clone for reed_io::bgzf::address::BlockTable<'a>
+pub fn reed_io::bgzf::address::BlockTable<'a>::clone(&self) -> reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::fmt::Debug for reed_io::bgzf::address::BlockTable<'a>
+pub fn reed_io::bgzf::address::BlockTable<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::marker::Freeze for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::marker::Send for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::marker::Sync for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::marker::Unpin for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::bgzf::address::BlockTable<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::bgzf::address::BlockTable<'a>
+pub struct reed_io::bgzf::address::VirtualOffset(_)
+impl reed_io::bgzf::address::VirtualOffset
+pub const fn reed_io::bgzf::address::VirtualOffset::at_block_end(u64, u16) -> Self
+pub const fn reed_io::bgzf::address::VirtualOffset::at_block_start(u64) -> Self
+pub const fn reed_io::bgzf::address::VirtualOffset::compressed(self) -> u64
+pub const fn reed_io::bgzf::address::VirtualOffset::from_raw(u64) -> Self
+pub const fn reed_io::bgzf::address::VirtualOffset::in_block(self) -> u16
+pub const fn reed_io::bgzf::address::VirtualOffset::new(u64, u16) -> Self
+pub const fn reed_io::bgzf::address::VirtualOffset::raw(self) -> u64
+impl core::clone::Clone for reed_io::bgzf::address::VirtualOffset
+pub fn reed_io::bgzf::address::VirtualOffset::clone(&self) -> reed_io::bgzf::address::VirtualOffset
+impl core::cmp::Eq for reed_io::bgzf::address::VirtualOffset
+impl core::cmp::Ord for reed_io::bgzf::address::VirtualOffset
+pub fn reed_io::bgzf::address::VirtualOffset::cmp(&self, &reed_io::bgzf::address::VirtualOffset) -> core::cmp::Ordering
+impl core::cmp::PartialEq for reed_io::bgzf::address::VirtualOffset
+pub fn reed_io::bgzf::address::VirtualOffset::eq(&self, &reed_io::bgzf::address::VirtualOffset) -> bool
+impl core::cmp::PartialOrd for reed_io::bgzf::address::VirtualOffset
+pub fn reed_io::bgzf::address::VirtualOffset::partial_cmp(&self, &reed_io::bgzf::address::VirtualOffset) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for reed_io::bgzf::address::VirtualOffset
+pub fn reed_io::bgzf::address::VirtualOffset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for reed_io::bgzf::address::VirtualOffset
+pub fn reed_io::bgzf::address::VirtualOffset::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for reed_io::bgzf::address::VirtualOffset
+impl core::marker::StructuralPartialEq for reed_io::bgzf::address::VirtualOffset
+impl core::marker::Freeze for reed_io::bgzf::address::VirtualOffset
+impl core::marker::Send for reed_io::bgzf::address::VirtualOffset
+impl core::marker::Sync for reed_io::bgzf::address::VirtualOffset
+impl core::marker::Unpin for reed_io::bgzf::address::VirtualOffset
+impl core::marker::UnsafeUnpin for reed_io::bgzf::address::VirtualOffset
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bgzf::address::VirtualOffset
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bgzf::address::VirtualOffset
+pub type reed_io::bgzf::address::BlockEntry = (u32, u32)
+pub mod reed_io::bgzf::block
+pub const reed_io::bgzf::block::BGZF_HEADER_LEN: usize
+pub const reed_io::bgzf::block::BGZF_INFLATE_MAX: usize
+pub const reed_io::bgzf::block::BGZF_MAX_BLOCK_DATA: usize
+pub const reed_io::bgzf::block::EOF_BLOCK: [u8; 28]
+pub fn reed_io::bgzf::block::block_entry(&[u8], &mut reed_io::bgzf::inflate::Inflater) -> core::result::Result<(u32, u32), reed_io::error::IoError>
+pub fn reed_io::bgzf::block::block_inflated_size(&[u8]) -> u32
+pub fn reed_io::bgzf::block::is_empty_member(&[u8]) -> bool
+pub fn reed_io::bgzf::block::is_eof_block(&[u8]) -> bool
+pub fn reed_io::bgzf::block::parse_block_size(&[u8]) -> core::option::Option<usize>
+pub mod reed_io::bgzf::deflate
+pub struct reed_io::bgzf::deflate::Deflater
+impl reed_io::bgzf::deflate::Deflater
+pub fn reed_io::bgzf::deflate::Deflater::deflate_block(&mut self, &[u8], &mut alloc::vec::Vec<u8>) -> core::result::Result<usize, reed_io::error::IoError>
+pub fn reed_io::bgzf::deflate::Deflater::new(i32) -> core::result::Result<Self, reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::bgzf::deflate::Deflater
+impl core::marker::Send for reed_io::bgzf::deflate::Deflater
+impl core::marker::Sync for reed_io::bgzf::deflate::Deflater
+impl core::marker::Unpin for reed_io::bgzf::deflate::Deflater
+impl core::marker::UnsafeUnpin for reed_io::bgzf::deflate::Deflater
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bgzf::deflate::Deflater
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bgzf::deflate::Deflater
+pub mod reed_io::bgzf::inflate
+pub struct reed_io::bgzf::inflate::Inflater
+impl reed_io::bgzf::inflate::Inflater
+pub fn reed_io::bgzf::inflate::Inflater::inflate_block(&mut self, &[u8], &mut alloc::vec::Vec<u8>) -> core::result::Result<usize, reed_io::error::IoError>
+pub fn reed_io::bgzf::inflate::Inflater::inflate_window(&mut self, &[u8], &mut [u8]) -> core::result::Result<usize, reed_io::error::IoError>
+pub fn reed_io::bgzf::inflate::Inflater::new() -> Self
+pub fn reed_io::bgzf::inflate::Inflater::verify_empty_member(&mut self, &[u8]) -> core::result::Result<(), reed_io::error::IoError>
+impl core::default::Default for reed_io::bgzf::inflate::Inflater
+pub fn reed_io::bgzf::inflate::Inflater::default() -> Self
+impl core::marker::Freeze for reed_io::bgzf::inflate::Inflater
+impl core::marker::Send for reed_io::bgzf::inflate::Inflater
+impl core::marker::Sync for reed_io::bgzf::inflate::Inflater
+impl core::marker::Unpin for reed_io::bgzf::inflate::Inflater
+impl core::marker::UnsafeUnpin for reed_io::bgzf::inflate::Inflater
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::bgzf::inflate::Inflater
+impl core::panic::unwind_safe::UnwindSafe for reed_io::bgzf::inflate::Inflater
+pub mod reed_io::chunk
+pub mod reed_io::chunk::bgzf
+pub struct reed_io::chunk::bgzf::BgzfChunkReader<R: std::io::Read>
+impl<R: std::io::Read> reed_io::chunk::bgzf::BgzfChunkReader<R>
+pub fn reed_io::chunk::bgzf::BgzfChunkReader<R>::new(R) -> Self
+pub fn reed_io::chunk::bgzf::BgzfChunkReader<R>::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+pub fn reed_io::chunk::bgzf::BgzfChunkReader<R>::scan_header(&mut self, &mut reed_io::bgzf::inflate::Inflater) -> core::result::Result<reed_io::chunk::bgzf::HeaderScan, reed_io::error::IoError>
+pub fn reed_io::chunk::bgzf::BgzfChunkReader<R>::with_chunk_target(R, u64) -> Self
+impl<R> core::marker::Freeze for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::marker::Send
+impl<R> core::marker::Sync for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::marker::Sync
+impl<R> core::marker::Unpin for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::marker::UnsafeUnpin
+impl<R> core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for reed_io::chunk::bgzf::BgzfChunkReader<R> where R: core::panic::unwind_safe::UnwindSafe
+pub struct reed_io::chunk::bgzf::HeaderScan
+pub reed_io::chunk::bgzf::HeaderScan::text: alloc::vec::Vec<u8>
+impl core::fmt::Debug for reed_io::chunk::bgzf::HeaderScan
+pub fn reed_io::chunk::bgzf::HeaderScan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::chunk::bgzf::HeaderScan
+impl core::marker::Send for reed_io::chunk::bgzf::HeaderScan
+impl core::marker::Sync for reed_io::chunk::bgzf::HeaderScan
+impl core::marker::Unpin for reed_io::chunk::bgzf::HeaderScan
+impl core::marker::UnsafeUnpin for reed_io::chunk::bgzf::HeaderScan
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::bgzf::HeaderScan
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::bgzf::HeaderScan
+pub struct reed_io::chunk::bgzf::MmapChunkSource
+impl reed_io::chunk::bgzf::MmapChunkSource
+pub unsafe fn reed_io::chunk::bgzf::MmapChunkSource::open(std::fs::File) -> core::result::Result<(Self, reed_io::header::HeaderFacts), reed_io::error::IoError>
+impl reed_io::chunk::ChunkSource for reed_io::chunk::bgzf::MmapChunkSource
+pub fn reed_io::chunk::bgzf::MmapChunkSource::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::chunk::bgzf::MmapChunkSource
+impl core::marker::Send for reed_io::chunk::bgzf::MmapChunkSource
+impl core::marker::Sync for reed_io::chunk::bgzf::MmapChunkSource
+impl core::marker::Unpin for reed_io::chunk::bgzf::MmapChunkSource
+impl core::marker::UnsafeUnpin for reed_io::chunk::bgzf::MmapChunkSource
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::bgzf::MmapChunkSource
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::bgzf::MmapChunkSource
+pub mod reed_io::chunk::framing
+pub enum reed_io::chunk::framing::RecordFraming
+pub reed_io::chunk::framing::RecordFraming::Newline
+pub reed_io::chunk::framing::RecordFraming::Raw
+impl core::clone::Clone for reed_io::chunk::framing::RecordFraming
+pub fn reed_io::chunk::framing::RecordFraming::clone(&self) -> reed_io::chunk::framing::RecordFraming
+impl core::cmp::Eq for reed_io::chunk::framing::RecordFraming
+impl core::cmp::PartialEq for reed_io::chunk::framing::RecordFraming
+pub fn reed_io::chunk::framing::RecordFraming::eq(&self, &reed_io::chunk::framing::RecordFraming) -> bool
+impl core::default::Default for reed_io::chunk::framing::RecordFraming
+pub fn reed_io::chunk::framing::RecordFraming::default() -> reed_io::chunk::framing::RecordFraming
+impl core::fmt::Debug for reed_io::chunk::framing::RecordFraming
+pub fn reed_io::chunk::framing::RecordFraming::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::chunk::framing::RecordFraming
+impl core::marker::StructuralPartialEq for reed_io::chunk::framing::RecordFraming
+impl core::marker::Freeze for reed_io::chunk::framing::RecordFraming
+impl core::marker::Send for reed_io::chunk::framing::RecordFraming
+impl core::marker::Sync for reed_io::chunk::framing::RecordFraming
+impl core::marker::Unpin for reed_io::chunk::framing::RecordFraming
+impl core::marker::UnsafeUnpin for reed_io::chunk::framing::RecordFraming
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::framing::RecordFraming
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::framing::RecordFraming
+pub mod reed_io::chunk::plain
+pub struct reed_io::chunk::plain::PlainChunkSource
+impl reed_io::chunk::plain::PlainChunkSource
+pub fn reed_io::chunk::plain::PlainChunkSource::open_gzip(impl std::io::Read + core::marker::Send + 'static) -> core::result::Result<(Self, reed_io::header::HeaderFacts), reed_io::error::IoError>
+pub fn reed_io::chunk::plain::PlainChunkSource::open_vcf(impl std::io::Read + core::marker::Send + 'static) -> core::result::Result<(Self, reed_io::header::HeaderFacts), reed_io::error::IoError>
+impl reed_io::chunk::ChunkSource for reed_io::chunk::plain::PlainChunkSource
+pub fn reed_io::chunk::plain::PlainChunkSource::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::chunk::plain::PlainChunkSource
+impl core::marker::Send for reed_io::chunk::plain::PlainChunkSource
+impl !core::marker::Sync for reed_io::chunk::plain::PlainChunkSource
+impl core::marker::Unpin for reed_io::chunk::plain::PlainChunkSource
+impl core::marker::UnsafeUnpin for reed_io::chunk::plain::PlainChunkSource
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::plain::PlainChunkSource
+impl !core::panic::unwind_safe::UnwindSafe for reed_io::chunk::plain::PlainChunkSource
+pub mod reed_io::chunk::region
+pub enum reed_io::chunk::region::FileIndex
+pub reed_io::chunk::region::FileIndex::Csi(alloc::boxed::Box<noodles_csi::Index>)
+pub reed_io::chunk::region::FileIndex::Tbi(alloc::boxed::Box<noodles_tabix::Index>)
+impl reed_io::chunk::region::FileIndex
+pub fn reed_io::chunk::region::FileIndex::open(&std::path::Path) -> core::result::Result<Self, reed_io::error::IoError>
+impl reed_io::chunk::region::IndexQuery for reed_io::chunk::region::FileIndex
+pub fn reed_io::chunk::region::FileIndex::has_reference_names(&self) -> bool
+pub fn reed_io::chunk::region::FileIndex::query(&self, usize, core::option::Option<u64>, core::option::Option<u64>) -> core::result::Result<alloc::vec::Vec<(u64, u64)>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::FileIndex::query_range(&self, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<core::option::Option<(u64, u64)>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::FileIndex::query_ranges(&self, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<core::option::Option<alloc::vec::Vec<(u64, u64)>>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::FileIndex::tid_of(&self, &str) -> core::option::Option<usize>
+impl core::marker::Freeze for reed_io::chunk::region::FileIndex
+impl core::marker::Send for reed_io::chunk::region::FileIndex
+impl core::marker::Sync for reed_io::chunk::region::FileIndex
+impl core::marker::Unpin for reed_io::chunk::region::FileIndex
+impl core::marker::UnsafeUnpin for reed_io::chunk::region::FileIndex
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::region::FileIndex
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::region::FileIndex
+pub struct reed_io::chunk::region::Region
+pub reed_io::chunk::region::Region::contig: alloc::string::String
+pub reed_io::chunk::region::Region::end1: core::option::Option<u64>
+pub reed_io::chunk::region::Region::start1: core::option::Option<u64>
+impl core::clone::Clone for reed_io::chunk::region::Region
+pub fn reed_io::chunk::region::Region::clone(&self) -> reed_io::chunk::region::Region
+impl core::cmp::Eq for reed_io::chunk::region::Region
+impl core::cmp::PartialEq for reed_io::chunk::region::Region
+pub fn reed_io::chunk::region::Region::eq(&self, &reed_io::chunk::region::Region) -> bool
+impl core::fmt::Debug for reed_io::chunk::region::Region
+pub fn reed_io::chunk::region::Region::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_io::chunk::region::Region
+impl core::marker::Freeze for reed_io::chunk::region::Region
+impl core::marker::Send for reed_io::chunk::region::Region
+impl core::marker::Sync for reed_io::chunk::region::Region
+impl core::marker::Unpin for reed_io::chunk::region::Region
+impl core::marker::UnsafeUnpin for reed_io::chunk::region::Region
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::region::Region
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::region::Region
+pub struct reed_io::chunk::region::RegionChunkSource<R: std::io::Read + std::io::Seek>
+impl<R: std::io::Read + std::io::Seek> reed_io::chunk::region::RegionChunkSource<R>
+pub fn reed_io::chunk::region::RegionChunkSource<R>::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::RegionChunkSource<R>::open(R, &dyn reed_io::chunk::region::IndexQuery, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<Self, reed_io::error::IoError>
+impl<R: std::io::Read + std::io::Seek> reed_io::chunk::region::RegionChunkSource<R>
+pub fn reed_io::chunk::region::RegionChunkSource<R>::open_empty(R) -> Self
+impl<R: std::io::Read + std::io::Seek + core::marker::Send> reed_io::chunk::ChunkSource for reed_io::chunk::region::RegionChunkSource<R>
+pub fn reed_io::chunk::region::RegionChunkSource<R>::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl<R> core::marker::Freeze for reed_io::chunk::region::RegionChunkSource<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for reed_io::chunk::region::RegionChunkSource<R> where R: core::marker::Send
+impl<R> core::marker::Sync for reed_io::chunk::region::RegionChunkSource<R> where R: core::marker::Sync
+impl<R> core::marker::Unpin for reed_io::chunk::region::RegionChunkSource<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for reed_io::chunk::region::RegionChunkSource<R> where R: core::marker::UnsafeUnpin
+impl<R> core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::region::RegionChunkSource<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for reed_io::chunk::region::RegionChunkSource<R> where R: core::panic::unwind_safe::UnwindSafe
+pub trait reed_io::chunk::region::IndexQuery
+pub fn reed_io::chunk::region::IndexQuery::has_reference_names(&self) -> bool
+pub fn reed_io::chunk::region::IndexQuery::query(&self, usize, core::option::Option<u64>, core::option::Option<u64>) -> core::result::Result<alloc::vec::Vec<(u64, u64)>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::IndexQuery::query_range(&self, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<core::option::Option<(u64, u64)>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::IndexQuery::query_ranges(&self, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<core::option::Option<alloc::vec::Vec<(u64, u64)>>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::IndexQuery::tid_of(&self, &str) -> core::option::Option<usize>
+impl reed_io::chunk::region::IndexQuery for reed_io::chunk::region::FileIndex
+pub fn reed_io::chunk::region::FileIndex::has_reference_names(&self) -> bool
+pub fn reed_io::chunk::region::FileIndex::query(&self, usize, core::option::Option<u64>, core::option::Option<u64>) -> core::result::Result<alloc::vec::Vec<(u64, u64)>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::FileIndex::query_range(&self, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<core::option::Option<(u64, u64)>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::FileIndex::query_ranges(&self, &[reed_io::chunk::region::Region], &[alloc::string::String]) -> core::result::Result<core::option::Option<alloc::vec::Vec<(u64, u64)>>, reed_io::error::IoError>
+pub fn reed_io::chunk::region::FileIndex::tid_of(&self, &str) -> core::option::Option<usize>
+pub enum reed_io::chunk::ChunkPayload
+pub reed_io::chunk::ChunkPayload::Mapped
+pub reed_io::chunk::ChunkPayload::Mapped::map: alloc::sync::Arc<memmap2::Mmap>
+pub reed_io::chunk::ChunkPayload::Mapped::range: core::ops::range::Range<usize>
+pub reed_io::chunk::ChunkPayload::Owned(alloc::sync::Arc<[u8]>)
+impl reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::as_slice(&self) -> &[u8]
+pub fn reed_io::chunk::ChunkPayload::is_empty(&self) -> bool
+pub fn reed_io::chunk::ChunkPayload::len(&self) -> usize
+impl core::clone::Clone for reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::clone(&self) -> reed_io::chunk::ChunkPayload
+impl core::convert::AsRef<[u8]> for reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::as_ref(&self) -> &[u8]
+impl core::convert::From<alloc::boxed::Box<[u8]>> for reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::from(alloc::boxed::Box<[u8]>) -> Self
+impl core::convert::From<alloc::sync::Arc<[u8]>> for reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::from(alloc::sync::Arc<[u8]>) -> Self
+impl core::convert::From<alloc::vec::Vec<u8>> for reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::from(alloc::vec::Vec<u8>) -> Self
+impl core::fmt::Debug for reed_io::chunk::ChunkPayload
+pub fn reed_io::chunk::ChunkPayload::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::deref::Deref for reed_io::chunk::ChunkPayload
+pub type reed_io::chunk::ChunkPayload::Target = [u8]
+pub fn reed_io::chunk::ChunkPayload::deref(&self) -> &[u8]
+impl core::marker::Freeze for reed_io::chunk::ChunkPayload
+impl core::marker::Send for reed_io::chunk::ChunkPayload
+impl core::marker::Sync for reed_io::chunk::ChunkPayload
+impl core::marker::Unpin for reed_io::chunk::ChunkPayload
+impl core::marker::UnsafeUnpin for reed_io::chunk::ChunkPayload
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::ChunkPayload
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::ChunkPayload
+pub struct reed_io::chunk::BgzfChunkSource<R: std::io::Read + core::marker::Send>
+impl<R: std::io::Read + core::marker::Send> reed_io::chunk::BgzfChunkSource<R>
+pub fn reed_io::chunk::BgzfChunkSource<R>::open(R) -> core::result::Result<(Self, reed_io::header::HeaderFacts), reed_io::error::IoError>
+impl<R: std::io::Read + core::marker::Send> reed_io::chunk::ChunkSource for reed_io::chunk::BgzfChunkSource<R>
+pub fn reed_io::chunk::BgzfChunkSource<R>::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl<R> core::marker::Freeze for reed_io::chunk::BgzfChunkSource<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for reed_io::chunk::BgzfChunkSource<R>
+impl<R> core::marker::Sync for reed_io::chunk::BgzfChunkSource<R> where R: core::marker::Sync
+impl<R> core::marker::Unpin for reed_io::chunk::BgzfChunkSource<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for reed_io::chunk::BgzfChunkSource<R> where R: core::marker::UnsafeUnpin
+impl<R> core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::BgzfChunkSource<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for reed_io::chunk::BgzfChunkSource<R> where R: core::panic::unwind_safe::UnwindSafe
+pub struct reed_io::chunk::ChunkBytes
+pub reed_io::chunk::ChunkBytes::blocks: alloc::vec::Vec<(u32, u32)>
+pub reed_io::chunk::ChunkBytes::compressed: reed_io::chunk::ChunkPayload
+pub reed_io::chunk::ChunkBytes::compressed_start: u64
+pub reed_io::chunk::ChunkBytes::first_in_block_offset: u64
+pub reed_io::chunk::ChunkBytes::id: reed_core::id::ChunkId
+pub reed_io::chunk::ChunkBytes::plain: bool
+pub reed_io::chunk::ChunkBytes::truncate_to: core::option::Option<u64>
+impl core::clone::Clone for reed_io::chunk::ChunkBytes
+pub fn reed_io::chunk::ChunkBytes::clone(&self) -> reed_io::chunk::ChunkBytes
+impl core::fmt::Debug for reed_io::chunk::ChunkBytes
+pub fn reed_io::chunk::ChunkBytes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::chunk::ChunkBytes
+impl core::marker::Send for reed_io::chunk::ChunkBytes
+impl core::marker::Sync for reed_io::chunk::ChunkBytes
+impl core::marker::Unpin for reed_io::chunk::ChunkBytes
+impl core::marker::UnsafeUnpin for reed_io::chunk::ChunkBytes
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::ChunkBytes
+impl core::panic::unwind_safe::UnwindSafe for reed_io::chunk::ChunkBytes
+pub struct reed_io::chunk::InflatedChunk<'a>
+pub reed_io::chunk::InflatedChunk::body: core::ops::range::Range<usize>
+pub reed_io::chunk::InflatedChunk::head: core::option::Option<core::ops::range::Range<usize>>
+pub reed_io::chunk::InflatedChunk::tail: core::option::Option<core::ops::range::Range<usize>>
+pub reed_io::chunk::InflatedChunk::text: &'a [u8]
+impl reed_io::chunk::InflatedChunk<'_>
+pub fn reed_io::chunk::InflatedChunk<'_>::body_bytes<'a>(&self, &'a [u8]) -> &'a [u8]
+pub fn reed_io::chunk::InflatedChunk<'_>::head_bytes<'a>(&self, &'a [u8]) -> core::option::Option<&'a [u8]>
+pub fn reed_io::chunk::InflatedChunk<'_>::tail_bytes<'a>(&self, &'a [u8]) -> core::option::Option<&'a [u8]>
+impl<'a> core::fmt::Debug for reed_io::chunk::InflatedChunk<'a>
+pub fn reed_io::chunk::InflatedChunk<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Freeze for reed_io::chunk::InflatedChunk<'a>
+impl<'a> core::marker::Send for reed_io::chunk::InflatedChunk<'a>
+impl<'a> core::marker::Sync for reed_io::chunk::InflatedChunk<'a>
+impl<'a> core::marker::Unpin for reed_io::chunk::InflatedChunk<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::chunk::InflatedChunk<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::chunk::InflatedChunk<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::chunk::InflatedChunk<'a>
+pub const reed_io::chunk::CHUNK_TARGET_COMPRESSED: u64
+pub trait reed_io::chunk::ChunkSource: core::marker::Send
+pub fn reed_io::chunk::ChunkSource::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl reed_io::chunk::ChunkSource for reed_io::chunk::bgzf::MmapChunkSource
+pub fn reed_io::chunk::bgzf::MmapChunkSource::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl reed_io::chunk::ChunkSource for reed_io::chunk::plain::PlainChunkSource
+pub fn reed_io::chunk::plain::PlainChunkSource::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl<R: std::io::Read + core::marker::Send> reed_io::chunk::ChunkSource for reed_io::chunk::BgzfChunkSource<R>
+pub fn reed_io::chunk::BgzfChunkSource<R>::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+impl<R: std::io::Read + std::io::Seek + core::marker::Send> reed_io::chunk::ChunkSource for reed_io::chunk::region::RegionChunkSource<R>
+pub fn reed_io::chunk::region::RegionChunkSource<R>::next_chunk(&mut self) -> core::result::Result<core::option::Option<reed_io::chunk::ChunkBytes>, reed_io::error::IoError>
+pub fn reed_io::chunk::inflate_chunk<'a>(&'a reed_io::chunk::ChunkBytes, &mut reed_io::bgzf::inflate::Inflater, &'a mut alloc::vec::Vec<u8>) -> core::result::Result<reed_io::chunk::InflatedChunk<'a>, reed_io::error::IoError>
+pub mod reed_io::error
+#[non_exhaustive] pub enum reed_io::error::IoError
+pub reed_io::error::IoError::Capability
+pub reed_io::error::IoError::Capability::fix: &'static str
+pub reed_io::error::IoError::Capability::needed: reed_io::error::Needed
+pub reed_io::error::IoError::Header(alloc::string::String)
+pub reed_io::error::IoError::Io(alloc::string::String)
+pub reed_io::error::IoError::MalformedBgzf
+pub reed_io::error::IoError::MalformedBgzf::locus: core::option::Option<reed_io::error::Locus>
+pub reed_io::error::IoError::MalformedBgzf::reason: alloc::string::String
+pub reed_io::error::IoError::MalformedRecord
+pub reed_io::error::IoError::MalformedRecord::locus: reed_io::error::Locus
+pub reed_io::error::IoError::MalformedRecord::reason: alloc::string::String
+pub reed_io::error::IoError::PolicyRejected
+pub reed_io::error::IoError::PolicyRejected::locus: reed_io::error::Locus
+pub reed_io::error::IoError::PolicyRejected::reason: &'static str
+pub reed_io::error::IoError::UnsupportedInput(&'static str)
+impl core::clone::Clone for reed_io::error::IoError
+pub fn reed_io::error::IoError::clone(&self) -> reed_io::error::IoError
+impl core::cmp::Eq for reed_io::error::IoError
+impl core::cmp::PartialEq for reed_io::error::IoError
+pub fn reed_io::error::IoError::eq(&self, &reed_io::error::IoError) -> bool
+impl core::convert::From<libdeflater::DecompressionError> for reed_io::error::IoError
+pub fn reed_io::error::IoError::from(libdeflater::DecompressionError) -> Self
+impl core::convert::From<std::io::error::Error> for reed_io::error::IoError
+pub fn reed_io::error::IoError::from(std::io::error::Error) -> Self
+impl core::error::Error for reed_io::error::IoError
+impl core::fmt::Debug for reed_io::error::IoError
+pub fn reed_io::error::IoError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_io::error::IoError
+pub fn reed_io::error::IoError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_io::error::IoError
+impl core::marker::Freeze for reed_io::error::IoError
+impl core::marker::Send for reed_io::error::IoError
+impl core::marker::Sync for reed_io::error::IoError
+impl core::marker::Unpin for reed_io::error::IoError
+impl core::marker::UnsafeUnpin for reed_io::error::IoError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::error::IoError
+impl core::panic::unwind_safe::UnwindSafe for reed_io::error::IoError
+#[non_exhaustive] pub enum reed_io::error::Needed
+pub reed_io::error::Needed::Bgzf
+pub reed_io::error::Needed::Index
+pub reed_io::error::Needed::Replay
+pub reed_io::error::Needed::Seek
+impl core::clone::Clone for reed_io::error::Needed
+pub fn reed_io::error::Needed::clone(&self) -> reed_io::error::Needed
+impl core::cmp::Eq for reed_io::error::Needed
+impl core::cmp::PartialEq for reed_io::error::Needed
+pub fn reed_io::error::Needed::eq(&self, &reed_io::error::Needed) -> bool
+impl core::fmt::Debug for reed_io::error::Needed
+pub fn reed_io::error::Needed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_io::error::Needed
+pub fn reed_io::error::Needed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::error::Needed
+impl core::marker::StructuralPartialEq for reed_io::error::Needed
+impl core::marker::Freeze for reed_io::error::Needed
+impl core::marker::Send for reed_io::error::Needed
+impl core::marker::Sync for reed_io::error::Needed
+impl core::marker::Unpin for reed_io::error::Needed
+impl core::marker::UnsafeUnpin for reed_io::error::Needed
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::error::Needed
+impl core::panic::unwind_safe::UnwindSafe for reed_io::error::Needed
+pub struct reed_io::error::Locus
+pub reed_io::error::Locus::contig_name: alloc::string::String
+pub reed_io::error::Locus::pos1: u64
+impl core::clone::Clone for reed_io::error::Locus
+pub fn reed_io::error::Locus::clone(&self) -> reed_io::error::Locus
+impl core::cmp::Eq for reed_io::error::Locus
+impl core::cmp::PartialEq for reed_io::error::Locus
+pub fn reed_io::error::Locus::eq(&self, &reed_io::error::Locus) -> bool
+impl core::fmt::Debug for reed_io::error::Locus
+pub fn reed_io::error::Locus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_io::error::Locus
+pub fn reed_io::error::Locus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_io::error::Locus
+impl reed_io::vcf::genotype_scan::LocusSource for reed_io::error::Locus
+pub fn reed_io::error::Locus::error_locus(&self) -> reed_io::error::Locus
+impl core::marker::Freeze for reed_io::error::Locus
+impl core::marker::Send for reed_io::error::Locus
+impl core::marker::Sync for reed_io::error::Locus
+impl core::marker::Unpin for reed_io::error::Locus
+impl core::marker::UnsafeUnpin for reed_io::error::Locus
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::error::Locus
+impl core::panic::unwind_safe::UnwindSafe for reed_io::error::Locus
+pub mod reed_io::format
+pub enum reed_io::format::Format
+pub reed_io::format::Format::Bcf
+pub reed_io::format::Format::Vcf
+pub reed_io::format::Format::VcfBgzf
+pub reed_io::format::Format::VcfGzip
+impl reed_io::format::Format
+pub fn reed_io::format::Format::detect(&[u8], core::option::Option<&[u8]>) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::format::Format::from_extension(&str) -> core::option::Option<Self>
+impl core::clone::Clone for reed_io::format::Format
+pub fn reed_io::format::Format::clone(&self) -> reed_io::format::Format
+impl core::cmp::Eq for reed_io::format::Format
+impl core::cmp::PartialEq for reed_io::format::Format
+pub fn reed_io::format::Format::eq(&self, &reed_io::format::Format) -> bool
+impl core::fmt::Debug for reed_io::format::Format
+pub fn reed_io::format::Format::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::format::Format
+impl core::marker::StructuralPartialEq for reed_io::format::Format
+impl core::marker::Freeze for reed_io::format::Format
+impl core::marker::Send for reed_io::format::Format
+impl core::marker::Sync for reed_io::format::Format
+impl core::marker::Unpin for reed_io::format::Format
+impl core::marker::UnsafeUnpin for reed_io::format::Format
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::format::Format
+impl core::panic::unwind_safe::UnwindSafe for reed_io::format::Format
+pub mod reed_io::header
+pub enum reed_io::header::InfoNumber
+pub reed_io::header::InfoNumber::A
+pub reed_io::header::InfoNumber::Fixed(u32)
+pub reed_io::header::InfoNumber::G
+pub reed_io::header::InfoNumber::R
+pub reed_io::header::InfoNumber::Unknown
+impl core::clone::Clone for reed_io::header::InfoNumber
+pub fn reed_io::header::InfoNumber::clone(&self) -> reed_io::header::InfoNumber
+impl core::cmp::Eq for reed_io::header::InfoNumber
+impl core::cmp::PartialEq for reed_io::header::InfoNumber
+pub fn reed_io::header::InfoNumber::eq(&self, &reed_io::header::InfoNumber) -> bool
+impl core::fmt::Debug for reed_io::header::InfoNumber
+pub fn reed_io::header::InfoNumber::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::header::InfoNumber
+impl core::marker::StructuralPartialEq for reed_io::header::InfoNumber
+impl core::marker::Freeze for reed_io::header::InfoNumber
+impl core::marker::Send for reed_io::header::InfoNumber
+impl core::marker::Sync for reed_io::header::InfoNumber
+impl core::marker::Unpin for reed_io::header::InfoNumber
+impl core::marker::UnsafeUnpin for reed_io::header::InfoNumber
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::header::InfoNumber
+impl core::panic::unwind_safe::UnwindSafe for reed_io::header::InfoNumber
+pub enum reed_io::header::InfoType
+pub reed_io::header::InfoType::Flag
+pub reed_io::header::InfoType::Float
+pub reed_io::header::InfoType::Integer
+pub reed_io::header::InfoType::String
+impl core::clone::Clone for reed_io::header::InfoType
+pub fn reed_io::header::InfoType::clone(&self) -> reed_io::header::InfoType
+impl core::cmp::Eq for reed_io::header::InfoType
+impl core::cmp::PartialEq for reed_io::header::InfoType
+pub fn reed_io::header::InfoType::eq(&self, &reed_io::header::InfoType) -> bool
+impl core::fmt::Debug for reed_io::header::InfoType
+pub fn reed_io::header::InfoType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::header::InfoType
+impl core::marker::StructuralPartialEq for reed_io::header::InfoType
+impl core::marker::Freeze for reed_io::header::InfoType
+impl core::marker::Send for reed_io::header::InfoType
+impl core::marker::Sync for reed_io::header::InfoType
+impl core::marker::Unpin for reed_io::header::InfoType
+impl core::marker::UnsafeUnpin for reed_io::header::InfoType
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::header::InfoType
+impl core::panic::unwind_safe::UnwindSafe for reed_io::header::InfoType
+pub struct reed_io::header::HeaderFacts
+pub reed_io::header::HeaderFacts::contig_lengths: alloc::vec::Vec<core::option::Option<u64>>
+pub reed_io::header::HeaderFacts::contig_names: alloc::vec::Vec<alloc::string::String>
+pub reed_io::header::HeaderFacts::format_keys: alloc::vec::Vec<alloc::string::String>
+pub reed_io::header::HeaderFacts::header: reed_io::header::VcfHeader
+pub reed_io::header::HeaderFacts::info_keys: alloc::vec::Vec<alloc::string::String>
+pub reed_io::header::HeaderFacts::sample_names: alloc::vec::Vec<alloc::string::String>
+pub reed_io::header::HeaderFacts::text: alloc::vec::Vec<u8>
+impl reed_io::header::HeaderFacts
+pub fn reed_io::header::HeaderFacts::n_samples(&self) -> usize
+pub fn reed_io::header::HeaderFacts::parse(&[u8]) -> core::result::Result<Self, reed_io::error::IoError>
+impl core::clone::Clone for reed_io::header::HeaderFacts
+pub fn reed_io::header::HeaderFacts::clone(&self) -> reed_io::header::HeaderFacts
+impl core::fmt::Debug for reed_io::header::HeaderFacts
+pub fn reed_io::header::HeaderFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::header::HeaderFacts
+impl core::marker::Send for reed_io::header::HeaderFacts
+impl core::marker::Sync for reed_io::header::HeaderFacts
+impl core::marker::Unpin for reed_io::header::HeaderFacts
+impl core::marker::UnsafeUnpin for reed_io::header::HeaderFacts
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::header::HeaderFacts
+impl core::panic::unwind_safe::UnwindSafe for reed_io::header::HeaderFacts
+pub struct reed_io::header::InfoDefinition
+pub reed_io::header::InfoDefinition::description: &'static str
+pub reed_io::header::InfoDefinition::id: &'static str
+pub reed_io::header::InfoDefinition::number: reed_io::header::InfoNumber
+pub reed_io::header::InfoDefinition::ty: reed_io::header::InfoType
+impl core::clone::Clone for reed_io::header::InfoDefinition
+pub fn reed_io::header::InfoDefinition::clone(&self) -> reed_io::header::InfoDefinition
+impl core::cmp::Eq for reed_io::header::InfoDefinition
+impl core::cmp::PartialEq for reed_io::header::InfoDefinition
+pub fn reed_io::header::InfoDefinition::eq(&self, &reed_io::header::InfoDefinition) -> bool
+impl core::fmt::Debug for reed_io::header::InfoDefinition
+pub fn reed_io::header::InfoDefinition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::header::InfoDefinition
+impl core::marker::StructuralPartialEq for reed_io::header::InfoDefinition
+impl core::marker::Freeze for reed_io::header::InfoDefinition
+impl core::marker::Send for reed_io::header::InfoDefinition
+impl core::marker::Sync for reed_io::header::InfoDefinition
+impl core::marker::Unpin for reed_io::header::InfoDefinition
+impl core::marker::UnsafeUnpin for reed_io::header::InfoDefinition
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::header::InfoDefinition
+impl core::panic::unwind_safe::UnwindSafe for reed_io::header::InfoDefinition
+pub struct reed_io::header::VcfHeader
+impl reed_io::header::VcfHeader
+pub fn reed_io::header::VcfHeader::contig_lengths(&self) -> alloc::vec::Vec<core::option::Option<u64>>
+pub fn reed_io::header::VcfHeader::contig_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn reed_io::header::VcfHeader::contig_names_in_dict_order(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn reed_io::header::VcfHeader::declares_filter(&self, &str) -> bool
+pub fn reed_io::header::VcfHeader::declares_info(&self, &str) -> bool
+pub fn reed_io::header::VcfHeader::encode_record_noodles(&self, &mut reed_io::bcf::encode_noodles::BcfEncoder, &[u8], &mut alloc::vec::Vec<u8>) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::header::VcfHeader::format_keys(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn reed_io::header::VcfHeader::info_keys(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn reed_io::header::VcfHeader::n_samples(&self) -> usize
+pub fn reed_io::header::VcfHeader::native_encoder(&self) -> core::result::Result<reed_io::bcf::encode_native::NativeEncoder, reed_io::error::IoError>
+pub fn reed_io::header::VcfHeader::noodles_encoder(&self) -> core::result::Result<reed_io::bcf::encode_noodles::BcfEncoder, reed_io::error::IoError>
+pub fn reed_io::header::VcfHeader::parse(&[u8]) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::header::VcfHeader::sample_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn reed_io::header::VcfHeader::to_bcf_file_header(&self) -> core::result::Result<alloc::vec::Vec<u8>, reed_io::error::IoError>
+pub fn reed_io::header::VcfHeader::to_text(&self) -> alloc::vec::Vec<u8>
+pub fn reed_io::header::VcfHeader::with_info_definitions(&self, &[reed_io::header::InfoDefinition]) -> Self
+pub fn reed_io::header::VcfHeader::with_meta_line(&self, &str, &str) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::header::VcfHeader::with_pass_filter(&self) -> Self
+pub fn reed_io::header::VcfHeader::with_samples_pruned(&self, &[bool]) -> Self
+impl core::clone::Clone for reed_io::header::VcfHeader
+pub fn reed_io::header::VcfHeader::clone(&self) -> reed_io::header::VcfHeader
+impl core::fmt::Debug for reed_io::header::VcfHeader
+pub fn reed_io::header::VcfHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::header::VcfHeader
+impl core::marker::Send for reed_io::header::VcfHeader
+impl core::marker::Sync for reed_io::header::VcfHeader
+impl core::marker::Unpin for reed_io::header::VcfHeader
+impl core::marker::UnsafeUnpin for reed_io::header::VcfHeader
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::header::VcfHeader
+impl core::panic::unwind_safe::UnwindSafe for reed_io::header::VcfHeader
+pub const reed_io::header::MAX_HEADER_BYTES: usize
+pub fn reed_io::header::tag_table(&reed_io::header::VcfHeader) -> reed_core::tag_table::TagTable
+pub mod reed_io::vcf
+pub use reed_io::vcf::format_layout
+pub use reed_io::vcf::info
+pub use reed_io::vcf::line
+pub use reed_io::vcf::line_edit
+pub mod reed_io::vcf::fixed
+pub fn reed_io::vcf::fixed::is_pass(&[u8]) -> bool
+pub fn reed_io::vcf::fixed::parse_pos1(&[u8], &[u8]) -> core::result::Result<u64, reed_io::error::IoError>
+pub fn reed_io::vcf::fixed::parse_qual(&[u8], (&[u8], u64)) -> core::result::Result<core::option::Option<f32>, reed_io::error::IoError>
+pub mod reed_io::vcf::genotype_scan
+pub struct reed_io::vcf::genotype_scan::GenotypeScanner
+impl reed_io::vcf::genotype_scan::GenotypeScanner
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::n_float_columns(&self) -> usize
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::n_int_columns(&self) -> usize
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::new(usize, &[&[u8]], &[&[u8]], reed_core::genotype::policy::GenotypePolicies) -> Self
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::new_with_specs(usize, &[reed_core::vcf::format_layout::IntSpec], &[&[u8]], reed_core::genotype::policy::GenotypePolicies) -> Self
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::scan<'s>(&'s mut self, &reed_core::vcf::line::LineRef<'_>, &reed_io::vcf::site::SiteView<'_>, &mut reed_core::genotype::policy::PolicyCounters) -> core::result::Result<reed_io::vcf::genotype_scan::ScanOutput<'s>, reed_io::error::IoError>
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::tracking_alleles(self) -> Self
+pub fn reed_io::vcf::genotype_scan::GenotypeScanner::with_active_samples(self, reed_core::sample::KeepMask) -> Self
+impl core::marker::Freeze for reed_io::vcf::genotype_scan::GenotypeScanner
+impl core::marker::Send for reed_io::vcf::genotype_scan::GenotypeScanner
+impl core::marker::Sync for reed_io::vcf::genotype_scan::GenotypeScanner
+impl core::marker::Unpin for reed_io::vcf::genotype_scan::GenotypeScanner
+impl core::marker::UnsafeUnpin for reed_io::vcf::genotype_scan::GenotypeScanner
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::vcf::genotype_scan::GenotypeScanner
+impl core::panic::unwind_safe::UnwindSafe for reed_io::vcf::genotype_scan::GenotypeScanner
+pub struct reed_io::vcf::genotype_scan::ScanOutput<'s>
+pub reed_io::vcf::genotype_scan::ScanOutput::alleles: core::option::Option<&'s [core::option::Option<u16>]>
+pub reed_io::vcf::genotype_scan::ScanOutput::codes: &'s [reed_core::genotype::gt_code::GtCode]
+pub reed_io::vcf::genotype_scan::ScanOutput::float_columns: &'s [alloc::vec::Vec<f32>]
+pub reed_io::vcf::genotype_scan::ScanOutput::has_gt: bool
+pub reed_io::vcf::genotype_scan::ScanOutput::int_columns: &'s [alloc::vec::Vec<u32>]
+impl<'s> core::clone::Clone for reed_io::vcf::genotype_scan::ScanOutput<'s>
+pub fn reed_io::vcf::genotype_scan::ScanOutput<'s>::clone(&self) -> reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::fmt::Debug for reed_io::vcf::genotype_scan::ScanOutput<'s>
+pub fn reed_io::vcf::genotype_scan::ScanOutput<'s>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'s> core::marker::Copy for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::marker::Freeze for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::marker::Send for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::marker::Sync for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::marker::Unpin for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::marker::UnsafeUnpin for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::panic::unwind_safe::RefUnwindSafe for reed_io::vcf::genotype_scan::ScanOutput<'s>
+impl<'s> core::panic::unwind_safe::UnwindSafe for reed_io::vcf::genotype_scan::ScanOutput<'s>
+pub const reed_io::vcf::genotype_scan::INT_MISSING: u32
+pub trait reed_io::vcf::genotype_scan::LocusSource
+pub fn reed_io::vcf::genotype_scan::LocusSource::error_locus(&self) -> reed_io::error::Locus
+impl reed_io::vcf::genotype_scan::LocusSource for (&[u8], u64)
+pub fn (&[u8], u64)::error_locus(&self) -> reed_io::error::Locus
+impl reed_io::vcf::genotype_scan::LocusSource for reed_io::error::Locus
+pub fn reed_io::error::Locus::error_locus(&self) -> reed_io::error::Locus
+impl reed_io::vcf::genotype_scan::LocusSource for reed_io::vcf::site::SiteView<'_>
+pub fn reed_io::vcf::site::SiteView<'_>::error_locus(&self) -> reed_io::error::Locus
+pub fn reed_io::vcf::genotype_scan::clamp_int_sum(u64) -> u32
+pub fn reed_io::vcf::genotype_scan::parse_float(&[u8]) -> f32
+pub fn reed_io::vcf::genotype_scan::parse_int(&[u8]) -> u32
+pub fn reed_io::vcf::genotype_scan::parse_int_sum(&[u8]) -> u32
+pub mod reed_io::vcf::site
+pub use reed_io::vcf::site::count_alts
+pub struct reed_io::vcf::site::ContigTable
+impl reed_io::vcf::site::ContigTable
+pub fn reed_io::vcf::site::ContigTable::id_of(&mut self, &[u8]) -> core::option::Option<reed_core::id::ContigId>
+pub fn reed_io::vcf::site::ContigTable::new(impl core::iter::traits::collect::IntoIterator<Item = alloc::vec::Vec<u8>>) -> Self
+impl core::default::Default for reed_io::vcf::site::ContigTable
+pub fn reed_io::vcf::site::ContigTable::default() -> reed_io::vcf::site::ContigTable
+impl core::fmt::Debug for reed_io::vcf::site::ContigTable
+pub fn reed_io::vcf::site::ContigTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::vcf::site::ContigTable
+impl core::marker::Send for reed_io::vcf::site::ContigTable
+impl core::marker::Sync for reed_io::vcf::site::ContigTable
+impl core::marker::Unpin for reed_io::vcf::site::ContigTable
+impl core::marker::UnsafeUnpin for reed_io::vcf::site::ContigTable
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::vcf::site::ContigTable
+impl core::panic::unwind_safe::UnwindSafe for reed_io::vcf::site::ContigTable
+pub struct reed_io::vcf::site::SiteView<'a>
+pub reed_io::vcf::site::SiteView::alts: &'a [u8]
+pub reed_io::vcf::site::SiteView::contig: core::option::Option<reed_core::id::ContigId>
+pub reed_io::vcf::site::SiteView::contig_name: &'a [u8]
+pub reed_io::vcf::site::SiteView::filter: &'a [u8]
+pub reed_io::vcf::site::SiteView::info: &'a [u8]
+pub reed_io::vcf::site::SiteView::pos1: u64
+pub reed_io::vcf::site::SiteView::qual: core::option::Option<f32>
+pub reed_io::vcf::site::SiteView::reference: &'a [u8]
+impl<'a> reed_io::vcf::site::SiteView<'a>
+pub fn reed_io::vcf::site::SiteView<'a>::alt_at(&self, usize) -> core::option::Option<&'a [u8]>
+pub fn reed_io::vcf::site::SiteView<'a>::indexed_span_len(&self) -> u64
+pub fn reed_io::vcf::site::SiteView<'a>::info_value(&self, &[u8]) -> core::option::Option<&'a [u8]>
+pub fn reed_io::vcf::site::SiteView<'a>::is_invariant(&self) -> bool
+pub fn reed_io::vcf::site::SiteView<'a>::locus(&self) -> reed_io::error::Locus
+pub fn reed_io::vcf::site::SiteView<'a>::n_alt(&self) -> u32
+pub fn reed_io::vcf::site::SiteView<'a>::parse(&reed_core::vcf::line::LineRef<'a>) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::vcf::site::SiteView<'a>::parse_declared(&reed_core::vcf::line::LineRef<'a>, &mut reed_io::vcf::site::ContigTable) -> core::result::Result<Self, reed_io::error::IoError>
+impl reed_io::vcf::genotype_scan::LocusSource for reed_io::vcf::site::SiteView<'_>
+pub fn reed_io::vcf::site::SiteView<'_>::error_locus(&self) -> reed_io::error::Locus
+impl<'a> core::clone::Clone for reed_io::vcf::site::SiteView<'a>
+pub fn reed_io::vcf::site::SiteView<'a>::clone(&self) -> reed_io::vcf::site::SiteView<'a>
+impl<'a> core::fmt::Debug for reed_io::vcf::site::SiteView<'a>
+pub fn reed_io::vcf::site::SiteView<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::marker::Freeze for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::marker::Send for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::marker::Sync for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::marker::Unpin for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::marker::UnsafeUnpin for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for reed_io::vcf::site::SiteView<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for reed_io::vcf::site::SiteView<'a>
+pub fn reed_io::vcf::site::indexed_span_len(u64, &[u8], &[u8], &[u8]) -> u64
+pub mod reed_io::write
+pub mod reed_io::write::atomic
+pub struct reed_io::write::atomic::AtomicFile
+impl reed_io::write::atomic::AtomicFile
+pub fn reed_io::write::atomic::AtomicFile::commit(self) -> std::io::error::Result<()>
+pub fn reed_io::write::atomic::AtomicFile::create(&std::path::Path) -> std::io::error::Result<(Self, std::fs::File)>
+pub fn reed_io::write::atomic::AtomicFile::create_with_parents(&std::path::Path, bool) -> std::io::error::Result<(Self, std::fs::File)>
+pub fn reed_io::write::atomic::AtomicFile::target_path(&self) -> &std::path::Path
+pub fn reed_io::write::atomic::AtomicFile::temp_path(&self) -> &std::path::Path
+impl core::fmt::Debug for reed_io::write::atomic::AtomicFile
+pub fn reed_io::write::atomic::AtomicFile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::drop::Drop for reed_io::write::atomic::AtomicFile
+pub fn reed_io::write::atomic::AtomicFile::drop(&mut self)
+impl core::marker::Freeze for reed_io::write::atomic::AtomicFile
+impl core::marker::Send for reed_io::write::atomic::AtomicFile
+impl core::marker::Sync for reed_io::write::atomic::AtomicFile
+impl core::marker::Unpin for reed_io::write::atomic::AtomicFile
+impl core::marker::UnsafeUnpin for reed_io::write::atomic::AtomicFile
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::atomic::AtomicFile
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::atomic::AtomicFile
+pub struct reed_io::write::atomic::AtomicWriter
+impl reed_io::write::atomic::AtomicWriter
+pub fn reed_io::write::atomic::AtomicWriter::commit(self) -> std::io::error::Result<()>
+pub fn reed_io::write::atomic::AtomicWriter::create(&std::path::Path) -> std::io::error::Result<Self>
+pub fn reed_io::write::atomic::AtomicWriter::create_with_parents(&std::path::Path, usize) -> std::io::error::Result<Self>
+pub fn reed_io::write::atomic::AtomicWriter::finish(self) -> std::io::error::Result<reed_io::write::atomic::AtomicFile>
+pub fn reed_io::write::atomic::AtomicWriter::target_path(&self) -> &std::path::Path
+pub fn reed_io::write::atomic::AtomicWriter::temp_path(&self) -> &std::path::Path
+pub fn reed_io::write::atomic::AtomicWriter::with_capacity(&std::path::Path, usize) -> std::io::error::Result<Self>
+impl core::fmt::Debug for reed_io::write::atomic::AtomicWriter
+pub fn reed_io::write::atomic::AtomicWriter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl std::io::Write for reed_io::write::atomic::AtomicWriter
+pub fn reed_io::write::atomic::AtomicWriter::flush(&mut self) -> std::io::error::Result<()>
+pub fn reed_io::write::atomic::AtomicWriter::write(&mut self, &[u8]) -> std::io::error::Result<usize>
+impl core::marker::Freeze for reed_io::write::atomic::AtomicWriter
+impl core::marker::Send for reed_io::write::atomic::AtomicWriter
+impl core::marker::Sync for reed_io::write::atomic::AtomicWriter
+impl core::marker::Unpin for reed_io::write::atomic::AtomicWriter
+impl core::marker::UnsafeUnpin for reed_io::write::atomic::AtomicWriter
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::atomic::AtomicWriter
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::atomic::AtomicWriter
+pub const reed_io::write::atomic::DEFAULT_BUFFER: usize
+pub fn reed_io::write::atomic::temp_path(&std::path::Path, u64) -> std::path::PathBuf
+pub fn reed_io::write::atomic::write_atomic(&std::path::Path, impl core::convert::AsRef<[u8]>) -> std::io::error::Result<()>
+pub mod reed_io::write::block_writer
+pub struct reed_io::write::block_writer::BlockWriter
+impl reed_io::write::block_writer::BlockWriter
+pub fn reed_io::write::block_writer::BlockWriter::finish_chunk(&mut self) -> core::result::Result<reed_io::write::block_writer::ChunkOutput, reed_io::error::IoError>
+pub fn reed_io::write::block_writer::BlockWriter::new(u8, bool) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::write::block_writer::BlockWriter::push_record(&mut self, &[u8], reed_io::write::block_writer::IndexKey) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::block_writer::BlockWriter
+impl core::marker::Send for reed_io::write::block_writer::BlockWriter
+impl core::marker::Sync for reed_io::write::block_writer::BlockWriter
+impl core::marker::Unpin for reed_io::write::block_writer::BlockWriter
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::BlockWriter
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::BlockWriter
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::BlockWriter
+pub struct reed_io::write::block_writer::ChunkOutput
+pub reed_io::write::block_writer::ChunkOutput::blocks: alloc::vec::Vec<reed_io::write::block_writer::OutBlock>
+pub reed_io::write::block_writer::ChunkOutput::deflate_nanos: u64
+pub reed_io::write::block_writer::ChunkOutput::raw: alloc::vec::Vec<u8>
+impl core::clone::Clone for reed_io::write::block_writer::ChunkOutput
+pub fn reed_io::write::block_writer::ChunkOutput::clone(&self) -> reed_io::write::block_writer::ChunkOutput
+impl core::default::Default for reed_io::write::block_writer::ChunkOutput
+pub fn reed_io::write::block_writer::ChunkOutput::default() -> reed_io::write::block_writer::ChunkOutput
+impl core::fmt::Debug for reed_io::write::block_writer::ChunkOutput
+pub fn reed_io::write::block_writer::ChunkOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::write::block_writer::ChunkOutput
+impl core::marker::Send for reed_io::write::block_writer::ChunkOutput
+impl core::marker::Sync for reed_io::write::block_writer::ChunkOutput
+impl core::marker::Unpin for reed_io::write::block_writer::ChunkOutput
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::ChunkOutput
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::ChunkOutput
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::ChunkOutput
+pub struct reed_io::write::block_writer::IndexKey
+pub reed_io::write::block_writer::IndexKey::contig: reed_core::id::ContigId
+pub reed_io::write::block_writer::IndexKey::ref_len: u32
+pub reed_io::write::block_writer::IndexKey::start1: u64
+impl core::clone::Clone for reed_io::write::block_writer::IndexKey
+pub fn reed_io::write::block_writer::IndexKey::clone(&self) -> reed_io::write::block_writer::IndexKey
+impl core::cmp::Eq for reed_io::write::block_writer::IndexKey
+impl core::cmp::PartialEq for reed_io::write::block_writer::IndexKey
+pub fn reed_io::write::block_writer::IndexKey::eq(&self, &reed_io::write::block_writer::IndexKey) -> bool
+impl core::fmt::Debug for reed_io::write::block_writer::IndexKey
+pub fn reed_io::write::block_writer::IndexKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::write::block_writer::IndexKey
+impl core::marker::StructuralPartialEq for reed_io::write::block_writer::IndexKey
+impl core::marker::Freeze for reed_io::write::block_writer::IndexKey
+impl core::marker::Send for reed_io::write::block_writer::IndexKey
+impl core::marker::Sync for reed_io::write::block_writer::IndexKey
+impl core::marker::Unpin for reed_io::write::block_writer::IndexKey
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::IndexKey
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::IndexKey
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::IndexKey
+pub struct reed_io::write::block_writer::IndexRecord
+pub reed_io::write::block_writer::IndexRecord::key: reed_io::write::block_writer::IndexKey
+pub reed_io::write::block_writer::IndexRecord::offset_in_block: u32
+impl core::clone::Clone for reed_io::write::block_writer::IndexRecord
+pub fn reed_io::write::block_writer::IndexRecord::clone(&self) -> reed_io::write::block_writer::IndexRecord
+impl core::cmp::Eq for reed_io::write::block_writer::IndexRecord
+impl core::cmp::PartialEq for reed_io::write::block_writer::IndexRecord
+pub fn reed_io::write::block_writer::IndexRecord::eq(&self, &reed_io::write::block_writer::IndexRecord) -> bool
+impl core::fmt::Debug for reed_io::write::block_writer::IndexRecord
+pub fn reed_io::write::block_writer::IndexRecord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::write::block_writer::IndexRecord
+impl core::marker::StructuralPartialEq for reed_io::write::block_writer::IndexRecord
+impl core::marker::Freeze for reed_io::write::block_writer::IndexRecord
+impl core::marker::Send for reed_io::write::block_writer::IndexRecord
+impl core::marker::Sync for reed_io::write::block_writer::IndexRecord
+impl core::marker::Unpin for reed_io::write::block_writer::IndexRecord
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::IndexRecord
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::IndexRecord
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::IndexRecord
+pub struct reed_io::write::block_writer::OutBlock
+pub reed_io::write::block_writer::OutBlock::compressed: alloc::vec::Vec<u8>
+pub reed_io::write::block_writer::OutBlock::records: alloc::vec::Vec<reed_io::write::block_writer::IndexRecord>
+pub reed_io::write::block_writer::OutBlock::uncompressed_len: u32
+impl core::clone::Clone for reed_io::write::block_writer::OutBlock
+pub fn reed_io::write::block_writer::OutBlock::clone(&self) -> reed_io::write::block_writer::OutBlock
+impl core::default::Default for reed_io::write::block_writer::OutBlock
+pub fn reed_io::write::block_writer::OutBlock::default() -> reed_io::write::block_writer::OutBlock
+impl core::fmt::Debug for reed_io::write::block_writer::OutBlock
+pub fn reed_io::write::block_writer::OutBlock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::write::block_writer::OutBlock
+impl core::marker::Send for reed_io::write::block_writer::OutBlock
+impl core::marker::Sync for reed_io::write::block_writer::OutBlock
+impl core::marker::Unpin for reed_io::write::block_writer::OutBlock
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::OutBlock
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::OutBlock
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::OutBlock
+pub const reed_io::write::block_writer::BGZF_BLOCK_SIZE: usize
+pub mod reed_io::write::index
+pub enum reed_io::write::index::Indexer
+pub reed_io::write::index::Indexer::Csi
+pub reed_io::write::index::Indexer::Csi::header: noodles_csi::binning_index::index::header::Header
+pub reed_io::write::index::Indexer::Csi::n_ref: usize
+pub reed_io::write::index::Indexer::Csi::per_contig: alloc::vec::Vec<core::option::Option<alloc::boxed::Box<noodles_csi::binning_index::indexer::Indexer<noodles_csi::binning_index::index::reference_sequence::index::binned_index::BinnedIndex>>>>
+pub reed_io::write::index::Indexer::Tbi(alloc::boxed::Box<noodles_tabix::index::indexer::Indexer>)
+impl reed_io::write::index::Indexer
+pub fn reed_io::write::index::Indexer::add(&mut self, &[u8], reed_core::id::ContigId, u64, u32, u64, u64) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::write::index::Indexer::new(reed_io::write::index::WriteIndex, &[alloc::vec::Vec<u8>]) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::write::index::Indexer::write(self, &std::path::Path) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::index::Indexer
+impl core::marker::Send for reed_io::write::index::Indexer
+impl core::marker::Sync for reed_io::write::index::Indexer
+impl core::marker::Unpin for reed_io::write::index::Indexer
+impl core::marker::UnsafeUnpin for reed_io::write::index::Indexer
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::index::Indexer
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::index::Indexer
+pub enum reed_io::write::index::WriteIndex
+pub reed_io::write::index::WriteIndex::Csi
+pub reed_io::write::index::WriteIndex::None
+pub reed_io::write::index::WriteIndex::Tbi
+impl reed_io::write::index::WriteIndex
+pub const fn reed_io::write::index::WriteIndex::is_some(self) -> bool
+pub fn reed_io::write::index::WriteIndex::parse(core::option::Option<&str>) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::write::index::WriteIndex::path_for(self, &std::path::Path) -> std::path::PathBuf
+pub const fn reed_io::write::index::WriteIndex::suffix(self) -> &'static str
+pub fn reed_io::write::index::WriteIndex::to_args(self) -> alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::clone(&self) -> reed_io::write::index::WriteIndex
+impl core::cmp::Eq for reed_io::write::index::WriteIndex
+impl core::cmp::PartialEq for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::eq(&self, &reed_io::write::index::WriteIndex) -> bool
+impl core::default::Default for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::default() -> reed_io::write::index::WriteIndex
+impl core::fmt::Debug for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::write::index::WriteIndex
+impl core::marker::StructuralPartialEq for reed_io::write::index::WriteIndex
+impl core::marker::Freeze for reed_io::write::index::WriteIndex
+impl core::marker::Send for reed_io::write::index::WriteIndex
+impl core::marker::Sync for reed_io::write::index::WriteIndex
+impl core::marker::Unpin for reed_io::write::index::WriteIndex
+impl core::marker::UnsafeUnpin for reed_io::write::index::WriteIndex
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::index::WriteIndex
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::index::WriteIndex
+pub const reed_io::write::index::TBI_MAX_POS1: u64
+pub mod reed_io::write::ordered_output
+pub struct reed_io::write::ordered_output::OrderedOutput
+impl reed_io::write::ordered_output::OrderedOutput
+pub fn reed_io::write::ordered_output::OrderedOutput::accept_chunk(&mut self, &reed_io::write::block_writer::ChunkOutput) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::write::ordered_output::OrderedOutput::adopting(self, reed_io::write::atomic::AtomicFile) -> Self
+pub fn reed_io::write::ordered_output::OrderedOutput::create(&std::path::Path, bool, u8, core::option::Option<reed_io::write::index::Indexer>, core::option::Option<std::path::PathBuf>, alloc::sync::Arc<[alloc::vec::Vec<u8>]>) -> core::result::Result<Self, reed_io::error::IoError>
+pub const fn reed_io::write::ordered_output::OrderedOutput::deflate_time(&self) -> core::time::Duration
+pub fn reed_io::write::ordered_output::OrderedOutput::finish(self) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::write::ordered_output::OrderedOutput::finish_pending(self) -> core::result::Result<reed_io::write::ordered_output::PendingOrderedOutput, reed_io::error::IoError>
+pub fn reed_io::write::ordered_output::OrderedOutput::index_path_for(&std::path::Path, reed_io::write::index::WriteIndex) -> std::path::PathBuf
+pub fn reed_io::write::ordered_output::OrderedOutput::new(alloc::boxed::Box<(dyn std::io::Write + core::marker::Send)>, bool, u8, core::option::Option<reed_io::write::index::Indexer>, core::option::Option<std::path::PathBuf>, alloc::sync::Arc<[alloc::vec::Vec<u8>]>) -> Self
+pub fn reed_io::write::ordered_output::OrderedOutput::write_header(&mut self, &[u8]) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::ordered_output::OrderedOutput
+impl core::marker::Send for reed_io::write::ordered_output::OrderedOutput
+impl !core::marker::Sync for reed_io::write::ordered_output::OrderedOutput
+impl core::marker::Unpin for reed_io::write::ordered_output::OrderedOutput
+impl core::marker::UnsafeUnpin for reed_io::write::ordered_output::OrderedOutput
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_io::write::ordered_output::OrderedOutput
+impl !core::panic::unwind_safe::UnwindSafe for reed_io::write::ordered_output::OrderedOutput
+pub struct reed_io::write::ordered_output::PendingOrderedOutput
+impl reed_io::write::ordered_output::PendingOrderedOutput
+pub fn reed_io::write::ordered_output::PendingOrderedOutput::commit(self) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::ordered_output::PendingOrderedOutput
+impl core::marker::Send for reed_io::write::ordered_output::PendingOrderedOutput
+impl core::marker::Sync for reed_io::write::ordered_output::PendingOrderedOutput
+impl core::marker::Unpin for reed_io::write::ordered_output::PendingOrderedOutput
+impl core::marker::UnsafeUnpin for reed_io::write::ordered_output::PendingOrderedOutput
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::ordered_output::PendingOrderedOutput
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::ordered_output::PendingOrderedOutput
+pub enum reed_io::write::Indexer
+pub reed_io::write::Indexer::Csi
+pub reed_io::write::Indexer::Csi::header: noodles_csi::binning_index::index::header::Header
+pub reed_io::write::Indexer::Csi::n_ref: usize
+pub reed_io::write::Indexer::Csi::per_contig: alloc::vec::Vec<core::option::Option<alloc::boxed::Box<noodles_csi::binning_index::indexer::Indexer<noodles_csi::binning_index::index::reference_sequence::index::binned_index::BinnedIndex>>>>
+pub reed_io::write::Indexer::Tbi(alloc::boxed::Box<noodles_tabix::index::indexer::Indexer>)
+impl reed_io::write::index::Indexer
+pub fn reed_io::write::index::Indexer::add(&mut self, &[u8], reed_core::id::ContigId, u64, u32, u64, u64) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::write::index::Indexer::new(reed_io::write::index::WriteIndex, &[alloc::vec::Vec<u8>]) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::write::index::Indexer::write(self, &std::path::Path) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::index::Indexer
+impl core::marker::Send for reed_io::write::index::Indexer
+impl core::marker::Sync for reed_io::write::index::Indexer
+impl core::marker::Unpin for reed_io::write::index::Indexer
+impl core::marker::UnsafeUnpin for reed_io::write::index::Indexer
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::index::Indexer
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::index::Indexer
+pub enum reed_io::write::WriteIndex
+pub reed_io::write::WriteIndex::Csi
+pub reed_io::write::WriteIndex::None
+pub reed_io::write::WriteIndex::Tbi
+impl reed_io::write::index::WriteIndex
+pub const fn reed_io::write::index::WriteIndex::is_some(self) -> bool
+pub fn reed_io::write::index::WriteIndex::parse(core::option::Option<&str>) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::write::index::WriteIndex::path_for(self, &std::path::Path) -> std::path::PathBuf
+pub const fn reed_io::write::index::WriteIndex::suffix(self) -> &'static str
+pub fn reed_io::write::index::WriteIndex::to_args(self) -> alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::clone(&self) -> reed_io::write::index::WriteIndex
+impl core::cmp::Eq for reed_io::write::index::WriteIndex
+impl core::cmp::PartialEq for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::eq(&self, &reed_io::write::index::WriteIndex) -> bool
+impl core::default::Default for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::default() -> reed_io::write::index::WriteIndex
+impl core::fmt::Debug for reed_io::write::index::WriteIndex
+pub fn reed_io::write::index::WriteIndex::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::write::index::WriteIndex
+impl core::marker::StructuralPartialEq for reed_io::write::index::WriteIndex
+impl core::marker::Freeze for reed_io::write::index::WriteIndex
+impl core::marker::Send for reed_io::write::index::WriteIndex
+impl core::marker::Sync for reed_io::write::index::WriteIndex
+impl core::marker::Unpin for reed_io::write::index::WriteIndex
+impl core::marker::UnsafeUnpin for reed_io::write::index::WriteIndex
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::index::WriteIndex
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::index::WriteIndex
+pub struct reed_io::write::AtomicFile
+impl reed_io::write::atomic::AtomicFile
+pub fn reed_io::write::atomic::AtomicFile::commit(self) -> std::io::error::Result<()>
+pub fn reed_io::write::atomic::AtomicFile::create(&std::path::Path) -> std::io::error::Result<(Self, std::fs::File)>
+pub fn reed_io::write::atomic::AtomicFile::create_with_parents(&std::path::Path, bool) -> std::io::error::Result<(Self, std::fs::File)>
+pub fn reed_io::write::atomic::AtomicFile::target_path(&self) -> &std::path::Path
+pub fn reed_io::write::atomic::AtomicFile::temp_path(&self) -> &std::path::Path
+impl core::fmt::Debug for reed_io::write::atomic::AtomicFile
+pub fn reed_io::write::atomic::AtomicFile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::drop::Drop for reed_io::write::atomic::AtomicFile
+pub fn reed_io::write::atomic::AtomicFile::drop(&mut self)
+impl core::marker::Freeze for reed_io::write::atomic::AtomicFile
+impl core::marker::Send for reed_io::write::atomic::AtomicFile
+impl core::marker::Sync for reed_io::write::atomic::AtomicFile
+impl core::marker::Unpin for reed_io::write::atomic::AtomicFile
+impl core::marker::UnsafeUnpin for reed_io::write::atomic::AtomicFile
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::atomic::AtomicFile
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::atomic::AtomicFile
+pub struct reed_io::write::AtomicWriter
+impl reed_io::write::atomic::AtomicWriter
+pub fn reed_io::write::atomic::AtomicWriter::commit(self) -> std::io::error::Result<()>
+pub fn reed_io::write::atomic::AtomicWriter::create(&std::path::Path) -> std::io::error::Result<Self>
+pub fn reed_io::write::atomic::AtomicWriter::create_with_parents(&std::path::Path, usize) -> std::io::error::Result<Self>
+pub fn reed_io::write::atomic::AtomicWriter::finish(self) -> std::io::error::Result<reed_io::write::atomic::AtomicFile>
+pub fn reed_io::write::atomic::AtomicWriter::target_path(&self) -> &std::path::Path
+pub fn reed_io::write::atomic::AtomicWriter::temp_path(&self) -> &std::path::Path
+pub fn reed_io::write::atomic::AtomicWriter::with_capacity(&std::path::Path, usize) -> std::io::error::Result<Self>
+impl core::fmt::Debug for reed_io::write::atomic::AtomicWriter
+pub fn reed_io::write::atomic::AtomicWriter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl std::io::Write for reed_io::write::atomic::AtomicWriter
+pub fn reed_io::write::atomic::AtomicWriter::flush(&mut self) -> std::io::error::Result<()>
+pub fn reed_io::write::atomic::AtomicWriter::write(&mut self, &[u8]) -> std::io::error::Result<usize>
+impl core::marker::Freeze for reed_io::write::atomic::AtomicWriter
+impl core::marker::Send for reed_io::write::atomic::AtomicWriter
+impl core::marker::Sync for reed_io::write::atomic::AtomicWriter
+impl core::marker::Unpin for reed_io::write::atomic::AtomicWriter
+impl core::marker::UnsafeUnpin for reed_io::write::atomic::AtomicWriter
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::atomic::AtomicWriter
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::atomic::AtomicWriter
+pub struct reed_io::write::BlockWriter
+impl reed_io::write::block_writer::BlockWriter
+pub fn reed_io::write::block_writer::BlockWriter::finish_chunk(&mut self) -> core::result::Result<reed_io::write::block_writer::ChunkOutput, reed_io::error::IoError>
+pub fn reed_io::write::block_writer::BlockWriter::new(u8, bool) -> core::result::Result<Self, reed_io::error::IoError>
+pub fn reed_io::write::block_writer::BlockWriter::push_record(&mut self, &[u8], reed_io::write::block_writer::IndexKey) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::block_writer::BlockWriter
+impl core::marker::Send for reed_io::write::block_writer::BlockWriter
+impl core::marker::Sync for reed_io::write::block_writer::BlockWriter
+impl core::marker::Unpin for reed_io::write::block_writer::BlockWriter
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::BlockWriter
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::BlockWriter
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::BlockWriter
+pub struct reed_io::write::ChunkOutput
+pub reed_io::write::ChunkOutput::blocks: alloc::vec::Vec<reed_io::write::block_writer::OutBlock>
+pub reed_io::write::ChunkOutput::deflate_nanos: u64
+pub reed_io::write::ChunkOutput::raw: alloc::vec::Vec<u8>
+impl core::clone::Clone for reed_io::write::block_writer::ChunkOutput
+pub fn reed_io::write::block_writer::ChunkOutput::clone(&self) -> reed_io::write::block_writer::ChunkOutput
+impl core::default::Default for reed_io::write::block_writer::ChunkOutput
+pub fn reed_io::write::block_writer::ChunkOutput::default() -> reed_io::write::block_writer::ChunkOutput
+impl core::fmt::Debug for reed_io::write::block_writer::ChunkOutput
+pub fn reed_io::write::block_writer::ChunkOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::write::block_writer::ChunkOutput
+impl core::marker::Send for reed_io::write::block_writer::ChunkOutput
+impl core::marker::Sync for reed_io::write::block_writer::ChunkOutput
+impl core::marker::Unpin for reed_io::write::block_writer::ChunkOutput
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::ChunkOutput
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::ChunkOutput
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::ChunkOutput
+pub struct reed_io::write::IndexKey
+pub reed_io::write::IndexKey::contig: reed_core::id::ContigId
+pub reed_io::write::IndexKey::ref_len: u32
+pub reed_io::write::IndexKey::start1: u64
+impl core::clone::Clone for reed_io::write::block_writer::IndexKey
+pub fn reed_io::write::block_writer::IndexKey::clone(&self) -> reed_io::write::block_writer::IndexKey
+impl core::cmp::Eq for reed_io::write::block_writer::IndexKey
+impl core::cmp::PartialEq for reed_io::write::block_writer::IndexKey
+pub fn reed_io::write::block_writer::IndexKey::eq(&self, &reed_io::write::block_writer::IndexKey) -> bool
+impl core::fmt::Debug for reed_io::write::block_writer::IndexKey
+pub fn reed_io::write::block_writer::IndexKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::write::block_writer::IndexKey
+impl core::marker::StructuralPartialEq for reed_io::write::block_writer::IndexKey
+impl core::marker::Freeze for reed_io::write::block_writer::IndexKey
+impl core::marker::Send for reed_io::write::block_writer::IndexKey
+impl core::marker::Sync for reed_io::write::block_writer::IndexKey
+impl core::marker::Unpin for reed_io::write::block_writer::IndexKey
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::IndexKey
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::IndexKey
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::IndexKey
+pub struct reed_io::write::IndexRecord
+pub reed_io::write::IndexRecord::key: reed_io::write::block_writer::IndexKey
+pub reed_io::write::IndexRecord::offset_in_block: u32
+impl core::clone::Clone for reed_io::write::block_writer::IndexRecord
+pub fn reed_io::write::block_writer::IndexRecord::clone(&self) -> reed_io::write::block_writer::IndexRecord
+impl core::cmp::Eq for reed_io::write::block_writer::IndexRecord
+impl core::cmp::PartialEq for reed_io::write::block_writer::IndexRecord
+pub fn reed_io::write::block_writer::IndexRecord::eq(&self, &reed_io::write::block_writer::IndexRecord) -> bool
+impl core::fmt::Debug for reed_io::write::block_writer::IndexRecord
+pub fn reed_io::write::block_writer::IndexRecord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::write::block_writer::IndexRecord
+impl core::marker::StructuralPartialEq for reed_io::write::block_writer::IndexRecord
+impl core::marker::Freeze for reed_io::write::block_writer::IndexRecord
+impl core::marker::Send for reed_io::write::block_writer::IndexRecord
+impl core::marker::Sync for reed_io::write::block_writer::IndexRecord
+impl core::marker::Unpin for reed_io::write::block_writer::IndexRecord
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::IndexRecord
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::IndexRecord
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::IndexRecord
+pub struct reed_io::write::OrderedOutput
+impl reed_io::write::ordered_output::OrderedOutput
+pub fn reed_io::write::ordered_output::OrderedOutput::accept_chunk(&mut self, &reed_io::write::block_writer::ChunkOutput) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::write::ordered_output::OrderedOutput::adopting(self, reed_io::write::atomic::AtomicFile) -> Self
+pub fn reed_io::write::ordered_output::OrderedOutput::create(&std::path::Path, bool, u8, core::option::Option<reed_io::write::index::Indexer>, core::option::Option<std::path::PathBuf>, alloc::sync::Arc<[alloc::vec::Vec<u8>]>) -> core::result::Result<Self, reed_io::error::IoError>
+pub const fn reed_io::write::ordered_output::OrderedOutput::deflate_time(&self) -> core::time::Duration
+pub fn reed_io::write::ordered_output::OrderedOutput::finish(self) -> core::result::Result<(), reed_io::error::IoError>
+pub fn reed_io::write::ordered_output::OrderedOutput::finish_pending(self) -> core::result::Result<reed_io::write::ordered_output::PendingOrderedOutput, reed_io::error::IoError>
+pub fn reed_io::write::ordered_output::OrderedOutput::index_path_for(&std::path::Path, reed_io::write::index::WriteIndex) -> std::path::PathBuf
+pub fn reed_io::write::ordered_output::OrderedOutput::new(alloc::boxed::Box<(dyn std::io::Write + core::marker::Send)>, bool, u8, core::option::Option<reed_io::write::index::Indexer>, core::option::Option<std::path::PathBuf>, alloc::sync::Arc<[alloc::vec::Vec<u8>]>) -> Self
+pub fn reed_io::write::ordered_output::OrderedOutput::write_header(&mut self, &[u8]) -> core::result::Result<(), reed_io::error::IoError>
+impl core::marker::Freeze for reed_io::write::ordered_output::OrderedOutput
+impl core::marker::Send for reed_io::write::ordered_output::OrderedOutput
+impl !core::marker::Sync for reed_io::write::ordered_output::OrderedOutput
+impl core::marker::Unpin for reed_io::write::ordered_output::OrderedOutput
+impl core::marker::UnsafeUnpin for reed_io::write::ordered_output::OrderedOutput
+impl !core::panic::unwind_safe::RefUnwindSafe for reed_io::write::ordered_output::OrderedOutput
+impl !core::panic::unwind_safe::UnwindSafe for reed_io::write::ordered_output::OrderedOutput
+pub struct reed_io::write::OutBlock
+pub reed_io::write::OutBlock::compressed: alloc::vec::Vec<u8>
+pub reed_io::write::OutBlock::records: alloc::vec::Vec<reed_io::write::block_writer::IndexRecord>
+pub reed_io::write::OutBlock::uncompressed_len: u32
+impl core::clone::Clone for reed_io::write::block_writer::OutBlock
+pub fn reed_io::write::block_writer::OutBlock::clone(&self) -> reed_io::write::block_writer::OutBlock
+impl core::default::Default for reed_io::write::block_writer::OutBlock
+pub fn reed_io::write::block_writer::OutBlock::default() -> reed_io::write::block_writer::OutBlock
+impl core::fmt::Debug for reed_io::write::block_writer::OutBlock
+pub fn reed_io::write::block_writer::OutBlock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_io::write::block_writer::OutBlock
+impl core::marker::Send for reed_io::write::block_writer::OutBlock
+impl core::marker::Sync for reed_io::write::block_writer::OutBlock
+impl core::marker::Unpin for reed_io::write::block_writer::OutBlock
+impl core::marker::UnsafeUnpin for reed_io::write::block_writer::OutBlock
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::write::block_writer::OutBlock
+impl core::panic::unwind_safe::UnwindSafe for reed_io::write::block_writer::OutBlock
+pub const reed_io::write::BGZF_BLOCK_SIZE: usize
+pub fn reed_io::write::write_atomic(&std::path::Path, impl core::convert::AsRef<[u8]>) -> std::io::error::Result<()>
+#[non_exhaustive] pub enum reed_io::IoError
+pub reed_io::IoError::Capability
+pub reed_io::IoError::Capability::fix: &'static str
+pub reed_io::IoError::Capability::needed: reed_io::error::Needed
+pub reed_io::IoError::Header(alloc::string::String)
+pub reed_io::IoError::Io(alloc::string::String)
+pub reed_io::IoError::MalformedBgzf
+pub reed_io::IoError::MalformedBgzf::locus: core::option::Option<reed_io::error::Locus>
+pub reed_io::IoError::MalformedBgzf::reason: alloc::string::String
+pub reed_io::IoError::MalformedRecord
+pub reed_io::IoError::MalformedRecord::locus: reed_io::error::Locus
+pub reed_io::IoError::MalformedRecord::reason: alloc::string::String
+pub reed_io::IoError::PolicyRejected
+pub reed_io::IoError::PolicyRejected::locus: reed_io::error::Locus
+pub reed_io::IoError::PolicyRejected::reason: &'static str
+pub reed_io::IoError::UnsupportedInput(&'static str)
+impl core::clone::Clone for reed_io::error::IoError
+pub fn reed_io::error::IoError::clone(&self) -> reed_io::error::IoError
+impl core::cmp::Eq for reed_io::error::IoError
+impl core::cmp::PartialEq for reed_io::error::IoError
+pub fn reed_io::error::IoError::eq(&self, &reed_io::error::IoError) -> bool
+impl core::convert::From<libdeflater::DecompressionError> for reed_io::error::IoError
+pub fn reed_io::error::IoError::from(libdeflater::DecompressionError) -> Self
+impl core::convert::From<std::io::error::Error> for reed_io::error::IoError
+pub fn reed_io::error::IoError::from(std::io::error::Error) -> Self
+impl core::error::Error for reed_io::error::IoError
+impl core::fmt::Debug for reed_io::error::IoError
+pub fn reed_io::error::IoError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_io::error::IoError
+pub fn reed_io::error::IoError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_io::error::IoError
+impl core::marker::Freeze for reed_io::error::IoError
+impl core::marker::Send for reed_io::error::IoError
+impl core::marker::Sync for reed_io::error::IoError
+impl core::marker::Unpin for reed_io::error::IoError
+impl core::marker::UnsafeUnpin for reed_io::error::IoError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::error::IoError
+impl core::panic::unwind_safe::UnwindSafe for reed_io::error::IoError
+#[non_exhaustive] pub enum reed_io::Needed
+pub reed_io::Needed::Bgzf
+pub reed_io::Needed::Index
+pub reed_io::Needed::Replay
+pub reed_io::Needed::Seek
+impl core::clone::Clone for reed_io::error::Needed
+pub fn reed_io::error::Needed::clone(&self) -> reed_io::error::Needed
+impl core::cmp::Eq for reed_io::error::Needed
+impl core::cmp::PartialEq for reed_io::error::Needed
+pub fn reed_io::error::Needed::eq(&self, &reed_io::error::Needed) -> bool
+impl core::fmt::Debug for reed_io::error::Needed
+pub fn reed_io::error::Needed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_io::error::Needed
+pub fn reed_io::error::Needed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_io::error::Needed
+impl core::marker::StructuralPartialEq for reed_io::error::Needed
+impl core::marker::Freeze for reed_io::error::Needed
+impl core::marker::Send for reed_io::error::Needed
+impl core::marker::Sync for reed_io::error::Needed
+impl core::marker::Unpin for reed_io::error::Needed
+impl core::marker::UnsafeUnpin for reed_io::error::Needed
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::error::Needed
+impl core::panic::unwind_safe::UnwindSafe for reed_io::error::Needed
+pub struct reed_io::Locus
+pub reed_io::Locus::contig_name: alloc::string::String
+pub reed_io::Locus::pos1: u64
+impl core::clone::Clone for reed_io::error::Locus
+pub fn reed_io::error::Locus::clone(&self) -> reed_io::error::Locus
+impl core::cmp::Eq for reed_io::error::Locus
+impl core::cmp::PartialEq for reed_io::error::Locus
+pub fn reed_io::error::Locus::eq(&self, &reed_io::error::Locus) -> bool
+impl core::fmt::Debug for reed_io::error::Locus
+pub fn reed_io::error::Locus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_io::error::Locus
+pub fn reed_io::error::Locus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_io::error::Locus
+impl reed_io::vcf::genotype_scan::LocusSource for reed_io::error::Locus
+pub fn reed_io::error::Locus::error_locus(&self) -> reed_io::error::Locus
+impl core::marker::Freeze for reed_io::error::Locus
+impl core::marker::Send for reed_io::error::Locus
+impl core::marker::Sync for reed_io::error::Locus
+impl core::marker::Unpin for reed_io::error::Locus
+impl core::marker::UnsafeUnpin for reed_io::error::Locus
+impl core::panic::unwind_safe::RefUnwindSafe for reed_io::error::Locus
+impl core::panic::unwind_safe::UnwindSafe for reed_io::error::Locus
+pub fn reed_io::bgzf_total_size(&[u8]) -> core::option::Option<usize>

@@ -1,7 +1,7 @@
 # STATUS：doc_v30 审计状态与复现记录
 
- **2026-11-11 立项。本轮是审计轮：未改任何代码。** 本文件 §1–§8 的表格和基线是 2026-11-11 的历史记录，不能单独当作当前状态；后续实施记录见 §10–§13，当前权威收口见 [06-final-audit.md](06-final-audit.md)。第二部分
-（API 工程质量）的基线与实测记录见 §5。
+ **2026-11-11 立项。本轮是审计轮：未改任何代码。** §1–§8 的表格和基线是历史记录，不代表当前状态；实施记录见 §10–§13，2026-11-19 状态见 §14，当前索引见 §15。详细结论见 [06-final-audit.md](06-final-audit.md)。
+第二部分（API 工程质量）的基线与实测记录见 §5。
 
 ## 0. 基线
 
@@ -627,7 +627,7 @@ bash gold/popgen/run_convert_parity.sh      PASS（含新的 half-call 门）
 至此 `04-recheck.md` 的 N-1/N-2/N-3/N-5 全部有结论；N-4 是环境要求（对拍基线需固定
 含 2026-09-07 修复的 plink 1.9），不改代码。
 
-## 14. 当前权威状态（2026-11-19）
+## 14. 状态快照（2026-11-19，历史）
 
 本节只做索引，详细结论、证据、剩余问题和发布流程见
 [06-final-audit.md](06-final-audit.md)。
@@ -639,3 +639,35 @@ bash gold/popgen/run_convert_parity.sh      PASS（含新的 half-call 门）
   是明确的功能边界，不应写成已完成的完整兼容。
 - 仍需处理的工程项：发布脚本的 clean/并发保护、`run_distance` facade 决策、opened
   filter 入口、支持 crate 稳定面、`frontend` 逃生舱和 header 重复解析优化。
+
+## 15. 当前权威状态（2026-11-20）
+
+当前实施状态和未决项以 [06-final-audit.md §10](06-final-audit.md) 为准。本节覆盖 §14
+之后的变化；§1–§14 的早期记录仍保留为历史证据。
+
+- P1-1/P1-2：发布脚本已固定源提交、要求 clean worktree，并使用普通 push。
+- P1-3：本地 `dev` upstream 已改为 `origin/dev`；该本地配置不进入源码提交。
+- `4ae203b` 已推送至 `origin/dev`，与远端同步；本轮未提交的脚本和文档修改不在远端。
+- 发布前必须先让 `origin/dev` 与待发布 `HEAD` 一致；脚本不替代开发门。
+
+## 16. 第五批（2026-11-23）：§10.2 剩余项收口
+
+按 [06-final-audit.md](06-final-audit.md) §10.2 的推荐项完成；当前权威索引见
+06 §11。
+
+| 项 | 结果 |
+|---|---|
+| P1-5 `run_distance` | facade 新增 `DistanceRequest`/`DistanceReport`/`run_distance`/`run_distance_opened`，CLI 只翻译 flag |
+| P1-6 typed 选项 | `Stand`/`MissingPolicy`/`PcaSolver`/`XvalResultMode`/`DistanceKind`/`DistanceFormat`/`TreeMethod` |
+| P1-7 支持 crate 稳定面 | 0.5.x lockstep；`ci/api/<crate>.txt` 9 份 + 逐 crate semver 门；ADR Amendment 2 |
+| P1-8 frontend 别名 | 改为逐项导出，无整 crate/模块别名；结构门覆盖缩进 `pub use` |
+| P2-1 `run_filter_opened` | 已补；region spec 在该入口返回 usage error |
+| P2-2 lints | `reed-distance`/`reed-reduce` 继承 workspace lints；clippy `-D warnings` 全绿 |
+| P2-3 feature 门 | `cargo hack --each-feature check --workspace` + workspace 空 feature 集 |
+| P2-4 `.genome` | 文档明确部分兼容（`PPC/RATIO=NA`，`RT/EZ/PHE` 占位） |
+| P2-5 summary | 文档明确不输出 `PSI`/`HWE` 及替代命令 |
+| P2-6 `--hwe midp` | 已实现 mid-p（复用 `HweCache::p_mid`），CLI spec 同步 |
+| P2-7 site-count windows | 仍拒绝，popg 文档明确 |
+| IO header 重复解析 | `PendingInput` 复用首次扫描构造的 source |
+
+验证命令与结果见 06 §11；本批未发布远端 `main`，也未重写 noodles。

@@ -75,7 +75,7 @@ reed distance [OPTIONS] --type KIND -o PREFIX <INPUT>
 | `ajk`（别名 `relatedness`） | 只用频率在开区间内的位点：`A_ij = mean (a−2p)(b−2p)/(2p(1−p))`；对角线用同一分子加 `x² − (1+2p)x + 2p²` 项 | `PREFIX.relatedness` |
 | `discordance`（别名 `gtcheck`） | 基因型错误模型 `e = 10^(−E/10)`（`--error-probability` 默认 40），逐位点对每个可能的真基因型取 `cost(a,G)+cost(b,G)` 的最小值后求和；`--mismatch-count` 改为直接数失配数 | `PREFIX.gtcheck` |
 
-矩阵型输出（dist、mibs、mdist、rel、king）附 `PREFIX.<suffix>.id` 边车（两列样本名）。表格型输出（genome、relatedness2、relatedness、gtcheck）按各自表格布局写，`.genome` 的 DST/PPC/RATIO 列写占位 0。
+矩阵型输出（dist、mibs、mdist、rel、king）附 `PREFIX.<suffix>.id` 边车（两列样本名）。表格型输出（genome、relatedness2、relatedness、gtcheck）按各自表格布局写。`.genome` 的 `Z0/Z1/Z2/PI_HAT/DST` 与 plink 1.9 对齐；`PPC`/`RATIO` 写 `NA`（plink 只按最后一个基因型窗口计数，无法从全位点统计复现），`RT`/`EZ`/`PHE` 是占位值。这是**部分兼容**，不是逐列克隆。
 
 ## 输出布局
 
@@ -158,7 +158,7 @@ s1	s2	12	26	37	31	-0.588235294
 s1	s3	6	29	37	30	-0.776119403
 ```
 
-`kin.genome`（`--type pihat`，严格下三角；DST/PPC/RATIO 是占位列）：
+`kin.genome`（`--type pihat`，严格下三角；`Z0/Z1/Z2/PI_HAT/DST` 已对齐，`PPC`/`RATIO` 为 `NA`，`RT`/`EZ`/`PHE` 为占位）：
 
 ```
 FID1	IID1	FID2	IID2	RT	EZ	Z0	Z1	Z2	PI_HAT	PHE	DST	PPC	RATIO

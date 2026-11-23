@@ -242,10 +242,10 @@ pub(crate) struct PcaCli {
     pub samples: filter_flags::SampleArgs,
     /// Worker threads (default: available parallelism)
     #[arg(long, value_name = "INT")]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -319,10 +319,10 @@ pub(crate) struct DistanceCli {
     pub samples: filter_flags::SampleArgs,
     /// Worker threads (default: available parallelism)
     #[arg(long, value_name = "INT")]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// Memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -409,10 +409,10 @@ pub(crate) struct FilterCli {
     pub strategy: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Directory for temporary files (the stdin spill of multi-pass runs)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
@@ -448,7 +448,7 @@ pub(crate) struct IndexCli {
     pub force: bool,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -536,14 +536,14 @@ pub(crate) struct StatsCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// Directory for temporary files (accepted for compatibility; single-pass
     /// report runs never spill — doc_v15 D15-23)
     #[arg(long, value_name = "DIR")]
     pub tmp_dir: Option<String>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -781,10 +781,10 @@ pub(crate) struct PopgCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -900,10 +900,10 @@ pub(crate) struct ConvertCli {
     pub out: Option<String>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]
@@ -997,10 +997,10 @@ pub(crate) struct RenameCli {
     pub help: Option<bool>,
     /// Worker threads (default: all cores)
     #[arg(long)]
-    pub threads: Option<reed::frontend::budget::Threads>,
+    pub threads: Option<reed::frontend::Threads>,
     /// In-flight memory budget in MiB (default: half of physical memory)
     #[arg(long, value_name = "MB")]
-    pub memory: Option<reed::frontend::budget::MemMiB>,
+    pub memory: Option<reed::frontend::MemMiB>,
     /// Output level: 0 silent, 1 summary (default), 2 stage timing, 3 debug
     #[arg(long, value_name = "INT", default_value_t = Verbosity::Summary,
           value_parser = Verbosity::parse)]

@@ -31,10 +31,13 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
     // Open once so stdin streams, and to resolve the sample names for the
     // subset flags before the run starts (cli.md §0.7).
     let path = crate::units::input_path(&args.input);
-    let opened = reed::frontend::open_regions(path.as_deref(), &[])?;
+    let opened = reed::open_regions(path.as_deref(), &[])?;
     let sample_names = opened.facts().sample_names.clone();
     let keep = parse_sample_keep(&args.samples, &sample_names).map_err(reed::Error::usage)?;
 
+    let stand = reed::Stand::parse(&args.stand).map_err(reed::Error::usage)?;
+    let missing = reed::MissingPolicy::parse(&args.missing).map_err(reed::Error::usage)?;
+    let solver = reed::PcaSolver::parse(&args.solver).map_err(reed::Error::usage)?;
     let budget = ThreadBudget::from_cli(args.threads, args.memory);
     let abort = reed::abort_for(&budget);
     let ctx = reed::RunContext::new(&budget, &abort.signal);
@@ -68,7 +71,8 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             Some(reed::XvalRequest {
                 n_rep: args.xval_rep,
                 training_set: args.xval_training,
-                result: args.xval_result,
+                result: reed::XvalResultMode::parse(&args.xval_result)
+                    .map_err(reed::Error::usage)?,
                 seed: args.xval_seed,
                 n_pca,
             })
@@ -79,9 +83,9 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
             n_pca: Some(args.pcs),
             n_da: args.n_da,
             populations: pop,
-            stand: args.stand,
-            missing: args.missing,
-            solver: args.solver,
+            stand,
+            missing,
+            solver,
             prefix: prefix.to_string(),
             keep_samples: keep,
             force_samples: args.force_samples,
@@ -129,9 +133,9 @@ pub(crate) fn run_pca_cli(args: PcaCli) -> Result<(), reed::Error> {
 
     let request = PcaRequest {
         pcs: args.pcs,
-        stand: args.stand,
-        missing: args.missing,
-        solver: args.solver,
+        stand,
+        missing,
+        solver,
         prefix: prefix.to_string(),
         keep_samples: keep,
     };

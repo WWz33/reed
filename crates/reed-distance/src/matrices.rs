@@ -91,14 +91,17 @@ pub struct AuxCounts {
     pub n_opposite_hom: Vec<u64>,
     /// Marginal heterozygous count per individual (vcftools `N_Aa`).
     pub n_het: Vec<u64>,
-    /// plink `--genome` Z0/Z1/Z2 per pair (row-major n*n).
+    /// plink `--genome` Z0 per pair (row-major n*n).
     pub z0: Vec<f64>,
+    /// plink `--genome` Z1 per pair.
     pub z1: Vec<f64>,
+    /// plink `--genome` Z2 per pair.
     pub z2: Vec<f64>,
     /// Jointly called sites per pair (`nn` in plink's `.genome`). Feeds DST.
     pub n_valid: Vec<u64>,
-    /// One-IBS and zero-IBS site counts per pair (plink's `IBS1`/`IBS0`).
+    /// One-IBS site counts per pair (plink's `IBS1`).
     pub n_ibs1: Vec<u64>,
+    /// Zero-IBS site counts per pair (plink's `IBS0`).
     pub n_ibs0: Vec<u64>,
 }
 
@@ -706,7 +709,7 @@ pub fn phi(st: &Standardized) -> (MatrixResult, AuxCounts) {
     let n_het: Vec<u64> = (0..n)
         .map(|i| (0..m).filter(|&s| dose[i * m + s] == 1).count() as u64)
         .collect();
-    aux.n_het = n_het.clone();
+    aux.n_het.clone_from(&n_het);
 
     // One full row of (phi, hethet, opposite) per task (doc_v20 R13); phi
     // walks the complete ordered matrix, so no mirror writes are needed.
@@ -845,6 +848,7 @@ pub enum DiscordanceMode {
 /// Options for the discordance estimator.
 #[derive(Clone, Copy, Debug)]
 pub struct DiscordanceOptions {
+    /// Which gtcheck score to report.
     pub mode: DiscordanceMode,
     /// Phred-scaled genotyping error probability (bcftools `-E`, default 40).
     pub error_probability: u32,

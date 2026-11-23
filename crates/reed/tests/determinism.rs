@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use reed::frontend::reports::{StatsReportRequest, run_stats};
+use reed::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 use sha2::Digest;
 use std::fmt::Write as _;
@@ -127,7 +127,7 @@ fn reports_and_summary_are_byte_identical_across_thread_counts() {
         for path in &outcome.files {
             hasher.update(std::fs::read(path).expect("invariant: report file"));
         }
-        hasher.update(reed::frontend::summary::render_bcftools_stats(&qc, &[]).as_bytes());
+        hasher.update(reed::frontend::render_bcftools_stats(&qc, &[]).as_bytes());
         digests.push(format!("{:x}", hasher.finalize()));
     }
     let unique: std::collections::HashSet<&String> = digests.iter().collect();

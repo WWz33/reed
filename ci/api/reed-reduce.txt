@@ -1,0 +1,972 @@
+pub mod reed_reduce
+pub use reed_reduce::Grm
+pub use reed_reduce::Mat
+pub use reed_reduce::Stand
+pub use reed_reduce::Standardized
+pub use reed_reduce::standardize
+pub use reed_reduce::standardize_binom2
+pub mod reed_reduce::backend
+pub enum reed_reduce::backend::Backend
+pub reed_reduce::backend::Backend::Faer
+pub reed_reduce::backend::Backend::Fallback
+impl reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::name(self) -> &'static str
+impl core::clone::Clone for reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::clone(&self) -> reed_reduce::backend::Backend
+impl core::cmp::Eq for reed_reduce::backend::Backend
+impl core::cmp::PartialEq for reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::eq(&self, &reed_reduce::backend::Backend) -> bool
+impl core::fmt::Debug for reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::backend::Backend
+impl core::marker::StructuralPartialEq for reed_reduce::backend::Backend
+impl core::marker::Freeze for reed_reduce::backend::Backend
+impl core::marker::Send for reed_reduce::backend::Backend
+impl core::marker::Sync for reed_reduce::backend::Backend
+impl core::marker::Unpin for reed_reduce::backend::Backend
+impl core::marker::UnsafeUnpin for reed_reduce::backend::Backend
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::backend::Backend
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::backend::Backend
+pub enum reed_reduce::backend::Parallel
+pub reed_reduce::backend::Parallel::Serial
+pub reed_reduce::backend::Parallel::Threads(usize)
+impl reed_reduce::backend::Parallel
+pub const fn reed_reduce::backend::Parallel::threads(self) -> usize
+impl core::clone::Clone for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::clone(&self) -> reed_reduce::backend::Parallel
+impl core::cmp::Eq for reed_reduce::backend::Parallel
+impl core::cmp::PartialEq for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::eq(&self, &reed_reduce::backend::Parallel) -> bool
+impl core::default::Default for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::default() -> reed_reduce::backend::Parallel
+impl core::fmt::Debug for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::backend::Parallel
+impl core::marker::StructuralPartialEq for reed_reduce::backend::Parallel
+impl core::marker::Freeze for reed_reduce::backend::Parallel
+impl core::marker::Send for reed_reduce::backend::Parallel
+impl core::marker::Sync for reed_reduce::backend::Parallel
+impl core::marker::Unpin for reed_reduce::backend::Parallel
+impl core::marker::UnsafeUnpin for reed_reduce::backend::Parallel
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::backend::Parallel
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::backend::Parallel
+pub struct reed_reduce::backend::SymEigResult
+pub reed_reduce::backend::SymEigResult::backend: reed_reduce::backend::Backend
+pub reed_reduce::backend::SymEigResult::values: alloc::vec::Vec<f64>
+pub reed_reduce::backend::SymEigResult::vectors: reed_core::linalg::Mat
+impl reed_reduce::backend::SymEigResult
+pub fn reed_reduce::backend::SymEigResult::top_k(&self, usize) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat)
+impl core::marker::Freeze for reed_reduce::backend::SymEigResult
+impl core::marker::Send for reed_reduce::backend::SymEigResult
+impl core::marker::Sync for reed_reduce::backend::SymEigResult
+impl core::marker::Unpin for reed_reduce::backend::SymEigResult
+impl core::marker::UnsafeUnpin for reed_reduce::backend::SymEigResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::backend::SymEigResult
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::backend::SymEigResult
+pub const reed_reduce::backend::COMPILED_BACKEND: reed_reduce::backend::Backend
+pub fn reed_reduce::backend::fix_column_signs(&mut reed_core::linalg::Mat)
+pub fn reed_reduce::backend::gram_divide(&reed_core::linalg::Mat, usize, reed_reduce::backend::Parallel) -> (reed_core::linalg::Mat, reed_reduce::backend::Backend)
+pub fn reed_reduce::backend::sym_eig(&reed_core::linalg::Mat, reed_reduce::backend::Parallel) -> reed_reduce::backend::SymEigResult
+pub fn reed_reduce::backend::sym_eig_top_k(&reed_core::linalg::Mat, usize, reed_reduce::backend::Parallel) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat, reed_reduce::backend::Backend)
+pub mod reed_reduce::eig
+pub struct reed_reduce::eig::SymEig
+pub reed_reduce::eig::SymEig::values: alloc::vec::Vec<f64>
+pub reed_reduce::eig::SymEig::vectors: reed_core::linalg::Mat
+impl reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::SymEig::top_k(&self, usize) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat)
+impl core::clone::Clone for reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::SymEig::clone(&self) -> reed_reduce::eig::SymEig
+impl core::fmt::Debug for reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::SymEig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::eig::SymEig
+impl core::marker::Send for reed_reduce::eig::SymEig
+impl core::marker::Sync for reed_reduce::eig::SymEig
+impl core::marker::Unpin for reed_reduce::eig::SymEig
+impl core::marker::UnsafeUnpin for reed_reduce::eig::SymEig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::eig::SymEig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::sym_eig(&reed_core::linalg::Mat) -> reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::sym_eig_top_k(&reed_core::linalg::Mat, usize) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat)
+pub mod reed_reduce::extra
+pub enum reed_reduce::extra::TsneError
+pub reed_reduce::extra::TsneError::PerplexityBelowOne
+pub reed_reduce::extra::TsneError::PerplexityBelowOne::perplexity: f64
+pub reed_reduce::extra::TsneError::PerplexityTooLarge
+pub reed_reduce::extra::TsneError::PerplexityTooLarge::n: usize
+pub reed_reduce::extra::TsneError::PerplexityTooLarge::perplexity: f64
+impl core::clone::Clone for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::clone(&self) -> reed_reduce::extra::TsneError
+impl core::cmp::PartialEq for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::eq(&self, &reed_reduce::extra::TsneError) -> bool
+impl core::error::Error for reed_reduce::extra::TsneError
+impl core::fmt::Debug for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_reduce::extra::TsneError
+impl core::marker::Freeze for reed_reduce::extra::TsneError
+impl core::marker::Send for reed_reduce::extra::TsneError
+impl core::marker::Sync for reed_reduce::extra::TsneError
+impl core::marker::Unpin for reed_reduce::extra::TsneError
+impl core::marker::UnsafeUnpin for reed_reduce::extra::TsneError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::extra::TsneError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::extra::TsneError
+pub struct reed_reduce::extra::LleError
+pub reed_reduce::extra::LleError::max: usize
+pub reed_reduce::extra::LleError::n: usize
+impl core::clone::Clone for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::clone(&self) -> reed_reduce::extra::LleError
+impl core::cmp::Eq for reed_reduce::extra::LleError
+impl core::cmp::PartialEq for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::eq(&self, &reed_reduce::extra::LleError) -> bool
+impl core::error::Error for reed_reduce::extra::LleError
+impl core::fmt::Debug for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::extra::LleError
+impl core::marker::StructuralPartialEq for reed_reduce::extra::LleError
+impl core::marker::Freeze for reed_reduce::extra::LleError
+impl core::marker::Send for reed_reduce::extra::LleError
+impl core::marker::Sync for reed_reduce::extra::LleError
+impl core::marker::Unpin for reed_reduce::extra::LleError
+impl core::marker::UnsafeUnpin for reed_reduce::extra::LleError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::extra::LleError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::extra::LleError
+pub struct reed_reduce::extra::TsneConfig
+pub reed_reduce::extra::TsneConfig::learning_rate: f64
+pub reed_reduce::extra::TsneConfig::n_components: usize
+pub reed_reduce::extra::TsneConfig::n_iter: usize
+pub reed_reduce::extra::TsneConfig::perplexity: f64
+pub reed_reduce::extra::TsneConfig::seed: u64
+impl core::clone::Clone for reed_reduce::extra::TsneConfig
+pub fn reed_reduce::extra::TsneConfig::clone(&self) -> reed_reduce::extra::TsneConfig
+impl core::default::Default for reed_reduce::extra::TsneConfig
+pub fn reed_reduce::extra::TsneConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::extra::TsneConfig
+pub fn reed_reduce::extra::TsneConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::extra::TsneConfig
+impl core::marker::Send for reed_reduce::extra::TsneConfig
+impl core::marker::Sync for reed_reduce::extra::TsneConfig
+impl core::marker::Unpin for reed_reduce::extra::TsneConfig
+impl core::marker::UnsafeUnpin for reed_reduce::extra::TsneConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::extra::TsneConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::extra::TsneConfig
+pub const reed_reduce::extra::LLE_MAX_SAMPLES: usize
+pub fn reed_reduce::extra::lle(&reed_core::linalg::Mat, usize, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::extra::lle_from_sq_distances(&reed_core::linalg::Mat, &reed_core::linalg::Mat, usize, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::extra::nmf(&reed_core::linalg::Mat, usize, usize, u64) -> (reed_core::linalg::Mat, reed_core::linalg::Mat)
+pub fn reed_reduce::extra::ppca(&reed_core::linalg::Mat, usize, usize, u64) -> reed_core::linalg::Mat
+pub fn reed_reduce::extra::try_lle(&reed_core::linalg::Mat, usize, usize) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::LleError>
+pub fn reed_reduce::extra::try_lle_from_sq_distances(&reed_core::linalg::Mat, &reed_core::linalg::Mat, usize, usize) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::LleError>
+pub fn reed_reduce::extra::tsne(&reed_core::linalg::Mat, &reed_reduce::extra::TsneConfig) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::TsneError>
+pub fn reed_reduce::extra::tsne_from_sq_distances(&reed_core::linalg::Mat, &reed_reduce::extra::TsneConfig) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::TsneError>
+pub mod reed_reduce::graph
+pub enum reed_reduce::graph::Kernel
+pub reed_reduce::graph::Kernel::Ibs
+pub reed_reduce::graph::Kernel::Linear
+pub reed_reduce::graph::Kernel::Rbf
+impl core::clone::Clone for reed_reduce::graph::Kernel
+pub fn reed_reduce::graph::Kernel::clone(&self) -> reed_reduce::graph::Kernel
+impl core::cmp::Eq for reed_reduce::graph::Kernel
+impl core::cmp::PartialEq for reed_reduce::graph::Kernel
+pub fn reed_reduce::graph::Kernel::eq(&self, &reed_reduce::graph::Kernel) -> bool
+impl core::fmt::Debug for reed_reduce::graph::Kernel
+pub fn reed_reduce::graph::Kernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::graph::Kernel
+impl core::marker::StructuralPartialEq for reed_reduce::graph::Kernel
+impl core::marker::Freeze for reed_reduce::graph::Kernel
+impl core::marker::Send for reed_reduce::graph::Kernel
+impl core::marker::Sync for reed_reduce::graph::Kernel
+impl core::marker::Unpin for reed_reduce::graph::Kernel
+impl core::marker::UnsafeUnpin for reed_reduce::graph::Kernel
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::graph::Kernel
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::graph::Kernel
+pub struct reed_reduce::graph::Embedding
+pub reed_reduce::graph::Embedding::coords: reed_core::linalg::Mat
+pub reed_reduce::graph::Embedding::values: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::Embedding::clone(&self) -> reed_reduce::graph::Embedding
+impl core::fmt::Debug for reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::Embedding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::graph::Embedding
+impl core::marker::Send for reed_reduce::graph::Embedding
+impl core::marker::Sync for reed_reduce::graph::Embedding
+impl core::marker::Unpin for reed_reduce::graph::Embedding
+impl core::marker::UnsafeUnpin for reed_reduce::graph::Embedding
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::graph::Embedding
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::auto_gamma(&reed_core::linalg::Mat) -> f64
+pub fn reed_reduce::graph::centre_kernel(&mut reed_core::linalg::Mat)
+pub fn reed_reduce::graph::diffusion_map(&reed_core::linalg::Mat, usize, f64) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::isomap(&reed_core::linalg::Mat, usize, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::kernel_pca(&reed_core::linalg::Mat, usize, reed_reduce::graph::Kernel, f64) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::kernel_scale(f64) -> f64
+pub fn reed_reduce::graph::knn_graph(&reed_core::linalg::Mat, usize, f64) -> reed_core::linalg::Mat
+pub fn reed_reduce::graph::laplacian_eigenmaps(&reed_core::linalg::Mat, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::pairwise_distances(&reed_core::linalg::Mat) -> reed_core::linalg::Mat
+pub fn reed_reduce::graph::pcoa(&reed_core::linalg::Mat, usize) -> reed_reduce::graph::Embedding
+pub mod reed_reduce::grm_reduce
+pub fn reed_reduce::grm_reduce::grm_diffusion(&reed_distance::grm::Grm, usize, usize, f64) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_reduce::grm_distances(&reed_distance::grm::Grm) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_reduce::grm_isomap(&reed_distance::grm::Grm, usize, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_reduce::grm_kernel(&reed_distance::grm::Grm, usize, reed_reduce::graph::Kernel) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_reduce::grm_kernel_pca(&reed_distance::grm::Grm, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_reduce::grm_knn_weights(&reed_distance::grm::Grm, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_reduce::grm_laplacian(&reed_distance::grm::Grm, usize, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_reduce::grm_lle(&reed_distance::grm::Grm, &reed_core::linalg::Mat, usize, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_reduce::grm_pcoa(&reed_distance::grm::Grm, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_reduce::grm_similarity(&reed_distance::grm::Grm) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_reduce::grm_tsne(&reed_distance::grm::Grm, &reed_reduce::extra::TsneConfig) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::TsneError>
+pub fn reed_reduce::grm_reduce::grm_umap(&reed_distance::grm::Grm, &reed_reduce::umap::UmapConfig) -> reed_core::linalg::Mat
+pub mod reed_reduce::lanczos
+pub struct reed_reduce::lanczos::StreamConfig
+pub reed_reduce::lanczos::StreamConfig::block: usize
+pub reed_reduce::lanczos::StreamConfig::k: usize
+pub reed_reduce::lanczos::StreamConfig::k_keep: usize
+pub reed_reduce::lanczos::StreamConfig::krylov_dim: usize
+pub reed_reduce::lanczos::StreamConfig::max_cycles: usize
+pub reed_reduce::lanczos::StreamConfig::parallel: reed_reduce::backend::Parallel
+pub reed_reduce::lanczos::StreamConfig::seed: u64
+pub reed_reduce::lanczos::StreamConfig::tol: f64
+impl core::clone::Clone for reed_reduce::lanczos::StreamConfig
+pub fn reed_reduce::lanczos::StreamConfig::clone(&self) -> reed_reduce::lanczos::StreamConfig
+impl core::default::Default for reed_reduce::lanczos::StreamConfig
+pub fn reed_reduce::lanczos::StreamConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::lanczos::StreamConfig
+pub fn reed_reduce::lanczos::StreamConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lanczos::StreamConfig
+impl core::marker::Send for reed_reduce::lanczos::StreamConfig
+impl core::marker::Sync for reed_reduce::lanczos::StreamConfig
+impl core::marker::Unpin for reed_reduce::lanczos::StreamConfig
+impl core::marker::UnsafeUnpin for reed_reduce::lanczos::StreamConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lanczos::StreamConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lanczos::StreamConfig
+pub struct reed_reduce::lanczos::StreamEig
+pub reed_reduce::lanczos::StreamEig::cycles: usize
+pub reed_reduce::lanczos::StreamEig::max_residual: f64
+pub reed_reduce::lanczos::StreamEig::values: alloc::vec::Vec<f64>
+pub reed_reduce::lanczos::StreamEig::vectors: reed_core::linalg::Mat
+impl core::clone::Clone for reed_reduce::lanczos::StreamEig
+pub fn reed_reduce::lanczos::StreamEig::clone(&self) -> reed_reduce::lanczos::StreamEig
+impl core::fmt::Debug for reed_reduce::lanczos::StreamEig
+pub fn reed_reduce::lanczos::StreamEig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lanczos::StreamEig
+impl core::marker::Send for reed_reduce::lanczos::StreamEig
+impl core::marker::Sync for reed_reduce::lanczos::StreamEig
+impl core::marker::Unpin for reed_reduce::lanczos::StreamEig
+impl core::marker::UnsafeUnpin for reed_reduce::lanczos::StreamEig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lanczos::StreamEig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lanczos::StreamEig
+pub fn reed_reduce::lanczos::lanczos_top_k(&reed_core::linalg::Mat, &reed_reduce::lanczos::StreamConfig) -> reed_reduce::lanczos::StreamEig
+pub type reed_reduce::lanczos::LanczosConfig = reed_reduce::lanczos::StreamConfig
+pub type reed_reduce::lanczos::PartialEig = reed_reduce::lanczos::StreamEig
+pub mod reed_reduce::lda
+pub enum reed_reduce::lda::LdaError
+pub reed_reduce::lda::LdaError::ConstantWithinGroups
+pub reed_reduce::lda::LdaError::ConstantWithinGroups::column: usize
+pub reed_reduce::lda::LdaError::Degenerate
+pub reed_reduce::lda::LdaError::EmptyGroup
+pub reed_reduce::lda::LdaError::EmptyGroup::group: usize
+pub reed_reduce::lda::LdaError::FeatureCountMismatch
+pub reed_reduce::lda::LdaError::FeatureCountMismatch::expected: usize
+pub reed_reduce::lda::LdaError::FeatureCountMismatch::got: usize
+pub reed_reduce::lda::LdaError::GroupCountMismatch
+pub reed_reduce::lda::LdaError::GroupCountMismatch::groups: usize
+pub reed_reduce::lda::LdaError::GroupCountMismatch::rows: usize
+pub reed_reduce::lda::LdaError::GroupIndexOutOfRange
+pub reed_reduce::lda::LdaError::GroupIndexOutOfRange::index: u32
+pub reed_reduce::lda::LdaError::GroupIndexOutOfRange::ng: usize
+pub reed_reduce::lda::LdaError::NoObservations
+pub reed_reduce::lda::LdaError::TooFewGroups(usize)
+pub reed_reduce::lda::LdaError::ZeroDimen
+impl core::clone::Clone for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::clone(&self) -> reed_reduce::lda::LdaError
+impl core::cmp::Eq for reed_reduce::lda::LdaError
+impl core::cmp::PartialEq for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::eq(&self, &reed_reduce::lda::LdaError) -> bool
+impl core::error::Error for reed_reduce::lda::LdaError
+impl core::fmt::Debug for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_reduce::lda::LdaError
+impl core::marker::Freeze for reed_reduce::lda::LdaError
+impl core::marker::Send for reed_reduce::lda::LdaError
+impl core::marker::Sync for reed_reduce::lda::LdaError
+impl core::marker::Unpin for reed_reduce::lda::LdaError
+impl core::marker::UnsafeUnpin for reed_reduce::lda::LdaError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lda::LdaError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lda::LdaError
+pub struct reed_reduce::lda::Lda
+pub reed_reduce::lda::Lda::counts: alloc::vec::Vec<usize>
+pub reed_reduce::lda::Lda::groups: alloc::vec::Vec<u32>
+pub reed_reduce::lda::Lda::levels: alloc::vec::Vec<alloc::string::String>
+pub reed_reduce::lda::Lda::means: reed_core::linalg::Mat
+pub reed_reduce::lda::Lda::n: usize
+pub reed_reduce::lda::Lda::prior: alloc::vec::Vec<f64>
+pub reed_reduce::lda::Lda::scaling: reed_core::linalg::Mat
+pub reed_reduce::lda::Lda::svd: alloc::vec::Vec<f64>
+impl reed_reduce::lda::Lda
+pub fn reed_reduce::lda::Lda::project(&self, &reed_core::linalg::Mat, usize) -> core::result::Result<reed_reduce::lda::LdaProjection, reed_reduce::lda::LdaError>
+pub fn reed_reduce::lda::Lda::rank(&self) -> usize
+impl core::clone::Clone for reed_reduce::lda::Lda
+pub fn reed_reduce::lda::Lda::clone(&self) -> reed_reduce::lda::Lda
+impl core::fmt::Debug for reed_reduce::lda::Lda
+pub fn reed_reduce::lda::Lda::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lda::Lda
+impl core::marker::Send for reed_reduce::lda::Lda
+impl core::marker::Sync for reed_reduce::lda::Lda
+impl core::marker::Unpin for reed_reduce::lda::Lda
+impl core::marker::UnsafeUnpin for reed_reduce::lda::Lda
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lda::Lda
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lda::Lda
+pub struct reed_reduce::lda::LdaProjection
+pub reed_reduce::lda::LdaProjection::assign: alloc::vec::Vec<u32>
+pub reed_reduce::lda::LdaProjection::coords: reed_core::linalg::Mat
+pub reed_reduce::lda::LdaProjection::posterior: reed_core::linalg::Mat
+impl core::clone::Clone for reed_reduce::lda::LdaProjection
+pub fn reed_reduce::lda::LdaProjection::clone(&self) -> reed_reduce::lda::LdaProjection
+impl core::fmt::Debug for reed_reduce::lda::LdaProjection
+pub fn reed_reduce::lda::LdaProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lda::LdaProjection
+impl core::marker::Send for reed_reduce::lda::LdaProjection
+impl core::marker::Sync for reed_reduce::lda::LdaProjection
+impl core::marker::Unpin for reed_reduce::lda::LdaProjection
+impl core::marker::UnsafeUnpin for reed_reduce::lda::LdaProjection
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lda::LdaProjection
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lda::LdaProjection
+pub fn reed_reduce::lda::fit(&reed_core::linalg::Mat, &[u32], &[alloc::string::String], f64) -> core::result::Result<reed_reduce::lda::Lda, reed_reduce::lda::LdaError>
+pub mod reed_reduce::pca
+pub use reed_reduce::pca::Grm
+pub use reed_reduce::pca::MissingPolicy
+pub use reed_reduce::pca::Stand
+pub use reed_reduce::pca::Standardized
+pub use reed_reduce::pca::standardize
+pub use reed_reduce::pca::standardize_binom2
+pub struct reed_reduce::pca::Pca
+pub reed_reduce::pca::Pca::all_values: alloc::vec::Vec<f64>
+pub reed_reduce::pca::Pca::pve: alloc::vec::Vec<f64>
+pub reed_reduce::pca::Pca::values: alloc::vec::Vec<f64>
+pub reed_reduce::pca::Pca::vectors: reed_core::linalg::Mat
+impl reed_reduce::pca::Pca
+pub fn reed_reduce::pca::Pca::loadings(&self, &reed_core::linalg::Mat) -> reed_core::linalg::Mat
+pub fn reed_reduce::pca::Pca::scores(&self) -> reed_core::linalg::Mat
+impl core::clone::Clone for reed_reduce::pca::Pca
+pub fn reed_reduce::pca::Pca::clone(&self) -> reed_reduce::pca::Pca
+impl core::fmt::Debug for reed_reduce::pca::Pca
+pub fn reed_reduce::pca::Pca::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::pca::Pca
+impl core::marker::Send for reed_reduce::pca::Pca
+impl core::marker::Sync for reed_reduce::pca::Pca
+impl core::marker::Unpin for reed_reduce::pca::Pca
+impl core::marker::UnsafeUnpin for reed_reduce::pca::Pca
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::pca::Pca
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::pca::Pca
+pub fn reed_reduce::pca::backend() -> reed_reduce::backend::Backend
+pub fn reed_reduce::pca::pca_dense(&reed_core::linalg::Mat, usize) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_dense_pairwise(&reed_core::linalg::Mat, usize) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_dense_pairwise_with(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_dense_pairwise_with_par(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand, reed_reduce::backend::Parallel) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_dense_with(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_dense_with_par(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand, reed_reduce::backend::Parallel) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_top_k(&reed_core::linalg::Mat, usize) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_top_k_with(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca::pca_top_k_with_par(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand, reed_reduce::backend::Parallel) -> reed_reduce::pca::Pca
+pub mod reed_reduce::umap
+pub struct reed_reduce::umap::FuzzyGraph
+pub reed_reduce::umap::FuzzyGraph::knn_dists: reed_core::linalg::Mat
+pub reed_reduce::umap::FuzzyGraph::knn_indices: alloc::vec::Vec<alloc::vec::Vec<usize>>
+pub reed_reduce::umap::FuzzyGraph::weights: reed_core::linalg::Mat
+impl core::marker::Freeze for reed_reduce::umap::FuzzyGraph
+impl core::marker::Send for reed_reduce::umap::FuzzyGraph
+impl core::marker::Sync for reed_reduce::umap::FuzzyGraph
+impl core::marker::Unpin for reed_reduce::umap::FuzzyGraph
+impl core::marker::UnsafeUnpin for reed_reduce::umap::FuzzyGraph
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::umap::FuzzyGraph
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::umap::FuzzyGraph
+pub struct reed_reduce::umap::UmapConfig
+pub reed_reduce::umap::UmapConfig::gamma: f64
+pub reed_reduce::umap::UmapConfig::learning_rate: f64
+pub reed_reduce::umap::UmapConfig::local_connectivity: f64
+pub reed_reduce::umap::UmapConfig::min_dist: f64
+pub reed_reduce::umap::UmapConfig::n_components: usize
+pub reed_reduce::umap::UmapConfig::n_epochs: usize
+pub reed_reduce::umap::UmapConfig::n_neighbors: usize
+pub reed_reduce::umap::UmapConfig::negative_sample_rate: usize
+pub reed_reduce::umap::UmapConfig::seed: u64
+pub reed_reduce::umap::UmapConfig::set_op_mix_ratio: f64
+pub reed_reduce::umap::UmapConfig::spread: f64
+impl core::clone::Clone for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::UmapConfig::clone(&self) -> reed_reduce::umap::UmapConfig
+impl core::default::Default for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::UmapConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::UmapConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::umap::UmapConfig
+impl core::marker::Send for reed_reduce::umap::UmapConfig
+impl core::marker::Sync for reed_reduce::umap::UmapConfig
+impl core::marker::Unpin for reed_reduce::umap::UmapConfig
+impl core::marker::UnsafeUnpin for reed_reduce::umap::UmapConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::umap::UmapConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::find_ab_params(f64, f64) -> (f64, f64)
+pub fn reed_reduce::umap::fuzzy_simplicial_set(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_reduce::umap::FuzzyGraph
+pub fn reed_reduce::umap::fuzzy_simplicial_set_from_distances(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_reduce::umap::FuzzyGraph
+pub fn reed_reduce::umap::umap(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_core::linalg::Mat
+pub fn reed_reduce::umap::umap_from_distances(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_core::linalg::Mat
+pub mod reed_reduce::xval
+pub enum reed_reduce::xval::XvalError
+pub reed_reduce::xval::XvalError::BadTrainingFraction
+pub reed_reduce::xval::XvalError::Lda(reed_reduce::lda::LdaError)
+pub reed_reduce::xval::XvalError::NoRepetitions
+pub reed_reduce::xval::XvalError::NoSplittableGroup
+pub reed_reduce::xval::XvalError::TooFewSamples
+impl core::clone::Clone for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::clone(&self) -> reed_reduce::xval::XvalError
+impl core::cmp::Eq for reed_reduce::xval::XvalError
+impl core::cmp::PartialEq for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::eq(&self, &reed_reduce::xval::XvalError) -> bool
+impl core::error::Error for reed_reduce::xval::XvalError
+impl core::fmt::Debug for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_reduce::xval::XvalError
+impl core::marker::Freeze for reed_reduce::xval::XvalError
+impl core::marker::Send for reed_reduce::xval::XvalError
+impl core::marker::Sync for reed_reduce::xval::XvalError
+impl core::marker::Unpin for reed_reduce::xval::XvalError
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalError
+pub enum reed_reduce::xval::XvalResult
+pub reed_reduce::xval::XvalResult::GroupMean
+pub reed_reduce::xval::XvalResult::Overall
+impl reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::clone(&self) -> reed_reduce::xval::XvalResult
+impl core::cmp::Eq for reed_reduce::xval::XvalResult
+impl core::cmp::PartialEq for reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::eq(&self, &reed_reduce::xval::XvalResult) -> bool
+impl core::fmt::Debug for reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::xval::XvalResult
+impl core::marker::StructuralPartialEq for reed_reduce::xval::XvalResult
+impl core::marker::Freeze for reed_reduce::xval::XvalResult
+impl core::marker::Send for reed_reduce::xval::XvalResult
+impl core::marker::Sync for reed_reduce::xval::XvalResult
+impl core::marker::Unpin for reed_reduce::xval::XvalResult
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalResult
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalResult
+pub struct reed_reduce::xval::Candidate
+pub reed_reduce::xval::Candidate::n_pca: usize
+pub reed_reduce::xval::Candidate::success: alloc::vec::Vec<f64>
+impl reed_reduce::xval::Candidate
+pub fn reed_reduce::xval::Candidate::error_from_perfect(&self) -> f64
+pub fn reed_reduce::xval::Candidate::mean_success(&self) -> f64
+impl core::clone::Clone for reed_reduce::xval::Candidate
+pub fn reed_reduce::xval::Candidate::clone(&self) -> reed_reduce::xval::Candidate
+impl core::fmt::Debug for reed_reduce::xval::Candidate
+pub fn reed_reduce::xval::Candidate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::xval::Candidate
+impl core::marker::Send for reed_reduce::xval::Candidate
+impl core::marker::Sync for reed_reduce::xval::Candidate
+impl core::marker::Unpin for reed_reduce::xval::Candidate
+impl core::marker::UnsafeUnpin for reed_reduce::xval::Candidate
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::Candidate
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::Candidate
+pub struct reed_reduce::xval::XvalConfig
+pub reed_reduce::xval::XvalConfig::n_rep: usize
+pub reed_reduce::xval::XvalConfig::result: reed_reduce::xval::XvalResult
+pub reed_reduce::xval::XvalConfig::seed: u64
+pub reed_reduce::xval::XvalConfig::training_set: f64
+impl core::clone::Clone for reed_reduce::xval::XvalConfig
+pub fn reed_reduce::xval::XvalConfig::clone(&self) -> reed_reduce::xval::XvalConfig
+impl core::default::Default for reed_reduce::xval::XvalConfig
+pub fn reed_reduce::xval::XvalConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::xval::XvalConfig
+pub fn reed_reduce::xval::XvalConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::xval::XvalConfig
+impl core::marker::Send for reed_reduce::xval::XvalConfig
+impl core::marker::Sync for reed_reduce::xval::XvalConfig
+impl core::marker::Unpin for reed_reduce::xval::XvalConfig
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalConfig
+pub struct reed_reduce::xval::XvalReport
+pub reed_reduce::xval::XvalReport::best_mean_success_n_pca: usize
+pub reed_reduce::xval::XvalReport::best_n_pca: usize
+pub reed_reduce::xval::XvalReport::candidates: alloc::vec::Vec<reed_reduce::xval::Candidate>
+pub reed_reduce::xval::XvalReport::random_chance: f64
+impl core::clone::Clone for reed_reduce::xval::XvalReport
+pub fn reed_reduce::xval::XvalReport::clone(&self) -> reed_reduce::xval::XvalReport
+impl core::fmt::Debug for reed_reduce::xval::XvalReport
+pub fn reed_reduce::xval::XvalReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::xval::XvalReport
+impl core::marker::Send for reed_reduce::xval::XvalReport
+impl core::marker::Sync for reed_reduce::xval::XvalReport
+impl core::marker::Unpin for reed_reduce::xval::XvalReport
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalReport
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalReport
+pub fn reed_reduce::xval::candidate_counts(usize) -> alloc::vec::Vec<usize>
+pub fn reed_reduce::xval::run(&reed_core::linalg::Mat, &[u32], &[alloc::string::String], &[usize], &reed_reduce::xval::XvalConfig) -> core::result::Result<reed_reduce::xval::XvalReport, reed_reduce::xval::XvalError>
+pub enum reed_reduce::Backend
+pub reed_reduce::Backend::Faer
+pub reed_reduce::Backend::Fallback
+impl reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::name(self) -> &'static str
+impl core::clone::Clone for reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::clone(&self) -> reed_reduce::backend::Backend
+impl core::cmp::Eq for reed_reduce::backend::Backend
+impl core::cmp::PartialEq for reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::eq(&self, &reed_reduce::backend::Backend) -> bool
+impl core::fmt::Debug for reed_reduce::backend::Backend
+pub fn reed_reduce::backend::Backend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::backend::Backend
+impl core::marker::StructuralPartialEq for reed_reduce::backend::Backend
+impl core::marker::Freeze for reed_reduce::backend::Backend
+impl core::marker::Send for reed_reduce::backend::Backend
+impl core::marker::Sync for reed_reduce::backend::Backend
+impl core::marker::Unpin for reed_reduce::backend::Backend
+impl core::marker::UnsafeUnpin for reed_reduce::backend::Backend
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::backend::Backend
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::backend::Backend
+pub enum reed_reduce::Kernel
+pub reed_reduce::Kernel::Ibs
+pub reed_reduce::Kernel::Linear
+pub reed_reduce::Kernel::Rbf
+impl core::clone::Clone for reed_reduce::graph::Kernel
+pub fn reed_reduce::graph::Kernel::clone(&self) -> reed_reduce::graph::Kernel
+impl core::cmp::Eq for reed_reduce::graph::Kernel
+impl core::cmp::PartialEq for reed_reduce::graph::Kernel
+pub fn reed_reduce::graph::Kernel::eq(&self, &reed_reduce::graph::Kernel) -> bool
+impl core::fmt::Debug for reed_reduce::graph::Kernel
+pub fn reed_reduce::graph::Kernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::graph::Kernel
+impl core::marker::StructuralPartialEq for reed_reduce::graph::Kernel
+impl core::marker::Freeze for reed_reduce::graph::Kernel
+impl core::marker::Send for reed_reduce::graph::Kernel
+impl core::marker::Sync for reed_reduce::graph::Kernel
+impl core::marker::Unpin for reed_reduce::graph::Kernel
+impl core::marker::UnsafeUnpin for reed_reduce::graph::Kernel
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::graph::Kernel
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::graph::Kernel
+pub enum reed_reduce::LdaError
+pub reed_reduce::LdaError::ConstantWithinGroups
+pub reed_reduce::LdaError::ConstantWithinGroups::column: usize
+pub reed_reduce::LdaError::Degenerate
+pub reed_reduce::LdaError::EmptyGroup
+pub reed_reduce::LdaError::EmptyGroup::group: usize
+pub reed_reduce::LdaError::FeatureCountMismatch
+pub reed_reduce::LdaError::FeatureCountMismatch::expected: usize
+pub reed_reduce::LdaError::FeatureCountMismatch::got: usize
+pub reed_reduce::LdaError::GroupCountMismatch
+pub reed_reduce::LdaError::GroupCountMismatch::groups: usize
+pub reed_reduce::LdaError::GroupCountMismatch::rows: usize
+pub reed_reduce::LdaError::GroupIndexOutOfRange
+pub reed_reduce::LdaError::GroupIndexOutOfRange::index: u32
+pub reed_reduce::LdaError::GroupIndexOutOfRange::ng: usize
+pub reed_reduce::LdaError::NoObservations
+pub reed_reduce::LdaError::TooFewGroups(usize)
+pub reed_reduce::LdaError::ZeroDimen
+impl core::clone::Clone for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::clone(&self) -> reed_reduce::lda::LdaError
+impl core::cmp::Eq for reed_reduce::lda::LdaError
+impl core::cmp::PartialEq for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::eq(&self, &reed_reduce::lda::LdaError) -> bool
+impl core::error::Error for reed_reduce::lda::LdaError
+impl core::fmt::Debug for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::lda::LdaError
+pub fn reed_reduce::lda::LdaError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_reduce::lda::LdaError
+impl core::marker::Freeze for reed_reduce::lda::LdaError
+impl core::marker::Send for reed_reduce::lda::LdaError
+impl core::marker::Sync for reed_reduce::lda::LdaError
+impl core::marker::Unpin for reed_reduce::lda::LdaError
+impl core::marker::UnsafeUnpin for reed_reduce::lda::LdaError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lda::LdaError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lda::LdaError
+pub enum reed_reduce::Parallel
+pub reed_reduce::Parallel::Serial
+pub reed_reduce::Parallel::Threads(usize)
+impl reed_reduce::backend::Parallel
+pub const fn reed_reduce::backend::Parallel::threads(self) -> usize
+impl core::clone::Clone for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::clone(&self) -> reed_reduce::backend::Parallel
+impl core::cmp::Eq for reed_reduce::backend::Parallel
+impl core::cmp::PartialEq for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::eq(&self, &reed_reduce::backend::Parallel) -> bool
+impl core::default::Default for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::default() -> reed_reduce::backend::Parallel
+impl core::fmt::Debug for reed_reduce::backend::Parallel
+pub fn reed_reduce::backend::Parallel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::backend::Parallel
+impl core::marker::StructuralPartialEq for reed_reduce::backend::Parallel
+impl core::marker::Freeze for reed_reduce::backend::Parallel
+impl core::marker::Send for reed_reduce::backend::Parallel
+impl core::marker::Sync for reed_reduce::backend::Parallel
+impl core::marker::Unpin for reed_reduce::backend::Parallel
+impl core::marker::UnsafeUnpin for reed_reduce::backend::Parallel
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::backend::Parallel
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::backend::Parallel
+pub enum reed_reduce::TsneError
+pub reed_reduce::TsneError::PerplexityBelowOne
+pub reed_reduce::TsneError::PerplexityBelowOne::perplexity: f64
+pub reed_reduce::TsneError::PerplexityTooLarge
+pub reed_reduce::TsneError::PerplexityTooLarge::n: usize
+pub reed_reduce::TsneError::PerplexityTooLarge::perplexity: f64
+impl core::clone::Clone for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::clone(&self) -> reed_reduce::extra::TsneError
+impl core::cmp::PartialEq for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::eq(&self, &reed_reduce::extra::TsneError) -> bool
+impl core::error::Error for reed_reduce::extra::TsneError
+impl core::fmt::Debug for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::extra::TsneError
+pub fn reed_reduce::extra::TsneError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_reduce::extra::TsneError
+impl core::marker::Freeze for reed_reduce::extra::TsneError
+impl core::marker::Send for reed_reduce::extra::TsneError
+impl core::marker::Sync for reed_reduce::extra::TsneError
+impl core::marker::Unpin for reed_reduce::extra::TsneError
+impl core::marker::UnsafeUnpin for reed_reduce::extra::TsneError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::extra::TsneError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::extra::TsneError
+pub enum reed_reduce::XvalError
+pub reed_reduce::XvalError::BadTrainingFraction
+pub reed_reduce::XvalError::Lda(reed_reduce::lda::LdaError)
+pub reed_reduce::XvalError::NoRepetitions
+pub reed_reduce::XvalError::NoSplittableGroup
+pub reed_reduce::XvalError::TooFewSamples
+impl core::clone::Clone for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::clone(&self) -> reed_reduce::xval::XvalError
+impl core::cmp::Eq for reed_reduce::xval::XvalError
+impl core::cmp::PartialEq for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::eq(&self, &reed_reduce::xval::XvalError) -> bool
+impl core::error::Error for reed_reduce::xval::XvalError
+impl core::fmt::Debug for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::xval::XvalError
+pub fn reed_reduce::xval::XvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for reed_reduce::xval::XvalError
+impl core::marker::Freeze for reed_reduce::xval::XvalError
+impl core::marker::Send for reed_reduce::xval::XvalError
+impl core::marker::Sync for reed_reduce::xval::XvalError
+impl core::marker::Unpin for reed_reduce::xval::XvalError
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalError
+pub enum reed_reduce::XvalResult
+pub reed_reduce::XvalResult::GroupMean
+pub reed_reduce::XvalResult::Overall
+impl reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::parse(&str) -> core::result::Result<Self, alloc::string::String>
+impl core::clone::Clone for reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::clone(&self) -> reed_reduce::xval::XvalResult
+impl core::cmp::Eq for reed_reduce::xval::XvalResult
+impl core::cmp::PartialEq for reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::eq(&self, &reed_reduce::xval::XvalResult) -> bool
+impl core::fmt::Debug for reed_reduce::xval::XvalResult
+pub fn reed_reduce::xval::XvalResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::xval::XvalResult
+impl core::marker::StructuralPartialEq for reed_reduce::xval::XvalResult
+impl core::marker::Freeze for reed_reduce::xval::XvalResult
+impl core::marker::Send for reed_reduce::xval::XvalResult
+impl core::marker::Sync for reed_reduce::xval::XvalResult
+impl core::marker::Unpin for reed_reduce::xval::XvalResult
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalResult
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalResult
+pub struct reed_reduce::Embedding
+pub reed_reduce::Embedding::coords: reed_core::linalg::Mat
+pub reed_reduce::Embedding::values: alloc::vec::Vec<f64>
+impl core::clone::Clone for reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::Embedding::clone(&self) -> reed_reduce::graph::Embedding
+impl core::fmt::Debug for reed_reduce::graph::Embedding
+pub fn reed_reduce::graph::Embedding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::graph::Embedding
+impl core::marker::Send for reed_reduce::graph::Embedding
+impl core::marker::Sync for reed_reduce::graph::Embedding
+impl core::marker::Unpin for reed_reduce::graph::Embedding
+impl core::marker::UnsafeUnpin for reed_reduce::graph::Embedding
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::graph::Embedding
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::graph::Embedding
+pub struct reed_reduce::Lda
+pub reed_reduce::Lda::counts: alloc::vec::Vec<usize>
+pub reed_reduce::Lda::groups: alloc::vec::Vec<u32>
+pub reed_reduce::Lda::levels: alloc::vec::Vec<alloc::string::String>
+pub reed_reduce::Lda::means: reed_core::linalg::Mat
+pub reed_reduce::Lda::n: usize
+pub reed_reduce::Lda::prior: alloc::vec::Vec<f64>
+pub reed_reduce::Lda::scaling: reed_core::linalg::Mat
+pub reed_reduce::Lda::svd: alloc::vec::Vec<f64>
+impl reed_reduce::lda::Lda
+pub fn reed_reduce::lda::Lda::project(&self, &reed_core::linalg::Mat, usize) -> core::result::Result<reed_reduce::lda::LdaProjection, reed_reduce::lda::LdaError>
+pub fn reed_reduce::lda::Lda::rank(&self) -> usize
+impl core::clone::Clone for reed_reduce::lda::Lda
+pub fn reed_reduce::lda::Lda::clone(&self) -> reed_reduce::lda::Lda
+impl core::fmt::Debug for reed_reduce::lda::Lda
+pub fn reed_reduce::lda::Lda::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lda::Lda
+impl core::marker::Send for reed_reduce::lda::Lda
+impl core::marker::Sync for reed_reduce::lda::Lda
+impl core::marker::Unpin for reed_reduce::lda::Lda
+impl core::marker::UnsafeUnpin for reed_reduce::lda::Lda
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lda::Lda
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lda::Lda
+pub struct reed_reduce::LdaProjection
+pub reed_reduce::LdaProjection::assign: alloc::vec::Vec<u32>
+pub reed_reduce::LdaProjection::coords: reed_core::linalg::Mat
+pub reed_reduce::LdaProjection::posterior: reed_core::linalg::Mat
+impl core::clone::Clone for reed_reduce::lda::LdaProjection
+pub fn reed_reduce::lda::LdaProjection::clone(&self) -> reed_reduce::lda::LdaProjection
+impl core::fmt::Debug for reed_reduce::lda::LdaProjection
+pub fn reed_reduce::lda::LdaProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lda::LdaProjection
+impl core::marker::Send for reed_reduce::lda::LdaProjection
+impl core::marker::Sync for reed_reduce::lda::LdaProjection
+impl core::marker::Unpin for reed_reduce::lda::LdaProjection
+impl core::marker::UnsafeUnpin for reed_reduce::lda::LdaProjection
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lda::LdaProjection
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lda::LdaProjection
+pub struct reed_reduce::LleError
+pub reed_reduce::LleError::max: usize
+pub reed_reduce::LleError::n: usize
+impl core::clone::Clone for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::clone(&self) -> reed_reduce::extra::LleError
+impl core::cmp::Eq for reed_reduce::extra::LleError
+impl core::cmp::PartialEq for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::eq(&self, &reed_reduce::extra::LleError) -> bool
+impl core::error::Error for reed_reduce::extra::LleError
+impl core::fmt::Debug for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for reed_reduce::extra::LleError
+pub fn reed_reduce::extra::LleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for reed_reduce::extra::LleError
+impl core::marker::StructuralPartialEq for reed_reduce::extra::LleError
+impl core::marker::Freeze for reed_reduce::extra::LleError
+impl core::marker::Send for reed_reduce::extra::LleError
+impl core::marker::Sync for reed_reduce::extra::LleError
+impl core::marker::Unpin for reed_reduce::extra::LleError
+impl core::marker::UnsafeUnpin for reed_reduce::extra::LleError
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::extra::LleError
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::extra::LleError
+pub struct reed_reduce::Pca
+pub reed_reduce::Pca::all_values: alloc::vec::Vec<f64>
+pub reed_reduce::Pca::pve: alloc::vec::Vec<f64>
+pub reed_reduce::Pca::values: alloc::vec::Vec<f64>
+pub reed_reduce::Pca::vectors: reed_core::linalg::Mat
+impl reed_reduce::pca::Pca
+pub fn reed_reduce::pca::Pca::loadings(&self, &reed_core::linalg::Mat) -> reed_core::linalg::Mat
+pub fn reed_reduce::pca::Pca::scores(&self) -> reed_core::linalg::Mat
+impl core::clone::Clone for reed_reduce::pca::Pca
+pub fn reed_reduce::pca::Pca::clone(&self) -> reed_reduce::pca::Pca
+impl core::fmt::Debug for reed_reduce::pca::Pca
+pub fn reed_reduce::pca::Pca::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::pca::Pca
+impl core::marker::Send for reed_reduce::pca::Pca
+impl core::marker::Sync for reed_reduce::pca::Pca
+impl core::marker::Unpin for reed_reduce::pca::Pca
+impl core::marker::UnsafeUnpin for reed_reduce::pca::Pca
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::pca::Pca
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::pca::Pca
+pub struct reed_reduce::StreamConfig
+pub reed_reduce::StreamConfig::block: usize
+pub reed_reduce::StreamConfig::k: usize
+pub reed_reduce::StreamConfig::k_keep: usize
+pub reed_reduce::StreamConfig::krylov_dim: usize
+pub reed_reduce::StreamConfig::max_cycles: usize
+pub reed_reduce::StreamConfig::parallel: reed_reduce::backend::Parallel
+pub reed_reduce::StreamConfig::seed: u64
+pub reed_reduce::StreamConfig::tol: f64
+impl core::clone::Clone for reed_reduce::lanczos::StreamConfig
+pub fn reed_reduce::lanczos::StreamConfig::clone(&self) -> reed_reduce::lanczos::StreamConfig
+impl core::default::Default for reed_reduce::lanczos::StreamConfig
+pub fn reed_reduce::lanczos::StreamConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::lanczos::StreamConfig
+pub fn reed_reduce::lanczos::StreamConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lanczos::StreamConfig
+impl core::marker::Send for reed_reduce::lanczos::StreamConfig
+impl core::marker::Sync for reed_reduce::lanczos::StreamConfig
+impl core::marker::Unpin for reed_reduce::lanczos::StreamConfig
+impl core::marker::UnsafeUnpin for reed_reduce::lanczos::StreamConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lanczos::StreamConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lanczos::StreamConfig
+pub struct reed_reduce::StreamEig
+pub reed_reduce::StreamEig::cycles: usize
+pub reed_reduce::StreamEig::max_residual: f64
+pub reed_reduce::StreamEig::values: alloc::vec::Vec<f64>
+pub reed_reduce::StreamEig::vectors: reed_core::linalg::Mat
+impl core::clone::Clone for reed_reduce::lanczos::StreamEig
+pub fn reed_reduce::lanczos::StreamEig::clone(&self) -> reed_reduce::lanczos::StreamEig
+impl core::fmt::Debug for reed_reduce::lanczos::StreamEig
+pub fn reed_reduce::lanczos::StreamEig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::lanczos::StreamEig
+impl core::marker::Send for reed_reduce::lanczos::StreamEig
+impl core::marker::Sync for reed_reduce::lanczos::StreamEig
+impl core::marker::Unpin for reed_reduce::lanczos::StreamEig
+impl core::marker::UnsafeUnpin for reed_reduce::lanczos::StreamEig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::lanczos::StreamEig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::lanczos::StreamEig
+pub struct reed_reduce::SymEig
+pub reed_reduce::SymEig::values: alloc::vec::Vec<f64>
+pub reed_reduce::SymEig::vectors: reed_core::linalg::Mat
+impl reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::SymEig::top_k(&self, usize) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat)
+impl core::clone::Clone for reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::SymEig::clone(&self) -> reed_reduce::eig::SymEig
+impl core::fmt::Debug for reed_reduce::eig::SymEig
+pub fn reed_reduce::eig::SymEig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::eig::SymEig
+impl core::marker::Send for reed_reduce::eig::SymEig
+impl core::marker::Sync for reed_reduce::eig::SymEig
+impl core::marker::Unpin for reed_reduce::eig::SymEig
+impl core::marker::UnsafeUnpin for reed_reduce::eig::SymEig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::eig::SymEig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::eig::SymEig
+pub struct reed_reduce::SymEigResult
+pub reed_reduce::SymEigResult::backend: reed_reduce::backend::Backend
+pub reed_reduce::SymEigResult::values: alloc::vec::Vec<f64>
+pub reed_reduce::SymEigResult::vectors: reed_core::linalg::Mat
+impl reed_reduce::backend::SymEigResult
+pub fn reed_reduce::backend::SymEigResult::top_k(&self, usize) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat)
+impl core::marker::Freeze for reed_reduce::backend::SymEigResult
+impl core::marker::Send for reed_reduce::backend::SymEigResult
+impl core::marker::Sync for reed_reduce::backend::SymEigResult
+impl core::marker::Unpin for reed_reduce::backend::SymEigResult
+impl core::marker::UnsafeUnpin for reed_reduce::backend::SymEigResult
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::backend::SymEigResult
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::backend::SymEigResult
+pub struct reed_reduce::TsneConfig
+pub reed_reduce::TsneConfig::learning_rate: f64
+pub reed_reduce::TsneConfig::n_components: usize
+pub reed_reduce::TsneConfig::n_iter: usize
+pub reed_reduce::TsneConfig::perplexity: f64
+pub reed_reduce::TsneConfig::seed: u64
+impl core::clone::Clone for reed_reduce::extra::TsneConfig
+pub fn reed_reduce::extra::TsneConfig::clone(&self) -> reed_reduce::extra::TsneConfig
+impl core::default::Default for reed_reduce::extra::TsneConfig
+pub fn reed_reduce::extra::TsneConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::extra::TsneConfig
+pub fn reed_reduce::extra::TsneConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::extra::TsneConfig
+impl core::marker::Send for reed_reduce::extra::TsneConfig
+impl core::marker::Sync for reed_reduce::extra::TsneConfig
+impl core::marker::Unpin for reed_reduce::extra::TsneConfig
+impl core::marker::UnsafeUnpin for reed_reduce::extra::TsneConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::extra::TsneConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::extra::TsneConfig
+pub struct reed_reduce::UmapConfig
+pub reed_reduce::UmapConfig::gamma: f64
+pub reed_reduce::UmapConfig::learning_rate: f64
+pub reed_reduce::UmapConfig::local_connectivity: f64
+pub reed_reduce::UmapConfig::min_dist: f64
+pub reed_reduce::UmapConfig::n_components: usize
+pub reed_reduce::UmapConfig::n_epochs: usize
+pub reed_reduce::UmapConfig::n_neighbors: usize
+pub reed_reduce::UmapConfig::negative_sample_rate: usize
+pub reed_reduce::UmapConfig::seed: u64
+pub reed_reduce::UmapConfig::set_op_mix_ratio: f64
+pub reed_reduce::UmapConfig::spread: f64
+impl core::clone::Clone for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::UmapConfig::clone(&self) -> reed_reduce::umap::UmapConfig
+impl core::default::Default for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::UmapConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::umap::UmapConfig
+pub fn reed_reduce::umap::UmapConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::umap::UmapConfig
+impl core::marker::Send for reed_reduce::umap::UmapConfig
+impl core::marker::Sync for reed_reduce::umap::UmapConfig
+impl core::marker::Unpin for reed_reduce::umap::UmapConfig
+impl core::marker::UnsafeUnpin for reed_reduce::umap::UmapConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::umap::UmapConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::umap::UmapConfig
+pub struct reed_reduce::XvalConfig
+pub reed_reduce::XvalConfig::n_rep: usize
+pub reed_reduce::XvalConfig::result: reed_reduce::xval::XvalResult
+pub reed_reduce::XvalConfig::seed: u64
+pub reed_reduce::XvalConfig::training_set: f64
+impl core::clone::Clone for reed_reduce::xval::XvalConfig
+pub fn reed_reduce::xval::XvalConfig::clone(&self) -> reed_reduce::xval::XvalConfig
+impl core::default::Default for reed_reduce::xval::XvalConfig
+pub fn reed_reduce::xval::XvalConfig::default() -> Self
+impl core::fmt::Debug for reed_reduce::xval::XvalConfig
+pub fn reed_reduce::xval::XvalConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::xval::XvalConfig
+impl core::marker::Send for reed_reduce::xval::XvalConfig
+impl core::marker::Sync for reed_reduce::xval::XvalConfig
+impl core::marker::Unpin for reed_reduce::xval::XvalConfig
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalConfig
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalConfig
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalConfig
+pub struct reed_reduce::XvalReport
+pub reed_reduce::XvalReport::best_mean_success_n_pca: usize
+pub reed_reduce::XvalReport::best_n_pca: usize
+pub reed_reduce::XvalReport::candidates: alloc::vec::Vec<reed_reduce::xval::Candidate>
+pub reed_reduce::XvalReport::random_chance: f64
+impl core::clone::Clone for reed_reduce::xval::XvalReport
+pub fn reed_reduce::xval::XvalReport::clone(&self) -> reed_reduce::xval::XvalReport
+impl core::fmt::Debug for reed_reduce::xval::XvalReport
+pub fn reed_reduce::xval::XvalReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for reed_reduce::xval::XvalReport
+impl core::marker::Send for reed_reduce::xval::XvalReport
+impl core::marker::Sync for reed_reduce::xval::XvalReport
+impl core::marker::Unpin for reed_reduce::xval::XvalReport
+impl core::marker::UnsafeUnpin for reed_reduce::xval::XvalReport
+impl core::panic::unwind_safe::RefUnwindSafe for reed_reduce::xval::XvalReport
+impl core::panic::unwind_safe::UnwindSafe for reed_reduce::xval::XvalReport
+pub const reed_reduce::COMPILED_BACKEND: reed_reduce::backend::Backend
+pub const reed_reduce::LLE_MAX_SAMPLES: usize
+pub fn reed_reduce::candidate_counts(usize) -> alloc::vec::Vec<usize>
+pub fn reed_reduce::diffusion_map(&reed_core::linalg::Mat, usize, f64) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::fit_lda(&reed_core::linalg::Mat, &[u32], &[alloc::string::String], f64) -> core::result::Result<reed_reduce::lda::Lda, reed_reduce::lda::LdaError>
+pub fn reed_reduce::fuzzy_simplicial_set(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_reduce::umap::FuzzyGraph
+pub fn reed_reduce::fuzzy_simplicial_set_from_distances(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_reduce::umap::FuzzyGraph
+pub fn reed_reduce::gram_divide(&reed_core::linalg::Mat, usize, reed_reduce::backend::Parallel) -> (reed_core::linalg::Mat, reed_reduce::backend::Backend)
+pub fn reed_reduce::grm_diffusion(&reed_distance::grm::Grm, usize, usize, f64) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_distances(&reed_distance::grm::Grm) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_isomap(&reed_distance::grm::Grm, usize, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_kernel(&reed_distance::grm::Grm, usize, reed_reduce::graph::Kernel) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_kernel_pca(&reed_distance::grm::Grm, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_knn_weights(&reed_distance::grm::Grm, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_laplacian(&reed_distance::grm::Grm, usize, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_lle(&reed_distance::grm::Grm, &reed_core::linalg::Mat, usize, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_pcoa(&reed_distance::grm::Grm, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::grm_similarity(&reed_distance::grm::Grm) -> reed_core::linalg::Mat
+pub fn reed_reduce::grm_tsne(&reed_distance::grm::Grm, &reed_reduce::extra::TsneConfig) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::TsneError>
+pub fn reed_reduce::grm_umap(&reed_distance::grm::Grm, &reed_reduce::umap::UmapConfig) -> reed_core::linalg::Mat
+pub fn reed_reduce::isomap(&reed_core::linalg::Mat, usize, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::kernel_pca(&reed_core::linalg::Mat, usize, reed_reduce::graph::Kernel, f64) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::knn_graph(&reed_core::linalg::Mat, usize, f64) -> reed_core::linalg::Mat
+pub fn reed_reduce::lanczos_top_k(&reed_core::linalg::Mat, &reed_reduce::lanczos::StreamConfig) -> reed_reduce::lanczos::StreamEig
+pub fn reed_reduce::laplacian_eigenmaps(&reed_core::linalg::Mat, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::lle(&reed_core::linalg::Mat, usize, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::lle_from_sq_distances(&reed_core::linalg::Mat, &reed_core::linalg::Mat, usize, usize) -> reed_core::linalg::Mat
+pub fn reed_reduce::nmf(&reed_core::linalg::Mat, usize, usize, u64) -> (reed_core::linalg::Mat, reed_core::linalg::Mat)
+pub fn reed_reduce::pairwise_distances(&reed_core::linalg::Mat) -> reed_core::linalg::Mat
+pub fn reed_reduce::pca_dense(&reed_core::linalg::Mat, usize) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_dense_pairwise(&reed_core::linalg::Mat, usize) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_dense_pairwise_with(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_dense_pairwise_with_par(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand, reed_reduce::backend::Parallel) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_dense_with(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_dense_with_par(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand, reed_reduce::backend::Parallel) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_top_k(&reed_core::linalg::Mat, usize) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_top_k_with(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pca_top_k_with_par(&reed_core::linalg::Mat, usize, reed_distance::standard::Stand, reed_reduce::backend::Parallel) -> reed_reduce::pca::Pca
+pub fn reed_reduce::pcoa(&reed_core::linalg::Mat, usize) -> reed_reduce::graph::Embedding
+pub fn reed_reduce::ppca(&reed_core::linalg::Mat, usize, usize, u64) -> reed_core::linalg::Mat
+pub fn reed_reduce::sym_eig(&reed_core::linalg::Mat, reed_reduce::backend::Parallel) -> reed_reduce::backend::SymEigResult
+pub fn reed_reduce::sym_eig_top_k(&reed_core::linalg::Mat, usize, reed_reduce::backend::Parallel) -> (alloc::vec::Vec<f64>, reed_core::linalg::Mat, reed_reduce::backend::Backend)
+pub fn reed_reduce::try_lle(&reed_core::linalg::Mat, usize, usize) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::LleError>
+pub fn reed_reduce::try_lle_from_sq_distances(&reed_core::linalg::Mat, &reed_core::linalg::Mat, usize, usize) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::LleError>
+pub fn reed_reduce::tsne(&reed_core::linalg::Mat, &reed_reduce::extra::TsneConfig) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::TsneError>
+pub fn reed_reduce::tsne_from_sq_distances(&reed_core::linalg::Mat, &reed_reduce::extra::TsneConfig) -> core::result::Result<reed_core::linalg::Mat, reed_reduce::extra::TsneError>
+pub fn reed_reduce::umap(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_core::linalg::Mat
+pub fn reed_reduce::umap_from_distances(&reed_core::linalg::Mat, &reed_reduce::umap::UmapConfig) -> reed_core::linalg::Mat
+pub type reed_reduce::LanczosConfig = reed_reduce::lanczos::StreamConfig
+pub type reed_reduce::PartialEig = reed_reduce::lanczos::StreamEig

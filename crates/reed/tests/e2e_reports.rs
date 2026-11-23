@@ -3,7 +3,7 @@
 
 use std::io::Write;
 
-use reed::frontend::reports::{StatsReportRequest, run_stats};
+use reed::{StatsReportRequest, run_stats};
 use reed_engine::budget::{MemBudget, ThreadBudget};
 
 mod support;
@@ -205,7 +205,7 @@ fn summary_idd_qual_psc_match_bcftools() {
         run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("invariant: run");
     let qc = outcome.qc.expect("invariant: summary requested");
     let names = vec!["S1".to_string(), "S2".to_string()];
-    let text = reed::frontend::summary::render_bcftools_stats(&qc, &names);
+    let text = reed::frontend::render_bcftools_stats(&qc, &names);
     for line in [
         "QUAL\t0\t.\t0\t0\t0\t2",
         "QUAL\t0\t30.0\t1\t0\t1\t0",
@@ -265,7 +265,7 @@ fn summary_depth_falls_back_to_ad() {
         run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget)).expect("invariant: run");
     let qc = outcome.qc.expect("invariant: summary requested");
     let names = vec!["s0".to_string(), "s1".to_string()];
-    let text = reed::frontend::summary::render_bcftools_stats(&qc, &names);
+    let text = reed::frontend::render_bcftools_stats(&qc, &names);
     for line in [
         // AD sums: s0 30, 20, then no fallback (FORMAT has DP, value
         // missing) and 0 (dropped: bcftools counts only dp > 0); s1 30, 25,
@@ -328,10 +328,8 @@ fn summary_uses_the_shared_ac_an_reader() {
         let outcome = run_stats(Some(&vcf), &request, &reed::RunContext::idle(&budget))
             .expect("invariant: run");
         let qc = outcome.qc.expect("invariant: summary requested");
-        let rendered = reed::frontend::summary::render_bcftools_stats(
-            &qc,
-            &["s0".to_string(), "s1".to_string()],
-        );
+        let rendered =
+            reed::frontend::render_bcftools_stats(&qc, &["s0".to_string(), "s1".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
         rendered
     };

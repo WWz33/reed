@@ -30,6 +30,7 @@ already-opened `OpenedInput` and are listed in `ci/api/reed.txt`):
 | `run_convert` | `ConvertRequest` | `ConvertReport` |
 | `run_pca` | `PcaRequest` | `PcaReport` |
 | `run_dapc` | `DapcRequest` | `DapcReport` |
+| `run_distance` | `DistanceRequest` | `DistanceReport` |
 
 The signature pattern is uniform: `fn run_*(input: Option<&Path>, request: &XxxRequest, ctx: &RunContext<'_>) -> Result<XxxReport>`. `RunContext` (`reed::RunContext`) borrows the run's `ThreadBudget` and `AbortSignal`; build one with `RunContext::new(&budget, &abort.signal)` from an `Abort` (`reed::abort_for(&budget)`), or `RunContext::idle(&budget)` when the caller has no cancellation source. `ThreadBudget::default()` means "all cores + half of physical memory", the same as the CLI defaults. The same names are available as `use reed::prelude::*;`; the prelude only re-exports root items (the `run_*` entry points, requests, reports, errors, budgets and `RunContext`).
 

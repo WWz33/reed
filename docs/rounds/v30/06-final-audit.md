@@ -3,6 +3,8 @@
 > 复核日期：2026-11-19。对象是当前 `dev` 工作树中的 v30 重构及其未提交改动。
 > 本文件是当前状态的权威索引；`01-review.md`、`04-recheck.md`、
 > `05-review-followup.md` 保留修复前的证据和修法讨论，不应再单独解释为当前状态。
+> 2026-11-20 follow-up 见 §10；该节更新发布风险状态并汇总尚未解决的 API、功能和 IO 项。
+> 本文件 §1.1 的运行时审计结论仍指 2026-11-19 的验证范围。
 
 ## 1. 先给结论
 
@@ -46,67 +48,30 @@ v30 已经脱离了“每个 issue 加一个局部补丁”的阶段：GT/AC/AN/
 预算和输出编辑等共同语义已经向底层收敛。当前不能再把它称为 IO/filter 层的
 明显屎山，也没有证据表明需要为了修复一个现存 P0 而立刻全面重写。
 
-但是，公共 API 仍有几处设计决策没有冻结，发布脚本也有发布错版本的可能。下面的
-问题需要在 v30 后续工作中处理，或由产品决策明确“暂不承诺”。
+截至 2026-11-19，公共 API 决策尚未冻结，发布脚本也有发布错版本的可能；后三项发布
+风险已在 §10.1 处理。其余 API、功能边界和 IO 优化仍未决，见 §10.2。
 
-## 2. 仍存在的真实工程风险
+## 2. 2026-11-19 审计发现的工程风险（当前状态见 §10）
 
-### P1-1：`publish.sh` 发布的是工作树，不是最后一个提交
+### P1-1：`publish.sh` 发布工作树内容（已解决，2026-11-20）
 
-`ci/publish.sh` 使用临时 Git index，对当前工作树执行 `git add`，随后从工作树生成
-公开快照。因此未提交的源码、manifest、CI 和 README 都可能进入 `origin/main`。
-脚本不运行完整门，也不验证这些内容已经提交到 `dev`。
+11 月 19 日复核时，脚本从工作树组装快照，未提交改动可能进入 `origin/main`。现已改为
+从 `HEAD` 的 Git 对象构建临时 index，拒绝 dirty worktree，并要求当前 `dev` 的 `HEAD`
+与远端 `origin/dev` 完全一致。发布提交正文记录 `Source-Commit`，可追溯到源提交。
 
-这不是运行时 bug，但它会让“已审查版本”和“实际发布版本”不同。发布前必须执行：
+脚本仍不替代完整开发门；发布者须先通过 dev gates、提交改动并推送 dev。
 
-```text
-dev 完整门通过
-→ 提交准备发布的改动
-→ 工作树 clean
-→ 推送 dev
-→ 运行 publish.sh
-```
+### P1-2：`publish.sh` 使用无条件 `--force`（已解决，2026-11-20）
 
-建议后续给脚本增加 clean-worktree 检查，并把源提交哈希写入发布提交信息或文件中。
-这属于发布安全增强，不应通过重复运行 main 的完整测试来解决。
+已移除 `--force`。发布提交以读取到的 `origin/main` 为父提交，再执行普通 push；若另一
+发布者先更新 `main`，Git 会拒绝非 fast-forward 更新而不覆盖对方提交。
+`ci/test-publish.sh` 在临时 bare remote 中验证了该竞争场景。
 
-### P1-2：`publish.sh` 使用无条件 `--force`
+### P1-3：`dev` upstream 指向错误分支（本地已解决，2026-11-20）
 
-脚本先读取远端 `origin/main` 作为父提交，再执行：
-
-```bash
-git push --force origin "$commit:refs/heads/main"
-```
-
-在读取远端和推送之间，如果另一个发布者更新了 `main`，当前脚本会覆盖对方的提交。
-
-建议：
-
-1. 优先改为普通 fast-forward push；或者
-2. 保留快照历史时使用带旧值的 `--force-with-lease`；并在冲突时失败，不覆盖远端新提交。
-
-### P1-3：`dev` 的 upstream 当前指向 `origin/main`
-
-当前本地配置是：
-
-```text
-branch.dev.remote = origin
-branch.dev.merge  = refs/heads/main
-```
-
-所以不要在当前配置下直接使用裸 `git push`。明确推送 dev：
-
-```bash
-git push origin HEAD:refs/heads/dev
-```
-
-如果希望以后在 `dev` 上直接运行 `git push`，再单独执行：
-
-```bash
-git branch --set-upstream-to=origin/dev dev
-```
-
-这是本地 Git 配置问题，不应混入源码提交中。
+本地 upstream 已改为 `origin/dev`，裸 `git push` 不再默认指向 `main`。2026-11-20 将
+`4ae203b` 从原远端 tip `f190708c` 推至 `origin/dev`，现在两端 HEAD 一致。本轮修改仍未提交，
+脚本会在 dirty worktree 状态拒绝发布。
 
 ### P1-4：v30 历史文档存在“旧结论 + 新结论”并列
 
@@ -245,46 +210,30 @@ PSI 没有等价输出。它是功能边界，不是隐藏错误；不要把 `--
 删除 noodles 的收益是版本和维护自主权；代价是重新承担 VCF/BCF/BGZF/CSI/TBI 的格式
 兼容、异常输入和安全修复。当前 v30 应把“彻底自写”作为待拍板路线，而不是默认重构目标。
 
-## 7. `publish.sh` 到底推送什么
+## 7. `publish.sh` 当前推送行为（2026-11-20）
 
-结论明确：**当前 `ci/publish.sh` 只推送 `origin/main`，不会推送 `dev`。**
+脚本只更新 `origin/main`，不推送 `dev`、不运行开发门，也不发布 release 或二进制。
 
-它会：
+运行前要求：
 
-- 用临时 index 从当前工作树收集公开路径；
-- 排除 `docs/`、`docsite/`、`gold/`、各 crate 的 `tests/` 和 Pages workflow；
-- 以远端 `origin/main` 为父提交生成公开快照；
-- `git push` 到 `refs/heads/main`。
+- 当前分支必须是 `dev`，工作树必须 clean；
+- 本地 `HEAD` 必须与远端 `origin/dev` 完全一致。
 
-它不会：
+脚本会：
 
-- 提交本地 `dev`；
-- 推送 `origin/dev`；
-- 运行 dev 完整门；
-- 检查工作树 clean；
-- 检查当前分支是否是 `dev`；
-- 发布 GitHub Release 或二进制。
+- 从 `HEAD` 的 Git 对象生成发布树，不读取工作树文件；
+- 排除 `docs/`、`docsite/`、`gold/`、`bench/`、各 crate 的 `tests/` 和 Pages workflow；
+- 以观察到的 `origin/main` 为父提交，并在发布提交正文记录 `Source-Commit`；
+- 使用普通 push。若 `main` 在读取与推送之间发生并发更新，Git 拒绝非 fast-forward 更新。
 
-当前推荐命令：
+推荐流程：
 
-```bash
-# 1. 在 dev 完成完整门并提交
-git add -A
-git commit -m "refactor(v30): consolidate semantic ownership and API release gates"
+1. 在 `dev` 通过完整开发门并提交改动；
+2. 使用 `git push` 将该提交同步到 `origin/dev`；
+3. 保持工作树 clean，运行 `bash ci/publish.sh "publish: v0.5.0 public source"`。
 
-# 2. 显式推送 dev（当前 upstream 配置不正确）
-git push origin HEAD:refs/heads/dev
-
-# 3. 由当前 clean 工作树生成并推送公开 main
-bash ci/publish.sh "publish: v0.5.0 public source"
-```
-
-随后应从 `origin/main` 生成的公开提交创建匹配 `Cargo.toml` 的版本 tag，再触发
-release workflow。不能从 dev 提前打 tag，否则 release workflow 的 HEAD/tag 校验会拒绝。
-
-这不是让 main 再重复一遍 dev 的完整门：dev 完整门是发布前置条件，main 只验证公开源代码
-能够构建。公开 main 是否保留 `docsite/` 和文档部署 workflow，仍是产品选择；当前脚本
-排除它们，因此 README 不应把 `docsite/` 相对路径当成 main 一定存在的内容。
+发布快照推到 `main` 后，再从该提交创建与 `Cargo.toml` 一致的版本 tag 并触发 release
+workflow。脚本只检查提交同步，不验证开发门是否通过；main 仍只构建公开源码，`docsite/` 不在公开树中。
 
 ## 8. 需要用户拍板的事项
 
@@ -294,7 +243,7 @@ release workflow。不能从 dev 提前打 tag，否则 release workflow 的 HEA
 | 支持 crate 的稳定面 | **0.5.x lockstep 公开承诺**，加 API/semver 门 | facade 自有类型隔离，后续做较大类型迁移 |
 | `frontend` 整 crate 别名 | **补齐 facade 后删除** | 保留并明确 unstable |
 | `run_filter_opened` | **补齐** | 明确 filter 不支持 opened |
-| `publish.sh` | **clean 检查 + `--force-with-lease`** | 保持脚本简单，由发布者手工保证 |
+| `publish.sh` | **已完成**：clean 检查、固定源提交、普通 push（见 §10） | 脚本不自动推送 dev |
 | main 的 docsite | **继续源码-only，README 指向外部文档站** | 把 docsite 和 Pages workflow 纳入公开树 |
 | noodles | **先保留内部后端/开发 oracle，分阶段替换** | v30 立即全面自写 |
 | `.genome` 完整列 | 本轮不阻断，明确部分兼容 | 实现 PPC/RATIO/RT/EZ/PHE |
@@ -310,6 +259,68 @@ release workflow。不能从 dev 提前打 tag，否则 release workflow 的 HEA
   doc-drift：通过；
 - genome parity、convert parity、IO/filter/engine/LD 相关回归：通过。
 
-本次没有从 GitHub API 读取分支保护设置，不能替你确认远端是否允许 force push；也没有把
-`run_distance`、完整 `.genome` 或 noodles 全面迁移作为已完成事项。它们在上文分别列为
-设计决策或后续工作。
+2026-11-20 follow-up 运行 `bash ci/test-publish.sh`，在临时 bare remote 验证了脏工作树拒绝、
+发布树来自已提交内容、内部路径排除、源码提交标记和并发更新被拒绝。本次未发布远端 `main`；
+按用户授权执行了普通 push 更新 `origin/dev`。GitHub 分支保护策略未检查。
+
+`run_distance`、完整 `.genome`、noodles 分阶段迁移等仍未完成；当前完整的未决清单见 §10。
+
+## 10. 2026-11-20 后续状态与未决项
+
+### 10.1 发布问题处理结果
+- P1-1：发布输入固定为 clean 的 `dev` HEAD，提交来源写入 `Source-Commit`。
+- P1-2：移除强制 push，以普通 fast-forward push 避免覆盖并发更新。
+- P1-3：本地 upstream 已修正，`4ae203b` 已推送至 `origin/dev`；本轮未提交修改不在远端。
+
+### 10.2 仍未解决的问题
+
+2026-11-23 批次已完成下列工程项；noodles 与 `.genome` 完整列仍按产品边界保留。
+
+| ID | 2026-11-23 结果 | 证据 |
+|---|---|---|
+| P1-4 | 历史表格保留，索引统一到 `STATUS.md` §15–§16 与本文件 §11 | 本文件 §11 |
+| P1-5 | **已完成**：`DistanceRequest/DistanceReport/run_distance/run_distance_opened`；CLI 只做 flag 翻译 | `crates/reed/src/distance.rs`；`reed-cli/src/translate/distance.rs` 仅 ~120 行 |
+| P1-6 | **已完成**：`Stand/MissingPolicy/PcaSolver/XvalResultMode` 等 facade 枚举，CLI 边界 `FromStr` | `crates/reed/src/options.rs`；`PcaRequest`/`DapcRequest` 字段改类型 |
+| P1-7 | **已完成**：支持 crate 采用 0.5.x lockstep 稳定面；9 个 crate 的 API 快照与 semver 门 | `api-contract.md` §2/§5/§6；`api-release-amendment.md` Amendment 2；`ci/api/*.txt` |
+| P1-8 | **已完成**：`frontend` 改为逐项导出，删除 `reed_distance/graph/reduce` 等整 crate 别名；结构门检查缩进别名 | `crates/reed/src/lib.rs`；`ci/check-structure.sh` |
+| P2-1 | **已完成**：`run_filter_opened`，拒绝事后应用 regions | `crates/reed/src/filter/mod.rs`；`api_surface.rs` 测试 |
+| P2-2 | **已完成**：`reed-distance`/`reed-reduce` 继承 workspace lints，clippy `-D warnings` 全绿 | 两 crate 的 `Cargo.toml`；§11 命令 |
+| P2-3 | **已完成**：feature 门按 workspace 自动发现（`cargo hack --each-feature --workspace`） | `ci/check-features.sh` |
+| P2-4 | **已文档化**：`.genome` 明确为部分兼容（`Z0/Z1/Z2/PI_HAT/DST`；`PPC/RATIO=NA`，`RT/EZ/PHE` 占位） | `docsite/.../distance.md`；`api-contract.md` §7 |
+| P2-5 | **已文档化**：`--summary` 的 PSI/HWE 边界与替代路径 | `docsite/.../stats.md`；`api-contract.md` §7 |
+| P2-6 | **已完成**：实现 mid-p HWE（`HweMode::MidP` → `p_mid`），不再拒绝 | `reed-core/math/hwe.rs` 既有 `p_mid`；`reed-filter` tail/compile |
+| P2-7 | **已文档化**：site-count windows 仍拒绝，文档明说 | `docsite/.../popg.md`；`api-contract.md` §7 |
+| IO | **已完成**：`PendingInput` 保留首次扫描构造的 source，无 region 时不再重复 inflate/parse header | `crates/reed/src/input.rs` |
+| noodles | **保持**：内部 IO 后端 + 差分 oracle，分阶段替换（未在本批重写） | 本文件 §6 |
+
+main 是否纳入 docsite、`.genome` 是否追求完整 PLINK 列、summary 是否扩充以及 noodles
+替换范围，仍是 §8 的产品决策，不应记录为本轮已完成。
+
+
+## 11. 2026-11-23 完成批次与验证
+
+本批按 §10.2 的推荐项完成 P1-5…P2-7 与 IO 优化，未重写 noodles，未实现
+`.genome` 的 PPC/RATIO/RT/EZ/PHE，也未实现 site-count windows；这三项按 §8
+产品边界保留并在文档中明确。
+
+验证（本机，`dev` 工作树）：
+
+```text
+cargo fmt --all
+cargo clippy --locked --workspace --all-targets -- -D warnings   exit 0
+cargo test --locked --workspace                                  全部 test-result ok
+cargo test --locked --doc --workspace                            exit 0
+bash ci/check-api.sh                                             9 个发布 crate 快照一致
+bash ci/check-semver.sh                                          9 个 crate，0.5.0 major 判定
+bash ci/check-nameable.sh                                        exit 0
+bash ci/check-external-types.sh                                  0 errors
+bash ci/check-features.sh                                        workspace each-feature + 空集
+bash ci/check-docs.sh                                            rustdoc/doctest/orphan/入口表
+bash ci/check-package.sh                                         release graph ok
+bash ci/check-doc-drift.sh                                       exit 0
+bash ci/check-structure.sh                                       exit 0
+bash ci/test-publish.sh                                          PASS
+```
+
+注意：`ci/check-external-types.sh` 仍有 2 条既有 warning（`FilterOptions` 的
+`#[doc(hidden)]` 字段无法检查），不是本批引入。

@@ -150,10 +150,11 @@ check "EditPlan is assembled only through SurvivorEdit (doc_v30 R14)" \
     bash -c 'grep -q "pub struct SurvivorEdit" crates/reed-filter/src/eval/edit_plan.rs &&
         [ "$(grep -rn "EditPlan {" crates/reed/src --include=*.rs | wc -l)" -eq 0 ]'
 
-# doc_v30 P3: the facade is curated. Requests, reports, errors and the
-# `run_*` entry points are public; the build-time plan, writers, distance/
-# graph/reduce aliases and the fixture/open primitives live behind the one
-# hidden `frontend` module (`#[doc(hidden)]` is allowed only there).
+# doc_v30 P3/P1-8: the facade is curated. Requests, reports, errors and the
+# `run_*` entry points are public; the build-time plan, writers and fixture
+# helpers live behind the one hidden `frontend` module (`#[doc(hidden)]` is
+# allowed only there). No lower crate or writer module is re-exported under
+# an alias, indented or not; the guard checks the whole `lib.rs`.
 check "the prelude only re-exports facade items (doc_v30 P3)" \
     bash -c 'grep -q "pub use crate::{" crates/reed/src/prelude.rs &&
         ! grep -q "pub use reed_" crates/reed/src/prelude.rs'
@@ -162,11 +163,9 @@ check "front-end-only API lives behind the hidden frontend module (doc_v30 P3)" 
     bash -c '[ "$(grep -c "^#\[doc(hidden)\]" crates/reed/src/lib.rs)" -eq 1 ] &&
         grep -q "^pub mod prelude" crates/reed/src/lib.rs &&
         grep -q "^pub mod frontend" crates/reed/src/lib.rs &&
-        ! grep -q "^pub use reed_filter::{expr" crates/reed/src/lib.rs &&
-        ! grep -q "^pub use reed_distance as distance" crates/reed/src/lib.rs &&
-        ! grep -q "^pub use reed_graph as graph" crates/reed/src/lib.rs &&
-        ! grep -q "^pub use reed_reduce as reduce" crates/reed/src/lib.rs &&
-        ! grep -q "^pub use crate::stats::writers::{" crates/reed/src/lib.rs'
+        ! grep -Eq "^[[:space:]]*pub use (reed_[a-z_]+|crate::[a-z_:]+) as [a-z_]+;" crates/reed/src/lib.rs &&
+        ! grep -Eq "^[[:space:]]*pub use crate::stats::writers::\{" crates/reed/src/lib.rs &&
+        ! grep -Eq "^[[:space:]]*pub use reed_(io|filter|core|stats)::\{" crates/reed/src/lib.rs'
 
 # doc_v30 P4: the convert job is a directory module (types/sink, the job
 # impl, the MSA helpers) and no source file grows past the audit ceiling.
